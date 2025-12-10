@@ -3,6 +3,7 @@
 셀프 호스팅 가능한 간단한 웹 기반 노트 앱 프로젝트
 
 ---
+<img src="./logo.jpg" width="100%" title="Github_Logo"/>
 
 ## 개요
 
@@ -141,4 +142,23 @@ export DB_USER=your_user
 export DB_PASSWORD=your_password
 export DB_NAME=dwrnote
 export PORT=3000
+```
+
+또는 환경 변수 대신 server.js의 DB_CONFIG 객체를 직접 수정해도 됩니다.
+
+### 4. 의존성 설치
+```
+npm install
+```
+
+이미 node_modules 디렉터리가 포함된 상태라면 생략 가능하나, 일반적인 환경에서는 npm install을 통해 정리하는 것이 안전합니다.
+
+### 5. 서버 실행
+```
+npm start
+```
+
+서버가 정상적으로 기동되면 콘솔에 다음과 같은 로그가 출력됩니다.
+```
+DWRNote 앱이 http://서버주소:3000 에서 실행 중.
 ```
