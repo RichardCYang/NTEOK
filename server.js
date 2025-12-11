@@ -60,6 +60,15 @@ function generatePageId(now) {
 }
 
 /**
+ * ISO string 기반 컬렉션 ID 생성
+ */
+function generateCollectionId(now) {
+    const iso = now.toISOString().replace(/[:.]/g, "-");
+    const rand = Math.random().toString(36).slice(2, 8);
+    return "col-" + iso + "-" + rand;
+}
+
+/**
  * DB DATETIME 값을 ISO 문자열로 변환
  */
 function toIsoString(value) {
@@ -180,6 +189,22 @@ async function initDb() {
         console.log("기본 관리자 계정 생성 완료. username:", username);
     }
 
+    // collections 테이블 생성 (users 테이블 생성 후)
+    await pool.execute(`
+        CREATE TABLE IF NOT EXISTS collections (
+            id          VARCHAR(64)  NOT NULL PRIMARY KEY,
+            user_id     INT          NOT NULL,
+            name        VARCHAR(255) NOT NULL,
+            sort_order  INT          NOT NULL DEFAULT 0,
+            created_at  DATETIME     NOT NULL,
+            updated_at  DATETIME     NOT NULL,
+            CONSTRAINT fk_collections_user
+                FOREIGN KEY (user_id)
+                REFERENCES users(id)
+                ON DELETE CASCADE
+        )
+    `);
+
     // pages 테이블 생성
     await pool.execute(`
     	CREATE TABLE IF NOT EXISTS pages (
@@ -201,6 +226,112 @@ async function initDb() {
                 ON DELETE CASCADE
         )
     `);
+
+    // pages 테이블에 collection_id 컬럼 추가 (없을 경우만)
+    await pool.execute(`
+        ALTER TABLE pages
+        ADD COLUMN IF NOT EXISTS collection_id VARCHAR(64) NULL
+    `);
+
+    // pages.collection_id 외래키 추가 (이미 있는 경우 무시)
+    try {
+        await pool.execute(`
+            ALTER TABLE pages
+            ADD CONSTRAINT fk_pages_collection
+                FOREIGN KEY (collection_id)
+                REFERENCES collections(id)
+                ON DELETE CASCADE
+        `);
+    } catch (error) {
+        // 이미 존재하는 경우 무시
+        if (error && error.code !== "ER_DUP_KEY" && error.code !== "ER_CANNOT_ADD_FOREIGN") {
+            console.warn("pages.collection_id FK 추가 중 경고:", error.message);
+        }
+    }
+
+    // 컬렉션이 없는 기존 사용자 데이터 마이그레이션
+    await backfillCollections();
+}
+
+/**
+ * 사용자별 기본 컬렉션을 생성하고, collection_id 가 비어있는 페이지에 할당
+ */
+async function backfillCollections() {
+    const [users] = await pool.execute(`SELECT id, username FROM users`);
+
+    for (const user of users) {
+        const userId = user.id;
+
+        // 사용자 컬렉션 존재 여부 확인
+        const [existingCols] = await pool.execute(
+            `SELECT id FROM collections WHERE user_id = ? ORDER BY sort_order ASC, updated_at DESC LIMIT 1`,
+            [userId]
+        );
+
+        let collectionId = existingCols.length ? existingCols[0].id : null;
+
+        // 없으면 기본 컬렉션 생성
+        if (!collectionId) {
+            const now = new Date();
+            const nowStr = formatDateForDb(now);
+            collectionId = generateCollectionId(now);
+
+            await pool.execute(
+                `
+                INSERT INTO collections (id, user_id, name, sort_order, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                `,
+                [collectionId, userId, "기본 컬렉션", 0, nowStr, nowStr]
+            );
+        }
+
+        // collection_id 가 비어있는 페이지에 기본 컬렉션 할당
+        await pool.execute(
+            `
+            UPDATE pages
+            SET collection_id = ?
+            WHERE user_id = ? AND (collection_id IS NULL OR collection_id = '')
+            `,
+            [collectionId, userId]
+        );
+    }
+}
+
+/**
+ * 사용자별 컬렉션 순서 구하기
+ */
+async function getNextCollectionSortOrder(userId) {
+    const [rows] = await pool.execute(
+        `SELECT COALESCE(MAX(sort_order), -1) AS maxOrder FROM collections WHERE user_id = ?`,
+        [userId]
+    );
+    return Number(rows[0].maxOrder) + 1;
+}
+
+/**
+ * 새 컬렉션 생성
+ */
+async function createCollection({ userId, name }) {
+    const now = new Date();
+    const nowStr = formatDateForDb(now);
+    const id = generateCollectionId(now);
+    const sortOrder = await getNextCollectionSortOrder(userId);
+
+    await pool.execute(
+        `
+        INSERT INTO collections (id, user_id, name, sort_order, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        `,
+        [id, userId, name, sortOrder, nowStr, nowStr]
+    );
+
+    return {
+        id,
+        name,
+        sortOrder,
+        createdAt: now.toISOString(),
+        updatedAt: now.toISOString()
+    };
 }
 
 /**
@@ -393,6 +524,12 @@ app.post("/api/auth/register", async (req, res) => {
             username: trimmedUsername
         };
 
+        // 새 사용자 기본 컬렉션 생성
+        await createCollection({
+            userId: user.id,
+            name: "기본 컬렉션"
+        });
+
         // 바로 로그인 상태로 만들어 주기 (세션 생성)
         const sessionId = createSession(user);
 
@@ -428,28 +565,93 @@ app.get("/api/auth/me", authMiddleware, (req, res) => {
 });
 
 /**
- * 페이지 목록 조회
- * GET /api/pages
+ * 컬렉션 목록 조회
+ * GET /api/collections
  */
-app.get("/api/pages", authMiddleware, async (req, res) => {
+app.get("/api/collections", authMiddleware, async (req, res) => {
     try {
-		const userId = req.user.id;
+        const userId = req.user.id;
         const [rows] = await pool.execute(
             `
-            SELECT id, title, updated_at, parent_id, sort_order
-            FROM pages
+            SELECT id, name, sort_order, created_at, updated_at
+            FROM collections
             WHERE user_id = ?
-            ORDER BY parent_id IS NULL DESC, sort_order ASC, updated_at DESC
+            ORDER BY sort_order ASC, updated_at DESC
             `,
             [userId]
         );
 
         const list = rows.map((row) => ({
             id: row.id,
+            name: row.name,
+            sortOrder: row.sort_order,
+            createdAt: toIsoString(row.created_at),
+            updatedAt: toIsoString(row.updated_at)
+        }));
+
+        res.json(list);
+    } catch (error) {
+        console.error("GET /api/collections 오류:", error);
+        res.status(500).json({ error: "컬렉션 목록을 불러오지 못했습니다." });
+    }
+});
+
+/**
+ * 새 컬렉션 생성
+ * POST /api/collections
+ * body: { name?: string }
+ */
+app.post("/api/collections", authMiddleware, async (req, res) => {
+    const rawName = typeof req.body.name === "string" ? req.body.name.trim() : "";
+    const name = rawName !== "" ? rawName : "새 컬렉션";
+
+    try {
+        const userId = req.user.id;
+        const collection = await createCollection({ userId, name });
+        res.status(201).json(collection);
+    } catch (error) {
+        console.error("POST /api/collections 오류:", error);
+        res.status(500).json({ error: "컬렉션을 생성하지 못했습니다." });
+    }
+});
+
+/**
+ * 페이지 목록 조회
+ * GET /api/pages
+ */
+app.get("/api/pages", authMiddleware, async (req, res) => {
+    try {
+		const userId = req.user.id;
+        const collectionId =
+            typeof req.query.collectionId === "string" && req.query.collectionId.trim() !== ""
+                ? req.query.collectionId.trim()
+                : null;
+
+        let query = `
+            SELECT id, title, updated_at, parent_id, sort_order, collection_id
+            FROM pages
+            WHERE user_id = ?
+        `;
+        const params = [userId];
+
+        if (collectionId) {
+            query += ` AND collection_id = ?`;
+            params.push(collectionId);
+        }
+
+        query += `
+            ORDER BY collection_id ASC, parent_id IS NULL DESC, sort_order ASC, updated_at DESC
+        `;
+
+        const [rows] = await pool.execute(query, params);
+
+        const list = rows.map((row) => ({
+            id: row.id,
             title: row.title || "제목 없음",
             updatedAt: toIsoString(row.updated_at),
             parentId: row.parent_id,
-            sortOrder: row.sort_order
+            sortOrder: row.sort_order,
+            collectionId: row.collection_id
         }));
 
         console.log("GET /api/pages 응답 개수:", list.length);
@@ -472,7 +674,7 @@ app.get("/api/pages/:id", authMiddleware, async (req, res) => {
     try {
         const [rows] = await pool.execute(
             `
-            SELECT id, title, content, created_at, updated_at, parent_id, sort_order
+            SELECT id, title, content, created_at, updated_at, parent_id, sort_order, collection_id
             FROM pages
             WHERE id = ? AND user_id = ?
             `,
@@ -493,7 +695,8 @@ app.get("/api/pages/:id", authMiddleware, async (req, res) => {
             createdAt: toIsoString(row.created_at),
             updatedAt: toIsoString(row.updated_at),
             parentId: row.parent_id,
-            sortOrder: row.sort_order
+            sortOrder: row.sort_order,
+            collectionId: row.collection_id
         };
 
         console.log("GET /api/pages/:id 응답:", id);
@@ -529,14 +732,53 @@ app.post("/api/pages", authMiddleware, async (req, res) => {
         typeof req.body.sortOrder === "number" && Number.isFinite(req.body.sortOrder)
             ? req.body.sortOrder
             : 0;
+    const collectionId =
+        typeof req.body.collectionId === "string" && req.body.collectionId.trim() !== ""
+            ? req.body.collectionId.trim()
+            : null;
+
+    if (!collectionId) {
+        return res.status(400).json({ error: "collectionId가 필요합니다." });
+    }
 
     try {
+        // 컬렉션 존재 여부 및 소유권 확인
+        const [colRows] = await pool.execute(
+            `
+            SELECT id FROM collections
+            WHERE id = ? AND user_id = ?
+            `,
+            [collectionId, userId]
+        );
+
+        if (!colRows.length) {
+            return res.status(404).json({ error: "컬렉션을 찾을 수 없습니다." });
+        }
+
+        if (parentId) {
+            const [parentRows] = await pool.execute(
+                `
+                SELECT id, collection_id FROM pages
+                WHERE id = ? AND user_id = ?
+                `,
+                [parentId, userId]
+            );
+
+            if (!parentRows.length) {
+                return res.status(400).json({ error: "부모 페이지를 찾을 수 없습니다." });
+            }
+
+            if (parentRows[0].collection_id !== collectionId) {
+                return res.status(400).json({ error: "부모 페이지와 동일한 컬렉션이어야 합니다." });
+            }
+        }
+
         await pool.execute(
             `
-            INSERT INTO pages (id, user_id, parent_id, title, content, sort_order, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO pages (id, user_id, parent_id, title, content, sort_order, created_at, updated_at, collection_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             `,
-            [id, userId, parentId, title, content, sortOrder, nowStr, nowStr]
+            [id, userId, parentId, title, content, sortOrder, nowStr, nowStr, collectionId]
         );
 
         const page = {
@@ -545,6 +787,7 @@ app.post("/api/pages", authMiddleware, async (req, res) => {
             content,
             parentId,
             sortOrder,
+            collectionId,
             createdAt: now.toISOString(),
             updatedAt: now.toISOString()
         };
@@ -577,7 +820,7 @@ app.put("/api/pages/:id", authMiddleware, async (req, res) => {
     try {
         const [rows] = await pool.execute(
             `
-            SELECT id, title, content, created_at, updated_at, parent_id, sort_order
+            SELECT id, title, content, created_at, updated_at, parent_id, sort_order, collection_id
             FROM pages
             WHERE id = ? AND user_id = ?
             `,
@@ -611,6 +854,7 @@ app.put("/api/pages/:id", authMiddleware, async (req, res) => {
             content: newContent,
             parentId: existing.parent_id,
             sortOrder: existing.sort_order,
+            collectionId: existing.collection_id,
             createdAt: toIsoString(existing.created_at),
             updatedAt: now.toISOString()
         };
