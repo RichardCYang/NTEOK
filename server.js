@@ -182,41 +182,19 @@ async function initDb() {
 
     // pages 테이블 생성
     await pool.execute(`
-        CREATE TABLE IF NOT EXISTS pages (
+    	CREATE TABLE IF NOT EXISTS pages (
             id          VARCHAR(64)  NOT NULL PRIMARY KEY,
+            user_id     INT          NOT NULL,
             title       VARCHAR(255) NOT NULL,
             content     MEDIUMTEXT   NOT NULL,
             created_at  DATETIME     NOT NULL,
-            updated_at  DATETIME     NOT NULL
+            updated_at  DATETIME     NOT NULL,
+            CONSTRAINT fk_pages_user
+                FOREIGN KEY (user_id)
+                REFERENCES users(id)
+                ON DELETE CASCADE
         )
     `);
-
-    // 기본 페이지 1개 보장
-    const [rows] = await pool.execute("SELECT COUNT(*) AS cnt FROM pages");
-    const count = rows[0].cnt;
-
-    if (count === 0) {
-        const now = new Date();
-        const id = generatePageId(now);
-        const title = "첫 페이지";
-        const content = "<p>여기는 첫 페이지 입니다.</p>";
-
-        await pool.execute(
-            `
-            INSERT INTO pages (id, title, content, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?)
-            `,
-            [
-                id,
-                title,
-                content,
-                formatDateForDb(now),
-                formatDateForDb(now)
-            ]
-        );
-
-        console.log("기본 페이지 생성 완료. id:", id);
-    }
 }
 
 /**
@@ -449,12 +427,15 @@ app.get("/api/auth/me", authMiddleware, (req, res) => {
  */
 app.get("/api/pages", authMiddleware, async (req, res) => {
     try {
+		const userId = req.user.id;
         const [rows] = await pool.execute(
             `
             SELECT id, title, updated_at
             FROM pages
+            WHERE user_id = ?
             ORDER BY updated_at DESC
-            `
+            `,
+            [userId]
         );
 
         const list = rows.map((row) => ({
@@ -478,15 +459,16 @@ app.get("/api/pages", authMiddleware, async (req, res) => {
  */
 app.get("/api/pages/:id", authMiddleware, async (req, res) => {
     const id = req.params.id;
+	const userId = req.user.id;
 
     try {
         const [rows] = await pool.execute(
             `
             SELECT id, title, content, created_at, updated_at
             FROM pages
-            WHERE id = ?
+            WHERE id = ? AND user_id = ?
             `,
-            [id]
+            [id, userId]
         );
 
         if (!rows.length) {
@@ -526,14 +508,15 @@ app.post("/api/pages", authMiddleware, async (req, res) => {
     const id = generatePageId(now);
     const nowStr = formatDateForDb(now);
     const content = "<p></p>";
+	const userId = req.user.id;
 
     try {
         await pool.execute(
             `
-            INSERT INTO pages (id, title, content, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO pages (id, user_id, title, content, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
             `,
-            [id, title, content, nowStr, nowStr]
+            [id, userId, title, content, nowStr, nowStr]
         );
 
         const page = {
@@ -560,6 +543,7 @@ app.post("/api/pages", authMiddleware, async (req, res) => {
  */
 app.put("/api/pages/:id", authMiddleware, async (req, res) => {
     const id = req.params.id;
+	const userId = req.user.id;
 
     const titleFromBody = typeof req.body.title === "string" ? req.body.title.trim() : null;
     const contentFromBody = typeof req.body.content === "string" ? req.body.content : null;
@@ -573,9 +557,9 @@ app.put("/api/pages/:id", authMiddleware, async (req, res) => {
             `
             SELECT id, title, content, created_at, updated_at
             FROM pages
-            WHERE id = ?
+            WHERE id = ? AND user_id = ?
             `,
-            [id]
+            [id, userId]
         );
 
         if (!rows.length) {
@@ -594,9 +578,9 @@ app.put("/api/pages/:id", authMiddleware, async (req, res) => {
             `
             UPDATE pages
             SET title = ?, content = ?, updated_at = ?
-            WHERE id = ?
+            WHERE id = ? AND user_id = ?
             `,
-            [newTitle, newContent, nowStr, id]
+            [newTitle, newContent, nowStr, id, userId]
         );
 
         const page = {
@@ -622,15 +606,16 @@ app.put("/api/pages/:id", authMiddleware, async (req, res) => {
  */
 app.delete("/api/pages/:id", authMiddleware, async (req, res) => {
     const id = req.params.id;
+	const userId = req.user.id;
 
     try {
         const [rows] = await pool.execute(
             `
             SELECT id
             FROM pages
-            WHERE id = ?
+            WHERE id = ? AND user_id = ?
             `,
-            [id]
+            [id, userId]
         );
 
         if (!rows.length) {
@@ -641,9 +626,9 @@ app.delete("/api/pages/:id", authMiddleware, async (req, res) => {
         await pool.execute(
             `
             DELETE FROM pages
-            WHERE id = ?
+            WHERE id = ? AND user_id = ?
             `,
-            [id]
+            [id, userId]
         );
 
         console.log("DELETE /api/pages/:id 삭제:", id);
