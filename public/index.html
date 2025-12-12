@@ -419,6 +419,27 @@
                         </div>
                     </div>
                     <div class="settings-section">
+                        <h3>보안</h3>
+                        <div class="settings-item">
+                            <label>TOTP 2단계 인증</label>
+                            <div style="display: flex; align-items: center; gap: 12px;">
+                                <span id="totp-status" class="settings-value">비활성화</span>
+                                <button id="totp-setup-btn" class="primary-button" style="padding: 4px 12px; font-size: 12px;">
+                                    설정
+                                </button>
+                            </div>
+                        </div>
+                        <div class="settings-item">
+                            <label>패스키 2단계 인증</label>
+                            <div style="display: flex; align-items: center; gap: 12px;">
+                                <span class="settings-value" style="color: #9ca3af;">미구현</span>
+                                <button class="primary-button" style="padding: 4px 12px; font-size: 12px; opacity: 0.5; cursor: not-allowed;" disabled>
+                                    설정
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="settings-section">
                         <h3>편집기</h3>
                         <div class="settings-item">
                             <label>기본 모드</label>
@@ -692,6 +713,159 @@
                     <div style="display: flex; justify-content: flex-end;">
                         <button id="encrypt-permission-confirm-btn" class="primary-button" style="padding: 10px 20px; font-size: 14px;">
                             확인
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- TOTP 설정 모달 -->
+        <div id="totp-setup-modal" class="modal hidden">
+            <div class="modal-overlay"></div>
+            <div class="modal-content" style="max-width: 500px;">
+                <div class="modal-header">
+                    <h2>TOTP 2단계 인증 설정</h2>
+                    <button id="close-totp-setup-btn" class="modal-close-btn">
+                        <i class="fa-solid fa-xmark"></i>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <div id="totp-setup-step1" style="display: none;">
+                        <p style="margin-bottom: 16px; color: #6b7280; font-size: 14px;">
+                            인증 앱(Google Authenticator, Authy 등)에서 아래 QR 코드를 스캔하세요.
+                        </p>
+                        <div style="text-align: center; margin: 20px 0;">
+                            <div id="totp-qrcode" style="display: inline-block;"></div>
+                        </div>
+                        <div style="margin-bottom: 16px;">
+                            <label style="display: block; margin-bottom: 8px; font-weight: 500; font-size: 13px;">
+                                수동 입력 코드
+                            </label>
+                            <div style="padding: 12px; background-color: #f5f2ed; border: 1px solid #d4cfc4; border-radius: 3px; font-family: monospace; font-size: 14px; word-break: break-all;" id="totp-secret-display"></div>
+                        </div>
+                        <div style="margin-bottom: 16px;">
+                            <label for="totp-verify-code" style="display: block; margin-bottom: 8px; font-weight: 500; font-size: 13px;">
+                                인증 코드 입력 (6자리)
+                            </label>
+                            <input
+                                type="text"
+                                id="totp-verify-code"
+                                class="settings-select"
+                                style="width: 100%; padding: 10px; font-size: 14px;"
+                                placeholder="000000"
+                                maxlength="6"
+                                pattern="[0-9]{6}"
+                            />
+                        </div>
+                        <div id="totp-setup-error" style="color: #ef4444; font-size: 12px; margin-bottom: 16px; min-height: 18px;"></div>
+                        <div style="display: flex; gap: 8px; justify-content: flex-end;">
+                            <button type="button" id="cancel-totp-setup-btn" style="padding: 10px 20px; background: #6b7280; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 14px;">
+                                취소
+                            </button>
+                            <button type="button" id="verify-totp-btn" class="primary-button" style="padding: 10px 20px; font-size: 14px;">
+                                활성화
+                            </button>
+                        </div>
+                    </div>
+                    <div id="totp-setup-step2" style="display: none;">
+                        <div style="display: flex; flex-direction: column; gap: 12px; margin-bottom: 20px; padding: 16px; background: #f3f4f6; border-radius: 8px;">
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <i class="fa-solid fa-check-circle" style="color: #16a34a; font-size: 20px;"></i>
+                                <span style="font-weight: 600; color: #16a34a; font-size: 16px;">TOTP 2단계 인증 활성화 완료</span>
+                            </div>
+                            <p style="margin: 0; font-size: 13px; color: #4b5563; line-height: 1.6;">
+                                백업 코드를 안전한 곳에 보관하세요. 인증 앱을 사용할 수 없을 때 사용할 수 있습니다.
+                            </p>
+                        </div>
+                        <div style="margin-bottom: 20px;">
+                            <label style="display: block; margin-bottom: 8px; font-weight: 500; font-size: 13px;">
+                                백업 코드 (각 코드는 1회만 사용 가능)
+                            </label>
+                            <div id="totp-backup-codes" style="padding: 16px; background-color: #f5f2ed; border: 1px solid #d4cfc4; border-radius: 3px; font-family: monospace; font-size: 13px; display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                                <!-- 백업 코드가 여기에 표시됩니다 -->
+                            </div>
+                        </div>
+                        <div style="display: flex; gap: 8px; justify-content: flex-end;">
+                            <button type="button" id="copy-backup-codes-btn" style="padding: 10px 20px; background: #6b7280; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 14px;">
+                                <i class="fa-solid fa-copy"></i> 복사
+                            </button>
+                            <button type="button" id="close-totp-success-btn" class="primary-button" style="padding: 10px 20px; font-size: 14px;">
+                                완료
+                            </button>
+                        </div>
+                    </div>
+                    <div id="totp-disable-confirm" style="display: none;">
+                        <p style="margin-bottom: 16px; color: #6b7280; font-size: 14px;">
+                            TOTP 2단계 인증을 비활성화하시겠습니까?
+                        </p>
+                        <div style="padding: 12px; background-color: #fef2f2; border: 1px solid #fecaca; border-radius: 3px; margin-bottom: 16px;">
+                            <p style="margin: 0; font-size: 13px; color: #dc2626; line-height: 1.6;">
+                                <i class="fa-solid fa-warning"></i> 2단계 인증을 비활성화하면 계정 보안이 약화됩니다.
+                            </p>
+                        </div>
+                        <div style="margin-bottom: 16px;">
+                            <label for="totp-disable-password" style="display: block; margin-bottom: 8px; font-weight: 500; font-size: 13px;">
+                                비밀번호 확인
+                            </label>
+                            <input
+                                type="password"
+                                id="totp-disable-password"
+                                class="settings-select"
+                                style="width: 100%; padding: 10px; font-size: 14px;"
+                                placeholder="비밀번호를 입력하세요"
+                            />
+                        </div>
+                        <div id="totp-disable-error" style="color: #ef4444; font-size: 12px; margin-bottom: 16px; min-height: 18px;"></div>
+                        <div style="display: flex; gap: 8px; justify-content: flex-end;">
+                            <button type="button" id="cancel-totp-disable-btn" style="padding: 10px 20px; background: #6b7280; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 14px;">
+                                취소
+                            </button>
+                            <button type="button" id="confirm-totp-disable-btn" class="danger-button" style="padding: 10px 20px; font-size: 14px;">
+                                비활성화
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- TOTP 로그인 검증 모달 -->
+        <div id="totp-verify-modal" class="modal hidden">
+            <div class="modal-overlay"></div>
+            <div class="modal-content" style="max-width: 400px;">
+                <div class="modal-header">
+                    <h2>2단계 인증</h2>
+                </div>
+                <div class="modal-body">
+                    <p style="margin-bottom: 16px; color: #6b7280; font-size: 14px;">
+                        인증 앱에 표시된 6자리 코드를 입력하세요.
+                    </p>
+                    <div style="margin-bottom: 16px;">
+                        <label for="totp-login-code" style="display: block; margin-bottom: 8px; font-weight: 500; font-size: 13px;">
+                            인증 코드
+                        </label>
+                        <input
+                            type="text"
+                            id="totp-login-code"
+                            class="settings-select"
+                            style="width: 100%; padding: 10px; font-size: 16px; text-align: center; letter-spacing: 0.3em;"
+                            placeholder="000000"
+                            maxlength="6"
+                            pattern="[0-9]{6}"
+                        />
+                    </div>
+                    <div id="totp-login-error" style="color: #ef4444; font-size: 12px; margin-bottom: 16px; min-height: 18px;"></div>
+                    <div style="display: flex; gap: 8px; justify-content: flex-end;">
+                        <button type="button" id="cancel-totp-login-btn" style="padding: 10px 20px; background: #6b7280; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 14px;">
+                            취소
+                        </button>
+                        <button type="button" id="verify-totp-login-btn" class="primary-button" style="padding: 10px 20px; font-size: 14px;">
+                            확인
+                        </button>
+                    </div>
+                    <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid #d4cfc4;">
+                        <button type="button" id="use-backup-code-btn" style="width: 100%; padding: 8px; background: transparent; color: #2d5f5d; border: 1px solid #2d5f5d; border-radius: 3px; cursor: pointer; font-size: 13px;">
+                            백업 코드 사용
                         </button>
                     </div>
                 </div>

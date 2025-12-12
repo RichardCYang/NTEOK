@@ -22,6 +22,7 @@
         href="https://fonts.googleapis.com/css2?family=Nunito:wght@600;700&display=swap"
     />
     <link rel="stylesheet" href="/css/login.css" />
+    <link rel="stylesheet" href="/css/main.css" />
 </head>
 <body class="login-body">
     <div class="login-shell">
@@ -99,6 +100,50 @@
             </div>
         </section>
     </div>
+
+    <!-- TOTP 로그인 검증 모달 -->
+    <div id="totp-verify-modal" class="modal hidden">
+        <div class="modal-overlay"></div>
+        <div class="modal-content" style="max-width: 400px;">
+            <div class="modal-header">
+                <h2>2단계 인증</h2>
+            </div>
+            <div class="modal-body">
+                <p style="margin-bottom: 16px; color: #6b7280; font-size: 14px;">
+                    인증 앱에 표시된 6자리 코드를 입력하세요.
+                </p>
+                <div style="margin-bottom: 16px;">
+                    <label for="totp-login-code" style="display: block; margin-bottom: 8px; font-weight: 500; font-size: 13px;">
+                        인증 코드
+                    </label>
+                    <input
+                        type="text"
+                        id="totp-login-code"
+                        class="settings-select"
+                        style="width: 100%; padding: 10px; font-size: 16px; text-align: center; letter-spacing: 0.3em; border: 1px solid #d4cfc4; border-radius: 3px;"
+                        placeholder="000000"
+                        maxlength="6"
+                        pattern="[0-9]{6}"
+                    />
+                </div>
+                <div id="totp-login-error" style="color: #ef4444; font-size: 12px; margin-bottom: 16px; min-height: 18px;"></div>
+                <div style="display: flex; gap: 8px; justify-content: flex-end;">
+                    <button type="button" id="cancel-totp-login-btn" style="padding: 10px 20px; background: #6b7280; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 14px;">
+                        취소
+                    </button>
+                    <button type="button" id="verify-totp-login-btn" style="padding: 10px 20px; background: #2d5f5d; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 14px; font-weight: 500;">
+                        확인
+                    </button>
+                </div>
+                <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid #d4cfc4;">
+                    <button type="button" id="use-backup-code-btn" style="width: 100%; padding: 8px; background: transparent; color: #2d5f5d; border: 1px solid #2d5f5d; border-radius: 3px; cursor: pointer; font-size: 13px;">
+                        백업 코드 사용
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- 보안: CSRF 토큰 유틸리티 -->
     <script src="/js/csrf-utils.js"></script>
     <script src="/js/crypto.js"></script>
