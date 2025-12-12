@@ -513,6 +513,19 @@ body {
     padding: 32px 120px 32px 120px;
 }
 
+/* 에디터 여백 반응형 */
+@media (max-width: 1200px) {
+    .editor {
+        padding: 28px 80px 28px 80px;
+    }
+}
+
+@media (max-width: 900px) {
+    .editor {
+        padding: 24px 60px 24px 60px;
+    }
+}
+
 /* 에디터 블록: 한지 느낌 */
 .editor .ProseMirror {
     outline: none;
@@ -876,5 +889,15 @@ body {
 
     .sidebar-overlay.visible {
         display: block;
+    }
+
+    .editor {
+        padding: 20px 24px 20px 24px;
+    }
+}
+
+@media (max-width: 480px) {
+    .editor {
+        padding: 16px 16px 16px 16px;
     }
 }
