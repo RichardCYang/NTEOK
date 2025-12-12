@@ -27,7 +27,10 @@
             <div class="app-body">
                 <aside class="sidebar">
                     <div class="sidebar-header">
-                        <span class="sidebar-title">컬렉션</span>
+                        <div class="user-profile">
+                            <div class="user-avatar" id="user-avatar"></div>
+                            <span class="user-name" id="user-name">사용자</span>
+                        </div>
                     </div>
                     <div class="sidebar-main">
                         <ul id="collection-list" class="collection-list"></ul>
@@ -49,9 +52,11 @@
                             id="page-title-input"
                             class="page-title-input"
                             placeholder="제목 없음"
+                            readonly
                         />
-                        <button id="save-page-btn" class="primary-button">
-                            저장
+                        <button id="mode-toggle-btn" class="mode-toggle-btn">
+                            <i class="fa-solid fa-pencil"></i>
+                            <span>쓰기모드</span>
                         </button>
                     </div>
                     <div class="editor-toolbar">

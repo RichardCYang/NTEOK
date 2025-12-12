@@ -26,7 +26,7 @@ body {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 10px 20px;
+    padding: 10px 20px 10px 28px;
     border-bottom: 1px solid #d4cfc4;
     background-color: #faf8f3;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
@@ -99,18 +99,36 @@ body {
     border-bottom: 1px solid #d4cfc4;
 }
 
-.sidebar-title {
+.user-profile {
     flex: 1;
-    font-size: 15px;
-    font-weight: 700;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
-    color: #5a6169;
-    padding: 6px 12px;
-    line-height: 1.5;
-    box-sizing: border-box;
     display: flex;
     align-items: center;
+    gap: 12px;
+    padding: 6px 12px;
+}
+
+.user-avatar {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background-color: #2d5f5d;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #ffffff;
+    font-size: 16px;
+    font-weight: 600;
+    flex-shrink: 0;
+}
+
+.user-name {
+    font-size: 14px;
+    font-weight: 500;
+    color: #2d2d2d;
+    line-height: 1.4;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .sidebar-actions {
@@ -274,7 +292,7 @@ body {
 
 /* 페이지 항목: 한국식 미니멀 */
 .page-list-item {
-    padding: 7px 12px 7px 32px;
+    padding: 7px 10px 7px 32px;
     cursor: pointer;
     display: flex;
     flex-direction: column;
@@ -287,13 +305,11 @@ body {
 }
 
 .page-list-item:hover {
-    background-color: #ddd9d0;
+    background-color: transparent;
 }
 
 .page-list-item.active {
-    background-color: #d4cfc4;
-    border-left: 2px solid #2d5f5d;
-    padding-left: 30px;
+    background-color: transparent;
 }
 
 .page-list-item-title {
@@ -340,12 +356,16 @@ body {
 }
 
 .editor-toolbar {
-    display: flex;
+    display: none;
     align-items: center;
     gap: 4px;
     padding: 6px 10px;
     border-bottom: 1px solid #d4cfc4;
     background-color: #f5f2ed;
+}
+
+.editor-toolbar.visible {
+    display: flex;
 }
 
 .editor-toolbar button {
@@ -476,6 +496,37 @@ body {
 
 .primary-button:hover {
     background-color: #1e4d4a;
+}
+
+#logout-btn {
+    min-width: 85px;
+}
+
+.mode-toggle-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    border: none;
+    border-radius: 3px;
+    padding: 6px 14px;
+    font-size: 13px;
+    cursor: pointer;
+    background-color: #2d5f5d;
+    color: #ffffff;
+    font-weight: 500;
+    min-width: 100px;
+}
+
+.mode-toggle-btn:hover {
+    background-color: #1e4d4a;
+}
+
+.mode-toggle-btn.write-mode {
+    background-color: #9b5555;
+}
+
+.mode-toggle-btn.write-mode:hover {
+    background-color: #7d4444;
 }
 
 .danger-button {

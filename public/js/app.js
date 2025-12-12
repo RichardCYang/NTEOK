@@ -58,6 +58,7 @@ let currentCollectionId = null;
 let expandedCollections = new Set();
 let colorDropdownElement = null;
 let colorMenuElement = null;
+let isWriteMode = false;
 
 // 슬래시(/) 명령 블록 메뉴 관련 상태
 const SLASH_ITEMS = [
@@ -337,6 +338,7 @@ function initEditor() {
 
     editor = new Editor({
         element,
+        editable: false, // 기본값은 읽기모드
         extensions: [
             StarterKit,
             CustomEnter,
@@ -852,6 +854,37 @@ async function loadPage(id) {
         return;
     }
 
+    // 페이지 전환 전에 쓰기모드였다면 저장하고 읽기모드로 전환
+    if (isWriteMode && currentPageId) {
+        await saveCurrentPage();
+        // 읽기모드로 전환
+        const modeToggleBtn = document.querySelector("#mode-toggle-btn");
+        const titleInput = document.querySelector("#page-title-input");
+        const toolbar = document.querySelector(".editor-toolbar");
+        const iconEl = modeToggleBtn ? modeToggleBtn.querySelector("i") : null;
+        const textEl = modeToggleBtn ? modeToggleBtn.querySelector("span") : null;
+
+        isWriteMode = false;
+        if (editor) {
+            editor.setEditable(false);
+        }
+        if (titleInput) {
+            titleInput.setAttribute("readonly", "");
+        }
+        if (toolbar) {
+            toolbar.classList.remove("visible");
+        }
+        if (modeToggleBtn) {
+            modeToggleBtn.classList.remove("write-mode");
+        }
+        if (iconEl) {
+            iconEl.className = "fa-solid fa-pencil";
+        }
+        if (textEl) {
+            textEl.textContent = "쓰기모드";
+        }
+    }
+
     try {
         console.log("단일 페이지 요청: GET /api/pages/" + id);
         const res = await fetch("/api/pages/" + encodeURIComponent(id));
@@ -1191,76 +1224,124 @@ function bindNewCollectionButton() {
     });
 }
 
-function bindSaveButton() {
-    const btn = document.querySelector("#save-page-btn");
+async function saveCurrentPage() {
     const titleInput = document.querySelector("#page-title-input");
 
+    if (!currentPageId) {
+        console.warn("저장할 페이지가 없음.");
+        return;
+    }
+    if (!editor) {
+        console.warn("에디터가 초기화되지 않음.");
+        return;
+    }
+
+    const title = titleInput ? titleInput.value || "제목 없음" : "제목 없음";
+    const content = editor.getHTML();
+
+    try {
+        const res = await fetch("/api/pages/" + encodeURIComponent(currentPageId), {
+            method: "PUT",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                title,
+                content
+            })
+        });
+
+        if (!res.ok) {
+            throw new Error("HTTP " + res.status + " " + res.statusText);
+        }
+
+        const page = await res.json();
+        console.log("페이지 저장 응답:", page);
+
+        pages = pages.map((p) => {
+            if (p.id === page.id) {
+                return {
+                    ...p,
+                    title: page.title,
+                    updatedAt: page.updatedAt,
+                    parentId: page.parentId ?? p.parentId ?? null,
+                    sortOrder:
+                        typeof page.sortOrder === "number"
+                            ? page.sortOrder
+                            : (typeof p.sortOrder === "number" ? p.sortOrder : 0)
+                };
+            }
+            return p;
+        });
+
+        renderPageList();
+        console.log("저장 완료.");
+    } catch (error) {
+        console.error("페이지 저장 오류:", error);
+        alert("페이지 저장 실패: " + error.message);
+    }
+}
+
+function toggleEditMode() {
+    const modeToggleBtn = document.querySelector("#mode-toggle-btn");
+    const titleInput = document.querySelector("#page-title-input");
+    const toolbar = document.querySelector(".editor-toolbar");
+    const iconEl = modeToggleBtn ? modeToggleBtn.querySelector("i") : null;
+    const textEl = modeToggleBtn ? modeToggleBtn.querySelector("span") : null;
+
+    if (!editor || !modeToggleBtn) {
+        return;
+    }
+
+    if (isWriteMode) {
+        // 쓰기모드 → 읽기모드: 저장하고 읽기 전용으로 변경
+        saveCurrentPage();
+
+        isWriteMode = false;
+        editor.setEditable(false);
+        if (titleInput) {
+            titleInput.setAttribute("readonly", "");
+        }
+        if (toolbar) {
+            toolbar.classList.remove("visible");
+        }
+
+        modeToggleBtn.classList.remove("write-mode");
+        if (iconEl) {
+            iconEl.className = "fa-solid fa-pencil";
+        }
+        if (textEl) {
+            textEl.textContent = "쓰기모드";
+        }
+    } else {
+        // 읽기모드 → 쓰기모드: 편집 가능하게 변경
+        isWriteMode = true;
+        editor.setEditable(true);
+        if (titleInput) {
+            titleInput.removeAttribute("readonly");
+        }
+        if (toolbar) {
+            toolbar.classList.add("visible");
+        }
+
+        modeToggleBtn.classList.add("write-mode");
+        if (iconEl) {
+            iconEl.className = "fa-solid fa-book-open";
+        }
+        if (textEl) {
+            textEl.textContent = "읽기모드";
+        }
+    }
+}
+
+function bindModeToggle() {
+    const btn = document.querySelector("#mode-toggle-btn");
     if (!btn) {
         return;
     }
 
-    btn.addEventListener("click", async () => {
-        if (!currentPageId) {
-            alert("저장할 페이지가 없음.");
-            return;
-        }
-        if (!editor) {
-            alert("에디터가 초기화되지 않음.");
-            return;
-        }
-
-        const title = titleInput ? titleInput.value || "제목 없음" : "제목 없음";
-        const content = editor.getHTML();
-
-        try {
-            const res = await fetch("/api/pages/" + encodeURIComponent(currentPageId), {
-                method: "PUT",
-                headers: {
-                    "Content-Type": "application/json"
-                },
-                body: JSON.stringify({
-                    title,
-                    content
-                })
-            });
-
-            if (!res.ok) {
-                throw new Error("HTTP " + res.status + " " + res.statusText);
-            }
-
-            const page = await res.json();
-            console.log("페이지 저장 응답:", page);
-
-            pages = pages.map((p) => {
-                if (p.id === page.id) {
-                	return {
-                        ...p,
-                        title: page.title,
-                        updatedAt: page.updatedAt,
-                        parentId: page.parentId ?? p.parentId ?? null,
-                        sortOrder:
-                            typeof page.sortOrder === "number"
-                                ? page.sortOrder
-                                : (typeof p.sortOrder === "number" ? p.sortOrder : 0)
-                    };
-                }
-                return p;
-            });
-
-            renderPageList();
-            alert("저장 완료.");
-        } catch (error) {
-            console.error("페이지 저장 오류:", error);
-            alert("페이지 저장 실패: " + error.message);
-        }
-    });
-
-    // Ctrl+S / Cmd+S 로 저장
-    document.addEventListener("keydown", (event) => {
-        if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
-            event.preventDefault();
-            btn.click();
-        }
+    btn.addEventListener("click", () => {
+        toggleEditMode();
     });
 }
 
@@ -1286,6 +1367,40 @@ function bindLogoutButton() {
             alert("로그아웃 중 오류가 발생했습니다.");
         }
     });
+}
+
+async function fetchAndDisplayCurrentUser() {
+    try {
+        const res = await fetch("/api/auth/me");
+        if (!res.ok) {
+            throw new Error("HTTP " + res.status);
+        }
+
+        const user = await res.json();
+
+        const userAvatarEl = document.querySelector("#user-avatar");
+        const userNameEl = document.querySelector("#user-name");
+
+        if (userNameEl) {
+            userNameEl.textContent = user.username || "사용자";
+        }
+
+        if (userAvatarEl) {
+            // 프로필 이미지가 없으므로 사용자명의 첫 글자를 표시
+            const firstLetter = (user.username || "?").charAt(0).toUpperCase();
+            userAvatarEl.textContent = firstLetter;
+        }
+    } catch (error) {
+        console.error("사용자 정보 조회 실패:", error);
+        const userNameEl = document.querySelector("#user-name");
+        if (userNameEl) {
+            userNameEl.textContent = "사용자";
+        }
+        const userAvatarEl = document.querySelector("#user-avatar");
+        if (userAvatarEl) {
+            userAvatarEl.textContent = "?";
+        }
+    }
 }
 
 function initEvent() {
@@ -1340,9 +1455,10 @@ function init() {
     bindToolbar();
     bindPageListClick();
     bindNewCollectionButton();
-    bindSaveButton();
+    bindModeToggle();
     bindSlashKeyHandlers();
 	bindLogoutButton();
+    fetchAndDisplayCurrentUser();
     fetchCollections().then(() => fetchPageList());
 }
 
