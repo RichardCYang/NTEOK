@@ -377,6 +377,11 @@ app.get("/register", (req, res) => {
     return res.sendFile(path.join(__dirname, "public", "register.html"));
 });
 
+// 앱 아이콘 제공
+app.get("/icon.png", (req, res) => {
+    return res.sendFile(path.join(__dirname, "icon.png"));
+});
+
 /**
  * 간단한 헬스 체크용
  * GET /api/debug/ping

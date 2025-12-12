@@ -56,10 +56,9 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    font-size: 16px;
-    font-weight: 700;
-    color: #2d5f5d;
     box-sizing: border-box;
+    object-fit: contain;
+    padding: 4px;
 }
 
 .login-logo-name {
