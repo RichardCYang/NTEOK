@@ -728,6 +728,15 @@ function renderPageList() {
         const colPages = pages.filter((p) => p.collectionId === collection.id);
         const hasPages = colPages.length > 0;
 
+        // 공유받은 컬렉션 표시 (isOwner가 명시적으로 false일 때만)
+        const isShared = collection.isOwner === false;
+        const indicator = isShared
+            ? `<span class="shared-collection-indicator">${collection.permission || 'READ'}</span>`
+            : '';
+        const folderIcon = isShared
+            ? 'fa-solid fa-folder-open'
+            : 'fa-regular fa-folder';
+
         // 페이지가 있을 때만 화살표 표시
         // XSS 방지: collection.name을 escapeHtml로 이스케이프 처리
         if (hasPages) {
@@ -735,8 +744,8 @@ function renderPageList() {
                 <span class="collection-toggle ${expandedCollections.has(collection.id) ? "expanded" : ""}">
                     <i class="fa-solid fa-caret-right"></i>
                 </span>
-                <i class="fa-regular fa-folder"></i>
-                <span>${escapeHtml(collection.name || "제목 없음")}</span>
+                <i class="${folderIcon}"></i>
+                <span>${escapeHtml(collection.name || "제목 없음")}${indicator}</span>
             `;
         } else {
             // 화살표가 없어도 동일한 너비의 공간을 차지하도록 빈 span 추가
@@ -745,8 +754,8 @@ function renderPageList() {
                 <span class="collection-toggle" style="visibility: hidden;">
                     <i class="fa-solid fa-caret-right"></i>
                 </span>
-                <i class="fa-regular fa-folder"></i>
-                <span>${escapeHtml(collection.name || "제목 없음")}</span>
+                <i class="${folderIcon}"></i>
+                <span>${escapeHtml(collection.name || "제목 없음")}${indicator}</span>
             `;
         }
 
@@ -769,14 +778,27 @@ function renderPageList() {
 
         const menu = document.createElement("div");
         menu.className = "dropdown-menu collection-menu hidden";
-        menu.innerHTML = `
-            <button data-action="delete-collection" data-collection-id="${collection.id}">
-                <i class="fa-regular fa-trash-can"></i>
-                컬렉션 삭제
-            </button>
-        `;
 
-        actions.appendChild(addBtn);
+        // 소유자만 공유 및 삭제 가능 (isOwner가 명시적으로 false가 아니면 소유자로 간주)
+        if (collection.isOwner !== false) {
+            menu.innerHTML = `
+                <button data-action="share-collection" data-collection-id="${collection.id}">
+                    <i class="fa-solid fa-share-nodes"></i>
+                    컬렉션 공유
+                </button>
+                <button data-action="delete-collection" data-collection-id="${collection.id}">
+                    <i class="fa-regular fa-trash-can"></i>
+                    컬렉션 삭제
+                </button>
+            `;
+        } else {
+            menu.innerHTML = `<div style="padding: 8px; color: #6b7280; font-size: 12px;">권한: ${collection.permission || 'READ'}</div>`;
+        }
+
+        // READ 권한이면 페이지 추가 버튼 숨김 (READ가 아니면 추가 가능)
+        if (collection.permission !== 'READ') {
+            actions.appendChild(addBtn);
+        }
         actions.appendChild(menuBtn);
         actions.appendChild(menu);
 
@@ -1034,6 +1056,19 @@ function bindPageListClick() {
         if (colMenuAction) {
             const action = colMenuAction.dataset.action;
             const colId = colMenuAction.dataset.collectionId;
+
+            // 컬렉션 공유 액션
+            if (action === "share-collection" && colId) {
+                const collection = collections.find(c => c.id === colId);
+                if (collection && collection.isOwner !== false) {
+                    openShareModal(colId);
+                } else {
+                    alert("컬렉션 소유자만 공유할 수 있습니다.");
+                }
+                closeAllDropdowns();
+                return;
+            }
+
             if (action === "delete-collection" && colId) {
                 const ok = confirm("이 컬렉션과 포함된 모든 페이지를 삭제하시겠습니까?");
                 if (!ok) return;
@@ -1208,7 +1243,13 @@ function bindPageListClick() {
                     }
                 } catch (error) {
                     console.error("페이지 삭제 오류:", error);
-                    alert("페이지를 삭제하지 못했습니다: " + error.message);
+
+                    // 403 오류(권한 없음)인 경우 커스텀 모달 표시
+                    if (error.message && error.message.includes("403")) {
+                        showDeletePermissionModal();
+                    } else {
+                        alert("페이지를 삭제하지 못했습니다: " + error.message);
+                    }
                 } finally {
                     closeAllDropdowns();
                 }
@@ -1300,11 +1341,11 @@ async function saveCurrentPage() {
 
     if (!currentPageId) {
         console.warn("저장할 페이지가 없음.");
-        return;
+        return true; // 저장할 페이지가 없으면 성공으로 간주
     }
     if (!editor) {
         console.warn("에디터가 초기화되지 않음.");
-        return;
+        return true; // 에디터가 없으면 성공으로 간주
     }
 
     let title = titleInput ? titleInput.value || "제목 없음" : "제목 없음";
@@ -1350,13 +1391,22 @@ async function saveCurrentPage() {
 
         renderPageList();
         console.log("저장 완료.");
+        return true; // 저장 성공
     } catch (error) {
         console.error("페이지 저장 오류:", error);
-        alert("페이지 저장 실패: " + error.message);
+
+        // 403 오류(권한 없음)인 경우 커스텀 모달 표시
+        if (error.message && error.message.includes("403")) {
+            showReadonlyWarningModal();
+            return false; // 저장 실패
+        } else {
+            alert("페이지 저장 실패: " + error.message);
+            return false; // 저장 실패
+        }
     }
 }
 
-function toggleEditMode() {
+async function toggleEditMode() {
     const modeToggleBtn = document.querySelector("#mode-toggle-btn");
     const titleInput = document.querySelector("#page-title-input");
     const toolbar = document.querySelector(".editor-toolbar");
@@ -1369,7 +1419,13 @@ function toggleEditMode() {
 
     if (isWriteMode) {
         // 쓰기모드 → 읽기모드: 저장하고 읽기 전용으로 변경
-        saveCurrentPage();
+        const saveSuccess = await saveCurrentPage();
+
+        // 저장이 실패하면 (READ 권한 등) 쓰기모드 유지
+        if (!saveSuccess) {
+            console.log("저장 실패 - 쓰기모드 유지");
+            return;
+        }
 
         isWriteMode = false;
         editor.setEditable(false);
@@ -1694,7 +1750,13 @@ async function handleEncryption(event) {
         cryptoManager.clearKey();
     } catch (error) {
         console.error("암호화 오류:", error);
-        errorEl.textContent = "암호화 중 오류가 발생했습니다: " + error.message;
+
+        // 403 오류(권한 없음)인 경우 커스텀 모달 표시
+        if (error.message && error.message.includes("403")) {
+            showEncryptPermissionModal();
+        } else {
+            errorEl.textContent = "암호화 중 오류가 발생했습니다: " + error.message;
+        }
     }
 }
 
@@ -1786,6 +1848,486 @@ function bindDecryptionModal() {
 
     if (cancelBtn) {
         cancelBtn.addEventListener("click", closeDecryptionModal);
+    }
+}
+
+// ==================== 컬렉션 공유 기능 ====================
+
+let currentSharingCollectionId = null;
+
+function openShareModal(collectionId) {
+    currentSharingCollectionId = collectionId;
+    const modal = document.querySelector("#share-collection-modal");
+    if (modal) {
+        modal.classList.remove("hidden");
+        loadShareList(collectionId);
+        loadShareLinks(collectionId);
+    }
+}
+
+function closeShareModal() {
+    const modal = document.querySelector("#share-collection-modal");
+    if (modal) {
+        modal.classList.add("hidden");
+    }
+    currentSharingCollectionId = null;
+}
+
+async function loadShareList(collectionId) {
+    try {
+        const res = await fetch(`/api/collections/${encodeURIComponent(collectionId)}/shares`);
+        if (!res.ok) throw new Error("HTTP " + res.status);
+
+        const shares = await res.json();
+        const listEl = document.querySelector("#share-list");
+
+        if (!listEl) return;
+
+        if (shares.length === 0) {
+            listEl.innerHTML = '<div style="color: #6b7280; font-size: 13px;">공유 중인 사용자가 없습니다.</div>';
+            return;
+        }
+
+        listEl.innerHTML = shares.map(share => `
+            <div class="share-item">
+                <div class="share-item-info">
+                    <div class="share-item-username">${escapeHtml(share.username)}</div>
+                    <div class="share-item-permission">${share.permission}</div>
+                </div>
+                <div class="share-item-actions">
+                    <button class="danger-button remove-share-btn" data-collection-id="${escapeHtml(collectionId)}" data-share-id="${share.id}" style="padding: 4px 8px; font-size: 12px;">
+                        삭제
+                    </button>
+                </div>
+            </div>
+        `).join('');
+
+        // 삭제 버튼에 이벤트 리스너 추가
+        listEl.querySelectorAll('.remove-share-btn').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const colId = btn.dataset.collectionId;
+                const shareId = btn.dataset.shareId;
+                await removeShare(colId, shareId);
+            });
+        });
+    } catch (error) {
+        console.error("공유 목록 로드 오류:", error);
+    }
+}
+
+async function loadShareLinks(collectionId) {
+    try {
+        const res = await fetch(`/api/collections/${encodeURIComponent(collectionId)}/share-links`);
+        if (!res.ok) throw new Error("HTTP " + res.status);
+
+        const links = await res.json();
+        const listEl = document.querySelector("#link-list");
+
+        if (!listEl) return;
+
+        if (links.length === 0) {
+            listEl.innerHTML = '<div style="color: #6b7280; font-size: 13px;">생성된 링크가 없습니다.</div>';
+            return;
+        }
+
+        listEl.innerHTML = links.map(link => {
+            const expiryText = link.expiresAt
+                ? `만료: ${new Date(link.expiresAt).toLocaleString()}`
+                : '무기한';
+
+            return `
+                <div class="link-item">
+                    <div class="link-item-url">${escapeHtml(link.url)}</div>
+                    <div class="link-item-meta">
+                        <span>${link.permission} · ${expiryText}</span>
+                        <div style="display: flex; gap: 6px;">
+                            <button class="copy-link-btn" data-url="${escapeHtml(link.url)}" style="padding: 4px 8px; font-size: 11px; border: none; background: #2d5f5d; color: white; border-radius: 2px; cursor: pointer;">
+                                복사
+                            </button>
+                            <button class="danger-button remove-link-btn" data-collection-id="${escapeHtml(collectionId)}" data-link-id="${link.id}" style="padding: 4px 8px; font-size: 11px;">
+                                삭제
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+        // 복사 버튼에 이벤트 리스너 추가
+        listEl.querySelectorAll('.copy-link-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const url = btn.dataset.url;
+                copyLinkToClipboard(url);
+            });
+        });
+
+        // 삭제 버튼에 이벤트 리스너 추가
+        listEl.querySelectorAll('.remove-link-btn').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const colId = btn.dataset.collectionId;
+                const linkId = btn.dataset.linkId;
+                await removeShareLink(colId, linkId);
+            });
+        });
+    } catch (error) {
+        console.error("링크 목록 로드 오류:", error);
+    }
+}
+
+async function handleShareUser(event) {
+    event.preventDefault();
+
+    const usernameInput = document.querySelector("#share-username");
+    const permissionSelect = document.querySelector("#share-permission");
+    const errorEl = document.querySelector("#share-error");
+
+    if (!usernameInput || !permissionSelect || !errorEl) return;
+
+    const username = usernameInput.value.trim();
+    const permission = permissionSelect.value;
+
+    errorEl.textContent = "";
+
+    if (!username) {
+        errorEl.textContent = "사용자명을 입력해 주세요.";
+        return;
+    }
+
+    try {
+        const res = await secureFetch(`/api/collections/${encodeURIComponent(currentSharingCollectionId)}/shares`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ username, permission })
+        });
+
+        if (!res.ok) {
+            const error = await res.json();
+            throw new Error(error.error || "공유 실패");
+        }
+
+        usernameInput.value = "";
+        await loadShareList(currentSharingCollectionId);
+        alert("공유가 완료되었습니다.");
+    } catch (error) {
+        console.error("공유 오류:", error);
+        errorEl.textContent = error.message;
+    }
+}
+
+async function handleShareLink(event) {
+    event.preventDefault();
+
+    const permissionSelect = document.querySelector("#link-permission");
+    const expiresInput = document.querySelector("#link-expires");
+    const errorEl = document.querySelector("#link-error");
+
+    if (!permissionSelect || !expiresInput || !errorEl) return;
+
+    const permission = permissionSelect.value;
+    const expiresInDays = expiresInput.value ? parseInt(expiresInput.value) : null;
+
+    errorEl.textContent = "";
+
+    try {
+        const res = await secureFetch(`/api/collections/${encodeURIComponent(currentSharingCollectionId)}/share-links`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ permission, expiresInDays })
+        });
+
+        if (!res.ok) {
+            const error = await res.json();
+            throw new Error(error.error || "링크 생성 실패");
+        }
+
+        expiresInput.value = "";
+        await loadShareLinks(currentSharingCollectionId);
+        alert("링크가 생성되었습니다.");
+    } catch (error) {
+        console.error("링크 생성 오류:", error);
+        errorEl.textContent = error.message;
+    }
+}
+
+async function removeShare(collectionId, shareId) {
+    if (!confirm("이 공유를 삭제하시겠습니까?")) return;
+
+    try {
+        const res = await secureFetch(`/api/collections/${encodeURIComponent(collectionId)}/shares/${shareId}`, {
+            method: "DELETE"
+        });
+
+        if (!res.ok) throw new Error("HTTP " + res.status);
+
+        await loadShareList(collectionId);
+    } catch (error) {
+        console.error("공유 삭제 오류:", error);
+        alert("공유 삭제 중 오류가 발생했습니다.");
+    }
+}
+
+async function removeShareLink(collectionId, linkId) {
+    if (!confirm("이 링크를 삭제하시겠습니까?")) return;
+
+    try {
+        const res = await secureFetch(`/api/collections/${encodeURIComponent(collectionId)}/share-links/${linkId}`, {
+            method: "DELETE"
+        });
+
+        if (!res.ok) throw new Error("HTTP " + res.status);
+
+        await loadShareLinks(collectionId);
+    } catch (error) {
+        console.error("링크 삭제 오류:", error);
+        alert("링크 삭제 중 오류가 발생했습니다.");
+    }
+}
+
+function copyLinkToClipboard(url) {
+    navigator.clipboard.writeText(url).then(() => {
+        alert("링크가 복사되었습니다!");
+    }).catch(err => {
+        console.error("복사 실패:", err);
+        alert("링크 복사에 실패했습니다.");
+    });
+}
+
+function bindShareModal() {
+    const closeBtn = document.querySelector("#close-share-modal-btn");
+    const userForm = document.querySelector("#share-user-form");
+    const linkForm = document.querySelector("#share-link-form");
+    const tabs = document.querySelectorAll(".share-tab");
+
+    if (closeBtn) {
+        closeBtn.addEventListener("click", closeShareModal);
+    }
+
+    if (userForm) {
+        userForm.addEventListener("submit", handleShareUser);
+    }
+
+    if (linkForm) {
+        linkForm.addEventListener("submit", handleShareLink);
+    }
+
+    tabs.forEach(tab => {
+        tab.addEventListener("click", () => {
+            const targetTab = tab.dataset.tab;
+
+            tabs.forEach(t => t.classList.remove("active"));
+            tab.classList.add("active");
+
+            document.querySelectorAll(".share-tab-content").forEach(content => {
+                content.classList.remove("active");
+            });
+
+            const targetContent = document.querySelector(`#share-${targetTab}-tab`);
+            if (targetContent) {
+                targetContent.classList.add("active");
+            }
+        });
+    });
+}
+
+// 전역 스코프에 함수 노출 (inline onclick 이벤트용)
+window.removeShare = removeShare;
+window.removeShareLink = removeShareLink;
+window.copyLinkToClipboard = copyLinkToClipboard;
+
+/**
+ * 읽기 전용 경고 모달 표시
+ */
+function showReadonlyWarningModal() {
+    const modal = document.querySelector("#readonly-warning-modal");
+    if (modal) {
+        modal.classList.remove("hidden");
+    }
+}
+
+/**
+ * 읽기 전용 경고 모달 닫기 및 읽기 모드로 전환
+ */
+async function closeReadonlyWarningModal() {
+    const modal = document.querySelector("#readonly-warning-modal");
+    if (modal) {
+        modal.classList.add("hidden");
+    }
+
+    // 저장하지 않고 읽기 모드로 강제 전환
+    if (isWriteMode) {
+        const modeToggleBtn = document.querySelector("#mode-toggle-btn");
+        const titleInput = document.querySelector("#page-title-input");
+        const toolbar = document.querySelector(".editor-toolbar");
+        const iconEl = modeToggleBtn ? modeToggleBtn.querySelector("i") : null;
+        const textEl = modeToggleBtn ? modeToggleBtn.querySelector("span") : null;
+
+        // 먼저 isWriteMode를 false로 설정 (loadPage에서 저장 시도를 방지)
+        isWriteMode = false;
+
+        if (editor) {
+            editor.setEditable(false);
+        }
+
+        if (titleInput) {
+            titleInput.setAttribute("readonly", "");
+        }
+
+        if (toolbar) {
+            toolbar.classList.remove("visible");
+        }
+
+        if (modeToggleBtn) {
+            modeToggleBtn.classList.remove("write-mode");
+        }
+
+        if (iconEl) {
+            iconEl.className = "fa-solid fa-pencil";
+        }
+
+        if (textEl) {
+            textEl.textContent = "쓰기모드";
+        }
+
+        // 원본 페이지 내용으로 복원
+        if (currentPageId) {
+            try {
+                console.log("READ-only 권한으로 수정 불가 - 원본 페이지 복원: " + currentPageId);
+                const res = await fetch("/api/pages/" + encodeURIComponent(currentPageId));
+                if (!res.ok) {
+                    throw new Error("HTTP " + res.status);
+                }
+
+                const page = await res.json();
+
+                // 제목과 내용을 원본으로 복원
+                if (titleInput) {
+                    titleInput.value = page.title || "";
+                }
+
+                if (editor) {
+                    editor.commands.setContent(page.content || "<p></p>", { emitUpdate: false });
+                }
+            } catch (error) {
+                console.error("원본 페이지 복원 오류:", error);
+            }
+        }
+    }
+}
+
+/**
+ * 읽기 전용 경고 모달 이벤트 바인딩
+ */
+function bindReadonlyWarningModal() {
+    const closeBtn = document.querySelector("#close-readonly-warning-btn");
+    const confirmBtn = document.querySelector("#readonly-warning-confirm-btn");
+
+    if (closeBtn) {
+        closeBtn.addEventListener("click", closeReadonlyWarningModal);
+    }
+
+    if (confirmBtn) {
+        confirmBtn.addEventListener("click", closeReadonlyWarningModal);
+    }
+
+    // 오버레이 클릭 시 닫기
+    const modal = document.querySelector("#readonly-warning-modal");
+    if (modal) {
+        const overlay = modal.querySelector(".modal-overlay");
+        if (overlay) {
+            overlay.addEventListener("click", closeReadonlyWarningModal);
+        }
+    }
+}
+
+/**
+ * 삭제 권한 없음 경고 모달 표시
+ */
+function showDeletePermissionModal() {
+    const modal = document.querySelector("#delete-permission-modal");
+    if (modal) {
+        modal.classList.remove("hidden");
+    }
+}
+
+/**
+ * 삭제 권한 없음 경고 모달 닫기
+ */
+function closeDeletePermissionModal() {
+    const modal = document.querySelector("#delete-permission-modal");
+    if (modal) {
+        modal.classList.add("hidden");
+    }
+}
+
+/**
+ * 삭제 권한 없음 경고 모달 이벤트 바인딩
+ */
+function bindDeletePermissionModal() {
+    const closeBtn = document.querySelector("#close-delete-permission-btn");
+    const confirmBtn = document.querySelector("#delete-permission-confirm-btn");
+
+    if (closeBtn) {
+        closeBtn.addEventListener("click", closeDeletePermissionModal);
+    }
+
+    if (confirmBtn) {
+        confirmBtn.addEventListener("click", closeDeletePermissionModal);
+    }
+
+    // 오버레이 클릭 시 닫기
+    const modal = document.querySelector("#delete-permission-modal");
+    if (modal) {
+        const overlay = modal.querySelector(".modal-overlay");
+        if (overlay) {
+            overlay.addEventListener("click", closeDeletePermissionModal);
+        }
+    }
+}
+
+/**
+ * 암호화 권한 없음 경고 모달 표시
+ */
+function showEncryptPermissionModal() {
+    const modal = document.querySelector("#encrypt-permission-modal");
+    if (modal) {
+        modal.classList.remove("hidden");
+    }
+}
+
+/**
+ * 암호화 권한 없음 경고 모달 닫기
+ */
+function closeEncryptPermissionModal() {
+    const modal = document.querySelector("#encrypt-permission-modal");
+    if (modal) {
+        modal.classList.add("hidden");
+    }
+    // 암호화 모달도 함께 닫기
+    closeEncryptionModal();
+}
+
+/**
+ * 암호화 권한 없음 경고 모달 이벤트 바인딩
+ */
+function bindEncryptPermissionModal() {
+    const closeBtn = document.querySelector("#close-encrypt-permission-btn");
+    const confirmBtn = document.querySelector("#encrypt-permission-confirm-btn");
+
+    if (closeBtn) {
+        closeBtn.addEventListener("click", closeEncryptPermissionModal);
+    }
+
+    if (confirmBtn) {
+        confirmBtn.addEventListener("click", closeEncryptPermissionModal);
+    }
+
+    // 오버레이 클릭 시 닫기
+    const modal = document.querySelector("#encrypt-permission-modal");
+    if (modal) {
+        const overlay = modal.querySelector(".modal-overlay");
+        if (overlay) {
+            overlay.addEventListener("click", closeEncryptPermissionModal);
+        }
     }
 }
 
@@ -1921,6 +2463,10 @@ async function init() {
     bindSettingsModal();
     bindEncryptionModal();
     bindDecryptionModal();
+    bindShareModal();
+    bindReadonlyWarningModal();
+    bindDeletePermissionModal();
+    bindEncryptPermissionModal();
     bindMobileSidebar();
 
     fetchAndDisplayCurrentUser();

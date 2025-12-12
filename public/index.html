@@ -374,6 +374,157 @@
             </div>
         </div>
 
+        <!-- 컬렉션 공유 모달 -->
+        <div id="share-collection-modal" class="modal hidden">
+            <div class="modal-overlay"></div>
+            <div class="modal-content" style="max-width: 600px;">
+                <div class="modal-header">
+                    <h2>컬렉션 공유</h2>
+                    <button id="close-share-modal-btn" class="modal-close-btn">
+                        <i class="fa-solid fa-xmark"></i>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <!-- 탭 메뉴 -->
+                    <div class="share-tabs">
+                        <button class="share-tab active" data-tab="user">사용자 공유</button>
+                        <button class="share-tab" data-tab="link">링크 공유</button>
+                    </div>
+
+                    <!-- 사용자 공유 탭 -->
+                    <div id="share-user-tab" class="share-tab-content active">
+                        <form id="share-user-form" style="margin-bottom: 24px;">
+                            <div style="display: flex; gap: 8px; margin-bottom: 16px;">
+                                <input
+                                    type="text"
+                                    id="share-username"
+                                    placeholder="사용자명 입력"
+                                    class="settings-select"
+                                    style="flex: 1;"
+                                    required
+                                />
+                                <select id="share-permission" class="settings-select">
+                                    <option value="READ">읽기 전용</option>
+                                    <option value="EDIT">편집 가능</option>
+                                    <option value="ADMIN">관리자</option>
+                                </select>
+                                <button type="submit" class="primary-button">공유</button>
+                            </div>
+                            <div id="share-error" style="color: #ef4444; font-size: 12px; min-height: 18px;"></div>
+                        </form>
+
+                        <!-- 공유 목록 -->
+                        <div>
+                            <h3 style="font-size: 14px; margin-bottom: 12px; color: #5a6169;">현재 공유 중</h3>
+                            <div id="share-list" style="display: flex; flex-direction: column; gap: 8px;">
+                                <!-- 동적 생성 -->
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 링크 공유 탭 -->
+                    <div id="share-link-tab" class="share-tab-content">
+                        <form id="share-link-form" style="margin-bottom: 24px;">
+                            <div style="display: flex; gap: 8px; margin-bottom: 16px;">
+                                <select id="link-permission" class="settings-select">
+                                    <option value="READ">읽기 전용</option>
+                                    <option value="EDIT">편집 가능</option>
+                                </select>
+                                <input
+                                    type="number"
+                                    id="link-expires"
+                                    placeholder="만료일 (일)"
+                                    class="settings-select"
+                                    style="width: 120px;"
+                                    min="1"
+                                    max="365"
+                                />
+                                <button type="submit" class="primary-button">링크 생성</button>
+                            </div>
+                            <div id="link-error" style="color: #ef4444; font-size: 12px; min-height: 18px;"></div>
+                        </form>
+
+                        <!-- 링크 목록 -->
+                        <div>
+                            <h3 style="font-size: 14px; margin-bottom: 12px; color: #5a6169;">생성된 링크</h3>
+                            <div id="link-list" style="display: flex; flex-direction: column; gap: 8px;">
+                                <!-- 동적 생성 -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 읽기 전용 경고 모달 -->
+        <div id="readonly-warning-modal" class="modal hidden">
+            <div class="modal-overlay"></div>
+            <div class="modal-content" style="max-width: 400px;">
+                <div class="modal-header">
+                    <h2>수정 권한 없음</h2>
+                    <button id="close-readonly-warning-btn" class="modal-close-btn">
+                        <i class="fa-solid fa-xmark"></i>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <p style="margin-bottom: 16px; color: #6b7280; font-size: 14px; line-height: 1.5;">
+                        읽기 전용 컬렉션의 페이지는 수정할 수 없습니다.
+                    </p>
+                    <div style="display: flex; justify-content: flex-end;">
+                        <button id="readonly-warning-confirm-btn" class="primary-button" style="padding: 10px 20px; font-size: 14px;">
+                            확인
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 삭제 권한 없음 경고 모달 -->
+        <div id="delete-permission-modal" class="modal hidden">
+            <div class="modal-overlay"></div>
+            <div class="modal-content" style="max-width: 400px;">
+                <div class="modal-header">
+                    <h2>삭제 권한 없음</h2>
+                    <button id="close-delete-permission-btn" class="modal-close-btn">
+                        <i class="fa-solid fa-xmark"></i>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <p style="margin-bottom: 16px; color: #6b7280; font-size: 14px; line-height: 1.5;">
+                        읽기 전용 컬렉션의 페이지는 삭제할 수 없습니다.
+                    </p>
+                    <div style="display: flex; justify-content: flex-end;">
+                        <button id="delete-permission-confirm-btn" class="primary-button" style="padding: 10px 20px; font-size: 14px;">
+                            확인
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 암호화 권한 없음 경고 모달 -->
+        <div id="encrypt-permission-modal" class="modal hidden">
+            <div class="modal-overlay"></div>
+            <div class="modal-content" style="max-width: 400px;">
+                <div class="modal-header">
+                    <h2>암호화 권한 없음</h2>
+                    <button id="close-encrypt-permission-btn" class="modal-close-btn">
+                        <i class="fa-solid fa-xmark"></i>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <p style="margin-bottom: 16px; color: #6b7280; font-size: 14px; line-height: 1.5;">
+                        읽기 전용 컬렉션의 페이지는 암호화할 수 없습니다.
+                    </p>
+                    <div style="display: flex; justify-content: flex-end;">
+                        <button id="encrypt-permission-confirm-btn" class="primary-button" style="padding: 10px 20px; font-size: 14px;">
+                            확인
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- 메인 코드 (import 안 씀, 전역 Tiptap 사용) -->
         <script type="module" src="/js/app.js"></script>
     </body>

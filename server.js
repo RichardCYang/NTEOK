@@ -445,6 +445,61 @@ async function initDb() {
         }
     }
 
+    // collection_shares 테이블 생성 (사용자 간 직접 공유)
+    await pool.execute(`
+        CREATE TABLE IF NOT EXISTS collection_shares (
+            id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            collection_id VARCHAR(64) NOT NULL,
+            owner_user_id INT NOT NULL,
+            shared_with_user_id INT NOT NULL,
+            permission VARCHAR(20) NOT NULL DEFAULT 'READ',
+            created_at DATETIME NOT NULL,
+            updated_at DATETIME NOT NULL,
+            CONSTRAINT fk_collection_shares_collection
+                FOREIGN KEY (collection_id)
+                REFERENCES collections(id)
+                ON DELETE CASCADE,
+            CONSTRAINT fk_collection_shares_owner
+                FOREIGN KEY (owner_user_id)
+                REFERENCES users(id)
+                ON DELETE CASCADE,
+            CONSTRAINT fk_collection_shares_shared_with
+                FOREIGN KEY (shared_with_user_id)
+                REFERENCES users(id)
+                ON DELETE CASCADE,
+            CONSTRAINT uc_collection_shares_unique
+                UNIQUE (collection_id, shared_with_user_id),
+            INDEX idx_shared_with_user (shared_with_user_id),
+            INDEX idx_collection_permission (collection_id, permission)
+        )
+    `);
+
+    // share_links 테이블 생성 (링크 기반 공유)
+    await pool.execute(`
+        CREATE TABLE IF NOT EXISTS share_links (
+            id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            token VARCHAR(64) NOT NULL UNIQUE,
+            collection_id VARCHAR(64) NOT NULL,
+            owner_user_id INT NOT NULL,
+            permission VARCHAR(20) NOT NULL DEFAULT 'READ',
+            expires_at DATETIME NULL,
+            is_active TINYINT(1) NOT NULL DEFAULT 1,
+            created_at DATETIME NOT NULL,
+            updated_at DATETIME NOT NULL,
+            CONSTRAINT fk_share_links_collection
+                FOREIGN KEY (collection_id)
+                REFERENCES collections(id)
+                ON DELETE CASCADE,
+            CONSTRAINT fk_share_links_owner
+                FOREIGN KEY (owner_user_id)
+                REFERENCES users(id)
+                ON DELETE CASCADE,
+            INDEX idx_token_active (token, is_active),
+            INDEX idx_collection_links (collection_id),
+            INDEX idx_expires_at (expires_at)
+        )
+    `);
+
     // 컬렉션이 없는 기존 사용자 데이터 마이그레이션
     await backfillCollections();
 }
@@ -505,6 +560,59 @@ async function getNextCollectionSortOrder(userId) {
 }
 
 /**
+ * 컬렉션 접근 권한 확인
+ * @param {string} collectionId - 컬렉션 ID
+ * @param {number} userId - 사용자 ID
+ * @returns {Promise<{permission: string|null, isOwner: boolean}>}
+ */
+async function getCollectionPermission(collectionId, userId) {
+    // 1. 소유자 확인
+    const [ownerRows] = await pool.execute(
+        `SELECT id FROM collections WHERE id = ? AND user_id = ?`,
+        [collectionId, userId]
+    );
+
+    if (ownerRows.length > 0) {
+        return { permission: 'ADMIN', isOwner: true };
+    }
+
+    // 2. 직접 공유 확인
+    const [shareRows] = await pool.execute(
+        `SELECT permission FROM collection_shares
+         WHERE collection_id = ? AND shared_with_user_id = ?`,
+        [collectionId, userId]
+    );
+
+    if (shareRows.length > 0) {
+        return { permission: shareRows[0].permission, isOwner: false };
+    }
+
+    return { permission: null, isOwner: false };
+}
+
+/**
+ * 암호화된 페이지 존재 여부 확인
+ * @param {string} collectionId - 컬렉션 ID
+ * @returns {Promise<boolean>}
+ */
+async function hasEncryptedPages(collectionId) {
+    const [rows] = await pool.execute(
+        `SELECT COUNT(*) as count FROM pages
+         WHERE collection_id = ? AND is_encrypted = 1`,
+        [collectionId]
+    );
+    return rows[0].count > 0;
+}
+
+/**
+ * 공유 링크 토큰 생성
+ * @returns {string} - 64자 hex 문자열
+ */
+function generateShareToken() {
+    return crypto.randomBytes(32).toString('hex');
+}
+
+/**
  * 새 컬렉션 생성
  */
 async function createCollection({ userId, name }) {
@@ -526,7 +634,9 @@ async function createCollection({ userId, name }) {
         name,
         sortOrder,
         createdAt: now.toISOString(),
-        updatedAt: now.toISOString()
+        updatedAt: now.toISOString(),
+        isOwner: true,
+        permission: 'OWNER'
     };
 }
 
@@ -937,20 +1047,26 @@ app.post("/api/auth/verify-password", authMiddleware, async (req, res) => {
 });
 
 /**
- * 컬렉션 목록 조회
+ * 컬렉션 목록 조회 (소유한 컬렉션 + 공유받은 컬렉션)
  * GET /api/collections
  */
 app.get("/api/collections", authMiddleware, async (req, res) => {
     try {
         const userId = req.user.id;
+
+        // 소유한 컬렉션 + 공유받은 컬렉션
         const [rows] = await pool.execute(
-            `
-            SELECT id, name, sort_order, created_at, updated_at
-            FROM collections
-            WHERE user_id = ?
-            ORDER BY sort_order ASC, updated_at DESC
-            `,
-            [userId]
+            `SELECT c.id, c.name, c.sort_order, c.created_at, c.updated_at,
+                    c.user_id as owner_id,
+                    CASE
+                        WHEN c.user_id = ? THEN 'OWNER'
+                        ELSE cs.permission
+                    END as permission
+             FROM collections c
+             LEFT JOIN collection_shares cs ON c.id = cs.collection_id AND cs.shared_with_user_id = ?
+             WHERE c.user_id = ? OR cs.shared_with_user_id IS NOT NULL
+             ORDER BY c.sort_order ASC, c.updated_at DESC`,
+            [userId, userId, userId]
         );
 
         const list = rows.map((row) => ({
@@ -958,7 +1074,9 @@ app.get("/api/collections", authMiddleware, async (req, res) => {
             name: row.name,
             sortOrder: row.sort_order,
             createdAt: toIsoString(row.created_at),
-            updatedAt: toIsoString(row.updated_at)
+            updatedAt: toIsoString(row.updated_at),
+            isOwner: row.owner_id === userId,
+            permission: row.permission
         }));
 
         res.json(list);
@@ -989,7 +1107,7 @@ app.post("/api/collections", authMiddleware, async (req, res) => {
 });
 
 /**
- * 컬렉션 삭제
+ * 컬렉션 삭제 (소유자만 가능)
  * DELETE /api/collections/:id
  */
 app.delete("/api/collections/:id", authMiddleware, async (req, res) => {
@@ -997,26 +1115,16 @@ app.delete("/api/collections/:id", authMiddleware, async (req, res) => {
     const userId = req.user.id;
 
     try {
-        const [rows] = await pool.execute(
-            `
-            SELECT id
-            FROM collections
-            WHERE id = ? AND user_id = ?
-            `,
-            [id, userId]
-        );
-
-        if (!rows.length) {
-            return res.status(404).json({ error: "컬렉션을 찾을 수 없습니다." });
+        // 소유자만 삭제 가능
+        const { isOwner } = await getCollectionPermission(id, userId);
+        if (!isOwner) {
+            return res.status(403).json({ error: "컬렉션 소유자만 삭제할 수 있습니다." });
         }
 
-        // 컬렉션 삭제 (pages는 FK CASCADE)
+        // 컬렉션 삭제 (pages, collection_shares, share_links는 FK CASCADE로 자동 삭제)
         await pool.execute(
-            `
-            DELETE FROM collections
-            WHERE id = ? AND user_id = ?
-            `,
-            [id, userId]
+            `DELETE FROM collections WHERE id = ?`,
+            [id]
         );
 
         res.json({ ok: true, removedId: id });
@@ -1027,7 +1135,7 @@ app.delete("/api/collections/:id", authMiddleware, async (req, res) => {
 });
 
 /**
- * 페이지 목록 조회
+ * 페이지 목록 조회 (소유한 페이지 + 공유받은 컬렉션의 페이지)
  * GET /api/pages
  */
 app.get("/api/pages", authMiddleware, async (req, res) => {
@@ -1038,20 +1146,22 @@ app.get("/api/pages", authMiddleware, async (req, res) => {
                 ? req.query.collectionId.trim()
                 : null;
 
+        // 소유한 페이지 + 공유받은 컬렉션의 페이지
         let query = `
-            SELECT id, title, updated_at, parent_id, sort_order, collection_id, is_encrypted
-            FROM pages
-            WHERE user_id = ?
+            SELECT DISTINCT p.id, p.title, p.updated_at, p.parent_id, p.sort_order, p.collection_id, p.is_encrypted
+            FROM pages p
+            LEFT JOIN collection_shares cs ON p.collection_id = cs.collection_id AND cs.shared_with_user_id = ?
+            WHERE p.user_id = ? OR cs.collection_id IS NOT NULL
         `;
-        const params = [userId];
+        const params = [userId, userId];
 
         if (collectionId) {
-            query += ` AND collection_id = ?`;
+            query += ` AND p.collection_id = ?`;
             params.push(collectionId);
         }
 
         query += `
-            ORDER BY collection_id ASC, parent_id IS NULL DESC, sort_order ASC, updated_at DESC
+            ORDER BY p.collection_id ASC, p.parent_id IS NULL DESC, p.sort_order ASC, p.updated_at DESC
         `;
 
         const [rows] = await pool.execute(query, params);
@@ -1076,7 +1186,7 @@ app.get("/api/pages", authMiddleware, async (req, res) => {
 });
 
 /**
- * 단일 페이지 조회
+ * 단일 페이지 조회 (소유한 페이지 또는 공유받은 컬렉션의 페이지)
  * GET /api/pages/:id
  */
 app.get("/api/pages/:id", authMiddleware, async (req, res) => {
@@ -1084,17 +1194,17 @@ app.get("/api/pages/:id", authMiddleware, async (req, res) => {
 	const userId = req.user.id;
 
     try {
+        // 소유한 페이지 또는 공유받은 컬렉션의 페이지
         const [rows] = await pool.execute(
-            `
-            SELECT id, title, content, created_at, updated_at, parent_id, sort_order, collection_id, is_encrypted
-            FROM pages
-            WHERE id = ? AND user_id = ?
-            `,
-            [id, userId]
+            `SELECT p.id, p.title, p.content, p.created_at, p.updated_at, p.parent_id, p.sort_order, p.collection_id, p.is_encrypted
+             FROM pages p
+             LEFT JOIN collection_shares cs ON p.collection_id = cs.collection_id AND cs.shared_with_user_id = ?
+             WHERE p.id = ? AND (p.user_id = ? OR cs.collection_id IS NOT NULL)`,
+            [userId, id, userId]
         );
 
         if (!rows.length) {
-            console.warn("GET /api/pages/:id - 페이지 없음:", id);
+            console.warn("GET /api/pages/:id - 페이지 없음 또는 권한 없음:", id);
             return res.status(404).json({ error: "Page not found" });
         }
 
@@ -1158,17 +1268,10 @@ app.post("/api/pages", authMiddleware, async (req, res) => {
     }
 
     try {
-        // 컬렉션 존재 여부 및 소유권 확인
-        const [colRows] = await pool.execute(
-            `
-            SELECT id FROM collections
-            WHERE id = ? AND user_id = ?
-            `,
-            [collectionId, userId]
-        );
-
-        if (!colRows.length) {
-            return res.status(404).json({ error: "컬렉션을 찾을 수 없습니다." });
+        // 컬렉션 접근 권한 확인 (EDIT 이상 필요)
+        const { permission } = await getCollectionPermission(collectionId, userId);
+        if (!permission || permission === 'READ') {
+            return res.status(403).json({ error: "페이지를 생성할 권한이 없습니다." });
         }
 
         if (parentId) {
@@ -1236,13 +1339,12 @@ app.put("/api/pages/:id", authMiddleware, async (req, res) => {
     }
 
     try {
+        // 페이지 조회
         const [rows] = await pool.execute(
-            `
-            SELECT id, title, content, created_at, updated_at, parent_id, sort_order, collection_id, is_encrypted
-            FROM pages
-            WHERE id = ? AND user_id = ?
-            `,
-            [id, userId]
+            `SELECT id, title, content, created_at, updated_at, parent_id, sort_order, collection_id, is_encrypted, user_id
+             FROM pages
+             WHERE id = ?`,
+            [id]
         );
 
         if (!rows.length) {
@@ -1252,6 +1354,12 @@ app.put("/api/pages/:id", authMiddleware, async (req, res) => {
 
         const existing = rows[0];
 
+        // 컬렉션 접근 권한 확인 (EDIT 이상 필요)
+        const { permission } = await getCollectionPermission(existing.collection_id, userId);
+        if (!permission || permission === 'READ') {
+            return res.status(403).json({ error: "페이지를 수정할 권한이 없습니다." });
+        }
+
         const newTitle = titleFromBody && titleFromBody !== "" ? titleFromBody : existing.title;
         const newContent = contentFromBody !== null ? contentFromBody : existing.content;
         const newIsEncrypted = isEncryptedFromBody !== null ? (isEncryptedFromBody ? 1 : 0) : existing.is_encrypted;
@@ -1259,12 +1367,10 @@ app.put("/api/pages/:id", authMiddleware, async (req, res) => {
         const nowStr = formatDateForDb(now);
 
         await pool.execute(
-            `
-            UPDATE pages
-            SET title = ?, content = ?, is_encrypted = ?, updated_at = ?
-            WHERE id = ? AND user_id = ?
-            `,
-            [newTitle, newContent, newIsEncrypted, nowStr, id, userId]
+            `UPDATE pages
+             SET title = ?, content = ?, is_encrypted = ?, updated_at = ?
+             WHERE id = ?`,
+            [newTitle, newContent, newIsEncrypted, nowStr, id]
         );
 
         const page = {
@@ -1288,7 +1394,7 @@ app.put("/api/pages/:id", authMiddleware, async (req, res) => {
 });
 
 /**
- * 페이지 삭제
+ * 페이지 삭제 (EDIT 이상 권한 필요)
  * DELETE /api/pages/:id
  */
 app.delete("/api/pages/:id", authMiddleware, async (req, res) => {
@@ -1296,13 +1402,10 @@ app.delete("/api/pages/:id", authMiddleware, async (req, res) => {
 	const userId = req.user.id;
 
     try {
+        // 페이지 조회
         const [rows] = await pool.execute(
-            `
-            SELECT id
-            FROM pages
-            WHERE id = ? AND user_id = ?
-            `,
-            [id, userId]
+            `SELECT id, collection_id FROM pages WHERE id = ?`,
+            [id]
         );
 
         if (!rows.length) {
@@ -1310,12 +1413,17 @@ app.delete("/api/pages/:id", authMiddleware, async (req, res) => {
             return res.status(404).json({ error: "Page not found" });
         }
 
+        const page = rows[0];
+
+        // 컬렉션 접근 권한 확인 (EDIT 이상 필요)
+        const { permission } = await getCollectionPermission(page.collection_id, userId);
+        if (!permission || permission === 'READ') {
+            return res.status(403).json({ error: "페이지를 삭제할 권한이 없습니다." });
+        }
+
         await pool.execute(
-            `
-            DELETE FROM pages
-            WHERE id = ? AND user_id = ?
-            `,
-            [id, userId]
+            `DELETE FROM pages WHERE id = ?`,
+            [id]
         );
 
         console.log("DELETE /api/pages/:id 삭제:", id);
@@ -1324,6 +1432,320 @@ app.delete("/api/pages/:id", authMiddleware, async (req, res) => {
     } catch (error) {
         console.error("DELETE /api/pages/:id 오류:", error);
         res.status(500).json({ error: "페이지 삭제 실패." });
+    }
+});
+
+// ==================== 컬렉션 공유 API ====================
+
+/**
+ * 컬렉션을 특정 사용자에게 공유
+ * POST /api/collections/:id/shares
+ */
+app.post("/api/collections/:id/shares", authMiddleware, async (req, res) => {
+    const collectionId = req.params.id;
+    const { username, permission } = req.body;
+    const ownerId = req.user.id;
+
+    // 입력 검증
+    if (!username || typeof username !== 'string') {
+        return res.status(400).json({ error: "사용자명을 입력해 주세요." });
+    }
+
+    if (!['READ', 'EDIT', 'ADMIN'].includes(permission)) {
+        return res.status(400).json({ error: "유효하지 않은 권한입니다." });
+    }
+
+    try {
+        // 1. 컬렉션 소유권 확인
+        const { isOwner } = await getCollectionPermission(collectionId, ownerId);
+        if (!isOwner) {
+            return res.status(403).json({ error: "컬렉션 소유자만 공유할 수 있습니다." });
+        }
+
+        // 2. 암호화된 페이지 확인
+        const hasEncrypted = await hasEncryptedPages(collectionId);
+        if (hasEncrypted) {
+            return res.status(400).json({
+                error: "암호화된 페이지가 포함된 컬렉션은 공유할 수 없습니다."
+            });
+        }
+
+        // 3. 대상 사용자 조회
+        const [userRows] = await pool.execute(
+            `SELECT id FROM users WHERE username = ?`,
+            [username.trim()]
+        );
+
+        if (userRows.length === 0) {
+            return res.status(404).json({ error: "사용자를 찾을 수 없습니다." });
+        }
+
+        const targetUserId = userRows[0].id;
+
+        // 4. 자기 자신에게 공유 방지
+        if (targetUserId === ownerId) {
+            return res.status(400).json({ error: "자기 자신에게는 공유할 수 없습니다." });
+        }
+
+        // 5. 공유 생성 (이미 존재하면 UPDATE)
+        const now = new Date();
+        const nowStr = formatDateForDb(now);
+
+        await pool.execute(
+            `INSERT INTO collection_shares
+             (collection_id, owner_user_id, shared_with_user_id, permission, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE
+             permission = VALUES(permission),
+             updated_at = VALUES(updated_at)`,
+            [collectionId, ownerId, targetUserId, permission, nowStr, nowStr]
+        );
+
+        res.status(201).json({
+            ok: true,
+            share: {
+                collectionId,
+                username,
+                permission,
+                createdAt: now.toISOString()
+            }
+        });
+    } catch (error) {
+        logError("POST /api/collections/:id/shares", error);
+        res.status(500).json({ error: "공유 생성 중 오류가 발생했습니다." });
+    }
+});
+
+/**
+ * 컬렉션 공유 목록 조회
+ * GET /api/collections/:id/shares
+ */
+app.get("/api/collections/:id/shares", authMiddleware, async (req, res) => {
+    const collectionId = req.params.id;
+    const userId = req.user.id;
+
+    try {
+        // 소유자만 공유 목록 조회 가능
+        const { isOwner } = await getCollectionPermission(collectionId, userId);
+        if (!isOwner) {
+            return res.status(403).json({ error: "권한이 없습니다." });
+        }
+
+        const [rows] = await pool.execute(
+            `SELECT cs.id, u.username, cs.permission, cs.created_at, cs.updated_at
+             FROM collection_shares cs
+             JOIN users u ON cs.shared_with_user_id = u.id
+             WHERE cs.collection_id = ?
+             ORDER BY cs.created_at DESC`,
+            [collectionId]
+        );
+
+        const shares = rows.map(row => ({
+            id: row.id,
+            username: row.username,
+            permission: row.permission,
+            createdAt: toIsoString(row.created_at),
+            updatedAt: toIsoString(row.updated_at)
+        }));
+
+        res.json(shares);
+    } catch (error) {
+        logError("GET /api/collections/:id/shares", error);
+        res.status(500).json({ error: "공유 목록 조회 중 오류가 발생했습니다." });
+    }
+});
+
+/**
+ * 공유 삭제
+ * DELETE /api/collections/:id/shares/:shareId
+ */
+app.delete("/api/collections/:id/shares/:shareId", authMiddleware, async (req, res) => {
+    const collectionId = req.params.id;
+    const shareId = req.params.shareId;
+    const userId = req.user.id;
+
+    try {
+        // 소유자만 공유 삭제 가능
+        const { isOwner } = await getCollectionPermission(collectionId, userId);
+        if (!isOwner) {
+            return res.status(403).json({ error: "권한이 없습니다." });
+        }
+
+        await pool.execute(
+            `DELETE FROM collection_shares WHERE id = ? AND collection_id = ?`,
+            [shareId, collectionId]
+        );
+
+        res.json({ ok: true });
+    } catch (error) {
+        logError("DELETE /api/collections/:id/shares/:shareId", error);
+        res.status(500).json({ error: "공유 삭제 중 오류가 발생했습니다." });
+    }
+});
+
+/**
+ * 공유 링크 생성
+ * POST /api/collections/:id/share-links
+ */
+app.post("/api/collections/:id/share-links", authMiddleware, async (req, res) => {
+    const collectionId = req.params.id;
+    const { permission, expiresInDays } = req.body;
+    const ownerId = req.user.id;
+
+    if (!['READ', 'EDIT'].includes(permission)) {
+        return res.status(400).json({ error: "유효하지 않은 권한입니다. (ADMIN은 링크로 공유 불가)" });
+    }
+
+    try {
+        const { isOwner } = await getCollectionPermission(collectionId, ownerId);
+        if (!isOwner) {
+            return res.status(403).json({ error: "컬렉션 소유자만 링크를 생성할 수 있습니다." });
+        }
+
+        const hasEncrypted = await hasEncryptedPages(collectionId);
+        if (hasEncrypted) {
+            return res.status(400).json({
+                error: "암호화된 페이지가 포함된 컬렉션은 공유할 수 없습니다."
+            });
+        }
+
+        const token = generateShareToken();
+        const now = new Date();
+        const nowStr = formatDateForDb(now);
+
+        let expiresAt = null;
+        if (expiresInDays && typeof expiresInDays === 'number' && expiresInDays > 0) {
+            const expiry = new Date(now.getTime() + expiresInDays * 24 * 60 * 60 * 1000);
+            expiresAt = formatDateForDb(expiry);
+        }
+
+        await pool.execute(
+            `INSERT INTO share_links
+             (token, collection_id, owner_user_id, permission, expires_at, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            [token, collectionId, ownerId, permission, expiresAt, nowStr, nowStr]
+        );
+
+        res.status(201).json({
+            ok: true,
+            link: {
+                token,
+                url: `${req.protocol}://${req.get('host')}/share/${token}`,
+                permission,
+                expiresAt: expiresAt ? toIsoString(expiresAt) : null
+            }
+        });
+    } catch (error) {
+        logError("POST /api/collections/:id/share-links", error);
+        res.status(500).json({ error: "링크 생성 중 오류가 발생했습니다." });
+    }
+});
+
+/**
+ * 컬렉션의 모든 공유 링크 조회
+ * GET /api/collections/:id/share-links
+ */
+app.get("/api/collections/:id/share-links", authMiddleware, async (req, res) => {
+    const collectionId = req.params.id;
+    const userId = req.user.id;
+
+    try {
+        const { isOwner } = await getCollectionPermission(collectionId, userId);
+        if (!isOwner) {
+            return res.status(403).json({ error: "권한이 없습니다." });
+        }
+
+        const [rows] = await pool.execute(
+            `SELECT id, token, permission, expires_at, is_active, created_at
+             FROM share_links
+             WHERE collection_id = ?
+             ORDER BY created_at DESC`,
+            [collectionId]
+        );
+
+        const links = rows.map(row => ({
+            id: row.id,
+            token: row.token,
+            url: `${req.protocol}://${req.get('host')}/share/${row.token}`,
+            permission: row.permission,
+            expiresAt: row.expires_at ? toIsoString(row.expires_at) : null,
+            isActive: row.is_active ? true : false,
+            createdAt: toIsoString(row.created_at)
+        }));
+
+        res.json(links);
+    } catch (error) {
+        logError("GET /api/collections/:id/share-links", error);
+        res.status(500).json({ error: "링크 목록 조회 중 오류가 발생했습니다." });
+    }
+});
+
+/**
+ * 공유 링크 삭제
+ * DELETE /api/collections/:id/share-links/:linkId
+ */
+app.delete("/api/collections/:id/share-links/:linkId", authMiddleware, async (req, res) => {
+    const collectionId = req.params.id;
+    const linkId = req.params.linkId;
+    const userId = req.user.id;
+
+    try {
+        const { isOwner } = await getCollectionPermission(collectionId, userId);
+        if (!isOwner) {
+            return res.status(403).json({ error: "권한이 없습니다." });
+        }
+
+        await pool.execute(
+            `DELETE FROM share_links WHERE id = ? AND collection_id = ?`,
+            [linkId, collectionId]
+        );
+
+        res.json({ ok: true });
+    } catch (error) {
+        logError("DELETE /api/collections/:id/share-links/:linkId", error);
+        res.status(500).json({ error: "링크 삭제 중 오류가 발생했습니다." });
+    }
+});
+
+/**
+ * 공유 링크로 컬렉션 정보 조회 (인증 불필요)
+ * GET /api/share-links/:token
+ */
+app.get("/api/share-links/:token", async (req, res) => {
+    const token = req.params.token;
+
+    try {
+        const [rows] = await pool.execute(
+            `SELECT sl.collection_id, sl.permission, sl.expires_at, sl.is_active,
+                    c.name as collection_name
+             FROM share_links sl
+             JOIN collections c ON sl.collection_id = c.id
+             WHERE sl.token = ?`,
+            [token]
+        );
+
+        if (rows.length === 0) {
+            return res.status(404).json({ error: "유효하지 않은 공유 링크입니다." });
+        }
+
+        const link = rows[0];
+
+        if (!link.is_active) {
+            return res.status(403).json({ error: "비활성화된 링크입니다." });
+        }
+
+        if (link.expires_at && new Date(link.expires_at) < new Date()) {
+            return res.status(403).json({ error: "만료된 링크입니다." });
+        }
+
+        res.json({
+            collectionId: link.collection_id,
+            collectionName: link.collection_name,
+            permission: link.permission
+        });
+    } catch (error) {
+        logError("GET /api/share-links/:token", error);
+        res.status(500).json({ error: "링크 정보 조회 중 오류가 발생했습니다." });
     }
 });
 
