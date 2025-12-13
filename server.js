@@ -529,6 +529,18 @@ async function initDb() {
         }
     }
 
+    // 공유 컬렉션의 암호화 페이지 공유 허용 플래그 추가 (기본값 0 - 공유 불가)
+    try {
+        await pool.execute(`
+            ALTER TABLE pages ADD COLUMN share_allowed TINYINT(1) NOT NULL DEFAULT 0
+        `);
+        console.log("pages 테이블에 share_allowed 컬럼 추가 완료");
+    } catch (error) {
+        if (error.code !== 'ER_DUP_FIELDNAME') {
+            console.warn("pages.share_allowed 컬럼 추가 중 경고:", error.message);
+        }
+    }
+
     // collection_shares 테이블 생성 (사용자 간 직접 공유)
     await pool.execute(`
         CREATE TABLE IF NOT EXISTS collection_shares (
@@ -692,14 +704,14 @@ async function getCollectionPermission(collectionId, userId) {
 }
 
 /**
- * 암호화된 페이지 존재 여부 확인
+ * 공유 불가능한 암호화 페이지 존재 여부 확인
  * @param {string} collectionId - 컬렉션 ID
  * @returns {Promise<boolean>}
  */
 async function hasEncryptedPages(collectionId) {
     const [rows] = await pool.execute(
         `SELECT COUNT(*) as count FROM pages
-         WHERE collection_id = ? AND is_encrypted = 1`,
+         WHERE collection_id = ? AND is_encrypted = 1 AND share_allowed = 0`,
         [collectionId]
     );
     return rows[0].count > 0;
@@ -1192,7 +1204,8 @@ app.get("/api/collections", authMiddleware, async (req, res) => {
                     CASE
                         WHEN c.user_id = ? THEN 'OWNER'
                         ELSE cs.permission
-                    END as permission
+                    END as permission,
+                    (SELECT COUNT(*) FROM collection_shares WHERE collection_id = c.id) as share_count
              FROM collections c
              LEFT JOIN collection_shares cs ON c.id = cs.collection_id AND cs.shared_with_user_id = ?
              WHERE c.user_id = ? OR cs.shared_with_user_id IS NOT NULL
@@ -1207,7 +1220,8 @@ app.get("/api/collections", authMiddleware, async (req, res) => {
             createdAt: toIsoString(row.created_at),
             updatedAt: toIsoString(row.updated_at),
             isOwner: row.owner_id === userId,
-            permission: row.permission
+            permission: row.permission,
+            isShared: row.share_count > 0
         }));
 
         res.json(list);
@@ -1277,14 +1291,17 @@ app.get("/api/pages", authMiddleware, async (req, res) => {
                 ? req.query.collectionId.trim()
                 : null;
 
-        // 소유한 페이지 + 공유받은 컬렉션의 페이지
+        // 소유한 페이지 + 소유한 컬렉션의 모든 페이지 + 공유받은 컬렉션의 페이지
+        // 단, 암호화된 페이지는 공유 허용되었거나 본인이 만든 경우만 표시
         let query = `
-            SELECT DISTINCT p.id, p.title, p.updated_at, p.parent_id, p.sort_order, p.collection_id, p.is_encrypted
+            SELECT DISTINCT p.id, p.title, p.updated_at, p.parent_id, p.sort_order, p.collection_id, p.is_encrypted, p.share_allowed, p.user_id
             FROM pages p
+            LEFT JOIN collections c ON p.collection_id = c.id
             LEFT JOIN collection_shares cs ON p.collection_id = cs.collection_id AND cs.shared_with_user_id = ?
-            WHERE p.user_id = ? OR cs.collection_id IS NOT NULL
+            WHERE (p.user_id = ? OR c.user_id = ? OR cs.collection_id IS NOT NULL)
+              AND NOT (p.is_encrypted = 1 AND p.share_allowed = 0 AND p.user_id != ?)
         `;
-        const params = [userId, userId];
+        const params = [userId, userId, userId, userId];
 
         if (collectionId) {
             query += ` AND p.collection_id = ?`;
@@ -1304,7 +1321,9 @@ app.get("/api/pages", authMiddleware, async (req, res) => {
             parentId: row.parent_id,
             sortOrder: row.sort_order,
             collectionId: row.collection_id,
-            isEncrypted: row.is_encrypted ? true : false
+            isEncrypted: row.is_encrypted ? true : false,
+            shareAllowed: row.share_allowed ? true : false,
+            userId: row.user_id
         }));
 
         console.log("GET /api/pages 응답 개수:", list.length);
@@ -1325,13 +1344,14 @@ app.get("/api/pages/:id", authMiddleware, async (req, res) => {
 	const userId = req.user.id;
 
     try {
-        // 소유한 페이지 또는 공유받은 컬렉션의 페이지
+        // 소유한 페이지 또는 소유한 컬렉션의 페이지 또는 공유받은 컬렉션의 페이지
         const [rows] = await pool.execute(
-            `SELECT p.id, p.title, p.content, p.created_at, p.updated_at, p.parent_id, p.sort_order, p.collection_id, p.is_encrypted
+            `SELECT p.id, p.title, p.content, p.created_at, p.updated_at, p.parent_id, p.sort_order, p.collection_id, p.is_encrypted, p.share_allowed, p.user_id
              FROM pages p
+             LEFT JOIN collections c ON p.collection_id = c.id
              LEFT JOIN collection_shares cs ON p.collection_id = cs.collection_id AND cs.shared_with_user_id = ?
-             WHERE p.id = ? AND (p.user_id = ? OR cs.collection_id IS NOT NULL)`,
-            [userId, id, userId]
+             WHERE p.id = ? AND (p.user_id = ? OR c.user_id = ? OR cs.collection_id IS NOT NULL)`,
+            [userId, id, userId, userId]
         );
 
         if (!rows.length) {
@@ -1350,7 +1370,9 @@ app.get("/api/pages/:id", authMiddleware, async (req, res) => {
             parentId: row.parent_id,
             sortOrder: row.sort_order,
             collectionId: row.collection_id,
-            isEncrypted: row.is_encrypted ? true : false
+            isEncrypted: row.is_encrypted ? true : false,
+            shareAllowed: row.share_allowed ? true : false,
+            userId: row.user_id
         };
 
         console.log("GET /api/pages/:id 응답:", id);
@@ -1406,12 +1428,14 @@ app.post("/api/pages", authMiddleware, async (req, res) => {
         }
 
         if (parentId) {
+            // 부모 페이지 접근 권한 확인 (소유한 페이지 또는 소유한/공유받은 컬렉션의 페이지)
             const [parentRows] = await pool.execute(
-                `
-                SELECT id, collection_id FROM pages
-                WHERE id = ? AND user_id = ?
-                `,
-                [parentId, userId]
+                `SELECT p.id, p.collection_id
+                 FROM pages p
+                 LEFT JOIN collections c ON p.collection_id = c.id
+                 LEFT JOIN collection_shares cs ON p.collection_id = cs.collection_id AND cs.shared_with_user_id = ?
+                 WHERE p.id = ? AND (p.user_id = ? OR c.user_id = ? OR cs.collection_id IS NOT NULL)`,
+                [userId, parentId, userId, userId]
             );
 
             if (!parentRows.length) {
@@ -1497,12 +1521,24 @@ app.put("/api/pages/:id", authMiddleware, async (req, res) => {
         const now = new Date();
         const nowStr = formatDateForDb(now);
 
-        await pool.execute(
-            `UPDATE pages
-             SET title = ?, content = ?, is_encrypted = ?, updated_at = ?
-             WHERE id = ?`,
-            [newTitle, newContent, newIsEncrypted, nowStr, id]
-        );
+        // 암호화 상태가 변경되는 경우 (일반 -> 암호화) user_id를 현재 사용자로 변경
+        const isBecomingEncrypted = existing.is_encrypted === 0 && newIsEncrypted === 1;
+
+        if (isBecomingEncrypted) {
+            await pool.execute(
+                `UPDATE pages
+                 SET title = ?, content = ?, is_encrypted = ?, user_id = ?, updated_at = ?
+                 WHERE id = ?`,
+                [newTitle, newContent, newIsEncrypted, userId, nowStr, id]
+            );
+        } else {
+            await pool.execute(
+                `UPDATE pages
+                 SET title = ?, content = ?, is_encrypted = ?, updated_at = ?
+                 WHERE id = ?`,
+                [newTitle, newContent, newIsEncrypted, nowStr, id]
+            );
+        }
 
         const page = {
             id,
@@ -1566,6 +1602,59 @@ app.delete("/api/pages/:id", authMiddleware, async (req, res) => {
     }
 });
 
+/**
+ * 페이지 공유 허용 설정 업데이트
+ * PUT /api/pages/:id/share-permission
+ * body: { shareAllowed: boolean }
+ */
+app.put("/api/pages/:id/share-permission", authMiddleware, async (req, res) => {
+    const id = req.params.id;
+    const userId = req.user.id;
+    const { shareAllowed } = req.body;
+
+    if (typeof shareAllowed !== "boolean") {
+        return res.status(400).json({ error: "shareAllowed는 boolean 값이어야 합니다." });
+    }
+
+    try {
+        // 페이지 조회
+        const [rows] = await pool.execute(
+            `SELECT id, collection_id, is_encrypted, user_id FROM pages WHERE id = ?`,
+            [id]
+        );
+
+        if (!rows.length) {
+            return res.status(404).json({ error: "페이지를 찾을 수 없습니다." });
+        }
+
+        const page = rows[0];
+
+        // 암호화된 페이지만 공유 허용 설정 가능
+        if (!page.is_encrypted) {
+            return res.status(400).json({ error: "암호화된 페이지만 공유 허용 설정이 가능합니다." });
+        }
+
+        // 페이지 소유자만 공유 허용 설정 가능
+        if (page.user_id !== userId) {
+            return res.status(403).json({ error: "페이지 생성자만 공유 허용 설정을 변경할 수 있습니다." });
+        }
+
+        // share_allowed 업데이트
+        const now = new Date();
+        const nowStr = formatDateForDb(now);
+
+        await pool.execute(
+            `UPDATE pages SET share_allowed = ?, updated_at = ? WHERE id = ?`,
+            [shareAllowed ? 1 : 0, nowStr, id]
+        );
+
+        res.json({ ok: true, shareAllowed });
+    } catch (error) {
+        logError("PUT /api/pages/:id/share-permission", error);
+        res.status(500).json({ error: "공유 허용 설정 업데이트 실패." });
+    }
+});
+
 // ==================== 컬렉션 공유 API ====================
 
 /**
@@ -1593,11 +1682,11 @@ app.post("/api/collections/:id/shares", authMiddleware, async (req, res) => {
             return res.status(403).json({ error: "컬렉션 소유자만 공유할 수 있습니다." });
         }
 
-        // 2. 암호화된 페이지 확인
+        // 2. 암호화된 페이지 확인 (share_allowed = 0인 페이지)
         const hasEncrypted = await hasEncryptedPages(collectionId);
         if (hasEncrypted) {
             return res.status(400).json({
-                error: "암호화된 페이지가 포함된 컬렉션은 공유할 수 없습니다."
+                error: "공유가 허용되지 않은 암호화 페이지가 포함되어 있습니다. 해당 페이지의 공유를 허용하거나 삭제한 후 다시 시도해 주세요."
             });
         }
 
@@ -1736,7 +1825,7 @@ app.post("/api/collections/:id/share-links", authMiddleware, async (req, res) =>
         const hasEncrypted = await hasEncryptedPages(collectionId);
         if (hasEncrypted) {
             return res.status(400).json({
-                error: "암호화된 페이지가 포함된 컬렉션은 공유할 수 없습니다."
+                error: "공유가 허용되지 않은 암호화 페이지가 포함되어 있습니다. 해당 페이지의 공유를 허용하거나 삭제한 후 다시 시도해 주세요."
             });
         }
 

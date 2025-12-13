@@ -98,6 +98,8 @@ body {
     flex-direction: column;
     min-height: 0;
     transition: transform 0.3s ease;
+    position: relative;
+    z-index: 100;
 }
 
 .sidebar-overlay {
@@ -280,7 +282,7 @@ body {
     border-radius: 3px;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
     min-width: 140px;
-    z-index: 200;
+    z-index: 900;
     padding: 4px 0;
 }
 
@@ -308,6 +310,39 @@ body {
 }
 
 .dropdown-menu button:hover {
+    background-color: #ebe8e1;
+}
+
+/* Context Menu (body에 직접 추가되는 공용 메뉴) */
+.context-menu {
+    position: fixed;
+    background-color: #faf8f3;
+    border: 1px solid #d4cfc4;
+    border-radius: 3px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+    min-width: 140px;
+    z-index: 950;
+    padding: 4px 0;
+}
+
+.context-menu.hidden {
+    display: none;
+}
+
+.context-menu button {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border: none;
+    background: none;
+    padding: 8px 12px;
+    font-size: 13px;
+    color: #2d2d2d;
+    cursor: pointer;
+}
+
+.context-menu button:hover {
     background-color: #ebe8e1;
 }
 

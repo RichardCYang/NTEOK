@@ -45,8 +45,8 @@ export function showErrorInEditor(message, editor) {
  * 모든 드롭다운 메뉴 닫기
  */
 export function closeAllDropdowns() {
-    document.querySelectorAll("[data-dropdown-menu]").forEach(menu => {
-        menu.setAttribute("hidden", "");
+    document.querySelectorAll(".dropdown-menu").forEach(menu => {
+        menu.classList.add("hidden");
         const dropdown = menu.closest("[data-dropdown]");
         if (dropdown) {
             dropdown.classList.remove("open");
@@ -58,9 +58,64 @@ export function closeAllDropdowns() {
  * 드롭다운 메뉴 열기
  */
 export function openDropdown(menu, trigger) {
-    menu.removeAttribute("hidden");
-    const dropdown = trigger.closest("[data-dropdown]");
+    menu.classList.remove("hidden");
+    const dropdown = trigger ? trigger.closest("[data-dropdown]") : null;
     if (dropdown) {
         dropdown.classList.add("open");
+    }
+}
+
+/**
+ * Context Menu 표시
+ */
+export function showContextMenu(triggerBtn, menuItems) {
+    const contextMenu = document.querySelector("#context-menu");
+    const contextMenuContent = document.querySelector("#context-menu-content");
+
+    if (!contextMenu || !contextMenuContent) return;
+
+    // 메뉴 내용 설정
+    contextMenuContent.innerHTML = menuItems;
+
+    // 버튼 위치 계산
+    const rect = triggerBtn.getBoundingClientRect();
+
+    // 일단 표시하여 크기 계산
+    contextMenu.style.left = '0px';
+    contextMenu.style.top = '0px';
+    contextMenu.classList.remove("hidden");
+
+    const menuRect = contextMenu.getBoundingClientRect();
+
+    // 오른쪽에 공간이 있으면 오른쪽에, 없으면 왼쪽에 표시
+    let left = rect.right + 6;
+    let top = rect.top;
+
+    // 화면 오른쪽을 벗어나는 경우
+    if (left + menuRect.width > window.innerWidth) {
+        left = rect.left - menuRect.width - 6;
+    }
+
+    // 화면 아래를 벗어나는 경우
+    if (top + menuRect.height > window.innerHeight) {
+        top = window.innerHeight - menuRect.height - 10;
+    }
+
+    // 화면 위를 벗어나는 경우
+    if (top < 10) {
+        top = 10;
+    }
+
+    contextMenu.style.left = `${left}px`;
+    contextMenu.style.top = `${top}px`;
+}
+
+/**
+ * Context Menu 닫기
+ */
+export function closeContextMenu() {
+    const contextMenu = document.querySelector("#context-menu");
+    if (contextMenu) {
+        contextMenu.classList.add("hidden");
     }
 }

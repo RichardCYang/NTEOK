@@ -101,11 +101,15 @@ class CryptoManager {
     /**
      * 데이터 암호화 (AES-256-GCM)
      * @param {string} plaintext - 평문
-     * @returns {Promise<string>} Base64 인코딩된 암호문 (IV + ciphertext + authTag)
+     * @returns {Promise<string>} Salt + IV + 암호문 포함 (SALT:<salt>:ENC2:<encrypted>)
      */
     async encrypt(plaintext) {
         if (!this.encryptionKey) {
             throw new Error('암호화 키가 초기화되지 않았습니다.');
+        }
+
+        if (!this.salt) {
+            throw new Error('Salt가 초기화되지 않았습니다.');
         }
 
         // IV 생성 (12 bytes, GCM 모드 권장)
@@ -131,25 +135,72 @@ class CryptoManager {
         combined.set(iv, 0);
         combined.set(new Uint8Array(ciphertext), iv.length);
 
-        // 보안 개선: 매직 바이트 추가하여 암호화 데이터 명확히 표시
-        // Base64로 인코딩하고 버전 접두사 추가
-        return 'ENC1:' + this.arrayBufferToBase64(combined.buffer);
+        // Salt를 Base64로 인코딩
+        const saltBase64 = this.arrayBufferToBase64(this.salt.buffer);
+        const encryptedBase64 = this.arrayBufferToBase64(combined.buffer);
+
+        // 형식: SALT:<salt_base64>:ENC2:<encrypted_base64>
+        return `SALT:${saltBase64}:ENC2:${encryptedBase64}`;
     }
 
     /**
      * 데이터 복호화 (AES-256-GCM)
-     * @param {string} encryptedBase64 - Base64 인코딩된 암호문
+     * @param {string} encryptedData - 암호화된 데이터
+     * @param {string} password - 비밀번호 (새 형식 ENC2 사용 시 필요)
      * @returns {Promise<string>} 평문
      */
-    async decrypt(encryptedBase64) {
+    async decrypt(encryptedData, password = null) {
+        // 새 형식: SALT:<salt>:ENC2:<encrypted>
+        if (encryptedData.startsWith('SALT:')) {
+            const parts = encryptedData.split(':');
+            if (parts.length !== 4 || parts[2] !== 'ENC2') {
+                throw new Error('암호화 데이터 형식이 올바르지 않습니다.');
+            }
+
+            const saltBase64 = parts[1];
+            const encryptedBase64 = parts[3];
+
+            // 비밀번호가 제공되지 않았으면 메모리에 저장된 비밀번호 사용
+            const pwd = password || this.password;
+            if (!pwd) {
+                throw new Error('복호화에 필요한 비밀번호가 없습니다.');
+            }
+
+            // Salt로 키 재생성
+            const salt = new Uint8Array(this.base64ToArrayBuffer(saltBase64));
+            const { key } = await this.deriveKeyFromPassword(pwd, salt);
+
+            // Base64 디코딩
+            const combined = new Uint8Array(this.base64ToArrayBuffer(encryptedBase64));
+
+            // IV와 ciphertext 분리
+            const iv = combined.slice(0, 12);
+            const ciphertext = combined.slice(12);
+
+            // 복호화
+            const decrypted = await crypto.subtle.decrypt(
+                {
+                    name: 'AES-GCM',
+                    iv: iv,
+                    tagLength: 128
+                },
+                key,
+                ciphertext
+            );
+
+            // 바이트를 문자열로 변환
+            const decoder = new TextDecoder();
+            return decoder.decode(decrypted);
+        }
+
+        // 구 형식 (하위 호환성): ENC1:<encrypted>
         if (!this.encryptionKey) {
             throw new Error('암호화 키가 초기화되지 않았습니다.');
         }
 
-        // 보안 개선: 매직 바이트 제거
-        let dataToDecrypt = encryptedBase64;
-        if (encryptedBase64.startsWith('ENC1:')) {
-            dataToDecrypt = encryptedBase64.substring(5);
+        let dataToDecrypt = encryptedData;
+        if (encryptedData.startsWith('ENC1:')) {
+            dataToDecrypt = encryptedData.substring(5);
         }
 
         // Base64 디코딩
@@ -185,7 +236,12 @@ class CryptoManager {
             return false;
         }
 
-        // 새 방식: 매직 바이트 확인
+        // 최신 방식: SALT 포함
+        if (data.startsWith('SALT:')) {
+            return true;
+        }
+
+        // 이전 방식: ENC1 매직 바이트
         if (data.startsWith('ENC1:')) {
             return true;
         }

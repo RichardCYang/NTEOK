@@ -204,32 +204,15 @@ export function renderPageList() {
         menuBtn.type = "button";
         menuBtn.className = "collection-menu-btn";
         menuBtn.dataset.collectionId = collection.id;
+        menuBtn.dataset.isOwner = collection.isOwner !== false ? 'true' : 'false';
+        menuBtn.dataset.permission = collection.permission || 'WRITE';
         menuBtn.title = "컬렉션 메뉴";
         menuBtn.innerHTML = `<i class="fa-solid fa-ellipsis-vertical"></i>`;
-
-        const menu = document.createElement("div");
-        menu.className = "dropdown-menu collection-menu hidden";
-
-        if (collection.isOwner !== false) {
-            menu.innerHTML = `
-                <button data-action="share-collection" data-collection-id="${collection.id}">
-                    <i class="fa-solid fa-share-nodes"></i>
-                    컬렉션 공유
-                </button>
-                <button data-action="delete-collection" data-collection-id="${collection.id}">
-                    <i class="fa-regular fa-trash-can"></i>
-                    컬렉션 삭제
-                </button>
-            `;
-        } else {
-            menu.innerHTML = `<div style="padding: 8px; color: #6b7280; font-size: 12px;">권한: ${collection.permission || 'READ'}</div>`;
-        }
 
         if (collection.permission !== 'READ') {
             actions.appendChild(addBtn);
         }
         actions.appendChild(menuBtn);
-        actions.appendChild(menu);
 
         header.appendChild(title);
         header.appendChild(actions);
@@ -289,36 +272,13 @@ export function renderPageList() {
                     pageMenuBtn.type = "button";
                     pageMenuBtn.className = "page-menu-btn";
                     pageMenuBtn.dataset.pageId = node.id;
+                    pageMenuBtn.dataset.isEncrypted = node.isEncrypted ? 'true' : 'false';
                     pageMenuBtn.title = "페이지 메뉴";
                     pageMenuBtn.innerHTML = `<i class="fa-solid fa-ellipsis-vertical"></i>`;
-
-                    const pageMenu = document.createElement("div");
-                    pageMenu.className = "dropdown-menu page-menu hidden";
-
-                    if (node.isEncrypted) {
-                        pageMenu.innerHTML = `
-                            <button data-action="delete-page" data-page-id="${node.id}">
-                                <i class="fa-regular fa-trash-can"></i>
-                                페이지 삭제
-                            </button>
-                        `;
-                    } else {
-                        pageMenu.innerHTML = `
-                            <button data-action="encrypt-page" data-page-id="${node.id}">
-                                <i class="fa-solid fa-lock"></i>
-                                페이지 암호화
-                            </button>
-                            <button data-action="delete-page" data-page-id="${node.id}">
-                                <i class="fa-regular fa-trash-can"></i>
-                                페이지 삭제
-                            </button>
-                        `;
-                    }
 
                     const right = document.createElement("div");
                     right.className = "page-menu-wrapper";
                     right.appendChild(pageMenuBtn);
-                    right.appendChild(pageMenu);
 
                     row.appendChild(titleWrap);
                     row.appendChild(right);
