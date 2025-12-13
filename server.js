@@ -200,7 +200,7 @@ function sanitizeHtmlContent(html) {
             'ul', 'ol', 'li', 'blockquote',
             'a', 'span', 'div'
         ],
-        ALLOWED_ATTR: ['style', 'class', 'href', 'target', 'rel'],
+        ALLOWED_ATTR: ['style', 'class', 'href', 'target', 'rel', 'data-type', 'data-latex'],
         ALLOW_DATA_ATTR: false,
         ALLOWED_URI_REGEXP: /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|cid|xmpp):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i
     });

@@ -13,6 +13,9 @@ import TextStyle from "https://esm.sh/@tiptap/extension-text-style@2.0.0-beta.20
 // 폰트 패밀리(FontFamily) 익스텐션 ESM import
 import FontFamily from "https://esm.sh/@tiptap/extension-font-family@2.0.0-beta.209";
 
+// Math 노드 import
+import { MathBlock, MathInline } from './math-node.js';
+
 // 전역 Tiptap 번들에서 Editor / StarterKit 가져오기
 const Editor = Tiptap.Core.Editor;
 const StarterKit = Tiptap.StarterKit;
@@ -105,9 +108,27 @@ export const SLASH_ITEMS = [
         id: "codeBlock",
         label: "코드 블록",
         description: "고정폭 코드 블록",
-        icon: "</>",
+        icon: "{ }",
         command(editor) {
             editor.chain().focus().toggleCodeBlock().run();
+        }
+    },
+    {
+        id: "mathBlock",
+        label: "수식 블록",
+        description: "LaTeX 수식 (블록)",
+        icon: "∑",
+        command(editor) {
+            editor.chain().focus().setMathBlock('').run();
+        }
+    },
+    {
+        id: "mathInline",
+        label: "인라인 수식",
+        description: "$수식$ 형식으로 입력",
+        icon: "$",
+        command(editor) {
+            editor.chain().focus().insertContent('$수식$').run();
         }
     }
 ];
@@ -348,6 +369,16 @@ export function bindSlashKeyHandlers(editor) {
             }
         }
     });
+
+    // 외부 영역 클릭 시 슬래시 메뉴 닫기
+    document.addEventListener("click", (event) => {
+        if (slashState.active && slashMenuEl) {
+            // 클릭한 요소가 슬래시 메뉴 내부가 아니면 닫기
+            if (!slashMenuEl.contains(event.target)) {
+                closeSlashMenu();
+            }
+        }
+    });
 }
 
 /**
@@ -371,6 +402,8 @@ export function initEditor() {
             FontFamily.configure({
                 types: ["textStyle"],
             }),
+            MathBlock,
+            MathInline,
         ],
         content: "<p>불러오는 중...</p>",
         onSelectionUpdate() {
