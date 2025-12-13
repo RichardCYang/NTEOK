@@ -18,6 +18,7 @@ const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7; // 7일 (idle timeout)
 const SESSION_ABSOLUTE_TTL_MS = 1000 * 60 * 60 * 24; // 24시간 (absolute timeout)
 const CSRF_COOKIE_NAME = "nteok_csrf";
 const IS_PRODUCTION = process.env.NODE_ENV === "production";
+const BASE_URL = process.env.BASE_URL || (IS_PRODUCTION ? "https://localhost:3000" : "http://localhost:3000");
 
 // 보안 개선: 기본 관리자 계정 비밀번호를 강제로 변경하도록 경고
 // 환경변수로 설정하지 않으면 무작위 비밀번호를 생성하고 콘솔에 출력
@@ -36,6 +37,22 @@ if (!process.env.ADMIN_PASSWORD) {
     console.warn("=".repeat(80) + "\n");
 }
 
+// 프로덕션 환경에서 필수 환경변수 검증
+if (IS_PRODUCTION) {
+    const requiredEnvVars = ['DB_HOST', 'DB_USER', 'DB_PASSWORD', 'DB_NAME', 'BASE_URL'];
+    const missingVars = requiredEnvVars.filter(key => !process.env[key]);
+
+    if (missingVars.length > 0) {
+        console.error("\n" + "=".repeat(80));
+        console.error("❌ 프로덕션 환경에서 필수 환경변수가 설정되지 않았습니다:");
+        missingVars.forEach(varName => {
+            console.error(`   - ${varName}`);
+        });
+        console.error("=".repeat(80) + "\n");
+        process.exit(1);
+    }
+}
+
 /**
  * DB 연결 설정 정보
  */
@@ -52,6 +69,44 @@ const DB_CONFIG = {
 
 let pool;
 const sessions = new Map();
+
+/**
+ * 만료된 세션 정리 작업
+ * 주기적으로 실행하여 메모리 누수 방지
+ */
+function cleanupExpiredSessions() {
+    const now = Date.now();
+    let cleanedCount = 0;
+
+    sessions.forEach((session, sessionId) => {
+        // 임시 세션 (pendingUserId) 정리 - 10분 경과
+        if (session.pendingUserId && session.createdAt + 10 * 60 * 1000 < now) {
+            sessions.delete(sessionId);
+            cleanedCount++;
+            return;
+        }
+
+        // 정식 세션의 절대 만료 시간 체크
+        if (session.absoluteExpiry && session.absoluteExpiry <= now) {
+            sessions.delete(sessionId);
+            cleanedCount++;
+            return;
+        }
+
+        // Idle timeout 체크
+        if (session.expiresAt && session.expiresAt <= now) {
+            sessions.delete(sessionId);
+            cleanedCount++;
+        }
+    });
+
+    if (cleanedCount > 0) {
+        console.log(`[세션 정리] ${cleanedCount}개의 만료된 세션을 정리했습니다. (남은 세션: ${sessions.size})`);
+    }
+}
+
+// 5분마다 세션 정리 작업 실행
+setInterval(cleanupExpiredSessions, 5 * 60 * 1000);
 
 /**
  * Date -> MySQL DATETIME 문자열 (YYYY-MM-DD HH:MM:SS)
@@ -708,6 +763,15 @@ const authLimiter = rateLimit({
     skipSuccessfulRequests: true, // 성공한 요청은 카운트하지 않음
 });
 
+// TOTP 인증 레이트 리밋 (브루트포스 방지)
+const totpLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15분
+    max: 10, // 최대 10번 시도
+    message: { error: "너무 많은 인증 시도가 발생했습니다. 15분 후 다시 시도해 주세요." },
+    standardHeaders: true,
+    legacyHeaders: false,
+});
+
 /**
  * 미들웨어 설정
  */
@@ -745,7 +809,7 @@ app.use((req, res, next) => {
         res.cookie(CSRF_COOKIE_NAME, token, {
             httpOnly: false, // JavaScript에서 읽을 수 있어야 함
             sameSite: "strict",
-            secure: true,  // 보안 개선: 항상 HTTPS 요구
+            secure: IS_PRODUCTION,  // 보안 개선: 환경에 따라 설정
             maxAge: SESSION_TTL_MS
         });
     }
@@ -878,7 +942,7 @@ app.post("/api/auth/login", authLimiter, async (req, res) => {
         res.cookie(SESSION_COOKIE_NAME, sessionId, {
             httpOnly: true,
             sameSite: "strict",  // CSRF 방어 강화
-            secure: true,  // 항상 HTTPS 요구 (개발 환경은 proxy 사용)
+            secure: IS_PRODUCTION,  // 환경에 따라 설정
             maxAge: SESSION_TTL_MS
         });
 
@@ -887,7 +951,7 @@ app.post("/api/auth/login", authLimiter, async (req, res) => {
         res.cookie(CSRF_COOKIE_NAME, newCsrfToken, {
             httpOnly: false,
             sameSite: "strict",
-            secure: true,
+            secure: IS_PRODUCTION,
             maxAge: SESSION_TTL_MS
         });
 
@@ -917,8 +981,8 @@ app.post("/api/auth/logout", (req, res) => {
 
     res.clearCookie(SESSION_COOKIE_NAME, {
         httpOnly: true,
-        sameSite: "lax",
-        secure: process.env.NODE_ENV === "production"
+        sameSite: "strict",
+        secure: IS_PRODUCTION
     });
 
     res.json({ ok: true });
@@ -997,7 +1061,7 @@ app.post("/api/auth/register", authLimiter, async (req, res) => {
         res.cookie(SESSION_COOKIE_NAME, sessionId, {
             httpOnly: true,
             sameSite: "strict",  // CSRF 방어 강화
-            secure: true,  // 항상 HTTPS 요구
+            secure: IS_PRODUCTION,  // 환경에 따라 설정
             maxAge: SESSION_TTL_MS
         });
 
@@ -1006,7 +1070,7 @@ app.post("/api/auth/register", authLimiter, async (req, res) => {
         res.cookie(CSRF_COOKIE_NAME, newCsrfToken, {
             httpOnly: false,
             sameSite: "strict",
-            secure: true,
+            secure: IS_PRODUCTION,
             maxAge: SESSION_TTL_MS
         });
 
@@ -1045,7 +1109,7 @@ app.get("/api/auth/me", authMiddleware, async (req, res) => {
             encryptionSalt: user.encryption_salt
         });
     } catch (error) {
-        console.error("GET /api/auth/me 오류:", error);
+        logError("GET /api/auth/me", error);
         res.status(500).json({ error: "사용자 정보 조회 중 오류가 발생했습니다." });
     }
 });
@@ -1069,7 +1133,7 @@ app.put("/api/auth/encryption-salt", authMiddleware, async (req, res) => {
 
         res.json({ ok: true });
     } catch (error) {
-        console.error("PUT /api/auth/encryption-salt 오류:", error);
+        logError("PUT /api/auth/encryption-salt", error);
         res.status(500).json({ error: "암호화 Salt 업데이트 중 오류가 발생했습니다." });
     }
 });
@@ -1148,7 +1212,7 @@ app.get("/api/collections", authMiddleware, async (req, res) => {
 
         res.json(list);
     } catch (error) {
-        console.error("GET /api/collections 오류:", error);
+        logError("GET /api/collections", error);
         res.status(500).json({ error: "컬렉션 목록을 불러오지 못했습니다." });
     }
 });
@@ -1196,7 +1260,7 @@ app.delete("/api/collections/:id", authMiddleware, async (req, res) => {
 
         res.json({ ok: true, removedId: id });
     } catch (error) {
-        console.error("DELETE /api/collections/:id 오류:", error);
+        logError("DELETE /api/collections/:id", error);
         res.status(500).json({ error: "컬렉션 삭제에 실패했습니다." });
     }
 });
@@ -1247,7 +1311,7 @@ app.get("/api/pages", authMiddleware, async (req, res) => {
 
         res.json(list);
     } catch (error) {
-        console.error("GET /api/pages 오류:", error);
+        logError("GET /api/pages", error);
         res.status(500).json({ error: "페이지 목록 불러오기 실패." });
     }
 });
@@ -1293,7 +1357,7 @@ app.get("/api/pages/:id", authMiddleware, async (req, res) => {
 
         res.json(page);
     } catch (error) {
-        console.error("GET /api/pages/:id 오류:", error);
+        logError("GET /api/pages/:id", error);
         res.status(500).json({ error: "페이지 불러오기 실패." });
     }
 });
@@ -1455,7 +1519,7 @@ app.put("/api/pages/:id", authMiddleware, async (req, res) => {
 
         res.json(page);
     } catch (error) {
-        console.error("PUT /api/pages/:id 오류:", error);
+        logError("PUT /api/pages/:id", error);
         res.status(500).json({ error: "페이지 수정 실패." });
     }
 });
@@ -1497,7 +1561,7 @@ app.delete("/api/pages/:id", authMiddleware, async (req, res) => {
 
         res.json({ ok: true, removedId: id });
     } catch (error) {
-        console.error("DELETE /api/pages/:id 오류:", error);
+        logError("DELETE /api/pages/:id", error);
         res.status(500).json({ error: "페이지 삭제 실패." });
     }
 });
@@ -1697,7 +1761,7 @@ app.post("/api/collections/:id/share-links", authMiddleware, async (req, res) =>
             ok: true,
             link: {
                 token,
-                url: `${req.protocol}://${req.get('host')}/share/${token}`,
+                url: `${BASE_URL}/share/${token}`,
                 permission,
                 expiresAt: expiresAt ? toIsoString(expiresAt) : null
             }
@@ -1733,7 +1797,7 @@ app.get("/api/collections/:id/share-links", authMiddleware, async (req, res) => 
         const links = rows.map(row => ({
             id: row.id,
             token: row.token,
-            url: `${req.protocol}://${req.get('host')}/share/${row.token}`,
+            url: `${BASE_URL}/share/${row.token}`,
             permission: row.permission,
             expiresAt: row.expires_at ? toIsoString(row.expires_at) : null,
             isActive: row.is_active ? true : false,
@@ -1808,7 +1872,8 @@ app.get("/api/share-links/:token", async (req, res) => {
         res.json({
             collectionId: link.collection_id,
             collectionName: link.collection_name,
-            permission: link.permission
+            permission: link.permission,
+            expiresAt: link.expires_at ? toIsoString(link.expires_at) : null
         });
     } catch (error) {
         logError("GET /api/share-links/:token", error);
@@ -1860,7 +1925,12 @@ app.post("/api/totp/setup", authMiddleware, csrfMiddleware, async (req, res) => 
         const qrCodeUrl = await QRCode.toDataURL(secret.otpauth_url);
 
         // 시크릿을 세션에 임시 저장 (아직 DB에 저장하지 않음)
-        sessions.get(req.cookies[SESSION_COOKIE_NAME]).totpTempSecret = secret.base32;
+        const sessionId = req.cookies[SESSION_COOKIE_NAME];
+        const session = sessions.get(sessionId);
+        if (!session) {
+            return res.status(401).json({ error: "세션이 만료되었습니다." });
+        }
+        session.totpTempSecret = secret.base32;
 
         res.json({
             secret: secret.base32,
@@ -1875,7 +1945,7 @@ app.post("/api/totp/setup", authMiddleware, csrfMiddleware, async (req, res) => 
 /**
  * TOTP 설정 검증 및 활성화
  */
-app.post("/api/totp/verify-setup", authMiddleware, csrfMiddleware, async (req, res) => {
+app.post("/api/totp/verify-setup", authMiddleware, csrfMiddleware, totpLimiter, async (req, res) => {
     try {
         const userId = req.user.id;
         const { token } = req.body;
@@ -1990,7 +2060,7 @@ app.post("/api/totp/disable", authMiddleware, csrfMiddleware, async (req, res) =
 /**
  * 로그인 시 TOTP 검증
  */
-app.post("/api/totp/verify-login", async (req, res) => {
+app.post("/api/totp/verify-login", totpLimiter, async (req, res) => {
     try {
         const { token, tempSessionId } = req.body;
 
@@ -2075,7 +2145,7 @@ app.post("/api/totp/verify-login", async (req, res) => {
 /**
  * 백업 코드로 로그인
  */
-app.post("/api/totp/verify-backup-code", async (req, res) => {
+app.post("/api/totp/verify-backup-code", totpLimiter, async (req, res) => {
     try {
         const { backupCode, tempSessionId } = req.body;
 
