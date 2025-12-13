@@ -1,265 +1,233 @@
 # NTEOK
 
-셀프 호스팅 가능한 간단한 웹 기반 노트 앱 프로젝트
+셀프 호스팅 가능한 웹 기반 노트 애플리케이션
 
 ---
-<img src="./example.png" width="100%" title="NTEOK_Logo"/>
+<img src="./example.png" width="100%" title="NTEOK_Screenshot"/>
 
 ## 개요
 
-**NTEOK**는 한국어 넋(NEOK)과 노트(NOTE)의 합성어로, 인간의 넋과 얼을 담는 노트라는 의미를 가진 웹 애플리케이션입니다.
+**NTEOK**는 한국어 넋(NEOK)과 노트(NOTE)의 합성어입니다. Node.js와 MySQL 기반의 다중 사용자 노트 웹 애플리케이션으로, 블록 기반 마크다운 편집과 End-to-End 암호화를 지원합니다.
 
-Node.js(Express)와 MySQL, Tiptap 기반의 다중 사용자용 노트 웹 애플리케이션으로, 블록 기반 문서 편집 인터페이스와 간단한 페이지 관리 기능을 제공합니다.
+### 주요 특징
+
+- **마크다운 편집기**: Tiptap 기반 블록 에디터
+- **End-to-End 암호화**: AES-256-GCM 방식의 클라이언트 측 암호화
+- **컬렉션 공유**: 사용자 간 협업 및 링크 공유
+- **계층적 구조**: 페이지 부모-자식 관계 지원
+- **2단계 인증**: TOTP 기반 보안 강화
+- **반응형 디자인**: 모바일, 태블릿, 데스크탑 최적화
+- **셀프 호스팅**: 독립적인 서버 운영 가능
 
 ---
 
-## 주요 기능
+## 핵심 기능
 
-### 사용자 인증
-- 회원가입 및 로그인
-- 세션 기반 인증 시스템
-- 사용자별 독립적인 노트 관리
+### 사용자 관리
+- 회원가입 및 로그인 시스템
+- TOTP 2단계 인증 (Google Authenticator, Authy 등)
+- 세션 기반 인증
+- 계정 삭제 기능
 
-### 컬렉션 관리
-- 사용자별 여러 컬렉션 생성
-- 컬렉션별 페이지 그룹 관리
-- 컬렉션 생성/삭제 기능
+### 노트 편집
+- **블록 타입**: 문단, 제목(H1-H6), 목록(글머리/번호), 인용구, 코드 블록, 구분선, LaTeX 수식
+- **인라인 서식**: 굵게, 기울임, 취소선, 텍스트 색상
+- **정렬 옵션**: 왼쪽, 가운데, 오른쪽, 양쪽
+- **슬래시 명령**: `/` 입력으로 블록 타입 전환
+- **단축키**: `Ctrl+S` / `Cmd+S` 저장
 
-### 페이지 관리
-- 페이지 목록 조회
-- 새 페이지 생성
-- 페이지 제목/본문 수정
-- 페이지 삭제
-- 최근 수정 시각 기준 정렬
-- 컬렉션별 페이지 필터링
+### 컬렉션 및 페이지
+- 컬렉션별 페이지 그룹화
+- 계층적 페이지 구조 (부모-자식 관계)
+- 페이지 아이콘 설정 (170개 Font Awesome 아이콘, 400개 이모지)
+- 최근 수정 시각 기준 자동 정렬
+- 드래그 앤 드롭 정렬 (예정)
 
-### 편집기 기능
+### 보안 기능
+- **E2EE 암호화**: AES-256-GCM 방식
+- **클라이언트 측 암호화**: 서버에 암호화된 데이터만 전송
+- **TOTP 2FA**: 시간 기반 일회용 비밀번호
+- **CSRF 보호**: SameSite 쿠키 설정
+- **세션 관리**: 안전한 쿠키 기반 인증
 
-Tiptap v2 및 StarterKit을 기반으로 하는 마크다운 편집기이며, 주요 기능은 다음과 같습니다.
-
-- 블록 유형
-  - 기본 문단
-  - 제목 블록 (H1, H2)
-  - 글머리 기호 목록 (bullet list)
-  - 번호 목록 (ordered list)
-  - 인용구 (blockquote)
-  - 코드 블록 (code block)
-  - 구분선(horizontal rule, 슬래시 명령 등을 통해 삽입)
-
-- 인라인 서식
-  - 굵게 (bold)
-  - 기울임 (italic)
-  - 취소선 (strike)
-  - 텍스트 색상 변경 (몇 가지 고정 색상 프리셋)
-
-- 문단 정렬
-  - 왼쪽 정렬
-  - 가운데 정렬
-  - 오른쪽 정렬
-  - 양쪽 정렬
-
-- 편의 기능
-  - `/` 입력을 기반으로 하는 슬래시 메뉴를 통한 블록 타입 전환
-  - 툴바 버튼으로 블록/서식 토글
-  - `Ctrl+S` / `Cmd+S` 단축키를 통한 저장
+### 협업 기능
+- **사용자 공유**: 특정 사용자에게 컬렉션 공유
+- **링크 공유**: 링크를 통한 컬렉션 접근
+- **권한 관리**: READ, EDIT, OWNER 권한 레벨
+- **암호화 페이지 공유**: 공유 허용 설정 옵션
 
 ---
 
 ## 기술 스택
 
-- 런타임
-  - Node.js (버전 18 이상 권장)
-  - MySQL (일반적인 MySQL 8.x 환경을 가정)
+### 백엔드
+- **런타임**: Node.js 18+
+- **프레임워크**: Express 5.x
+- **데이터베이스**: MySQL 8.x
+- **인증**: bcrypt (비밀번호 해싱), speakeasy (TOTP)
+- **보안**: cookie-parser, CSRF 토큰, SameSite 쿠키
 
-- 서버 측
-  - Express 5.x
-  - mysql2 (promise 기반)
-  - bcrypt (비밀번호 암호화)
-  - cookie-parser (세션 관리)
-
-- 클라이언트 측
-  - 순수 HTML/CSS/JavaScript
-  - Tiptap v2 (StarterKit, TextAlign, Color, TextStyle)
-  - `tiptap-for-browser` 번들 (CDN)
-  - Font Awesome (아이콘, CDN)
-
----
-
-## 디자인 컨셉
-
-NTEOK는 **인간의 넋과 얼을 담는 노트**라는 컨셉으로 한국 전통의 미니멀한 느낌을 살린 디자인을 적용하고 있습니다.
-
-### 색상 팔레트
-
-- **배경색**: 한지 느낌의 크림/베이지 계열 (#faf8f3, #f5f2ed)
-  - 눈의 피로를 줄이고 장시간 노트 작성에 최적화된 따뜻한 색감
-
-- **사이드바**: 어두운 베이지 계열 (#ebe8e1, #e6e3db)
-  - 차분하고 깊이감 있는 톤으로 콘텐츠와 시각적 구분
-
-- **텍스트**: 먹색 계열 (#1a1a1a, #2d2d2d)
-  - 한지 위에 먹으로 쓴 듯한 선명하고 읽기 좋은 대비
-
-- **포인트 컬러**: 어두운 청록색 (#2d5f5d, #1e4d4a)
-  - 넋과 얼의 깊이를 표현하는 차가운 색조
-
-- **회색 톤**: (#5a6169, #6b7280)
-  - 은은하고 절제된 보조 색상
-
-### 디자인 특징
-
-1. **한국식 미니멀리즘**
-   - 불필요한 장식을 배제한 깔끔한 여백
-   - 직선 위주의 디자인 (border-radius 3px로 최소화)
-
-2. **한지 스타일 배경**
-   - 따뜻한 베이지/크림 톤의 배경으로 전통 한지 느낌 재현
-   - 부드럽고 자연스러운 색감으로 눈의 피로 최소화
-
-3. **절제된 그림자**
-   - 약한 box-shadow로 깊이감만 표현
-   - 과도한 장식 없는 깔끔한 레이아웃
-
-4. **여백의 미**
-   - 충분한 패딩과 line-height (1.7)로 가독성 향상
-   - 블록 간 적절한 간격으로 편안한 읽기 경험 제공
-
-5. **전통적 요소**
-   - 어두운 청록색 액센트 컬러로 깊이감 표현
-   - 회색조 전반으로 절제된 분위기
-   - 선택된 항목의 왼쪽 보더로 시각적 강조
-
----
-
-## 디렉터리 구조
-
-루트 디렉터리 기준 주요 파일 및 디렉터리는 다음과 같습니다.
-
-- `server.js`
-  Express 서버 엔트리 포인트입니다.
-  - MySQL 커넥션 풀 초기화
-  - `users`, `collections`, `pages` 테이블 생성 및 관리
-  - 사용자 인증 및 세션 관리
-  - `/api/*` REST 엔드포인트 정의
-  - 정적 파일 서빙 (`public` 디렉터리)
-
-- `public/`
-  - `index.html`
-    메인 애플리케이션 HTML 템플릿입니다. 사이드바, 에디터 영역, 툴바 등을 포함합니다.
-  - `login.html`
-    로그인 페이지 HTML 템플릿입니다.
-  - `register.html`
-    회원가입 페이지 HTML 템플릿입니다.
-  - `app.js`
-    클라이언트 로직입니다.
-    - Tiptap 에디터 초기화
-    - 툴바, 슬래시 메뉴, 페이지 목록, 컬렉션 관리
-    - `/api/*` 엔드포인트와의 통신
-  - `css/`
-    - `main.css` - 메인 애플리케이션 스타일
-    - `login.css` - 로그인/회원가입 페이지 스타일
-
-- `package.json`, `package-lock.json`
-  Node.js 의존성 및 스크립트 정의입니다.
-
-- `node_modules/`
-  Node.js 의존성 디렉터리입니다. 일반적인 환경에서는 `npm install`을 통해 재구성할 수 있습니다.
+### 프론트엔드
+- **코어**: 바닐라 JavaScript (ES6+ 모듈)
+- **에디터**: Tiptap v2 (StarterKit, TextAlign, Color, Mathematics)
+- **수식 렌더링**: KaTeX
+- **암호화**: Web Crypto API (AES-256-GCM)
+- **아이콘**: Font Awesome 6
+- **스타일**: 순수 CSS (반응형 디자인)
 
 ---
 
 ## 설치 및 실행
 
-### 1. 사전 요구 사항
+### 사전 요구사항
 
 - Node.js 18 LTS 이상
-- MySQL 서버 인스턴스
-- 터미널 및 Node.js 패키지 관리 도구(npm)
+- MySQL 8.x 서버
+- npm 패키지 관리자
 
-### 2. 데이터베이스 준비
-
-MySQL에 접속하여 데이터베이스를 생성합니다.
+### 1. 데이터베이스 생성
 
 ```sql
 CREATE DATABASE nteok
   CHARACTER SET utf8mb4
   COLLATE utf8mb4_unicode_ci;
 ```
-데이터베이스 이름은 기본값(nteok)을 기준으로 작성하였습니다. 다른 이름을 사용할 경우 환경 변수 또는 server.js 내 DB_CONFIG를 함께 수정해야 합니다.
 
-### 3. 환경 설정
+### 2. 환경 변수 설정
 
-서버는 다음과 같은 환경 변수를 사용합니다. 설정되지 않은 값은 server.js 내 기본값을 사용합니다.
+`.env` 파일 생성 또는 환경 변수 설정:
 
-* DB_HOST (기본값: localhost)
-* DB_PORT (기본값: 3306)
-* DB_USER (기본값: root)
-* DB_PASSWORD (기본값: admin)
-* DB_NAME (기본값: nteok)
-* PORT (기본값: 3000)
-* ADMIN_USERNAME (기본값: admin)
-* ADMIN_PASSWORD (기본값: admin)
-* BCRYPT_SALT_ROUNDS (기본값: 12)
-
-예시
-```
-export DB_HOST=localhost
-export DB_PORT=3306
-export DB_USER=your_user
-export DB_PASSWORD=your_password
-export DB_NAME=nteok
-export PORT=3000
-export ADMIN_USERNAME=admin
-export ADMIN_PASSWORD=your_secure_password
+```bash
+DB_HOST=localhost
+DB_PORT=3306
+DB_USER=root
+DB_PASSWORD=your_password
+DB_NAME=nteok
+PORT=3000
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=your_secure_password
+BCRYPT_SALT_ROUNDS=12
 ```
 
-또는 환경 변수 대신 server.js의 DB_CONFIG 객체를 직접 수정해도 됩니다.
+### 3. 의존성 설치 및 실행
 
-### 4. 의존성 설치
-```
+```bash
 npm install
-```
-
-이미 node_modules 디렉터리가 포함된 상태라면 생략 가능하나, 일반적인 환경에서는 npm install을 통해 정리하는 것이 안전합니다.
-
-### 5. 서버 실행
-```
 npm start
 ```
 
-서버가 정상적으로 기동되면 콘솔에 다음과 같은 로그가 출력됩니다.
-```
-NTEOK 앱이 http://localhost:3000 에서 실행 중.
-```
+서버가 `http://localhost:3000`에서 실행됩니다.
 
-### 6. 초기 로그인
+### 4. 초기 로그인
 
-최초 실행 시 기본 관리자 계정이 자동으로 생성됩니다.
-- 아이디: `admin` (또는 환경 변수로 설정한 값)
-- 비밀번호: `admin` (또는 환경 변수로 설정한 값)
-
-**보안을 위해 최초 로그인 후 반드시 비밀번호를 변경하거나 환경 변수를 통해 안전한 비밀번호를 설정하세요.**
+기본 관리자 계정으로 로그인 후 비밀번호를 변경하세요.
+- 아이디: `admin` (또는 설정한 값)
+- 비밀번호: `admin` (또는 설정한 값)
 
 ---
 
 ## API 엔드포인트
 
-### 인증 관련
+### 인증
 - `POST /api/auth/login` - 로그인
 - `POST /api/auth/logout` - 로그아웃
 - `POST /api/auth/register` - 회원가입
 - `GET /api/auth/me` - 현재 사용자 정보
+- `DELETE /api/auth/delete-account` - 계정 삭제
 
-### 컬렉션 관련
+### 2단계 인증
+- `POST /api/auth/totp/setup` - TOTP 설정
+- `POST /api/auth/totp/verify` - TOTP 인증
+- `DELETE /api/auth/totp/disable` - TOTP 비활성화
+
+### 컬렉션
 - `GET /api/collections` - 컬렉션 목록 조회
-- `POST /api/collections` - 새 컬렉션 생성
+- `POST /api/collections` - 컬렉션 생성
 - `DELETE /api/collections/:id` - 컬렉션 삭제
 
-### 페이지 관련
+### 컬렉션 공유
+- `POST /api/collections/:id/share` - 사용자에게 공유
+- `DELETE /api/collections/:id/share/:shareId` - 공유 해제
+- `POST /api/collections/:id/share-link` - 공유 링크 생성
+- `POST /api/share-link/:token` - 공유 링크로 접근
+
+### 페이지
 - `GET /api/pages` - 페이지 목록 조회
-- `GET /api/pages/:id` - 특정 페이지 조회
-- `POST /api/pages` - 새 페이지 생성
+- `GET /api/pages/:id` - 페이지 조회
+- `POST /api/pages` - 페이지 생성
 - `PUT /api/pages/:id` - 페이지 수정
 - `DELETE /api/pages/:id` - 페이지 삭제
+- `PUT /api/pages/:id/share-permission` - 암호화 페이지 공유 설정
+
+---
+
+## 보안 고려사항
+
+### End-to-End 암호화
+- 클라이언트 측에서 AES-256-GCM으로 암호화
+- 암호화 키는 사용자만 소유
+- 서버는 암호화된 데이터만 저장
+
+### 2단계 인증
+- TOTP 기반 시간 동기화 인증
+- QR 코드를 통한 간편한 설정
+- 백업 코드 제공 (예정)
+
+### 세션 보안
+- SameSite=Strict 쿠키 설정
+- CSRF 토큰 검증
+- 세션 타임아웃 관리
+
+---
+
+## 디자인 컨셉
+
+한국 전통 한지의 미니멀한 감성을 현대적으로 재해석한 디자인입니다.
+
+### 색상 팔레트
+- **배경**: 한지 느낌의 크림/베이지 계열 (#faf8f3, #f5f2ed)
+- **사이드바**: 어두운 베이지 계열 (#ebe8e1)
+- **텍스트**: 먹색 계열 (#1a1a1a, #2d2d2d)
+- **포인트**: 어두운 청록색 (#2d5f5d)
+
+### 디자인 원칙
+- 절제된 여백과 깔끔한 레이아웃
+- 직선 위주의 미니멀한 인터페이스
+- 반응형 디자인으로 모든 기기 지원
+- 가독성을 위한 충분한 line-height (1.7)
+
+---
+
+## 프로젝트 구조
+
+```
+NTEOK/
+├── server.js              # Express 서버 엔트리포인트
+├── package.json           # 프로젝트 의존성
+├── public/                # 클라이언트 파일
+│   ├── index.html         # 메인 애플리케이션
+│   ├── login.html         # 로그인 페이지
+│   ├── register.html      # 회원가입 페이지
+│   ├── css/
+│   │   ├── main.css       # 메인 스타일
+│   │   └── login.css      # 로그인 스타일
+│   └── js/
+│       ├── app.js         # 메인 로직
+│       ├── editor.js      # 에디터 초기화
+│       ├── pages-manager.js    # 페이지 관리
+│       ├── encryption-manager.js  # 암호화 관리
+│       ├── share-manager.js       # 공유 관리
+│       ├── settings-manager.js    # 설정 관리
+│       ├── crypto.js      # E2EE 암호화
+│       └── ui-utils.js    # UI 유틸리티
+└── README.md
+```
+
+---
+
+## 키워드
+
+노트 앱, 마크다운 에디터, 웹 노트, E2EE, End-to-End 암호화, 암호화 노트, 셀프 호스팅, 오픈소스 노트, Node.js 노트 앱, MySQL 노트 앱, 협업 노트, 공유 노트, Tiptap 에디터, 2단계 인증, TOTP, 반응형 노트 앱, 웹 기반 노트, 개인 노트 서버
 
 ---
 
@@ -269,6 +237,6 @@ MIT License
 
 ---
 
-## 작성자
+## 개발자
 
 RichardCYang
