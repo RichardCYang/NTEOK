@@ -1197,3 +1197,486 @@ body {
 .katex {
     font-size: 1.1em;
 }
+
+/* ==================== Settings Modal - Responsive Design ==================== */
+
+/* 설정 모달 컨텐츠 */
+.settings-modal-content {
+    width: 90vw;
+    max-width: 600px;
+    max-height: 85vh;
+}
+
+/* 설정 모달 바디 */
+.settings-modal-body {
+    overflow-y: auto;
+    max-height: calc(85vh - 140px);
+}
+
+/* 설정 섹션 */
+.settings-section {
+    margin-bottom: 24px;
+    padding-bottom: 24px;
+    border-bottom: 1px solid #d4cfc4;
+}
+
+.settings-section:last-child {
+    border-bottom: none;
+    margin-bottom: 0;
+}
+
+.settings-section h3 {
+    font-size: 16px;
+    font-weight: 600;
+    color: #2d5f5d;
+    margin-bottom: 16px;
+}
+
+/* 설정 아이템 */
+.settings-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+    gap: 16px;
+}
+
+.settings-item:last-child {
+    margin-bottom: 0;
+}
+
+.settings-item label {
+    font-size: 14px;
+    color: #374151;
+    font-weight: 500;
+    flex-shrink: 0;
+}
+
+.settings-value {
+    font-size: 14px;
+    color: #6b7280;
+}
+
+.settings-disabled {
+    color: #9ca3af !important;
+}
+
+/* 설정 컨트롤 */
+.settings-controls {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.settings-button {
+    padding: 4px 12px !important;
+    font-size: 12px !important;
+}
+
+.settings-button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* 설정 셀렉트 */
+.settings-select {
+    padding: 8px 12px;
+    border: 1px solid #d4cfc4;
+    border-radius: 3px;
+    background: white;
+    color: #374151;
+    font-size: 14px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.settings-select:focus {
+    outline: none;
+    border-color: #2d5f5d;
+}
+
+/* 계정 관리 위험 구역 */
+.settings-danger-zone {
+    padding: 12px 0;
+}
+
+.settings-danger-zone .danger-button {
+    padding: 6px 16px;
+    font-size: 13px;
+}
+
+.settings-warning {
+    margin: 8px 0 0 0;
+    font-size: 12px;
+    color: #dc2626;
+    line-height: 1.5;
+}
+
+/* 스크롤바 스타일 */
+.settings-modal-body::-webkit-scrollbar {
+    width: 8px;
+}
+
+.settings-modal-body::-webkit-scrollbar-track {
+    background: #f9f8f6;
+    border-radius: 4px;
+}
+
+.settings-modal-body::-webkit-scrollbar-thumb {
+    background: #d4cfc4;
+    border-radius: 4px;
+}
+
+.settings-modal-body::-webkit-scrollbar-thumb:hover {
+    background: #2d5f5d;
+}
+
+/* ==================== Settings Modal - Responsive ==================== */
+
+/* 태블릿 이하 */
+@media (max-width: 768px) {
+    .settings-modal-content {
+        width: 95vw;
+        max-height: 90vh;
+    }
+
+    .settings-modal-body {
+        max-height: calc(90vh - 130px);
+    }
+
+    .settings-section h3 {
+        font-size: 15px;
+    }
+
+    .settings-item {
+        gap: 12px;
+    }
+
+    .settings-item label {
+        font-size: 13px;
+    }
+
+    .settings-value {
+        font-size: 13px;
+    }
+}
+
+/* 모바일 */
+@media (max-width: 480px) {
+    .settings-modal-content {
+        width: 100vw;
+        max-height: 95vh;
+        border-radius: 0;
+    }
+
+    .settings-modal-body {
+        max-height: calc(95vh - 120px);
+    }
+
+    .settings-section {
+        margin-bottom: 20px;
+        padding-bottom: 20px;
+    }
+
+    .settings-section h3 {
+        font-size: 14px;
+        margin-bottom: 12px;
+    }
+
+    .settings-item {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 8px;
+        margin-bottom: 12px;
+    }
+
+    .settings-item label {
+        font-size: 12px;
+    }
+
+    .settings-value {
+        font-size: 12px;
+    }
+
+    .settings-controls {
+        width: 100%;
+        justify-content: space-between;
+    }
+
+    .settings-select {
+        width: 100%;
+        font-size: 13px;
+    }
+
+    .settings-danger-zone .danger-button {
+        width: 100%;
+        font-size: 12px;
+    }
+
+    .settings-warning {
+        font-size: 11px;
+    }
+}
+
+/* ==================== Icon Picker Modal - Responsive Design ==================== */
+
+/* 모달 컨텐츠 */
+.icon-picker-modal-content {
+    width: 90vw;
+    max-width: 800px;
+    max-height: 85vh;
+}
+
+/* 모달 바디 */
+.icon-picker-modal-body {
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    max-height: calc(85vh - 80px);
+}
+
+/* 설명 텍스트 */
+.icon-picker-description {
+    margin-bottom: 16px;
+    color: #6b7280;
+    font-size: 14px;
+    flex-shrink: 0;
+}
+
+/* 헤더 (탭 + 해제 버튼) */
+.icon-picker-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+    border-bottom: 2px solid #d4cfc4;
+    flex-shrink: 0;
+    gap: 12px;
+}
+
+/* 탭 컨테이너 */
+.icon-picker-tabs {
+    display: flex;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
+}
+
+/* 탭 버튼 */
+.icon-tab-btn {
+    flex: 1;
+    min-width: 0;
+    padding: 12px 16px;
+    background: transparent;
+    border: none;
+    border-bottom: 3px solid transparent;
+    color: #6b7280;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+}
+
+.icon-tab-btn:hover {
+    color: #2d5f5d;
+    background: #f9f8f6;
+}
+
+.icon-tab-btn.active {
+    color: #2d5f5d;
+    border-bottom-color: #2d5f5d;
+    font-weight: 600;
+}
+
+/* 아이콘 해제 버튼 */
+.icon-remove-btn {
+    padding: 8px 16px;
+    background: transparent;
+    color: #6b7280;
+    border: 1px solid #d4cfc4;
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 13px;
+    transition: all 0.2s ease;
+    margin-bottom: 2px;
+    white-space: nowrap;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+}
+
+.icon-remove-btn:hover {
+    background: #f9f8f6;
+    border-color: #2d5f5d;
+    color: #2d5f5d;
+}
+
+/* 아이콘 그리드 */
+.icon-picker-grid {
+    display: grid;
+    grid-template-columns: repeat(8, 1fr);
+    gap: 8px;
+    height: 100%;
+    max-height: calc(85vh - 220px);
+    min-height: 300px;
+    overflow-y: auto;
+    padding: 4px;
+    flex-shrink: 1;
+}
+
+/* 아이콘 아이템 */
+.icon-picker-item {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    aspect-ratio: 1;
+    padding: 8px;
+    background: #f9f8f6;
+    border: 2px solid #d4cfc4;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    font-size: 20px;
+    color: #2d5f5d;
+    user-select: none;
+}
+
+.icon-picker-item:hover {
+    background: #ebe8e1;
+    border-color: #2d5f5d;
+    transform: scale(1.05);
+}
+
+.icon-picker-item.selected {
+    background: #2d5f5d;
+    border-color: #2d5f5d;
+    color: white;
+}
+
+.icon-picker-item i {
+    pointer-events: none;
+}
+
+/* 스크롤바 스타일 */
+.icon-picker-grid::-webkit-scrollbar {
+    width: 8px;
+}
+
+.icon-picker-grid::-webkit-scrollbar-track {
+    background: #f9f8f6;
+    border-radius: 4px;
+}
+
+.icon-picker-grid::-webkit-scrollbar-thumb {
+    background: #d4cfc4;
+    border-radius: 4px;
+}
+
+.icon-picker-grid::-webkit-scrollbar-thumb:hover {
+    background: #2d5f5d;
+}
+
+/* ==================== 반응형 미디어 쿼리 ==================== */
+
+/* 태블릿 이하 */
+@media (max-width: 768px) {
+    .icon-picker-modal-content {
+        width: 95vw;
+        max-height: 90vh;
+    }
+
+    .icon-picker-modal-body {
+        max-height: calc(90vh - 70px);
+    }
+
+    .icon-picker-grid {
+        grid-template-columns: repeat(6, 1fr);
+        gap: 6px;
+        max-height: calc(90vh - 200px);
+    }
+
+    .icon-tab-btn {
+        padding: 10px 12px;
+        font-size: 13px;
+        gap: 6px;
+    }
+
+    .icon-remove-btn {
+        padding: 6px 12px;
+        font-size: 12px;
+    }
+
+    .icon-picker-description {
+        font-size: 13px;
+    }
+
+    .icon-picker-item {
+        font-size: 18px;
+        padding: 6px;
+    }
+}
+
+/* 모바일 */
+@media (max-width: 480px) {
+    .icon-picker-modal-content {
+        width: 100vw;
+        max-height: 95vh;
+        border-radius: 0;
+    }
+
+    .icon-picker-modal-body {
+        max-height: calc(95vh - 60px);
+    }
+
+    .icon-picker-header {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 8px;
+    }
+
+    .icon-picker-tabs {
+        width: 100%;
+    }
+
+    .icon-remove-btn {
+        width: 100%;
+        justify-content: center;
+        margin-bottom: 8px;
+    }
+
+    .icon-picker-grid {
+        grid-template-columns: repeat(4, 1fr);
+        gap: 6px;
+        max-height: calc(95vh - 250px);
+    }
+
+    .icon-tab-btn {
+        padding: 10px 8px;
+        font-size: 12px;
+        gap: 4px;
+    }
+
+    .icon-tab-text {
+        display: none;
+    }
+
+    .icon-remove-btn {
+        font-size: 13px;
+    }
+
+    .icon-picker-item {
+        font-size: 16px;
+        padding: 4px;
+    }
+
+    .icon-picker-description {
+        font-size: 12px;
+        margin-bottom: 12px;
+    }
+}

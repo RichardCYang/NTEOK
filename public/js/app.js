@@ -248,6 +248,10 @@ async function handlePageListClick(event, state) {
             if (isSharedCollection && isPageOwner) {
                 const shareAllowed = page && page.shareAllowed;
                 menuItems = `
+                    <button data-action="set-icon" data-page-id="${escapeHtml(pageId)}">
+                        <i class="fa-solid fa-icons"></i>
+                        아이콘 설정
+                    </button>
                     <button data-action="toggle-share" data-page-id="${escapeHtml(pageId)}" data-share-allowed="${shareAllowed ? 'true' : 'false'}">
                         <i class="fa-solid fa-${shareAllowed ? 'eye-slash' : 'eye'}"></i>
                         ${shareAllowed ? '공유 비허용' : '공유 허용'}
@@ -259,6 +263,10 @@ async function handlePageListClick(event, state) {
                 `;
             } else {
                 menuItems = `
+                    <button data-action="set-icon" data-page-id="${escapeHtml(pageId)}">
+                        <i class="fa-solid fa-icons"></i>
+                        아이콘 설정
+                    </button>
                     <button data-action="delete-page" data-page-id="${escapeHtml(pageId)}">
                         <i class="fa-regular fa-trash-can"></i>
                         페이지 삭제
@@ -267,6 +275,10 @@ async function handlePageListClick(event, state) {
             }
         } else {
             menuItems = `
+                <button data-action="set-icon" data-page-id="${escapeHtml(pageId)}">
+                    <i class="fa-solid fa-icons"></i>
+                    아이콘 설정
+                </button>
                 <button data-action="encrypt-page" data-page-id="${escapeHtml(pageId)}">
                     <i class="fa-solid fa-lock"></i>
                     페이지 암호화
@@ -283,10 +295,16 @@ async function handlePageListClick(event, state) {
     }
 
     // 페이지 메뉴 액션
-    const pageMenuAction = event.target.closest("#context-menu button[data-action^='encrypt-page'], #context-menu button[data-action^='delete-page'], #context-menu button[data-action^='toggle-share']");
+    const pageMenuAction = event.target.closest("#context-menu button[data-action^='set-icon'], #context-menu button[data-action^='encrypt-page'], #context-menu button[data-action^='delete-page'], #context-menu button[data-action^='toggle-share']");
     if (pageMenuAction) {
         const action = pageMenuAction.dataset.action;
         const pageId = pageMenuAction.dataset.pageId;
+
+        if (action === "set-icon" && pageId) {
+            showIconPickerModal(pageId);
+            closeContextMenu();
+            return;
+        }
 
         if (action === "encrypt-page" && pageId) {
             showEncryptionModal(pageId);
@@ -816,6 +834,7 @@ async function init() {
     bindReadonlyWarningModal();
     bindDeletePermissionModal();
     bindEncryptPermissionModal();
+    bindIconPickerModal();
     bindMobileSidebar();
     bindTotpModals();
     bindAccountManagementButtons();
@@ -824,6 +843,293 @@ async function init() {
     await fetchAndDisplayCurrentUser();
     await fetchCollections();
     await fetchPageList();
+}
+
+// ==================== Icon Picker Modal ====================
+const THEME_ICONS = [
+    // 문서 및 파일
+    'fa-solid fa-file', 'fa-solid fa-file-lines', 'fa-solid fa-file-code', 'fa-solid fa-file-pdf',
+    'fa-solid fa-file-word', 'fa-solid fa-file-excel', 'fa-solid fa-file-powerpoint', 'fa-solid fa-file-image',
+    'fa-solid fa-file-audio', 'fa-solid fa-file-video', 'fa-solid fa-file-zipper', 'fa-solid fa-folder',
+    'fa-solid fa-folder-open', 'fa-solid fa-folder-closed', 'fa-solid fa-book', 'fa-solid fa-book-open',
+    'fa-solid fa-bookmark', 'fa-solid fa-clipboard', 'fa-solid fa-clipboard-list', 'fa-solid fa-note-sticky',
+
+    // 표시 및 강조
+    'fa-solid fa-star', 'fa-solid fa-heart', 'fa-solid fa-flag', 'fa-solid fa-fire',
+    'fa-solid fa-bolt', 'fa-solid fa-lightbulb', 'fa-solid fa-circle-exclamation', 'fa-solid fa-triangle-exclamation',
+    'fa-solid fa-circle-check', 'fa-solid fa-circle-xmark', 'fa-solid fa-circle-info', 'fa-solid fa-circle-question',
+    'fa-solid fa-bell', 'fa-solid fa-medal', 'fa-solid fa-trophy', 'fa-solid fa-award',
+
+    // 시간 및 날짜
+    'fa-solid fa-calendar', 'fa-solid fa-calendar-days', 'fa-solid fa-calendar-check', 'fa-solid fa-clock',
+    'fa-solid fa-hourglass', 'fa-solid fa-stopwatch', 'fa-solid fa-business-time',
+
+    // 커뮤니케이션
+    'fa-solid fa-envelope', 'fa-solid fa-envelope-open', 'fa-solid fa-comment', 'fa-solid fa-comments',
+    'fa-solid fa-message', 'fa-solid fa-phone', 'fa-solid fa-mobile', 'fa-solid fa-fax',
+
+    // 위치 및 지도
+    'fa-solid fa-location-dot', 'fa-solid fa-map', 'fa-solid fa-map-pin', 'fa-solid fa-compass',
+    'fa-solid fa-globe', 'fa-solid fa-earth-americas', 'fa-solid fa-route',
+
+    // 장소
+    'fa-solid fa-home', 'fa-solid fa-building', 'fa-solid fa-shop', 'fa-solid fa-hospital',
+    'fa-solid fa-school', 'fa-solid fa-graduation-cap', 'fa-solid fa-church', 'fa-solid fa-landmark',
+
+    // 작업 및 도구
+    'fa-solid fa-briefcase', 'fa-solid fa-suitcase', 'fa-solid fa-wrench', 'fa-solid fa-screwdriver-wrench',
+    'fa-solid fa-hammer', 'fa-solid fa-gavel', 'fa-solid fa-toolbox', 'fa-solid fa-gear',
+    'fa-solid fa-gears', 'fa-solid fa-pen', 'fa-solid fa-pencil', 'fa-solid fa-pen-to-square',
+
+    // 보안
+    'fa-solid fa-lock', 'fa-solid fa-unlock', 'fa-solid fa-key', 'fa-solid fa-shield',
+    'fa-solid fa-shield-halved', 'fa-solid fa-user-shield',
+
+    // 사용자
+    'fa-solid fa-user', 'fa-solid fa-users', 'fa-solid fa-user-tie', 'fa-solid fa-user-group',
+    'fa-solid fa-user-doctor', 'fa-solid fa-user-nurse', 'fa-solid fa-user-graduate',
+
+    // 미디어
+    'fa-solid fa-image', 'fa-solid fa-camera', 'fa-solid fa-video', 'fa-solid fa-film',
+    'fa-solid fa-music', 'fa-solid fa-microphone', 'fa-solid fa-headphones', 'fa-solid fa-photo-film',
+
+    // 기술
+    'fa-solid fa-code', 'fa-solid fa-terminal', 'fa-solid fa-laptop', 'fa-solid fa-laptop-code',
+    'fa-solid fa-desktop', 'fa-solid fa-mobile-screen', 'fa-solid fa-tablet', 'fa-solid fa-keyboard',
+    'fa-solid fa-mouse', 'fa-solid fa-wifi', 'fa-solid fa-database', 'fa-solid fa-server',
+    'fa-solid fa-cloud', 'fa-solid fa-microchip', 'fa-solid fa-bug',
+
+    // 교통
+    'fa-solid fa-car', 'fa-solid fa-bus', 'fa-solid fa-train', 'fa-solid fa-plane',
+    'fa-solid fa-rocket', 'fa-solid fa-bicycle', 'fa-solid fa-ship', 'fa-solid fa-truck',
+
+    // 음식
+    'fa-solid fa-pizza-slice', 'fa-solid fa-burger', 'fa-solid fa-mug-hot', 'fa-solid fa-coffee',
+    'fa-solid fa-wine-glass', 'fa-solid fa-beer-mug-empty', 'fa-solid fa-apple-whole', 'fa-solid fa-carrot',
+    'fa-solid fa-ice-cream', 'fa-solid fa-cake-candles', 'fa-solid fa-cookie',
+
+    // 자연
+    'fa-solid fa-tree', 'fa-solid fa-leaf', 'fa-solid fa-seedling', 'fa-solid fa-sun',
+    'fa-solid fa-moon', 'fa-solid fa-cloud-sun', 'fa-solid fa-cloud-rain', 'fa-solid fa-snowflake',
+    'fa-solid fa-rainbow', 'fa-solid fa-umbrella', 'fa-solid fa-mountain',
+
+    // 기타
+    'fa-solid fa-gift', 'fa-solid fa-tag', 'fa-solid fa-tags', 'fa-solid fa-chart-line',
+    'fa-solid fa-chart-pie', 'fa-solid fa-chart-bar', 'fa-solid fa-magnifying-glass', 'fa-solid fa-link',
+    'fa-solid fa-paperclip', 'fa-solid fa-download', 'fa-solid fa-upload', 'fa-solid fa-battery-full',
+    'fa-solid fa-plug', 'fa-solid fa-print', 'fa-solid fa-trash', 'fa-solid fa-box'
+];
+
+const COLOR_ICONS = [
+    // 이모지 - 얼굴 및 감정
+    '😀', '😃', '😄', '😁', '😆', '😅', '🤣', '😂', '🙂', '🙃',
+    '😉', '😊', '😇', '🥰', '😍', '🤩', '😘', '😗', '😚', '😙',
+    '😋', '😛', '😜', '🤪', '😝', '🤑', '🤗', '🤭', '🤫', '🤔',
+    '🤐', '🤨', '😐', '😑', '😶', '😏', '😒', '🙄', '😬', '🤥',
+    '😌', '😔', '😪', '🤤', '😴', '😷', '🤒', '🤕', '🤢', '🤮',
+
+    // 동물
+    '🐶', '🐱', '🐭', '🐹', '🐰', '🦊', '🐻', '🐼', '🐨', '🐯',
+    '🦁', '🐮', '🐷', '🐸', '🐵', '🐔', '🐧', '🐦', '🐤', '🦆',
+    '🦅', '🦉', '🦇', '🐺', '🐗', '🐴', '🦄', '🐝', '🐛', '🦋',
+    '🐌', '🐞', '🐜', '🦟', '🦗', '🕷', '🐢', '🐍', '🦎', '🐙',
+    '🦑', '🦐', '🦀', '🐡', '🐠', '🐟', '🐬', '🐳', '🐋', '🦈',
+
+    // 식물 및 자연
+    '🌸', '🌺', '🌻', '🌷', '🌹', '🥀', '🌼', '🌿', '🍀', '🍁',
+    '🍂', '🍃', '🌾', '🌱', '🌲', '🌳', '🌴', '🌵', '🌊', '🌈',
+
+    // 음식 및 음료
+    '🍎', '🍏', '🍐', '🍊', '🍋', '🍌', '🍉', '🍇', '🍓', '🍈',
+    '🍒', '🍑', '🥭', '🍍', '🥥', '🥝', '🍅', '🥑', '🍆', '🥔',
+    '🥕', '🌽', '🌶', '🥒', '🥬', '🥦', '🧄', '🧅', '🍄', '🥜',
+    '🍞', '🥐', '🥖', '🥨', '🥯', '🧇', '🥞', '🧈', '🍕', '🍔',
+    '🌭', '🥪', '🌮', '🌯', '🥙', '🧆', '🍟', '🍗', '🍖', '🦴',
+    '☕', '🍵', '🧃', '🥤', '🍶', '🍺', '🍻', '🥂', '🍷', '🥃',
+    '🍰', '🎂', '🧁', '🍮', '🍩', '🍪', '🍫', '🍬', '🍭', '🍡',
+
+    // 활동 및 스포츠
+    '⚽', '🏀', '🏈', '⚾', '🥎', '🎾', '🏐', '🏉', '🥏', '🎱',
+    '🏓', '🏸', '🏒', '🏑', '🥍', '🏏', '🥅', '⛳', '🏹', '🎣',
+    '🥊', '🥋', '🎽', '🛹', '🛼', '⛸', '🥌', '🎿', '⛷', '🏂',
+
+    // 교통 수단
+    '🚗', '🚕', '🚙', '🚌', '🚎', '🏎', '🚓', '🚑', '🚒', '🚐',
+    '🚚', '🚛', '🚜', '🛴', '🚲', '🛵', '🏍', '🛺', '🚁', '🛩',
+    '✈️', '🚀', '🛸', '🚂', '🚊', '🚝', '🚄', '🚅', '🚆', '🚇',
+    '🚈', '🚉', '🚞', '⛴', '🛳', '⛵', '🚤', '🛶', '⚓',
+
+    // 장소 및 건물
+    '🏠', '🏡', '🏢', '🏣', '🏤', '🏥', '🏦', '🏨', '🏩', '🏪',
+    '🏫', '🏬', '🏭', '🏯', '🏰', '💒', '🗼', '🗽', '⛪', '🕌',
+    '🛕', '🕍', '⛩', '🕋', '⛲', '⛺', '🌁', '🌃', '🏙', '🌄',
+
+    // 물건 및 도구
+    '⌚', '📱', '💻', '⌨️', '🖥', '🖨', '🖱', '💽', '💾', '💿',
+    '📀', '📷', '📹', '🎥', '📞', '☎️', '📟', '📠', '📺', '📻',
+    '⏰', '⏱', '⏲', '🕰', '⏳', '⌛', '📡', '🔋', '🔌', '💡',
+    '🔦', '🕯', '🪔', '🧯', '🛢', '💸', '💵', '💴', '💶', '💷',
+    '🔨', '⚒', '🛠', '⛏', '🔧', '🔩', '⚙️', '⛓', '🔫', '💣',
+    '🔪', '🗡', '⚔️', '🛡', '🔐', '🔑', '🗝', '🔓', '🔒', '📌',
+
+    // 기호 및 이모지
+    '❤️', '🧡', '💛', '💚', '💙', '💜', '🖤', '🤍', '🤎', '💔',
+    '❣️', '💕', '💞', '💓', '💗', '💖', '💘', '💝', '⭐', '🌟',
+    '✨', '💫', '💥', '💢', '💦', '💨', '🔥', '☀️', '⛅', '☁️',
+    '🌤', '⛈', '🌧', '⚡', '❄️', '☃️', '⛄', '🌬', '💨', '🌪',
+    '🎈', '🎉', '🎊', '🎁', '🎀', '🏆', '🥇', '🥈', '🥉', '🏅'
+];
+
+let currentIconPageId = null;
+let currentIconTab = 'theme'; // 'theme' or 'color'
+
+function showIconPickerModal(pageId) {
+    currentIconPageId = pageId;
+    currentIconTab = 'theme'; // 기본 탭으로 시작
+    const modal = document.getElementById('icon-picker-modal');
+
+    // 탭 버튼 활성화 상태 업데이트
+    updateTabButtons();
+
+    // 아이콘 그리드 렌더링
+    renderIconGrid();
+
+    modal.classList.remove('hidden');
+}
+
+function updateTabButtons() {
+    const themeTabBtn = document.getElementById('icon-tab-theme');
+    const colorTabBtn = document.getElementById('icon-tab-color');
+
+    if (currentIconTab === 'theme') {
+        themeTabBtn.classList.add('active');
+        colorTabBtn.classList.remove('active');
+    } else {
+        themeTabBtn.classList.remove('active');
+        colorTabBtn.classList.add('active');
+    }
+}
+
+function switchIconTab(tab) {
+    currentIconTab = tab;
+    updateTabButtons();
+    renderIconGrid();
+}
+
+function renderIconGrid() {
+    const grid = document.getElementById('icon-picker-grid');
+    const page = appState.pages.find(p => p.id === currentIconPageId);
+    const currentIcon = page ? page.icon : null;
+
+    const icons = currentIconTab === 'theme' ? THEME_ICONS : COLOR_ICONS;
+
+    // 아이콘 그리드 생성
+    grid.innerHTML = '';
+    icons.forEach(icon => {
+        const button = document.createElement('button');
+        button.className = 'icon-picker-item';
+
+        if (currentIconTab === 'theme') {
+            // Font Awesome 아이콘
+            button.innerHTML = `<i class="${icon}"></i>`;
+        } else {
+            // 이모지
+            button.textContent = icon;
+            button.style.fontSize = '24px';
+        }
+
+        button.dataset.icon = icon;
+
+        // 현재 선택된 아이콘 표시
+        if (icon === currentIcon) {
+            button.classList.add('selected');
+        }
+
+        button.addEventListener('click', () => {
+            selectIcon(icon);
+        });
+
+        grid.appendChild(button);
+    });
+}
+
+function closeIconPickerModal() {
+    const modal = document.getElementById('icon-picker-modal');
+    modal.classList.add('hidden');
+    currentIconPageId = null;
+}
+
+async function selectIcon(iconClass) {
+    if (!currentIconPageId) return;
+
+    try {
+        const res = await secureFetch(`/api/pages/${encodeURIComponent(currentIconPageId)}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ icon: iconClass })
+        });
+
+        if (!res.ok) {
+            throw new Error('HTTP ' + res.status);
+        }
+
+        // 상태 업데이트
+        const page = appState.pages.find(p => p.id === currentIconPageId);
+        if (page) {
+            page.icon = iconClass;
+        }
+
+        renderPageList();
+        closeIconPickerModal();
+        alert('아이콘이 설정되었습니다.');
+    } catch (error) {
+        console.error('아이콘 설정 오류:', error);
+        alert('아이콘 설정 중 오류가 발생했습니다.');
+    }
+}
+
+async function removeIcon() {
+    if (!currentIconPageId) return;
+
+    try {
+        const res = await secureFetch(`/api/pages/${encodeURIComponent(currentIconPageId)}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ icon: '' })
+        });
+
+        if (!res.ok) {
+            throw new Error('HTTP ' + res.status);
+        }
+
+        // 상태 업데이트
+        const page = appState.pages.find(p => p.id === currentIconPageId);
+        if (page) {
+            page.icon = null;
+        }
+
+        renderPageList();
+        closeIconPickerModal();
+        alert('아이콘이 제거되었습니다.');
+    } catch (error) {
+        console.error('아이콘 제거 오류:', error);
+        alert('아이콘 제거 중 오류가 발생했습니다.');
+    }
+}
+
+function bindIconPickerModal() {
+    const modal = document.getElementById('icon-picker-modal');
+    const closeBtn = document.getElementById('close-icon-picker-btn');
+    const removeBtn = document.getElementById('remove-icon-btn');
+    const overlay = modal.querySelector('.modal-overlay');
+    const themeTabBtn = document.getElementById('icon-tab-theme');
+    const colorTabBtn = document.getElementById('icon-tab-color');
+
+    closeBtn.addEventListener('click', closeIconPickerModal);
+    overlay.addEventListener('click', closeIconPickerModal);
+    removeBtn.addEventListener('click', removeIcon);
+    themeTabBtn.addEventListener('click', () => switchIconTab('theme'));
+    colorTabBtn.addEventListener('click', () => switchIconTab('color'));
 }
 
 // ==================== Global Window Functions ====================

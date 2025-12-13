@@ -408,14 +408,14 @@
         <!-- 설정 모달 -->
         <div id="settings-modal" class="modal hidden">
             <div class="modal-overlay"></div>
-            <div class="modal-content">
+            <div class="modal-content settings-modal-content">
                 <div class="modal-header">
                     <h2>설정</h2>
                     <button id="close-settings-btn" class="modal-close-btn">
                         <i class="fa-solid fa-xmark"></i>
                     </button>
                 </div>
-                <div class="modal-body">
+                <div class="modal-body settings-modal-body">
                     <div class="settings-section">
                         <h3>계정 정보</h3>
                         <div class="settings-item">
@@ -427,18 +427,18 @@
                         <h3>보안</h3>
                         <div class="settings-item">
                             <label>TOTP 2단계 인증</label>
-                            <div style="display: flex; align-items: center; gap: 12px;">
+                            <div class="settings-controls">
                                 <span id="totp-status" class="settings-value">비활성화</span>
-                                <button id="totp-setup-btn" class="primary-button" style="padding: 4px 12px; font-size: 12px;">
+                                <button id="totp-setup-btn" class="primary-button settings-button">
                                     설정
                                 </button>
                             </div>
                         </div>
                         <div class="settings-item">
                             <label>패스키 2단계 인증</label>
-                            <div style="display: flex; align-items: center; gap: 12px;">
-                                <span class="settings-value" style="color: #9ca3af;">미구현</span>
-                                <button class="primary-button" style="padding: 4px 12px; font-size: 12px; opacity: 0.5; cursor: not-allowed;" disabled>
+                            <div class="settings-controls">
+                                <span class="settings-value settings-disabled">미구현</span>
+                                <button class="primary-button settings-button" disabled>
                                     설정
                                 </button>
                             </div>
@@ -456,11 +456,11 @@
                     </div>
                     <div class="settings-section">
                         <h3>계정 관리</h3>
-                        <div style="padding: 12px 0;">
-                            <button id="delete-account-btn" class="danger-button" style="padding: 6px 16px; font-size: 13px;">
+                        <div class="settings-danger-zone">
+                            <button id="delete-account-btn" class="danger-button">
                                 계정 영구 삭제
                             </button>
-                            <p style="margin: 8px 0 0 0; font-size: 12px; color: #dc2626; line-height: 1.5;">
+                            <p class="settings-warning">
                                 계정을 삭제하면 모든 데이터가 영구적으로 삭제되며 복구할 수 없습니다.
                             </p>
                         </div>
@@ -954,6 +954,45 @@
                         <button type="button" id="use-backup-code-btn" style="width: 100%; padding: 8px; background: transparent; color: #2d5f5d; border: 1px solid #2d5f5d; border-radius: 3px; cursor: pointer; font-size: 13px;">
                             백업 코드 사용
                         </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 아이콘 선택 모달 -->
+        <div id="icon-picker-modal" class="modal hidden">
+            <div class="modal-overlay"></div>
+            <div class="modal-content icon-picker-modal-content">
+                <div class="modal-header">
+                    <h2>페이지 아이콘 설정</h2>
+                    <button id="close-icon-picker-btn" class="modal-close-btn">
+                        <i class="fa-solid fa-xmark"></i>
+                    </button>
+                </div>
+                <div class="modal-body icon-picker-modal-body">
+                    <p class="icon-picker-description">
+                        페이지에 표시할 아이콘을 선택하세요.
+                    </p>
+                    <!-- 탭 및 해제 버튼 영역 -->
+                    <div class="icon-picker-header">
+                        <div class="icon-picker-tabs">
+                            <button id="icon-tab-theme" class="icon-tab-btn active">
+                                <i class="fa-solid fa-palette"></i>
+                                <span class="icon-tab-text">기본 테마</span>
+                            </button>
+                            <button id="icon-tab-color" class="icon-tab-btn">
+                                <i class="fa-solid fa-icons"></i>
+                                <span class="icon-tab-text">컬러 아이콘</span>
+                            </button>
+                        </div>
+                        <button type="button" id="remove-icon-btn" class="icon-remove-btn">
+                            <i class="fa-solid fa-xmark"></i>
+                            <span class="icon-remove-text">아이콘 해제</span>
+                        </button>
+                    </div>
+                    <!-- 아이콘 그리드 -->
+                    <div id="icon-picker-grid" class="icon-picker-grid">
+                        <!-- 아이콘들이 JavaScript로 동적 생성됨 -->
                     </div>
                 </div>
             </div>

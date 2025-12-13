@@ -253,11 +253,23 @@ export function renderPageList() {
                     const titleSpan = document.createElement("span");
                     titleSpan.className = "page-list-item-title";
 
-                    if (node.isEncrypted) {
-                        titleSpan.innerHTML = `<i class="fa-solid fa-lock" style="margin-right: 6px; color: #2d5f5d;"></i>${escapeHtml(node.title || "제목 없음")}`;
-                    } else {
-                        titleSpan.textContent = node.title || "제목 없음";
+                    // 아이콘 표시 로직
+                    let iconHtml = '';
+                    if (node.icon) {
+                        // 사용자가 설정한 아이콘 표시
+                        if (node.icon.startsWith('fa-')) {
+                            // Font Awesome 아이콘
+                            iconHtml = `<i class="${node.icon}" style="margin-right: 6px; color: #2d5f5d;"></i>`;
+                        } else {
+                            // 이모지
+                            iconHtml = `<span style="margin-right: 6px; font-size: 16px;">${node.icon}</span>`;
+                        }
+                    } else if (node.isEncrypted) {
+                        // 암호화 페이지는 자물쇠 아이콘 표시
+                        iconHtml = `<i class="fa-solid fa-lock" style="margin-right: 6px; color: #2d5f5d;"></i>`;
                     }
+
+                    titleSpan.innerHTML = iconHtml + escapeHtml(node.title || "제목 없음");
 
                     const dateSpan = document.createElement("span");
                     dateSpan.className = "page-list-item-date";

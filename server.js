@@ -541,6 +541,18 @@ async function initDb() {
         }
     }
 
+    // 페이지 아이콘 지정 기능 추가 (기본값 NULL - 아이콘 없음)
+    try {
+        await pool.execute(`
+            ALTER TABLE pages ADD COLUMN icon VARCHAR(100) NULL
+        `);
+        console.log("pages 테이블에 icon 컬럼 추가 완료");
+    } catch (error) {
+        if (error.code !== 'ER_DUP_FIELDNAME') {
+            console.warn("pages.icon 컬럼 추가 중 경고:", error.message);
+        }
+    }
+
     // collection_shares 테이블 생성 (사용자 간 직접 공유)
     await pool.execute(`
         CREATE TABLE IF NOT EXISTS collection_shares (
@@ -1356,7 +1368,7 @@ app.get("/api/pages", authMiddleware, async (req, res) => {
         // 소유한 페이지 + 소유한 컬렉션의 모든 페이지 + 공유받은 컬렉션의 페이지
         // 단, 암호화된 페이지는 공유 허용되었거나 본인이 만든 경우만 표시
         let query = `
-            SELECT DISTINCT p.id, p.title, p.updated_at, p.parent_id, p.sort_order, p.collection_id, p.is_encrypted, p.share_allowed, p.user_id
+            SELECT DISTINCT p.id, p.title, p.updated_at, p.parent_id, p.sort_order, p.collection_id, p.is_encrypted, p.share_allowed, p.user_id, p.icon
             FROM pages p
             LEFT JOIN collections c ON p.collection_id = c.id
             LEFT JOIN collection_shares cs ON p.collection_id = cs.collection_id AND cs.shared_with_user_id = ?
@@ -1385,7 +1397,8 @@ app.get("/api/pages", authMiddleware, async (req, res) => {
             collectionId: row.collection_id,
             isEncrypted: row.is_encrypted ? true : false,
             shareAllowed: row.share_allowed ? true : false,
-            userId: row.user_id
+            userId: row.user_id,
+            icon: row.icon || null
         }));
 
         console.log("GET /api/pages 응답 개수:", list.length);
@@ -1408,7 +1421,7 @@ app.get("/api/pages/:id", authMiddleware, async (req, res) => {
     try {
         // 소유한 페이지 또는 소유한 컬렉션의 페이지 또는 공유받은 컬렉션의 페이지
         const [rows] = await pool.execute(
-            `SELECT p.id, p.title, p.content, p.created_at, p.updated_at, p.parent_id, p.sort_order, p.collection_id, p.is_encrypted, p.share_allowed, p.user_id
+            `SELECT p.id, p.title, p.content, p.created_at, p.updated_at, p.parent_id, p.sort_order, p.collection_id, p.is_encrypted, p.share_allowed, p.user_id, p.icon
              FROM pages p
              LEFT JOIN collections c ON p.collection_id = c.id
              LEFT JOIN collection_shares cs ON p.collection_id = cs.collection_id AND cs.shared_with_user_id = ?
@@ -1434,7 +1447,8 @@ app.get("/api/pages/:id", authMiddleware, async (req, res) => {
             collectionId: row.collection_id,
             isEncrypted: row.is_encrypted ? true : false,
             shareAllowed: row.share_allowed ? true : false,
-            userId: row.user_id
+            userId: row.user_id,
+            icon: row.icon || null
         };
 
         console.log("GET /api/pages/:id 응답:", id);
@@ -1477,6 +1491,10 @@ app.post("/api/pages", authMiddleware, async (req, res) => {
         typeof req.body.collectionId === "string" && req.body.collectionId.trim() !== ""
             ? req.body.collectionId.trim()
             : null;
+    const icon =
+        typeof req.body.icon === "string" && req.body.icon.trim() !== ""
+            ? req.body.icon.trim()
+            : null;
 
     if (!collectionId) {
         return res.status(400).json({ error: "collectionId가 필요합니다." });
@@ -1511,10 +1529,10 @@ app.post("/api/pages", authMiddleware, async (req, res) => {
 
         await pool.execute(
             `
-            INSERT INTO pages (id, user_id, parent_id, title, content, sort_order, created_at, updated_at, collection_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO pages (id, user_id, parent_id, title, content, sort_order, created_at, updated_at, collection_id, icon)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `,
-            [id, userId, parentId, title, content, sortOrder, nowStr, nowStr, collectionId]
+            [id, userId, parentId, title, content, sortOrder, nowStr, nowStr, collectionId, icon]
         );
 
         const page = {
@@ -1525,7 +1543,8 @@ app.post("/api/pages", authMiddleware, async (req, res) => {
             sortOrder,
             collectionId,
             createdAt: now.toISOString(),
-            updatedAt: now.toISOString()
+            updatedAt: now.toISOString(),
+            icon
         };
 
         console.log("POST /api/pages 생성:", id);
@@ -1550,15 +1569,16 @@ app.put("/api/pages/:id", authMiddleware, async (req, res) => {
     const titleFromBody = typeof req.body.title === "string" ? sanitizeInput(req.body.title.trim()) : null;
     const contentFromBody = typeof req.body.content === "string" ? sanitizeHtmlContent(req.body.content) : null;
     const isEncryptedFromBody = typeof req.body.isEncrypted === "boolean" ? req.body.isEncrypted : null;
+    const iconFromBody = typeof req.body.icon === "string" ? req.body.icon.trim() : undefined;
 
-    if (!titleFromBody && !contentFromBody && isEncryptedFromBody === null) {
+    if (!titleFromBody && !contentFromBody && isEncryptedFromBody === null && iconFromBody === undefined) {
         return res.status(400).json({ error: "수정할 데이터 없음." });
     }
 
     try {
         // 페이지 조회
         const [rows] = await pool.execute(
-            `SELECT id, title, content, created_at, updated_at, parent_id, sort_order, collection_id, is_encrypted, user_id
+            `SELECT id, title, content, created_at, updated_at, parent_id, sort_order, collection_id, is_encrypted, user_id, icon
              FROM pages
              WHERE id = ?`,
             [id]
@@ -1580,6 +1600,7 @@ app.put("/api/pages/:id", authMiddleware, async (req, res) => {
         const newTitle = titleFromBody && titleFromBody !== "" ? titleFromBody : existing.title;
         const newContent = contentFromBody !== null ? contentFromBody : existing.content;
         const newIsEncrypted = isEncryptedFromBody !== null ? (isEncryptedFromBody ? 1 : 0) : existing.is_encrypted;
+        const newIcon = iconFromBody !== undefined ? (iconFromBody !== "" ? iconFromBody : null) : existing.icon;
         const now = new Date();
         const nowStr = formatDateForDb(now);
 
@@ -1589,16 +1610,16 @@ app.put("/api/pages/:id", authMiddleware, async (req, res) => {
         if (isBecomingEncrypted) {
             await pool.execute(
                 `UPDATE pages
-                 SET title = ?, content = ?, is_encrypted = ?, user_id = ?, updated_at = ?
+                 SET title = ?, content = ?, is_encrypted = ?, icon = ?, user_id = ?, updated_at = ?
                  WHERE id = ?`,
-                [newTitle, newContent, newIsEncrypted, userId, nowStr, id]
+                [newTitle, newContent, newIsEncrypted, newIcon, userId, nowStr, id]
             );
         } else {
             await pool.execute(
                 `UPDATE pages
-                 SET title = ?, content = ?, is_encrypted = ?, updated_at = ?
+                 SET title = ?, content = ?, is_encrypted = ?, icon = ?, updated_at = ?
                  WHERE id = ?`,
-                [newTitle, newContent, newIsEncrypted, nowStr, id]
+                [newTitle, newContent, newIsEncrypted, newIcon, nowStr, id]
             );
         }
 
@@ -1610,7 +1631,8 @@ app.put("/api/pages/:id", authMiddleware, async (req, res) => {
             sortOrder: existing.sort_order,
             collectionId: existing.collection_id,
             createdAt: toIsoString(existing.created_at),
-            updatedAt: now.toISOString()
+            updatedAt: now.toISOString(),
+            icon: newIcon
         };
 
         console.log("PUT /api/pages/:id 수정 완료:", id);
