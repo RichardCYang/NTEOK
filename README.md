@@ -16,11 +16,12 @@
 
 ### 주요 특징
 
-- **마크다운 편집기**: Tiptap 기반 블록 에디터
+- **마크다운 편집기**: Tiptap 기반 블록 에디터 (체크리스트 지원)
 - **End-to-End 암호화**: AES-256-GCM 방식의 클라이언트 측 암호화
 - **컬렉션 공유**: 사용자 간 협업 및 링크 공유
 - **계층적 구조**: 페이지 부모-자식 관계 지원
 - **2단계 인증**: TOTP 기반 보안 강화
+- **HTTPS 자동 인증서**: Let's Encrypt + DuckDNS 연동
 - **반응형 디자인**: 모바일, 태블릿, 데스크탑 최적화
 - **셀프 호스팅**: 독립적인 서버 운영 가능
 
@@ -35,7 +36,7 @@
 - 계정 삭제 기능
 
 ### 노트 편집
-- **블록 타입**: 문단, 제목(H1-H6), 목록(글머리/번호), 인용구, 코드 블록, 구분선, LaTeX 수식
+- **블록 타입**: 문단, 제목(H1-H6), 목록(글머리/번호), 체크리스트, 인용구, 코드 블록, 구분선, LaTeX 수식
 - **인라인 서식**: 굵게, 기울임, 취소선, 텍스트 색상
 - **정렬 옵션**: 왼쪽, 가운데, 오른쪽, 양쪽
 - **슬래시 명령**: `/` 입력으로 블록 타입 전환
@@ -71,6 +72,7 @@
 - **데이터베이스**: MySQL 8.x
 - **인증**: bcrypt (비밀번호 해싱), speakeasy (TOTP)
 - **보안**: cookie-parser, CSRF 토큰, SameSite 쿠키
+- **HTTPS**: acme-client (Let's Encrypt), dotenv (환경 변수)
 
 ### 프론트엔드
 - **코어**: 바닐라 JavaScript (ES6+ 모듈)
@@ -103,6 +105,7 @@ CREATE DATABASE nteok
 `.env` 파일 생성 또는 환경 변수 설정:
 
 ```bash
+# 기본 설정
 DB_HOST=localhost
 DB_PORT=3306
 DB_USER=root
@@ -112,7 +115,16 @@ PORT=3000
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=your_secure_password
 BCRYPT_SALT_ROUNDS=12
+
+# HTTPS 자동 인증서 설정 (선택 사항)
+# DuckDNS 도메인과 토큰을 설정하면 Let's Encrypt 인증서가 자동으로 발급됩니다.
+DUCKDNS_DOMAIN=your-domain.duckdns.org
+DUCKDNS_TOKEN=your-duckdns-token
+CERT_EMAIL=admin@example.com
+ENABLE_HTTP_REDIRECT=true
 ```
+
+자세한 환경 변수 설명은 `.env.example` 파일을 참조하세요.
 
 ### 3. 의존성 설치 및 실행
 
@@ -128,6 +140,93 @@ npm start
 기본 관리자 계정으로 로그인 후 비밀번호를 변경하세요.
 - 아이디: `admin` (또는 설정한 값)
 - 비밀번호: `admin` (또는 설정한 값)
+
+---
+
+## HTTPS 자동 인증서 설정
+
+NTEOK는 DuckDNS와 Let's Encrypt를 연동하여 HTTPS 인증서를 자동으로 발급하고 관리합니다.
+
+### 특징
+
+- ✅ **자동 인증서 발급**: Let's Encrypt DNS-01 Challenge
+- ✅ **자동 갱신**: 만료 30일 전 자동 갱신 (24시간 주기 체크)
+- ✅ **DuckDNS 연동**: TXT 레코드 기반 도메인 검증
+- ✅ **HTTP/HTTPS 자동 전환**: 설정에 따라 자동으로 프로토콜 선택
+- ✅ **순수 npm 라이브러리**: Certbot 등 외부 데몬 불필요
+
+### 설정 방법
+
+#### 1. DuckDNS 계정 생성
+
+1. [DuckDNS](https://www.duckdns.org)에 접속하여 계정 생성
+2. 원하는 도메인 등록 (예: `mynteok.duckdns.org`)
+3. 서버의 공개 IP 주소를 도메인에 연결
+4. API 토큰 복사
+
+#### 2. 환경 변수 설정
+
+`.env` 파일에 다음 내용 추가:
+
+```bash
+# DuckDNS 도메인 (반드시 .duckdns.org로 끝나야 함)
+DUCKDNS_DOMAIN=mynteok.duckdns.org
+
+# DuckDNS API 토큰
+DUCKDNS_TOKEN=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+
+# Let's Encrypt 인증서 이메일 (선택 사항)
+CERT_EMAIL=admin@example.com
+
+# HTTPS 포트 (기본값: 3000, 권장: 443)
+PORT=443
+
+# HTTP -> HTTPS 자동 리다이렉트 (선택 사항)
+ENABLE_HTTP_REDIRECT=true
+```
+
+#### 3. 서버 실행
+
+```bash
+npm start
+```
+
+서버가 시작되면 자동으로 다음 작업을 수행합니다:
+
+1. **기존 인증서 확인**: 유효한 인증서가 있으면 재사용
+2. **인증서 발급**: 없거나 만료된 경우 Let's Encrypt에서 새로 발급
+3. **DNS Challenge**: DuckDNS API를 통해 TXT 레코드 설정
+4. **HTTPS 서버 시작**: 발급된 인증서로 HTTPS 서버 실행
+
+#### 4. 인증서 저장 위치
+
+발급된 인증서는 `certs/` 디렉토리에 저장됩니다:
+
+```
+certs/
+├── account-key.pem       # ACME 계정 개인키
+├── domain-key.pem        # 도메인 개인키
+├── certificate.pem       # 인증서
+├── fullchain.pem         # 전체 체인 (인증서 + 중간 인증서)
+└── chain.pem             # 중간 인증서 체인
+```
+
+### 주의사항
+
+- **공개 IP 필요**: Let's Encrypt DNS Challenge는 공개 IP에서만 작동합니다.
+- **도메인 형식**: DuckDNS 도메인은 반드시 `.duckdns.org`로 끝나야 합니다.
+- **포트 권한**: 포트 80/443 사용 시 관리자 권한이 필요할 수 있습니다.
+- **DNS 전파 시간**: 최초 인증서 발급 시 약 2-3분 소요됩니다.
+- **자동 갱신**: 서버가 실행 중이면 만료 30일 전 자동으로 갱신됩니다.
+
+### 폴백 모드
+
+HTTPS 인증서 발급에 실패하면 자동으로 HTTP 모드로 폴백됩니다:
+
+```
+❌ HTTPS 인증서 발급 실패. HTTP 모드로 폴백합니다.
+⚠️  NTEOK 앱이 HTTP로 실행 중: http://localhost:3000
+```
 
 ---
 
@@ -208,7 +307,10 @@ npm start
 ```
 NTEOK/
 ├── server.js              # Express 서버 엔트리포인트
+├── cert-manager.js        # HTTPS 인증서 자동 발급 모듈
 ├── package.json           # 프로젝트 의존성
+├── .env.example           # 환경 변수 예시
+├── certs/                 # SSL/TLS 인증서 저장 (자동 생성)
 ├── public/                # 클라이언트 파일
 │   ├── index.html         # 메인 애플리케이션
 │   ├── login.html         # 로그인 페이지

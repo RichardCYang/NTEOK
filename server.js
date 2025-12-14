@@ -1,3 +1,5 @@
+require('dotenv').config();
+
 const express = require("express");
 const path = require("path");
 const mysql = require("mysql2/promise");
@@ -9,6 +11,9 @@ const DOMPurify = require("isomorphic-dompurify");
 const speakeasy = require("speakeasy");
 const QRCode = require("qrcode");
 const Y = require("yjs");
+const https = require("https");
+const http = require("http");
+const certManager = require("./cert-manager");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -2832,14 +2837,95 @@ app.post("/api/totp/verify-backup-code", totpLimiter, async (req, res) => {
 });
 
 /**
- * 서버 시작
+ * 서버 시작 (HTTPS 자동 설정)
  */
 (async () => {
     try {
         await initDb();
-        app.listen(PORT, () => {
-            console.log(`NTEOK 앱이 http://localhost:${PORT} 에서 실행 중.`);
-        });
+
+        // DuckDNS 설정 확인
+        const DUCKDNS_DOMAIN = process.env.DUCKDNS_DOMAIN;
+        const DUCKDNS_TOKEN = process.env.DUCKDNS_TOKEN;
+        const CERT_EMAIL = process.env.CERT_EMAIL || 'admin@example.com';
+
+        // HTTPS 설정이 있는 경우
+        if (DUCKDNS_DOMAIN && DUCKDNS_TOKEN) {
+            console.log('\n' + '='.repeat(80));
+            console.log('🔐 HTTPS 모드로 시작합니다.');
+            console.log(`   도메인: ${DUCKDNS_DOMAIN}`);
+            console.log('='.repeat(80) + '\n');
+
+            try {
+                // Let's Encrypt 인증서 발급/로드
+                const certData = await certManager.getCertificate(
+                    DUCKDNS_DOMAIN,
+                    DUCKDNS_TOKEN,
+                    CERT_EMAIL
+                );
+
+                // HTTPS 서버 생성
+                const httpsOptions = {
+                    key: certData.key,
+                    cert: certData.cert
+                };
+
+                const httpsServer = https.createServer(httpsOptions, app);
+
+                httpsServer.listen(PORT, () => {
+                    console.log('\n' + '='.repeat(80));
+                    console.log(`✅ NTEOK 서버가 HTTPS로 실행 중`);
+                    console.log(`   URL: https://${DUCKDNS_DOMAIN}:${PORT}`);
+                    console.log('='.repeat(80) + '\n');
+                });
+
+                // HTTP -> HTTPS 리다이렉트 서버 (포트 80)
+                if (process.env.ENABLE_HTTP_REDIRECT === 'true') {
+                    const HTTP_REDIRECT_PORT = 80;
+                    const redirectApp = express();
+
+                    redirectApp.use((req, res) => {
+                        const httpsUrl = `https://${DUCKDNS_DOMAIN}${PORT !== 443 ? ':' + PORT : ''}${req.url}`;
+                        res.redirect(301, httpsUrl);
+                    });
+
+                    http.createServer(redirectApp).listen(HTTP_REDIRECT_PORT, () => {
+                        console.log(`🔄 HTTP -> HTTPS 리다이렉트 활성화 (포트 ${HTTP_REDIRECT_PORT})`);
+                    });
+                }
+
+                // 인증서 자동 갱신 스케줄러
+                certManager.scheduleRenewal(DUCKDNS_DOMAIN, DUCKDNS_TOKEN, CERT_EMAIL, (newCert) => {
+                    console.log('\n' + '='.repeat(80));
+                    console.log('🔄 인증서가 갱신되었습니다.');
+                    console.log('⚠️  서버를 재시작하여 새 인증서를 적용해주세요.');
+                    console.log('='.repeat(80) + '\n');
+                });
+
+            } catch (certError) {
+                console.error('\n' + '='.repeat(80));
+                console.error('❌ HTTPS 인증서 발급 실패. HTTP 모드로 폴백합니다.');
+                console.error(`   오류: ${certError.message}`);
+                console.error('='.repeat(80) + '\n');
+
+                // HTTP 모드로 폴백
+                app.listen(PORT, () => {
+                    console.log(`⚠️  NTEOK 앱이 HTTP로 실행 중: http://localhost:${PORT}`);
+                });
+            }
+        } else {
+            // HTTPS 설정이 없는 경우 - HTTP 모드
+            console.log('\n' + '='.repeat(80));
+            console.log('ℹ️  HTTPS 설정이 없습니다. HTTP 모드로 시작합니다.');
+            console.log('   HTTPS를 사용하려면 .env 파일에 다음을 추가하세요:');
+            console.log('   - DUCKDNS_DOMAIN=your-domain.duckdns.org');
+            console.log('   - DUCKDNS_TOKEN=your-duckdns-token');
+            console.log('='.repeat(80) + '\n');
+
+            app.listen(PORT, () => {
+                console.log(`NTEOK 앱이 HTTP로 실행 중: http://localhost:${PORT}`);
+            });
+        }
+
     } catch (error) {
         console.error("서버 시작 중 치명적 오류:", error);
         process.exit(1);
