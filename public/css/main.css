@@ -757,6 +757,61 @@ body {
     color: #6b7280;
 }
 
+/* 체크리스트 스타일 */
+.editor .ProseMirror ul[data-type="taskList"] {
+    list-style: none;
+    padding: 0;
+    margin: 6px 0;
+}
+
+.editor .ProseMirror ul[data-type="taskList"] li {
+    display: flex;
+    align-items: center;
+    margin: 4px 0;
+}
+
+.editor .ProseMirror ul[data-type="taskList"] li > label {
+    display: flex;
+    align-items: center;
+    margin-right: 8px;
+    user-select: none;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.editor .ProseMirror ul[data-type="taskList"] li > label input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    margin: 0;
+    cursor: pointer;
+    border: 1px solid #d4cfc4;
+    border-radius: 3px;
+    background-color: #faf8f3;
+    flex-shrink: 0;
+}
+
+.editor .ProseMirror ul[data-type="taskList"] li > label input[type="checkbox"]:checked {
+    background-color: #2d5f5d;
+    border-color: #2d5f5d;
+}
+
+.editor .ProseMirror ul[data-type="taskList"] li > div {
+    flex: 1;
+    line-height: 1.5;
+}
+
+.editor .ProseMirror ul[data-type="taskList"] li > div p {
+    height: 36px;
+    margin: 0;
+    line-height: 36px;
+    padding: 0;
+}
+
+.editor .ProseMirror ul[data-type="taskList"] li[data-checked="true"] > div {
+    text-decoration: line-through;
+    color: #6b7280;
+}
+
 /* 사이드바 하단 버튼: 한국식 절제된 스타일 */
 .sidebar-footer {
     padding: 12px 14px 14px;

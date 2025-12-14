@@ -13,6 +13,10 @@ import TextStyle from "https://esm.sh/@tiptap/extension-text-style@2.0.0-beta.20
 // 폰트 패밀리(FontFamily) 익스텐션 ESM import
 import FontFamily from "https://esm.sh/@tiptap/extension-font-family@2.0.0-beta.209";
 
+// TaskList / TaskItem 익스텐션 ESM import
+import TaskList from "https://esm.sh/@tiptap/extension-task-list@2.0.0-beta.209";
+import TaskItem from "https://esm.sh/@tiptap/extension-task-item@2.0.0-beta.209";
+
 // Math 노드 import
 import { MathBlock, MathInline } from './math-node.js';
 
@@ -93,6 +97,15 @@ export const SLASH_ITEMS = [
         icon: "1.",
         command(editor) {
             editor.chain().focus().toggleOrderedList().run();
+        }
+    },
+    {
+        id: "taskList",
+        label: "체크리스트",
+        description: "완료 상태를 표시하는 목록",
+        icon: "☑",
+        command(editor) {
+            editor.chain().focus().toggleTaskList().run();
         }
     },
     {
@@ -401,6 +414,10 @@ export function initEditor() {
             Color,
             FontFamily.configure({
                 types: ["textStyle"],
+            }),
+            TaskList,
+            TaskItem.configure({
+                nested: true,
             }),
             MathBlock,
             MathInline,
