@@ -668,71 +668,32 @@
                     </button>
                 </div>
                 <div class="modal-body">
-                    <!-- 탭 메뉴 -->
-                    <div class="share-tabs">
-                        <button class="share-tab active" data-tab="user">사용자 공유</button>
-                        <button class="share-tab" data-tab="link">링크 공유</button>
-                    </div>
-
-                    <!-- 사용자 공유 탭 -->
-                    <div id="share-user-tab" class="share-tab-content active">
-                        <form id="share-user-form" style="margin-bottom: 24px;">
-                            <div style="display: flex; gap: 8px; margin-bottom: 16px;">
-                                <input
-                                    type="text"
-                                    id="share-username"
-                                    placeholder="사용자명 입력"
-                                    class="settings-select"
-                                    style="flex: 1;"
-                                    required
-                                />
-                                <select id="share-permission" class="settings-select">
-                                    <option value="READ">읽기 전용</option>
-                                    <option value="EDIT">편집 가능</option>
-                                    <option value="ADMIN">관리자</option>
-                                </select>
-                                <button type="submit" class="primary-button">공유</button>
-                            </div>
-                            <div id="share-error" style="color: #ef4444; font-size: 12px; min-height: 18px;"></div>
-                        </form>
-
-                        <!-- 공유 목록 -->
-                        <div>
-                            <h3 style="font-size: 14px; margin-bottom: 12px; color: #5a6169;">현재 공유 중</h3>
-                            <div id="share-list" style="display: flex; flex-direction: column; gap: 8px;">
-                                <!-- 동적 생성 -->
-                            </div>
+                    <!-- 사용자 공유 -->
+                    <form id="share-user-form" style="margin-bottom: 24px;">
+                        <div style="display: flex; gap: 8px; margin-bottom: 16px;">
+                            <input
+                                type="text"
+                                id="share-username"
+                                placeholder="사용자명 입력"
+                                class="settings-select"
+                                style="flex: 1;"
+                                required
+                            />
+                            <select id="share-permission" class="settings-select">
+                                <option value="READ">읽기 전용</option>
+                                <option value="EDIT">편집 가능</option>
+                                <option value="ADMIN">관리자</option>
+                            </select>
+                            <button type="submit" class="primary-button">공유</button>
                         </div>
-                    </div>
+                        <div id="share-error" style="color: #ef4444; font-size: 12px; min-height: 18px;"></div>
+                    </form>
 
-                    <!-- 링크 공유 탭 -->
-                    <div id="share-link-tab" class="share-tab-content">
-                        <form id="share-link-form" style="margin-bottom: 24px;">
-                            <div style="display: flex; gap: 8px; margin-bottom: 16px;">
-                                <select id="link-permission" class="settings-select">
-                                    <option value="READ">읽기 전용</option>
-                                    <option value="EDIT">편집 가능</option>
-                                </select>
-                                <input
-                                    type="number"
-                                    id="link-expires"
-                                    placeholder="만료일 (일)"
-                                    class="settings-select"
-                                    style="width: 120px;"
-                                    min="1"
-                                    max="365"
-                                />
-                                <button type="submit" class="primary-button">링크 생성</button>
-                            </div>
-                            <div id="link-error" style="color: #ef4444; font-size: 12px; min-height: 18px;"></div>
-                        </form>
-
-                        <!-- 링크 목록 -->
-                        <div>
-                            <h3 style="font-size: 14px; margin-bottom: 12px; color: #5a6169;">생성된 링크</h3>
-                            <div id="link-list" style="display: flex; flex-direction: column; gap: 8px;">
-                                <!-- 동적 생성 -->
-                            </div>
+                    <!-- 공유 목록 -->
+                    <div>
+                        <h3 style="font-size: 14px; margin-bottom: 12px; color: #5a6169;">현재 공유 중</h3>
+                        <div id="share-list" style="display: flex; flex-direction: column; gap: 8px;">
+                            <!-- 동적 생성 -->
                         </div>
                     </div>
                 </div>

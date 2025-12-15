@@ -30,9 +30,7 @@ import {
     openShareModal,
     closeShareModal,
     bindShareModal,
-    removeShare,
-    removeShareLink,
-    copyLinkToClipboard
+    removeShare
 } from './share-manager.js';
 import {
     initSettingsManager,
@@ -1148,8 +1146,6 @@ window.showEncryptionModal = showEncryptionModal;
 window.showDecryptionModal = showDecryptionModal;
 window.openShareModal = openShareModal;
 window.removeShare = removeShare;
-window.removeShareLink = removeShareLink;
-window.copyLinkToClipboard = copyLinkToClipboard;
 window.showReadonlyWarningModal = showReadonlyWarningModal;
 window.showDeletePermissionModal = showDeletePermissionModal;
 window.showEncryptPermissionModal = showEncryptPermissionModal;

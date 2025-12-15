@@ -1113,38 +1113,6 @@ body {
 }
 
 /* 공유 모달 스타일 */
-.share-tabs {
-    display: flex;
-    gap: 4px;
-    margin-bottom: 20px;
-    border-bottom: 1px solid #d4cfc4;
-}
-
-.share-tab {
-    padding: 10px 20px;
-    border: none;
-    background: none;
-    cursor: pointer;
-    font-size: 14px;
-    font-weight: 500;
-    color: #5a6169;
-    border-bottom: 2px solid transparent;
-    transition: all 0.1s ease;
-}
-
-.share-tab.active {
-    color: #2d5f5d;
-    border-bottom-color: #2d5f5d;
-}
-
-.share-tab-content {
-    display: none;
-}
-
-.share-tab-content.active {
-    display: block;
-}
-
 .share-item {
     display: flex;
     align-items: center;
@@ -1175,31 +1143,6 @@ body {
 .share-item-actions {
     display: flex;
     gap: 6px;
-}
-
-.link-item {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    padding: 12px;
-    background-color: #f5f2ed;
-    border-radius: 3px;
-    border: 1px solid #d4cfc4;
-}
-
-.link-item-url {
-    font-size: 12px;
-    color: #2d5f5d;
-    word-break: break-all;
-    font-family: monospace;
-}
-
-.link-item-meta {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    font-size: 11px;
-    color: #6b7280;
 }
 
 .shared-collection-indicator {
