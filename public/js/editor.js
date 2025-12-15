@@ -640,6 +640,11 @@ export function bindToolbar(editor) {
                 colorMenuElement.setAttribute("hidden", "");
                 colorDropdownElement.classList.remove("open");
             } else {
+                // 버튼 위치 계산
+                const buttonRect = button.getBoundingClientRect();
+                colorMenuElement.style.top = `${buttonRect.bottom + 4}px`;
+                colorMenuElement.style.left = `${buttonRect.left}px`;
+
                 colorMenuElement.removeAttribute("hidden");
                 colorDropdownElement.classList.add("open");
             }
@@ -656,6 +661,11 @@ export function bindToolbar(editor) {
                 fontMenuElement.setAttribute("hidden", "");
                 fontDropdownElement.classList.remove("open");
             } else {
+                // 버튼 위치 계산
+                const buttonRect = button.getBoundingClientRect();
+                fontMenuElement.style.top = `${buttonRect.bottom + 4}px`;
+                fontMenuElement.style.left = `${buttonRect.left}px`;
+
                 fontMenuElement.removeAttribute("hidden");
                 fontDropdownElement.classList.add("open");
             }
