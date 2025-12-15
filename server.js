@@ -207,6 +207,7 @@ function sanitizeHtmlContent(html) {
             'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
             'ul', 'ol', 'li', 'blockquote',
             'a', 'span', 'div',
+            'hr',
             'table', 'thead', 'tbody', 'tr', 'th', 'td'
         ],
         ALLOWED_ATTR: ['style', 'class', 'href', 'target', 'rel', 'data-type', 'data-latex', 'colspan', 'rowspan', 'colwidth'],
