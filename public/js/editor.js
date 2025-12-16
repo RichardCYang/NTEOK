@@ -88,6 +88,33 @@ export const SLASH_ITEMS = [
         }
     },
     {
+        id: "heading3",
+        label: "제목 3",
+        description: "작은 제목(Heading 3)",
+        icon: "H3",
+        command(editor) {
+            editor.chain().focus().setHeading({ level: 3 }).run();
+        }
+    },
+    {
+        id: "heading4",
+        label: "제목 4",
+        description: "더 작은 제목(Heading 4)",
+        icon: "H4",
+        command(editor) {
+            editor.chain().focus().setHeading({ level: 4 }).run();
+        }
+    },
+    {
+        id: "heading5",
+        label: "제목 5",
+        description: "가장 작은 제목(Heading 5)",
+        icon: "H5",
+        command(editor) {
+            editor.chain().focus().setHeading({ level: 5 }).run();
+        }
+    },
+    {
         id: "bulletList",
         label: "글머리 기호 목록",
         description: "점 목록 블록",
@@ -553,6 +580,15 @@ export function updateToolbarState(editor) {
             case "h2":
                 isActive = editor.isActive("heading", { level: 2 });
                 break;
+            case "h3":
+                isActive = editor.isActive("heading", { level: 3 });
+                break;
+            case "h4":
+                isActive = editor.isActive("heading", { level: 4 });
+                break;
+            case "h5":
+                isActive = editor.isActive("heading", { level: 5 });
+                break;
             case "bulletList":
                 isActive = editor.isActive("bulletList");
                 break;
@@ -731,6 +767,15 @@ export function bindToolbar(editor) {
                 break;
             case "h2":
                 editor.chain().focus().toggleHeading({ level: 2 }).run();
+                break;
+            case "h3":
+                editor.chain().focus().toggleHeading({ level: 3 }).run();
+                break;
+            case "h4":
+                editor.chain().focus().toggleHeading({ level: 4 }).run();
+                break;
+            case "h5":
+                editor.chain().focus().toggleHeading({ level: 5 }).run();
                 break;
             case "bulletList":
                 editor.chain().focus().toggleBulletList().run();
