@@ -76,6 +76,10 @@ certs/
 *.crt
 *.key
 
+# 사용자 업로드 커버 이미지 (default 폴더 제외)
+covers/*
+!covers/default/
+
 # parcel-bundler cache (https://parceljs.org/)
 .cache
 .parcel-cache

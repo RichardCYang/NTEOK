@@ -159,7 +159,7 @@ async function uploadCustomCover(file) {
         const formData = new FormData();
         formData.append('cover', file);
 
-        const res = await fetch(`/api/pages/${state.currentPageId}/cover`, {
+        const res = await secureFetch(`/api/pages/${state.currentPageId}/cover`, {
             method: 'POST',
             body: formData,
             credentials: 'include'
