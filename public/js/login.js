@@ -1,4 +1,20 @@
 let currentTempSessionId = null;
+let availableMethods = [];
+
+// SimpleWebAuthn 동적 import
+let SimpleWebAuthnBrowser = null;
+
+async function loadSimpleWebAuthn() {
+    if (SimpleWebAuthnBrowser) return SimpleWebAuthnBrowser;
+
+    try {
+        SimpleWebAuthnBrowser = await import('https://cdn.jsdelivr.net/npm/@simplewebauthn/browser@10.0.0/+esm');
+        return SimpleWebAuthnBrowser;
+    } catch (error) {
+        console.error('SimpleWebAuthn 로드 실패:', error);
+        throw new Error('SimpleWebAuthn 라이브러리를 로드할 수 없습니다.');
+    }
+}
 
 async function handleLogin(event) {
     event.preventDefault();
@@ -52,7 +68,20 @@ async function handleLogin(event) {
         // 2FA 검증 필요
         if (data.requires2FA && data.tempSessionId) {
             currentTempSessionId = data.tempSessionId;
-            showTotpVerifyModal();
+            availableMethods = data.availableMethods || [];
+
+            // 사용 가능한 2FA 방법이 1개면 바로 해당 방법으로, 2개 이상이면 선택 화면
+            if (availableMethods.length === 1) {
+                if (availableMethods[0] === 'passkey') {
+                    await startPasskeyAuth();
+                } else {
+                    showTotpVerifyModal();
+                }
+            } else if (availableMethods.length >= 2) {
+                show2FAMethodSelectModal();
+            } else {
+                errorEl.textContent = "2단계 인증 설정에 오류가 있습니다.";
+            }
             return;
         }
 
@@ -203,4 +232,121 @@ document.addEventListener("DOMContentLoaded", () => {
             }
         });
     }
+
+    // 2FA 방식 선택 모달 이벤트 바인딩
+    const selectPasskeyBtn = document.querySelector("#select-passkey-btn");
+    if (selectPasskeyBtn) {
+        selectPasskeyBtn.addEventListener("click", async () => {
+            close2FAMethodSelectModal();
+            await startPasskeyAuth();
+        });
+    }
+
+    const selectTotpBtn = document.querySelector("#select-totp-btn");
+    if (selectTotpBtn) {
+        selectTotpBtn.addEventListener("click", () => {
+            close2FAMethodSelectModal();
+            showTotpVerifyModal();
+        });
+    }
+
+    const cancelTwoFASelectBtn = document.querySelector("#cancel-twofa-select-btn");
+    if (cancelTwoFASelectBtn) {
+        cancelTwoFASelectBtn.addEventListener("click", close2FAMethodSelectModal);
+    }
+
+    // 패스키 인증 모달 이벤트 바인딩
+    const cancelPasskeyAuthBtn = document.querySelector("#cancel-passkey-auth-btn");
+    if (cancelPasskeyAuthBtn) {
+        cancelPasskeyAuthBtn.addEventListener("click", closePasskeyAuthModal);
+    }
+
+    const useTotpInsteadBtn = document.querySelector("#use-totp-instead-btn");
+    if (useTotpInsteadBtn) {
+        useTotpInsteadBtn.addEventListener("click", () => {
+            closePasskeyAuthModal();
+            showTotpVerifyModal();
+        });
+    }
 });
+
+// 2FA 방식 선택 모달
+function show2FAMethodSelectModal() {
+    const modal = document.querySelector("#twofa-method-select-modal");
+    const passkeyBtn = document.querySelector("#select-passkey-btn");
+    const totpBtn = document.querySelector("#select-totp-btn");
+
+    if (!modal) return;
+
+    // 사용 가능한 방법에 따라 버튼 표시
+    if (passkeyBtn) {
+        passkeyBtn.style.display = availableMethods.includes('passkey') ? 'block' : 'none';
+    }
+    if (totpBtn) {
+        totpBtn.style.display = availableMethods.includes('totp') ? 'block' : 'none';
+    }
+
+    modal.classList.remove("hidden");
+}
+
+function close2FAMethodSelectModal() {
+    const modal = document.querySelector("#twofa-method-select-modal");
+    if (modal) modal.classList.add("hidden");
+}
+
+// 패스키 인증
+async function startPasskeyAuth() {
+    const modal = document.querySelector("#passkey-auth-modal");
+    const errorEl = document.querySelector("#passkey-auth-error");
+
+    if (modal) modal.classList.remove("hidden");
+    if (errorEl) errorEl.textContent = "";
+
+    try {
+        // 1. 서버에서 인증 옵션 가져오기
+        const optionsRes = await fetch("/api/passkey/authenticate/options", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ tempSessionId: currentTempSessionId })
+        });
+
+        if (!optionsRes.ok) {
+            const errorData = await optionsRes.json();
+            throw new Error(errorData.error || "인증 옵션을 가져올 수 없습니다.");
+        }
+
+        const options = await optionsRes.json();
+
+        // 2. SimpleWebAuthn 브라우저 라이브러리로 인증 시작
+        const webAuthn = await loadSimpleWebAuthn();
+        const credential = await webAuthn.startAuthentication(options);
+
+        // 3. 서버에서 인증 검증
+        const verifyRes = await fetch("/api/passkey/authenticate/verify", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                credential: credential,
+                tempSessionId: currentTempSessionId
+            })
+        });
+
+        if (!verifyRes.ok) {
+            const errorData = await verifyRes.json();
+            throw new Error(errorData.error || "인증에 실패했습니다.");
+        }
+
+        // 로그인 성공
+        window.location.href = "/";
+    } catch (error) {
+        console.error("패스키 인증 실패:", error);
+        if (errorEl) {
+            errorEl.textContent = error.message || "패스키 인증 중 오류가 발생했습니다.";
+        }
+    }
+}
+
+function closePasskeyAuthModal() {
+    const modal = document.querySelector("#passkey-auth-modal");
+    if (modal) modal.classList.add("hidden");
+}

@@ -48,6 +48,10 @@ import {
     bindTotpModals
 } from './totp-manager.js';
 import {
+    updatePasskeyStatus,
+    bindPasskeyModals
+} from './passkey-manager.js';
+import {
     bindAccountManagementButtons
 } from './account-manager.js';
 import {
@@ -857,6 +861,7 @@ async function init() {
     bindIconPickerModal();
     bindMobileSidebar();
     bindTotpModals();
+    bindPasskeyModals();
     bindAccountManagementButtons();
 
     // 데이터 로드

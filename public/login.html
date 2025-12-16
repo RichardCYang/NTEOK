@@ -23,6 +23,7 @@
     />
     <link rel="stylesheet" href="/css/login.css" />
     <link rel="stylesheet" href="/css/main.css" />
+
 </head>
 <body class="login-body">
     <div class="login-shell">
@@ -138,6 +139,68 @@
                 <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid #d4cfc4;">
                     <button type="button" id="use-backup-code-btn" style="width: 100%; padding: 8px; background: transparent; color: #2d5f5d; border: 1px solid #2d5f5d; border-radius: 3px; cursor: pointer; font-size: 13px;">
                         백업 코드 사용
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 2FA 방식 선택 모달 -->
+    <div id="twofa-method-select-modal" class="modal hidden">
+        <div class="modal-overlay"></div>
+        <div class="modal-content" style="max-width: 400px;">
+            <div class="modal-header">
+                <h2>2단계 인증</h2>
+            </div>
+            <div class="modal-body">
+                <p style="margin-bottom: 16px; color: #6b7280; font-size: 14px;">
+                    로그인을 완료하려면 2단계 인증이 필요합니다.
+                </p>
+                <div style="display: flex; flex-direction: column; gap: 12px;">
+                    <button type="button" id="select-passkey-btn" class="twofa-method-btn" style="display: none; width: 100%; padding: 14px; background: #2d5f5d; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 14px; font-weight: 500; text-align: left;">
+                        <i class="fa-solid fa-key" style="margin-right: 8px;"></i>
+                        패스키로 인증
+                    </button>
+                    <button type="button" id="select-totp-btn" class="twofa-method-btn" style="display: none; width: 100%; padding: 14px; background: #2d5f5d; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 14px; font-weight: 500; text-align: left;">
+                        <i class="fa-solid fa-mobile-screen" style="margin-right: 8px;"></i>
+                        인증 앱으로 인증
+                    </button>
+                </div>
+                <div style="margin-top: 16px;">
+                    <button type="button" id="cancel-twofa-select-btn" style="width: 100%; padding: 8px; background: transparent; color: #6b7280; border: 1px solid #d4cfc4; border-radius: 3px; cursor: pointer; font-size: 13px;">
+                        취소
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 패스키 인증 모달 -->
+    <div id="passkey-auth-modal" class="modal hidden">
+        <div class="modal-overlay"></div>
+        <div class="modal-content" style="max-width: 400px;">
+            <div class="modal-header">
+                <h2>패스키 인증</h2>
+            </div>
+            <div class="modal-body">
+                <div style="text-align: center; padding: 20px;">
+                    <i class="fa-solid fa-key" style="font-size: 48px; color: #2d5f5d; margin-bottom: 16px;"></i>
+                    <p style="margin-bottom: 16px; color: #6b7280; font-size: 14px;">
+                        디바이스의 생체 인증을 사용하여 로그인하세요.
+                    </p>
+                    <p style="color: #9ca3af; font-size: 12px;">
+                        지문, 얼굴 인식 또는 PIN을 사용할 수 있습니다.
+                    </p>
+                </div>
+                <div id="passkey-auth-error" style="color: #ef4444; font-size: 12px; margin-bottom: 16px; min-height: 18px; text-align: center;"></div>
+                <div style="display: flex; gap: 8px; justify-content: flex-end;">
+                    <button type="button" id="cancel-passkey-auth-btn" style="padding: 10px 20px; background: #6b7280; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 14px;">
+                        취소
+                    </button>
+                </div>
+                <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid #d4cfc4;">
+                    <button type="button" id="use-totp-instead-btn" style="width: 100%; padding: 8px; background: transparent; color: #2d5f5d; border: 1px solid #2d5f5d; border-radius: 3px; cursor: pointer; font-size: 13px;">
+                        OTP 코드로 인증
                     </button>
                 </div>
             </div>

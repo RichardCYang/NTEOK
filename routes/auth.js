@@ -50,7 +50,7 @@ module.exports = (dependencies) => {
         try {
             const [rows] = await pool.execute(
                 `
-                SELECT id, username, password_hash, encryption_salt, totp_enabled
+                SELECT id, username, password_hash, encryption_salt, totp_enabled, passkey_enabled
                 FROM users
                 WHERE username = ?
                 `,
@@ -70,8 +70,8 @@ module.exports = (dependencies) => {
                 return res.status(401).json({ error: "아이디 또는 비밀번호가 올바르지 않습니다." });
             }
 
-            // 2FA(TOTP) 활성화 확인
-            if (user.totp_enabled) {
+            // 2FA(TOTP 또는 패스키) 활성화 확인
+            if (user.totp_enabled || user.passkey_enabled) {
                 // 임시 세션 생성 (2FA 검증 대기)
                 const tempSessionId = crypto.randomBytes(32).toString("hex");
                 const now = new Date();
@@ -82,10 +82,16 @@ module.exports = (dependencies) => {
                     lastAccessedAt: now.getTime()
                 });
 
+                // 사용 가능한 2FA 방법 목록
+                const availableMethods = [];
+                if (user.totp_enabled) availableMethods.push('totp');
+                if (user.passkey_enabled) availableMethods.push('passkey');
+
                 // 2FA 검증 필요 응답
                 return res.json({
                     ok: false,
                     requires2FA: true,
+                    availableMethods: availableMethods,
                     tempSessionId: tempSessionId
                 });
             }

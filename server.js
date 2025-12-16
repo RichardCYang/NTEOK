@@ -117,6 +117,23 @@ function cleanupExpiredSessions() {
 setInterval(cleanupExpiredSessions, 5 * 60 * 1000);
 
 /**
+ * 만료된 WebAuthn 챌린지 정리
+ */
+function cleanupExpiredWebAuthnChallenges() {
+    const now = formatDateForDb(new Date());
+    pool.execute("DELETE FROM webauthn_challenges WHERE expires_at < ?", [now])
+        .then(([result]) => {
+            if (result.affectedRows > 0) {
+                console.log(`[WebAuthn 챌린지 정리] ${result.affectedRows}개의 만료된 챌린지를 정리했습니다.`);
+            }
+        })
+        .catch(err => console.error("WebAuthn 챌린지 정리 중 오류:", err));
+}
+
+// 5분마다 WebAuthn 챌린지 정리 작업 실행
+setInterval(cleanupExpiredWebAuthnChallenges, 5 * 60 * 1000);
+
+/**
  * Date -> MySQL DATETIME 문자열 (YYYY-MM-DD HH:MM:SS)
  */
 function formatDateForDb(date) {
@@ -375,7 +392,9 @@ function csrfMiddleware(req, res, next) {
     if (req.path === "/auth/login" ||
         req.path === "/auth/register" ||
         req.path === "/totp/verify-login" ||
-        req.path === "/totp/verify-backup-code") {
+        req.path === "/totp/verify-backup-code" ||
+        req.path === "/passkey/authenticate/options" ||
+        req.path === "/passkey/authenticate/verify") {
         return next();
     }
 
@@ -659,6 +678,55 @@ async function initDb() {
         )
     `);
 
+    // users 테이블에 passkey_enabled 컬럼 추가 (패스키 2FA)
+    try {
+        await pool.execute(`
+            ALTER TABLE users ADD COLUMN passkey_enabled TINYINT(1) NOT NULL DEFAULT 0
+        `);
+        console.log("users 테이블에 passkey_enabled 컬럼 추가 완료");
+    } catch (error) {
+        if (error.code !== 'ER_DUP_FIELDNAME') {
+            console.warn("passkey_enabled 컬럼 추가 중 경고:", error.message);
+        }
+    }
+
+    // passkeys 테이블 생성 (WebAuthn 크레덴셜 저장)
+    await pool.execute(`
+        CREATE TABLE IF NOT EXISTS passkeys (
+            id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            user_id INT NOT NULL,
+            credential_id VARCHAR(512) NOT NULL UNIQUE,
+            public_key TEXT NOT NULL,
+            counter BIGINT UNSIGNED NOT NULL DEFAULT 0,
+            transports VARCHAR(255) NULL,
+            aaguid VARCHAR(36) NULL,
+            device_name VARCHAR(100) NULL,
+            last_used_at DATETIME NULL,
+            created_at DATETIME NOT NULL,
+            CONSTRAINT fk_passkeys_user
+                FOREIGN KEY (user_id)
+                REFERENCES users(id)
+                ON DELETE CASCADE,
+            INDEX idx_user_id (user_id),
+            INDEX idx_credential_id (credential_id)
+        )
+    `);
+
+    // webauthn_challenges 테이블 생성 (임시 챌린지 저장)
+    await pool.execute(`
+        CREATE TABLE IF NOT EXISTS webauthn_challenges (
+            id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            user_id INT NULL,
+            session_id VARCHAR(64) NOT NULL,
+            challenge VARCHAR(255) NOT NULL,
+            operation VARCHAR(20) NOT NULL,
+            created_at DATETIME NOT NULL,
+            expires_at DATETIME NOT NULL,
+            INDEX idx_session_id (session_id),
+            INDEX idx_expires_at (expires_at)
+        )
+    `);
+
     // 컬렉션이 없는 기존 사용자 데이터 마이그레이션
     await backfillCollections();
 }
@@ -826,6 +894,15 @@ const totpLimiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15분
     max: 10, // 최대 10번 시도
     message: { error: "너무 많은 인증 시도가 발생했습니다. 15분 후 다시 시도해 주세요." },
+    standardHeaders: true,
+    legacyHeaders: false,
+});
+
+// 패스키 인증 레이트 리밋 (브루트포스 방지)
+const passkeyLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15분
+    max: 10, // 최대 10번 시도
+    message: { error: "너무 많은 패스키 인증 요청이 발생했습니다. 잠시 후 다시 시도해 주세요." },
     standardHeaders: true,
     legacyHeaders: false,
 });
@@ -1139,6 +1216,7 @@ const coverUpload = multer({
             yjsDocuments,
             authLimiter,
             totpLimiter,
+            passkeyLimiter,
             sseConnectionLimiter,
             SESSION_COOKIE_NAME,
             CSRF_COOKIE_NAME,
@@ -1159,6 +1237,7 @@ const coverUpload = multer({
         const sharesRoutes = require('./routes/shares')(routeDependencies);
         const syncRoutes = require('./routes/sync')(routeDependencies);
         const totpRoutes = require('./routes/totp')(routeDependencies);
+        const passkeyRoutes = require('./routes/passkey')(routeDependencies);
 
         // 라우트 등록
         app.use('/', indexRoutes);
@@ -1168,6 +1247,7 @@ const coverUpload = multer({
         app.use('/api', sharesRoutes);
         app.use('/api', syncRoutes);
         app.use('/api/totp', totpRoutes);
+        app.use('/api/passkey', passkeyRoutes);
 
         // DuckDNS 설정 확인
         const DUCKDNS_DOMAIN = process.env.DUCKDNS_DOMAIN;
