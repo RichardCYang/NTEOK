@@ -60,7 +60,8 @@ import {
 import {
     initCoverManager,
     showCover,
-    hideCover
+    hideCover,
+    updateCoverButtonsVisibility
 } from './cover-manager.js';
 
 // ==================== Global State ====================
@@ -592,6 +593,9 @@ async function closeReadonlyWarningModal() {
         if (textEl) {
             textEl.textContent = "쓰기모드";
         }
+
+        // 읽기모드로 전환 시 커버 버튼 숨김
+        updateCoverButtonsVisibility();
 
         if (appState.currentPageId) {
             try {

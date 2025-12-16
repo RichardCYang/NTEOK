@@ -73,6 +73,7 @@ export function showCover(coverImage, coverPosition = 50) {
     const container = document.getElementById('page-cover-container');
     const imageEl = document.getElementById('page-cover-image');
     const addBtn = document.getElementById('add-cover-btn');
+    const overlay = container?.querySelector('.page-cover-overlay');
 
     if (container && imageEl) {
         container.style.display = 'block';
@@ -81,6 +82,11 @@ export function showCover(coverImage, coverPosition = 50) {
 
         // 커버가 있으면 커버 추가 버튼 숨김
         if (addBtn) addBtn.style.display = 'none';
+
+        // 쓰기모드일 때만 커버 편집 버튼 표시
+        if (overlay) {
+            overlay.style.display = state?.isWriteMode ? 'flex' : 'none';
+        }
     }
 }
 
@@ -295,6 +301,26 @@ function stopRepositioning() {
 function closeCoverModal() {
     const modal = document.getElementById('cover-modal');
     if (modal) modal.classList.add('hidden');
+}
+
+/**
+ * 커버 버튼 표시 상태 업데이트 (모드 전환 시 호출)
+ */
+export function updateCoverButtonsVisibility() {
+    const container = document.getElementById('page-cover-container');
+    const overlay = container?.querySelector('.page-cover-overlay');
+    const addBtn = document.getElementById('add-cover-btn');
+
+    // 커버 편집 버튼 (변경, 위치 조정, 제거)
+    if (overlay) {
+        overlay.style.display = state?.isWriteMode ? 'flex' : 'none';
+    }
+
+    // 커버 추가 버튼 (커버가 없을 때만 표시)
+    if (addBtn) {
+        const hasNoCover = !container || container.style.display === 'none';
+        addBtn.style.display = (state?.isWriteMode && hasNoCover) ? 'flex' : 'none';
+    }
 }
 
 async function loadUserCovers() {

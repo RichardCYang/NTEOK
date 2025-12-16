@@ -5,7 +5,7 @@
 import { secureFetch } from './ui-utils.js';
 import { escapeHtml, showErrorInEditor } from './ui-utils.js';
 import { startPageSync, stopPageSync, startCollectionSync, stopCollectionSync } from './sync-manager.js';
-import { showCover, hideCover } from './cover-manager.js';
+import { showCover, hideCover, updateCoverButtonsVisibility } from './cover-manager.js';
 
 // 전역 상태 (app.js에서 전달받음)
 let state = {
@@ -354,6 +354,9 @@ export async function loadPage(id) {
         if (textEl) {
             textEl.textContent = "쓰기모드";
         }
+
+        // 읽기모드로 전환 시 커버 버튼 숨김
+        updateCoverButtonsVisibility();
     }
 
     try {
@@ -521,11 +524,6 @@ export async function toggleEditMode() {
             toolbar.classList.remove("visible");
         }
 
-        // 읽기모드 진입 시 커버 추가 버튼 숨김
-        if (addCoverBtn) {
-            addCoverBtn.style.display = 'none';
-        }
-
         modeToggleBtn.classList.remove("write-mode");
         if (iconEl) {
             iconEl.className = "fa-solid fa-pencil";
@@ -533,6 +531,9 @@ export async function toggleEditMode() {
         if (textEl) {
             textEl.textContent = "쓰기모드";
         }
+
+        // 읽기모드 진입 시 커버 버튼 숨김
+        updateCoverButtonsVisibility();
     } else {
         state.isWriteMode = true;
         state.editor.setEditable(true);
@@ -543,11 +544,6 @@ export async function toggleEditMode() {
             toolbar.classList.add("visible");
         }
 
-        // 쓰기모드 진입 시 커버가 없으면 추가 버튼 표시
-        if (addCoverBtn && coverContainer && coverContainer.style.display === 'none') {
-            addCoverBtn.style.display = 'flex';
-        }
-
         modeToggleBtn.classList.add("write-mode");
         if (iconEl) {
             iconEl.className = "fa-solid fa-book-open";
@@ -555,6 +551,9 @@ export async function toggleEditMode() {
         if (textEl) {
             textEl.textContent = "읽기모드";
         }
+
+        // 쓰기모드 진입 시 커버 버튼 표시
+        updateCoverButtonsVisibility();
     }
 }
 
