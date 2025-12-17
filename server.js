@@ -816,6 +816,107 @@ async function initDb() {
         )
     `);
 
+    // ============================================================
+    // E2EE 시스템 재설계: 마스터 키 기반 자동 암호화
+    // ============================================================
+
+    // users 테이블에 master_key_salt 컬럼 추가 (마스터 키 유도용)
+    try {
+        await pool.execute(`
+            ALTER TABLE users ADD COLUMN master_key_salt VARCHAR(255) NULL
+        `);
+        console.log("users 테이블에 master_key_salt 컬럼 추가 완료");
+    } catch (error) {
+        if (error.code !== 'ER_DUP_FIELDNAME') {
+            console.warn("master_key_salt 컬럼 추가 중 경고:", error.message);
+        }
+    }
+
+    // pages 테이블에 암호화 필드 추가
+    try {
+        await pool.execute(`
+            ALTER TABLE pages ADD COLUMN content_encrypted MEDIUMTEXT NULL
+        `);
+        console.log("pages 테이블에 content_encrypted 컬럼 추가 완료");
+    } catch (error) {
+        if (error.code !== 'ER_DUP_FIELDNAME') {
+            console.warn("content_encrypted 컬럼 추가 중 경고:", error.message);
+        }
+    }
+
+    try {
+        await pool.execute(`
+            ALTER TABLE pages ADD COLUMN title_encrypted VARCHAR(512) NULL
+        `);
+        console.log("pages 테이블에 title_encrypted 컬럼 추가 완료");
+    } catch (error) {
+        if (error.code !== 'ER_DUP_FIELDNAME') {
+            console.warn("title_encrypted 컬럼 추가 중 경고:", error.message);
+        }
+    }
+
+    try {
+        await pool.execute(`
+            ALTER TABLE pages ADD COLUMN search_index_encrypted TEXT NULL
+        `);
+        console.log("pages 테이블에 search_index_encrypted 컬럼 추가 완료");
+    } catch (error) {
+        if (error.code !== 'ER_DUP_FIELDNAME') {
+            console.warn("search_index_encrypted 컬럼 추가 중 경고:", error.message);
+        }
+    }
+
+    // collections 테이블에 암호화 관련 컬럼 추가
+    try {
+        await pool.execute(`
+            ALTER TABLE collections ADD COLUMN is_encrypted TINYINT(1) NOT NULL DEFAULT 0
+        `);
+        console.log("collections 테이블에 is_encrypted 컬럼 추가 완료");
+    } catch (error) {
+        if (error.code !== 'ER_DUP_FIELDNAME') {
+            console.warn("collections.is_encrypted 컬럼 추가 중 경고:", error.message);
+        }
+    }
+
+    try {
+        await pool.execute(`
+            ALTER TABLE collections ADD COLUMN encryption_key_encrypted TEXT NULL
+        `);
+        console.log("collections 테이블에 encryption_key_encrypted 컬럼 추가 완료");
+    } catch (error) {
+        if (error.code !== 'ER_DUP_FIELDNAME') {
+            console.warn("collections.encryption_key_encrypted 컬럼 추가 중 경고:", error.message);
+        }
+    }
+
+    // collection_encryption_keys 테이블 생성 (공유 컬렉션 키 관리)
+    await pool.execute(`
+        CREATE TABLE IF NOT EXISTS collection_encryption_keys (
+            id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            collection_id VARCHAR(64) NOT NULL,
+            user_id INT NOT NULL,
+            encrypted_key TEXT NOT NULL,
+            created_at DATETIME NOT NULL,
+            updated_at DATETIME NOT NULL,
+            CONSTRAINT fk_collection_encryption_keys_collection
+                FOREIGN KEY (collection_id)
+                REFERENCES collections(id)
+                ON DELETE CASCADE,
+            CONSTRAINT fk_collection_encryption_keys_user
+                FOREIGN KEY (user_id)
+                REFERENCES users(id)
+                ON DELETE CASCADE,
+            CONSTRAINT uc_collection_encryption_keys_unique
+                UNIQUE (collection_id, user_id),
+            INDEX idx_collection_user (collection_id, user_id)
+        )
+    `);
+    console.log("collection_encryption_keys 테이블 생성 완료");
+
+    // ============================================================
+    // E2EE 시스템 재설계 완료
+    // ============================================================
+
     // 컬렉션이 없는 기존 사용자 데이터 마이그레이션
     await backfillCollections();
 }
@@ -1071,11 +1172,22 @@ async function saveYjsDocToDatabase(pageId, ydoc) {
         const rawContent = extractHtmlFromYDoc(ydoc);
         const content = sanitizeHtmlContent(rawContent);
 
+        // E2EE: 암호화된 페이지는 content를 빈 문자열로 저장
+        const [rows] = await pool.execute(
+            'SELECT is_encrypted FROM pages WHERE id = ?',
+            [pageId]
+        );
+
+        let finalContent = content;
+        if (rows.length > 0 && rows[0].is_encrypted === 1) {
+            finalContent = '';  // 암호화된 페이지는 content 비움
+        }
+
         await pool.execute(
             `UPDATE pages
              SET title = ?, content = ?, icon = ?, sort_order = ?, parent_id = ?, updated_at = NOW()
              WHERE id = ?`,
-            [title, content, icon, sortOrder, parentId, pageId]
+            [title, finalContent, icon, sortOrder, parentId, pageId]
         );
     } catch (error) {
         console.error(`[SSE] 페이지 저장 실패 (${pageId}):`, error);

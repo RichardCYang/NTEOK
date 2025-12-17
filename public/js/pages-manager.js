@@ -15,7 +15,8 @@ let state = {
     currentPageId: null,
     currentCollectionId: null,
     expandedCollections: new Set(),
-    isWriteMode: false
+    isWriteMode: false,
+    currentPageIsEncrypted: false  // 현재 페이지의 암호화 상태
 };
 
 /**
@@ -65,8 +66,11 @@ export async function fetchPageList() {
         const data = await res.json();
         console.log("페이지 목록 응답:", data);
 
+        // 제목은 평문으로 저장되므로 복호화 불필요
+        const pages = Array.isArray(data) ? data : [];
+
         state.pages.length = 0;
-        state.pages.push(...(Array.isArray(data) ? data : []));
+        state.pages.push(...pages);
 
         renderPageList();
 
@@ -369,25 +373,44 @@ export async function loadPage(id) {
         const page = await res.json();
         console.log("단일 페이지 응답:", page);
 
-        // 암호화된 페이지인 경우 복호화 모달 표시
-        if (page.isEncrypted) {
-            if (page.collectionId) {
-                state.currentCollectionId = page.collectionId;
-                state.expandedCollections.add(page.collectionId);
-            }
-            // showDecryptionModal은 app.js에서 처리
-            window.showDecryptionModal(page);
-            return;
-        }
-
+        // 현재 페이지 상태 설정
         state.currentPageId = page.id;
         if (page.collectionId) {
             state.currentCollectionId = page.collectionId;
             state.expandedCollections.add(page.collectionId);
         }
 
-        let title = page.title || "";
-        let content = page.content || "<p></p>";
+        let title = "";
+        let content = "<p></p>";
+
+        // 투명한 복호화
+        if (page.isEncrypted) {
+            state.currentPageIsEncrypted = true;
+
+            // 제목은 평문으로 저장됨
+            title = page.title || "";
+
+            // 컬렉션 타입 확인
+            const collection = state.collections.find(c => c.id === page.collectionId);
+            const isSharedCollection = collection && (collection.isShared || !collection.isOwner);
+
+            if (isSharedCollection && collection.isEncrypted) {
+                // 암호화된 공유 컬렉션: 컬렉션 키로 복호화
+                const collectionKey = await getCollectionKey(collection.id);
+                content = await cryptoManager.decryptWithKey(page.contentEncrypted, collectionKey);
+            } else {
+                // 개인 컬렉션: 마스터 키로 복호화
+                if (!cryptoManager.isMasterKeyInitialized()) {
+                    throw new Error('마스터 키가 초기화되지 않았습니다. 다시 로그인해 주세요.');
+                }
+                content = await cryptoManager.decryptWithMasterKey(page.contentEncrypted);
+            }
+        } else {
+            // 평문 페이지
+            state.currentPageIsEncrypted = false;
+            title = page.title || "";
+            content = page.content || "<p></p>";
+        }
 
         const titleInput = document.querySelector("#page-title-input");
         if (titleInput) {
@@ -426,7 +449,23 @@ export async function loadPage(id) {
 }
 
 /**
- * 현재 페이지 저장
+ * 검색 키워드 추출 (E2EE 시스템 재설계)
+ */
+function extractSearchKeywords(title, htmlContent) {
+    const tempDiv = document.createElement('div');
+    tempDiv.innerHTML = htmlContent;
+    const textContent = tempDiv.textContent || '';
+    const fullText = title + ' ' + textContent;
+    const words = fullText
+        .toLowerCase()
+        .replace(/[^\w\sㄱ-ㅎㅏ-ㅣ가-힣]/g, ' ')
+        .split(/\s+/)
+        .filter(word => word.length >= 2);
+    return [...new Set(words)];
+}
+
+/**
+ * 현재 페이지 저장 (E2EE 시스템 재설계 - 투명한 암호화)
  */
 export async function saveCurrentPage() {
     const titleInput = document.querySelector("#page-title-input");
@@ -444,15 +483,62 @@ export async function saveCurrentPage() {
     let content = state.editor.getHTML();
 
     try {
+        // 현재 페이지 정보 조회
+        const currentPage = state.pages.find(p => p.id === state.currentPageId);
+        if (!currentPage) {
+            console.warn("현재 페이지를 state에서 찾을 수 없음.");
+            return false;
+        }
+
+        // 컬렉션 정보 조회
+        const collection = state.collections.find(c => c.id === currentPage.collectionId);
+        const isSharedCollection = collection && (collection.isShared || !collection.isOwner);
+
+        let requestBody = {};
+
+        // 공유 컬렉션 vs 개인 컬렉션 구분
+        if (isSharedCollection) {
+            if (collection.isEncrypted) {
+                // 암호화된 공유 컬렉션: 컬렉션 키 사용
+                const collectionKey = await getCollectionKey(collection.id);
+                requestBody = {
+                    title: title,  // 제목은 평문으로
+                    content: '',  // 내용은 빈 문자열 (암호화됨)
+                    contentEncrypted: await cryptoManager.encryptWithKey(content, collectionKey),
+                    isEncrypted: true
+                };
+            } else {
+                // 평문 공유 컬렉션
+                requestBody = {
+                    title,
+                    content,
+                    isEncrypted: false
+                };
+            }
+        } else {
+            // 개인 컬렉션: 마스터 키로 자동 암호화 (투명한 E2EE)
+            if (!cryptoManager.isMasterKeyInitialized()) {
+                alert("마스터 키가 초기화되지 않았습니다. 페이지를 새로고침하고 다시 로그인해주세요.");
+                return false;
+            }
+
+            const searchKeywords = extractSearchKeywords(title, content);
+            requestBody = {
+                // E2EE: 제목은 평문, 내용만 암호화
+                title: title,  // 제목은 평문으로 저장 (검색/목록 표시용)
+                content: '',  // 내용은 빈 문자열 (암호화됨)
+                contentEncrypted: await cryptoManager.encryptWithMasterKey(content),
+                searchIndexEncrypted: await cryptoManager.encryptWithMasterKey(JSON.stringify(searchKeywords)),
+                isEncrypted: true
+            };
+        }
+
         const res = await secureFetch("/api/pages/" + encodeURIComponent(state.currentPageId), {
             method: "PUT",
             headers: {
                 "Content-Type": "application/json"
             },
-            body: JSON.stringify({
-                title,
-                content
-            })
+            body: JSON.stringify(requestBody)
         });
 
         if (!res.ok) {
@@ -460,8 +546,6 @@ export async function saveCurrentPage() {
         }
 
         const page = await res.json();
-        console.log("페이지 저장 응답:", page);
-
         const decryptedTitle = titleInput ? titleInput.value || "제목 없음" : "제목 없음";
 
         state.pages = state.pages.map((p) => {
@@ -478,7 +562,6 @@ export async function saveCurrentPage() {
         });
 
         renderPageList();
-        console.log("저장 완료.");
         return true;
     } catch (error) {
         console.error("페이지 저장 오류:", error);
@@ -490,6 +573,23 @@ export async function saveCurrentPage() {
             alert("페이지 저장 실패: " + error.message);
             return false;
         }
+    }
+}
+
+/**
+ * 공유 컬렉션 키 조회 (E2EE 시스템 재설계)
+ */
+async function getCollectionKey(collectionId) {
+    try {
+        const res = await secureFetch(`/api/collections/${encodeURIComponent(collectionId)}/encryption-key`);
+        if (!res.ok) {
+            throw new Error("컬렉션 키 조회 실패");
+        }
+        const data = await res.json();
+        return await cryptoManager.decryptCollectionKey(data.encryptedKey);
+    } catch (error) {
+        console.error("컬렉션 키 조회 오류:", error);
+        throw error;
     }
 }
 
@@ -511,7 +611,6 @@ export async function toggleEditMode() {
         const saveSuccess = await saveCurrentPage();
 
         if (!saveSuccess) {
-            console.log("저장 실패 - 쓰기모드 유지");
             return;
         }
 
@@ -535,6 +634,12 @@ export async function toggleEditMode() {
         // 읽기모드 진입 시 커버 버튼 숨김
         updateCoverButtonsVisibility();
     } else {
+        // 암호화된 페이지는 쓰기 모드 진입 차단
+        if (state.currentPageIsEncrypted) {
+            alert("암호화된 페이지는 편집할 수 없습니다.\n편집하려면 먼저 복호화하세요.");
+            return;
+        }
+
         state.isWriteMode = true;
         state.editor.setEditable(true);
         if (titleInput) {

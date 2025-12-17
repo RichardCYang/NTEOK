@@ -349,7 +349,7 @@ module.exports = (dependencies) => {
     router.get("/me", authMiddleware, async (req, res) => {
         try {
             const [rows] = await pool.execute(
-                `SELECT id, username, encryption_salt FROM users WHERE id = ?`,
+                `SELECT id, username, encryption_salt, master_key_salt FROM users WHERE id = ?`,
                 [req.user.id]
             );
 
@@ -361,7 +361,8 @@ module.exports = (dependencies) => {
             res.json({
                 id: user.id,
                 username: user.username,
-                encryptionSalt: user.encryption_salt
+                encryptionSalt: user.encryption_salt,
+                masterKeySalt: user.master_key_salt // E2EE 시스템 재설계
             });
         } catch (error) {
             logError("GET /api/auth/me", error);
@@ -394,6 +395,30 @@ module.exports = (dependencies) => {
     });
 
     /**
+     * 마스터 키 Salt 설정 (E2EE 시스템 재설계)
+     * PUT /api/auth/master-key-salt
+     */
+    router.put("/master-key-salt", authMiddleware, async (req, res) => {
+        const { masterKeySalt } = req.body;
+
+        if (typeof masterKeySalt !== "string" || !masterKeySalt) {
+            return res.status(400).json({ error: "마스터 키 Salt가 필요합니다." });
+        }
+
+        try {
+            await pool.execute(
+                `UPDATE users SET master_key_salt = ? WHERE id = ?`,
+                [masterKeySalt, req.user.id]
+            );
+
+            res.json({ ok: true });
+        } catch (error) {
+            logError("PUT /api/auth/master-key-salt", error);
+            res.status(500).json({ error: "마스터 키 Salt 업데이트 중 오류가 발생했습니다." });
+        }
+    });
+
+    /**
      * 비밀번호 재확인 (보안 강화)
      * POST /api/auth/verify-password
      */
@@ -406,7 +431,7 @@ module.exports = (dependencies) => {
 
         try {
             const [rows] = await pool.execute(
-                `SELECT id, username, password_hash, encryption_salt FROM users WHERE id = ?`,
+                `SELECT id, username, password_hash, encryption_salt, master_key_salt FROM users WHERE id = ?`,
                 [req.user.id]
             );
 
@@ -424,7 +449,8 @@ module.exports = (dependencies) => {
 
             res.json({
                 ok: true,
-                encryptionSalt: user.encryption_salt
+                encryptionSalt: user.encryption_salt,
+                masterKeySalt: user.master_key_salt // E2EE 시스템 재설계
             });
         } catch (error) {
             logError("POST /api/auth/verify-password", error);

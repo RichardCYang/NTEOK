@@ -8,6 +8,12 @@ class CryptoManager {
         this.encryptionKey = null;
         this.salt = null;
         this.password = null; // 메모리 전용 비밀번호 저장 (새로고침 시 삭제됨)
+
+        // 마스터 키 기반 자동 암호화 (신규)
+        this.masterKey = null; // 사용자 마스터 키 (로그인 비밀번호에서 유도)
+        this.masterKeySalt = null; // 마스터 키용 salt (사용자별 고정)
+        this.loginPassword = null; // 로그인 비밀번호 (세션 동안 유지)
+
         this.inactivityTimer = null; // 자동 로그아웃 타이머
         this.INACTIVITY_TIMEOUT = 15 * 60 * 1000; // 15분 (밀리초)
     }
@@ -315,7 +321,306 @@ class CryptoManager {
                 window.location.href = '/login';
             });
     }
+
+    // ============================================================
+    // 마스터 키 기반 자동 암호화 메소드 (신규)
+    // ============================================================
+
+    /**
+     * 마스터 키 초기화 (로그인 시)
+     * @param {string} password - 로그인 비밀번호
+     * @param {string} masterKeySaltBase64 - 마스터 키용 salt (Base64, DB에서 로드)
+     * @returns {Promise<string>} Master key salt (Base64)
+     */
+    async initializeMasterKey(password, masterKeySaltBase64 = null) {
+        let salt = null;
+
+        // Salt가 제공되지 않으면 새로 생성 (신규 사용자)
+        if (masterKeySaltBase64) {
+            salt = new Uint8Array(this.base64ToArrayBuffer(masterKeySaltBase64));
+        } else {
+            salt = crypto.getRandomValues(new Uint8Array(16));
+        }
+
+        // PBKDF2로 마스터 키 유도
+        const { key } = await this.deriveKeyFromPassword(password, salt);
+
+        this.masterKey = key;
+        this.masterKeySalt = salt;
+        this.loginPassword = password; // 세션 동안 유지
+
+        // sessionStorage에 salt 백업 (새로고침 대응)
+        const saltBase64 = this.arrayBufferToBase64(salt.buffer);
+        sessionStorage.setItem('_mk_salt', saltBase64);
+
+        // 자동 로그아웃 타이머 시작
+        this.resetInactivityTimer();
+
+        return saltBase64;
+    }
+
+    /**
+     * 마스터 키로 데이터 암호화
+     * @param {string} plaintext - 평문
+     * @returns {Promise<string>} Base64 암호문 (IV + ciphertext)
+     */
+    async encryptWithMasterKey(plaintext) {
+        if (!this.masterKey) {
+            throw new Error('마스터 키가 초기화되지 않았습니다. 로그인이 필요합니다.');
+        }
+
+        // IV 생성 (12 bytes, GCM 모드 권장)
+        const iv = crypto.getRandomValues(new Uint8Array(12));
+
+        // 평문을 바이트로 변환
+        const encoder = new TextEncoder();
+        const data = encoder.encode(plaintext);
+
+        // AES-256-GCM으로 암호화
+        const ciphertext = await crypto.subtle.encrypt(
+            {
+                name: 'AES-GCM',
+                iv: iv,
+                tagLength: 128
+            },
+            this.masterKey,
+            data
+        );
+
+        // IV + ciphertext를 하나로 결합
+        const combined = new Uint8Array(iv.length + ciphertext.byteLength);
+        combined.set(iv, 0);
+        combined.set(new Uint8Array(ciphertext), iv.length);
+
+        // Base64로 인코딩
+        return this.arrayBufferToBase64(combined.buffer);
+    }
+
+    /**
+     * 마스터 키로 데이터 복호화
+     * @param {string} encryptedBase64 - Base64 암호문 (IV + ciphertext)
+     * @returns {Promise<string>} 평문
+     */
+    async decryptWithMasterKey(encryptedBase64) {
+        if (!this.masterKey) {
+            throw new Error('마스터 키가 초기화되지 않았습니다. 로그인이 필요합니다.');
+        }
+
+        // Base64 디코딩
+        const combined = new Uint8Array(this.base64ToArrayBuffer(encryptedBase64));
+
+        // IV와 ciphertext 분리
+        const iv = combined.slice(0, 12);
+        const ciphertext = combined.slice(12);
+
+        // 복호화
+        const decrypted = await crypto.subtle.decrypt(
+            {
+                name: 'AES-GCM',
+                iv: iv,
+                tagLength: 128
+            },
+            this.masterKey,
+            ciphertext
+        );
+
+        // 바이트를 문자열로 변환
+        const decoder = new TextDecoder();
+        return decoder.decode(decrypted);
+    }
+
+    /**
+     * 공유 컬렉션용 랜덤 키 생성
+     * @returns {Promise<CryptoKey>} 256-bit AES-GCM 키
+     */
+    async generateCollectionKey() {
+        return await crypto.subtle.generateKey(
+            {
+                name: 'AES-GCM',
+                length: 256
+            },
+            true, // extractable (내보내기 가능)
+            ['encrypt', 'decrypt']
+        );
+    }
+
+    /**
+     * 컬렉션 키를 마스터 키로 암호화
+     * @param {CryptoKey} collectionKey - 공유 컬렉션 키
+     * @returns {Promise<string>} Base64 암호화된 컬렉션 키
+     */
+    async encryptCollectionKey(collectionKey) {
+        if (!this.masterKey) {
+            throw new Error('마스터 키가 초기화되지 않았습니다.');
+        }
+
+        // 컬렉션 키를 raw 형식으로 내보내기
+        const keyData = await crypto.subtle.exportKey('raw', collectionKey);
+
+        // IV 생성
+        const iv = crypto.getRandomValues(new Uint8Array(12));
+
+        // 마스터 키로 암호화
+        const ciphertext = await crypto.subtle.encrypt(
+            {
+                name: 'AES-GCM',
+                iv: iv,
+                tagLength: 128
+            },
+            this.masterKey,
+            keyData
+        );
+
+        // IV + ciphertext 결합
+        const combined = new Uint8Array(iv.length + ciphertext.byteLength);
+        combined.set(iv, 0);
+        combined.set(new Uint8Array(ciphertext), iv.length);
+
+        return this.arrayBufferToBase64(combined.buffer);
+    }
+
+    /**
+     * 암호화된 컬렉션 키를 마스터 키로 복호화
+     * @param {string} encryptedCollectionKeyBase64 - Base64 암호화된 컬렉션 키
+     * @returns {Promise<CryptoKey>} 복호화된 컬렉션 키
+     */
+    async decryptCollectionKey(encryptedCollectionKeyBase64) {
+        if (!this.masterKey) {
+            throw new Error('마스터 키가 초기화되지 않았습니다.');
+        }
+
+        // Base64 디코딩
+        const combined = new Uint8Array(this.base64ToArrayBuffer(encryptedCollectionKeyBase64));
+
+        // IV와 ciphertext 분리
+        const iv = combined.slice(0, 12);
+        const ciphertext = combined.slice(12);
+
+        // 마스터 키로 복호화
+        const keyData = await crypto.subtle.decrypt(
+            {
+                name: 'AES-GCM',
+                iv: iv,
+                tagLength: 128
+            },
+            this.masterKey,
+            ciphertext
+        );
+
+        // raw 데이터를 CryptoKey로 가져오기
+        return await crypto.subtle.importKey(
+            'raw',
+            keyData,
+            { name: 'AES-GCM', length: 256 },
+            true,
+            ['encrypt', 'decrypt']
+        );
+    }
+
+    /**
+     * 특정 키로 데이터 암호화 (컬렉션 키 사용)
+     * @param {string} plaintext - 평문
+     * @param {CryptoKey} key - 암호화 키
+     * @returns {Promise<string>} Base64 암호문
+     */
+    async encryptWithKey(plaintext, key) {
+        // IV 생성
+        const iv = crypto.getRandomValues(new Uint8Array(12));
+
+        // 평문을 바이트로 변환
+        const encoder = new TextEncoder();
+        const data = encoder.encode(plaintext);
+
+        // AES-256-GCM으로 암호화
+        const ciphertext = await crypto.subtle.encrypt(
+            {
+                name: 'AES-GCM',
+                iv: iv,
+                tagLength: 128
+            },
+            key,
+            data
+        );
+
+        // IV + ciphertext 결합
+        const combined = new Uint8Array(iv.length + ciphertext.byteLength);
+        combined.set(iv, 0);
+        combined.set(new Uint8Array(ciphertext), iv.length);
+
+        return this.arrayBufferToBase64(combined.buffer);
+    }
+
+    /**
+     * 특정 키로 데이터 복호화 (컬렉션 키 사용)
+     * @param {string} encryptedBase64 - Base64 암호문
+     * @param {CryptoKey} key - 복호화 키
+     * @returns {Promise<string>} 평문
+     */
+    async decryptWithKey(encryptedBase64, key) {
+        // Base64 디코딩
+        const combined = new Uint8Array(this.base64ToArrayBuffer(encryptedBase64));
+
+        // IV와 ciphertext 분리
+        const iv = combined.slice(0, 12);
+        const ciphertext = combined.slice(12);
+
+        // 복호화
+        const decrypted = await crypto.subtle.decrypt(
+            {
+                name: 'AES-GCM',
+                iv: iv,
+                tagLength: 128
+            },
+            key,
+            ciphertext
+        );
+
+        // 바이트를 문자열로 변환
+        const decoder = new TextDecoder();
+        return decoder.decode(decrypted);
+    }
+
+    /**
+     * 마스터 키 초기화 여부 확인
+     * @returns {boolean}
+     */
+    isMasterKeyInitialized() {
+        return this.masterKey !== null;
+    }
+
+    /**
+     * 마스터 키 제거 (로그아웃 시)
+     */
+    clearMasterKey() {
+        this.masterKey = null;
+        this.masterKeySalt = null;
+        this.loginPassword = null;
+
+        // sessionStorage에서 salt 제거
+        sessionStorage.removeItem('_mk_salt');
+    }
+
+    /**
+     * 새로고침 시 마스터 키 복구 시도
+     * @param {string} password - 로그인 비밀번호
+     * @returns {Promise<boolean>} 복구 성공 여부
+     */
+    async tryRestoreMasterKey(password) {
+        const saltBase64 = sessionStorage.getItem('_mk_salt');
+        if (!saltBase64) {
+            return false;
+        }
+
+        try {
+            await this.initializeMasterKey(password, saltBase64);
+            return true;
+        } catch (error) {
+            console.error('마스터 키 복구 실패:', error);
+            return false;
+        }
+    }
 }
 
 // 전역 CryptoManager 인스턴스
 const cryptoManager = new CryptoManager();
+window.cryptoManager = cryptoManager;

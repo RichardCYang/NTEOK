@@ -31,7 +31,7 @@ module.exports = (dependencies) => {
 
             const [rows] = await pool.execute(
                 `SELECT c.id, c.name, c.sort_order, c.created_at, c.updated_at,
-                        c.user_id as owner_id,
+                        c.user_id as owner_id, c.is_encrypted,
                         CASE
                             WHEN c.user_id = ? THEN 'OWNER'
                             ELSE cs.permission
@@ -52,7 +52,8 @@ module.exports = (dependencies) => {
                 updatedAt: toIsoString(row.updated_at),
                 isOwner: row.owner_id === userId,
                 permission: row.permission,
-                isShared: row.share_count > 0
+                isShared: row.share_count > 0,
+                isEncrypted: Boolean(row.is_encrypted)
             }));
 
             res.json(list);
@@ -104,6 +105,124 @@ module.exports = (dependencies) => {
         } catch (error) {
             logError("DELETE /api/collections/:id", error);
             res.status(500).json({ error: "컬렉션 삭제에 실패했습니다." });
+        }
+    });
+
+    /**
+     * 컬렉션 암호화 키 조회
+     * GET /api/collections/:id/encryption-key
+     */
+    router.get("/:id/encryption-key", authMiddleware, async (req, res) => {
+        const collectionId = req.params.id;
+        const userId = req.user.id;
+
+        try {
+            const { hasAccess, isOwner } = await getCollectionPermission(collectionId, userId);
+            if (!hasAccess) {
+                return res.status(403).json({ error: "접근 권한이 없습니다." });
+            }
+
+            if (isOwner) {
+                // 소유자: collections 테이블에서 encryption_key_encrypted 조회
+                const [rows] = await pool.execute(
+                    `SELECT encryption_key_encrypted FROM collections WHERE id = ?`,
+                    [collectionId]
+                );
+
+                if (rows.length === 0 || !rows[0].encryption_key_encrypted) {
+                    return res.status(404).json({ error: "암호화 키가 설정되지 않았습니다." });
+                }
+
+                res.json({ encryptedKey: rows[0].encryption_key_encrypted });
+            } else {
+                // 공유받은 사용자: collection_encryption_keys 테이블에서 조회
+                const [rows] = await pool.execute(
+                    `SELECT encrypted_key FROM collection_encryption_keys
+                     WHERE collection_id = ? AND user_id = ?`,
+                    [collectionId, userId]
+                );
+
+                if (rows.length === 0) {
+                    return res.status(404).json({ error: "암호화 키를 찾을 수 없습니다." });
+                }
+
+                res.json({ encryptedKey: rows[0].encrypted_key });
+            }
+        } catch (error) {
+            logError("GET /api/collections/:id/encryption-key", error);
+            res.status(500).json({ error: "암호화 키 조회에 실패했습니다." });
+        }
+    });
+
+    /**
+     * 컬렉션 암호화 활성화
+     * POST /api/collections/:id/encrypt
+     */
+    router.post("/:id/encrypt", authMiddleware, async (req, res) => {
+        const collectionId = req.params.id;
+        const userId = req.user.id;
+        const { encryptedKey, sharedUserKeys } = req.body;
+
+        try {
+            const { isOwner } = await getCollectionPermission(collectionId, userId);
+            if (!isOwner) {
+                return res.status(403).json({ error: "컬렉션 소유자만 암호화를 설정할 수 있습니다." });
+            }
+
+            // 컬렉션을 암호화 상태로 변경
+            await pool.execute(
+                `UPDATE collections
+                 SET is_encrypted = 1, encryption_key_encrypted = ?, updated_at = NOW()
+                 WHERE id = ?`,
+                [encryptedKey, collectionId]
+            );
+
+            // 공유된 사용자들에게 컬렉션 키 공유
+            if (sharedUserKeys && Array.isArray(sharedUserKeys)) {
+                for (const { userId: sharedUserId, encryptedKey: userEncryptedKey } of sharedUserKeys) {
+                    await pool.execute(
+                        `INSERT INTO collection_encryption_keys (collection_id, user_id, encrypted_key, created_at, updated_at)
+                         VALUES (?, ?, ?, NOW(), NOW())
+                         ON DUPLICATE KEY UPDATE encrypted_key = VALUES(encrypted_key), updated_at = NOW()`,
+                        [collectionId, sharedUserId, userEncryptedKey]
+                    );
+                }
+            }
+
+            res.json({ ok: true });
+        } catch (error) {
+            logError("POST /api/collections/:id/encrypt", error);
+            res.status(500).json({ error: "컬렉션 암호화 설정에 실패했습니다." });
+        }
+    });
+
+    /**
+     * 컬렉션 키를 새 수신자에게 공유
+     * POST /api/collections/:id/share-key
+     */
+    router.post("/:id/share-key", authMiddleware, async (req, res) => {
+        const collectionId = req.params.id;
+        const userId = req.user.id;
+        const { sharedUserId, encryptedKey } = req.body;
+
+        try {
+            const { isOwner } = await getCollectionPermission(collectionId, userId);
+            if (!isOwner) {
+                return res.status(403).json({ error: "컬렉션 소유자만 키를 공유할 수 있습니다." });
+            }
+
+            // collection_encryption_keys 테이블에 추가
+            await pool.execute(
+                `INSERT INTO collection_encryption_keys (collection_id, user_id, encrypted_key, created_at, updated_at)
+                 VALUES (?, ?, ?, NOW(), NOW())
+                 ON DUPLICATE KEY UPDATE encrypted_key = VALUES(encrypted_key), updated_at = NOW()`,
+                [collectionId, sharedUserId, encryptedKey]
+            );
+
+            res.json({ ok: true });
+        } catch (error) {
+            logError("POST /api/collections/:id/share-key", error);
+            res.status(500).json({ error: "키 공유에 실패했습니다." });
         }
     });
 

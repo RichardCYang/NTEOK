@@ -38,6 +38,23 @@
                             <i class="fa-solid fa-gear"></i>
                         </button>
                     </div>
+                    <div class="sidebar-search">
+                        <div style="position: relative; padding: 12px;">
+                            <input
+                                type="text"
+                                id="search-input"
+                                placeholder="페이지 검색..."
+                                style="width: 100%; padding: 8px 32px 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px;"
+                            />
+                            <i class="fa-solid fa-magnifying-glass" style="position: absolute; right: 24px; top: 50%; transform: translateY(-50%); color: #9ca3af; pointer-events: none;"></i>
+                        </div>
+                        <div id="search-results" style="display: none; padding: 0 12px 12px 12px;">
+                            <div style="font-size: 12px; color: #6b7280; margin-bottom: 8px;">
+                                검색 결과: <span id="search-count">0</span>개
+                            </div>
+                            <ul id="search-results-list" style="list-style: none; padding: 0; max-height: 200px; overflow-y: auto;"></ul>
+                        </div>
+                    </div>
                     <div class="sidebar-main">
                         <ul id="collection-list" class="collection-list"></ul>
                     </div>
@@ -688,6 +705,92 @@
                             </button>
                             <button type="submit" class="primary-button" style="padding: 10px 20px; font-size: 14px;">
                                 확인
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- 비밀번호 재확인 모달 (마스터 키 초기화) -->
+        <div id="password-reconfirm-modal" class="modal hidden">
+            <div class="modal-overlay"></div>
+            <div class="modal-content" style="max-width: 400px;">
+                <div class="modal-header">
+                    <h2>보안 확인</h2>
+                </div>
+                <div class="modal-body">
+                    <p style="margin-bottom: 16px; color: #6b7280; font-size: 14px;">
+                        암호화된 데이터에 접근하려면 비밀번호를 다시 입력해 주세요.
+                    </p>
+                    <form id="password-reconfirm-form">
+                        <div style="margin-bottom: 16px;">
+                            <label for="reconfirm-password" style="display: block; margin-bottom: 8px; font-weight: 500;">
+                                비밀번호
+                            </label>
+                            <input
+                                type="password"
+                                id="reconfirm-password"
+                                class="settings-select"
+                                style="width: 100%; padding: 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px;"
+                                placeholder="비밀번호를 입력하세요"
+                                required
+                                autocomplete="current-password"
+                            />
+                        </div>
+                        <div id="reconfirm-error" style="color: #ef4444; font-size: 12px; margin-bottom: 16px; min-height: 18px;"></div>
+                        <div style="display: flex; gap: 8px; justify-content: flex-end;">
+                            <button type="submit" class="primary-button" style="padding: 10px 20px; font-size: 14px; width: 100%;">
+                                확인
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- 암호화 마이그레이션 모달 -->
+        <div id="migration-modal" class="modal hidden">
+            <div class="modal-overlay"></div>
+            <div class="modal-content" style="max-width: 500px;">
+                <div class="modal-header">
+                    <h2>암호화 시스템 업그레이드</h2>
+                </div>
+                <div class="modal-body">
+                    <p style="margin-bottom: 16px; color: #6b7280; font-size: 14px;">
+                        기존 암호화 페이지를 새로운 자동 암호화 시스템으로 변환해야 합니다.
+                        <br><br>
+                        <strong id="migration-page-count"></strong>개의 페이지를 변환합니다.
+                    </p>
+                    <form id="migration-form">
+                        <div style="margin-bottom: 16px;">
+                            <label for="migration-password" style="display: block; margin-bottom: 8px; font-weight: 500;">
+                                기존 암호화 비밀번호
+                            </label>
+                            <input
+                                type="password"
+                                id="migration-password"
+                                class="settings-select"
+                                style="width: 100%; padding: 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px;"
+                                placeholder="기존 암호화에 사용한 비밀번호"
+                                required
+                            />
+                        </div>
+                        <div id="migration-error" style="color: #ef4444; font-size: 12px; margin-bottom: 16px; min-height: 18px;"></div>
+                        <div id="migration-progress" style="margin-bottom: 16px; display: none;">
+                            <div style="background: #e5e7eb; border-radius: 8px; height: 8px; overflow: hidden;">
+                                <div id="migration-progress-bar" style="background: #3b82f6; height: 100%; width: 0%; transition: width 0.3s;"></div>
+                            </div>
+                            <p style="margin-top: 8px; font-size: 12px; color: #6b7280; text-align: center;">
+                                <span id="migration-current">0</span> / <span id="migration-total">0</span> 페이지 변환 중...
+                            </p>
+                        </div>
+                        <div style="display: flex; gap: 8px; justify-content: flex-end;">
+                            <button type="button" id="skip-migration-btn" style="padding: 10px 20px; background: #6b7280; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px;">
+                                나중에
+                            </button>
+                            <button type="submit" class="primary-button" style="padding: 10px 20px; font-size: 14px;">
+                                변환 시작
                             </button>
                         </div>
                     </form>

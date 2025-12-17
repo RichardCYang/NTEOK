@@ -124,6 +124,11 @@ export async function handleEncryption(event) {
         alert("페이지가 성공적으로 암호화되었습니다!");
         closeEncryptionModal();
 
+        // 암호화 완료 - 쓰기 모드 차단
+        if (state.currentPageId === state.currentEncryptingPageId) {
+            state.currentPageIsEncrypted = true;
+        }
+
         if (state.fetchPageList) {
             await state.fetchPageList();
         }
@@ -135,6 +140,34 @@ export async function handleEncryption(event) {
             }
             if (state.editor) {
                 state.editor.commands.setContent(page.content, { emitUpdate: false });
+            }
+
+            // 암호화 후 쓰기 모드 비활성화
+            if (state.isWriteMode) {
+                const modeToggleBtn = document.querySelector("#mode-toggle-btn");
+                const toolbar = document.querySelector(".editor-toolbar");
+                const iconEl = modeToggleBtn ? modeToggleBtn.querySelector("i") : null;
+                const textEl = modeToggleBtn ? modeToggleBtn.querySelector("span") : null;
+
+                state.isWriteMode = false;
+                if (state.editor) {
+                    state.editor.setEditable(false);
+                }
+                if (titleInput) {
+                    titleInput.setAttribute("readonly", "");
+                }
+                if (toolbar) {
+                    toolbar.classList.remove("visible");
+                }
+                if (modeToggleBtn) {
+                    modeToggleBtn.classList.remove("write-mode");
+                }
+                if (iconEl) {
+                    iconEl.className = "fa-solid fa-pencil";
+                }
+                if (textEl) {
+                    textEl.textContent = "쓰기모드";
+                }
             }
         }
 
