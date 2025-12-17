@@ -118,7 +118,10 @@ module.exports = (dependencies) => {
 
         try {
             const { permission, isOwner } = await getCollectionPermission(collectionId, userId);
+            console.log(`[컬렉션 키 조회] 사용자 ${userId}, 컬렉션 ${collectionId}, 권한: ${permission}, 소유자: ${isOwner}`);
+
             if (!permission) {
+                console.warn(`[컬렉션 키 조회 실패] 사용자 ${userId}가 컬렉션 ${collectionId}에 대한 권한이 없음`);
                 return res.status(403).json({ error: "접근 권한이 없습니다." });
             }
 

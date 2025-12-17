@@ -24,7 +24,7 @@ const PORT = process.env.PORT || 3000;
 // 세션 / 인증 관련 설정
 const SESSION_COOKIE_NAME = "nteok_session";
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7; // 7일 (idle timeout)
-const SESSION_ABSOLUTE_TTL_MS = 1000 * 60 * 60 * 24; // 24시간 (absolute timeout)
+const SESSION_ABSOLUTE_TTL_MS = 1000 * 60 * 60 * 24 * 7; // 7일 (absolute timeout)
 const CSRF_COOKIE_NAME = "nteok_csrf";
 const IS_PRODUCTION = process.env.NODE_ENV === "production";
 const BASE_URL = process.env.BASE_URL || (IS_PRODUCTION ? "https://localhost:3000" : "http://localhost:3000");
@@ -399,8 +399,9 @@ function getSessionFromRequest(req) {
 
     const now = Date.now();
 
-    // 절대 만료 시간 체크 (세션 생성 후 24시간)
+    // 절대 만료 시간 체크 (세션 생성 후 7일)
     if (session.absoluteExpiry <= now) {
+        console.warn(`[세션 만료] 세션 ID ${sessionId.substring(0, 8)}... - 절대 만료 시간 초과 (사용자: ${session.userId})`);
         sessions.delete(sessionId);
         // userSessions에서도 제거
         if (session.userId) {
@@ -417,6 +418,7 @@ function getSessionFromRequest(req) {
 
     // Idle timeout 체크 (마지막 활동 후 7일)
     if (session.expiresAt <= now) {
+        console.warn(`[세션 만료] 세션 ID ${sessionId.substring(0, 8)}... - 비활성 시간 초과 (사용자: ${session.userId})`);
         sessions.delete(sessionId);
         // userSessions에서도 제거
         if (session.userId) {
@@ -444,6 +446,8 @@ function authMiddleware(req, res, next) {
     const session = getSessionFromRequest(req);
 
     if (!session) {
+        const sessionId = req.cookies[SESSION_COOKIE_NAME];
+        console.warn(`[인증 실패] ${req.method} ${req.path} - 세션 쿠키: ${sessionId ? '있음' : '없음'}, 유효한 세션: 없음`);
         return res.status(401).json({ error: "로그인이 필요합니다." });
     }
 
