@@ -418,6 +418,35 @@ export async function loadPage(id) {
             state.editor.commands.setContent(content, { emitUpdate: false });
         }
 
+        // state.pages 배열 업데이트 (동기화 문제 해결)
+        const pageIndex = state.pages.findIndex(p => p.id === page.id);
+        if (pageIndex !== -1) {
+            // 기존 페이지 업데이트
+            state.pages[pageIndex] = {
+                ...state.pages[pageIndex],
+                title: title,
+                content: page.isEncrypted ? undefined : content,
+                isEncrypted: page.isEncrypted,
+                updatedAt: page.updatedAt,
+                coverImage: page.coverImage,
+                coverPosition: page.coverPosition
+            };
+        } else {
+            // 페이지가 배열에 없으면 추가 (드문 경우)
+            state.pages.push({
+                id: page.id,
+                title: title,
+                content: page.isEncrypted ? undefined : content,
+                collectionId: page.collectionId,
+                isEncrypted: page.isEncrypted,
+                updatedAt: page.updatedAt,
+                coverImage: page.coverImage,
+                coverPosition: page.coverPosition,
+                parentId: page.parentId,
+                sortOrder: page.sortOrder
+            });
+        }
+
         renderPageList();
 
         // 커버 이미지 표시
@@ -602,6 +631,23 @@ export async function toggleEditMode() {
             return;
         }
 
+        // DB에서 최신 데이터 다시 로드 (동기화 문제 해결)
+        if (state.currentPageId) {
+            try {
+                const res = await fetch("/api/pages/" + encodeURIComponent(state.currentPageId));
+                if (res.ok) {
+                    const page = await res.json();
+                    const content = page.isEncrypted ? "<p></p>" : (page.content || "<p></p>");
+                    if (state.editor) {
+                        state.editor.commands.setContent(content, { emitUpdate: false });
+                    }
+                    console.log('[모드전환] DB에서 최신 데이터 로드 완료');
+                }
+            } catch (error) {
+                console.error('[모드전환] 최신 데이터 로드 실패:', error);
+            }
+        }
+
         state.isWriteMode = false;
         state.editor.setEditable(false);
         if (titleInput) {
@@ -626,6 +672,23 @@ export async function toggleEditMode() {
         if (state.currentPageIsEncrypted) {
             alert("암호화된 페이지는 편집할 수 없습니다.\n편집하려면 먼저 복호화하세요.");
             return;
+        }
+
+        // DB에서 최신 데이터 다시 로드 (동기화 문제 해결)
+        if (state.currentPageId) {
+            try {
+                const res = await fetch("/api/pages/" + encodeURIComponent(state.currentPageId));
+                if (res.ok) {
+                    const page = await res.json();
+                    const content = page.isEncrypted ? "<p></p>" : (page.content || "<p></p>");
+                    if (state.editor) {
+                        state.editor.commands.setContent(content, { emitUpdate: false });
+                    }
+                    console.log('[모드전환] DB에서 최신 데이터 로드 완료');
+                }
+            } catch (error) {
+                console.error('[모드전환] 최신 데이터 로드 실패:', error);
+            }
         }
 
         state.isWriteMode = true;

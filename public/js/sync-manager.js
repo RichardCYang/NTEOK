@@ -4,7 +4,7 @@
  */
 
 import * as Y from 'https://cdn.jsdelivr.net/npm/yjs@13.6.18/+esm';
-import { escapeHtml } from './ui-utils.js';
+import { escapeHtml, showErrorInEditor } from './ui-utils.js';
 import { showCover, hideCover } from './cover-manager.js';
 
 // 전역 상태
@@ -22,7 +22,8 @@ const state = {
     editor: null,
     currentPageId: null,
     currentCollectionId: null,
-    fetchPageList: null
+    fetchPageList: null,
+    pages: []
 };
 
 /**
@@ -434,6 +435,41 @@ function handlePageCreated(data) {
  */
 function handlePageDeleted(data) {
     try {
+        const deletedPageId = data.pageId;
+
+        // state.pages 배열에서 삭제된 페이지 제거
+        if (state.pages) {
+            const pageIndex = state.pages.findIndex(p => p.id === deletedPageId);
+            if (pageIndex !== -1) {
+                state.pages.splice(pageIndex, 1);
+            }
+        }
+
+        // 현재 선택된 페이지가 삭제된 경우
+        if (state.currentPageId === deletedPageId) {
+            console.log('[WS] 현재 페이지가 삭제되었습니다:', deletedPageId);
+
+            // 페이지 동기화 중지
+            stopPageSync();
+
+            // 에디터 내용 비우고 메시지 표시
+            if (state.editor) {
+                showErrorInEditor(
+                    '이 페이지는 삭제되었습니다.',
+                    state.editor
+                );
+            }
+
+            // 현재 페이지 ID 초기화
+            state.currentPageId = null;
+
+            // 페이지 제목 초기화
+            const titleInput = document.querySelector("#page-title-input");
+            if (titleInput) {
+                titleInput.value = '';
+            }
+        }
+
         // 페이지 목록 새로고침
         if (state.fetchPageList) {
             state.fetchPageList();
