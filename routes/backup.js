@@ -16,8 +16,23 @@ const multer = require('multer');
  */
 
 // 백업 파일 업로드 설정
+// temp 폴더를 미리 생성
+const tempDir = 'temp';
+if (!fs.existsSync(tempDir)) {
+    fs.mkdirSync(tempDir, { recursive: true });
+}
+
 const backupUpload = multer({
-    dest: 'temp/',
+    storage: multer.diskStorage({
+        destination: (req, file, cb) => {
+            cb(null, tempDir);
+        },
+        filename: (req, file, cb) => {
+            // 파일명에 타임스탐프 추가로 중복 방지
+            const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+            cb(null, 'backup-' + uniqueSuffix + '.zip');
+        }
+    }),
     limits: {
         fileSize: 100 * 1024 * 1024 // 100MB
     },

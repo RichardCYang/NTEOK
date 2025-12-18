@@ -84,6 +84,9 @@ covers/*
 imgs/*
 !imgs/.gitkeep
 
+# 백업 업로드 임시 폴더
+temp/
+
 # parcel-bundler cache (https://parceljs.org/)
 .cache
 .parcel-cache
