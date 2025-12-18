@@ -957,9 +957,13 @@ async function showCollectionSettingsModal(collectionId) {
     currentSettingsCollectionId = collectionId;
 
     // 현재 설정 값 로드
+    const nameInput = document.getElementById('collection-name-input');
     const defaultEncryptionCheckbox = document.getElementById('collection-default-encryption');
     const enforceEncryptionCheckbox = document.getElementById('collection-enforce-encryption');
 
+    if (nameInput) {
+        nameInput.value = collection.name || '';
+    }
     if (defaultEncryptionCheckbox) {
         defaultEncryptionCheckbox.checked = collection.defaultEncryption || false;
     }
@@ -1001,10 +1005,20 @@ async function saveCollectionSettings(event) {
         return;
     }
 
+    const nameInput = document.getElementById('collection-name-input');
+    const name = nameInput?.value?.trim() || '';
     const defaultEncryption = document.getElementById('collection-default-encryption')?.checked || false;
     const enforceEncryption = document.getElementById('collection-enforce-encryption')?.checked || false;
     const errorEl = document.getElementById('collection-settings-error');
     const submitBtn = event.target.querySelector('button[type="submit"]');
+
+    // 이름 유효성 검사
+    if (!name) {
+        if (errorEl) {
+            errorEl.textContent = '컬렉션 이름을 입력해주세요.';
+        }
+        return;
+    }
 
     if (submitBtn) {
         submitBtn.disabled = true;
@@ -1018,6 +1032,7 @@ async function saveCollectionSettings(event) {
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({
+                name,
                 defaultEncryption,
                 enforceEncryption
             })
@@ -1030,9 +1045,14 @@ async function saveCollectionSettings(event) {
         // 로컬 상태 업데이트
         const collection = appState.collections.find(c => c.id === currentSettingsCollectionId);
         if (collection) {
+            collection.name = name;
             collection.defaultEncryption = defaultEncryption;
             collection.enforceEncryption = enforceEncryption;
         }
+
+        // 컬렉션 목록 UI 업데이트
+        await fetchCollections();
+        renderPageList();
 
         closeCollectionSettingsModal();
         alert('컬렉션 설정이 저장되었습니다.');
