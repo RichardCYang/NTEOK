@@ -1266,7 +1266,7 @@ body {
 
 /* ==================== Image with Caption Styles ==================== */
 .image-with-caption-wrapper {
-    margin: 1em 0;
+    margin: 1em auto;
     padding: 0;
     background: transparent;
     border: none;
@@ -1362,6 +1362,76 @@ body {
 .image-resize-handle:active {
     background: #1d4ed8;
     transform: scale(1.2);
+}
+
+/* 정렬 메뉴 */
+.image-align-menu {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    display: flex;
+    gap: 4px;
+    background: rgba(255, 255, 255, 0.95);
+    backdrop-filter: blur(8px);
+    border-radius: 6px;
+    padding: 4px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    z-index: 10;
+}
+
+.align-button {
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid #e5e7eb;
+    border-radius: 4px;
+    background: white;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    padding: 0;
+    color: #6b7280;
+}
+
+.align-button svg {
+    width: 16px;
+    height: 16px;
+    pointer-events: none;
+}
+
+.align-button:hover {
+    background: #f3f4f6;
+    border-color: #d1d5db;
+    transform: scale(1.05);
+    color: #374151;
+}
+
+.align-button.active {
+    background: #3b82f6;
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+    color: white;
+}
+
+.align-button:active {
+    transform: scale(0.95);
+}
+
+/* 정렬 스타일 */
+.image-with-caption-wrapper[data-align="left"] {
+    margin-left: 0;
+    margin-right: auto;
+}
+
+.image-with-caption-wrapper[data-align="center"] {
+    margin-left: auto;
+    margin-right: auto;
+}
+
+.image-with-caption-wrapper[data-align="right"] {
+    margin-left: auto;
+    margin-right: 0;
 }
 
 /* ==================== Settings Modal - Responsive Design ==================== */

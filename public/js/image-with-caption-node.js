@@ -25,6 +25,9 @@ export const ImageWithCaption = Node.create({
             },
             width: {
                 default: '100%'
+            },
+            align: {
+                default: 'center'
             }
         };
     },
@@ -39,13 +42,15 @@ export const ImageWithCaption = Node.create({
                     const dataAlt = element.getAttribute('data-alt');
                     const dataCaption = element.getAttribute('data-caption');
                     const dataWidth = element.getAttribute('data-width');
+                    const dataAlign = element.getAttribute('data-align');
 
                     if (dataSrc) {
                         return {
                             src: dataSrc,
                             alt: dataAlt || '',
                             caption: dataCaption || '',
-                            width: dataWidth || '100%'
+                            width: dataWidth || '100%',
+                            align: dataAlign || 'center'
                         };
                     }
 
@@ -58,7 +63,8 @@ export const ImageWithCaption = Node.create({
                         src: img?.getAttribute('src') || null,
                         alt: img?.getAttribute('alt') || '',
                         caption: captionDiv?.textContent || captionInput?.value || '',
-                        width: element.style.width || '100%'
+                        width: element.style.width || '100%',
+                        align: element.getAttribute('data-align') || 'center'
                     };
                 }
             }
@@ -75,6 +81,7 @@ export const ImageWithCaption = Node.create({
                 'data-alt': node.attrs.alt || '',
                 'data-caption': node.attrs.caption || '',
                 'data-width': node.attrs.width || '100%',
+                'data-align': node.attrs.align || 'center',
                 'class': 'image-with-caption',
                 'style': `width: ${node.attrs.width || '100%'};`
             },
@@ -109,13 +116,121 @@ export const ImageWithCaption = Node.create({
             figure.className = 'image-with-caption-wrapper';
             figure.contentEditable = 'false';
             figure.style.width = node.attrs.width || '100%';
+            figure.setAttribute('data-align', node.attrs.align || 'center');
 
             let currentCaption = node.attrs.caption || '';
+            let currentAlign = node.attrs.align || 'center';
 
             // 이미지 컨테이너 (resize handle 포함)
             const imageContainer = document.createElement('div');
             imageContainer.className = 'image-container';
             imageContainer.style.position = 'relative';
+
+            // 정렬 메뉴 (쓰기모드에서만 표시)
+            const alignMenu = document.createElement('div');
+            alignMenu.className = 'image-align-menu';
+            alignMenu.style.display = editor.isEditable ? 'flex' : 'none';
+
+            // 정렬 아이콘 SVG 생성 함수
+            const createAlignIcon = (align) => {
+                const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+                svg.setAttribute('width', '16');
+                svg.setAttribute('height', '16');
+                svg.setAttribute('viewBox', '0 0 16 16');
+                svg.setAttribute('fill', 'currentColor');
+
+                if (align === 'left') {
+                    // 왼쪽 정렬: 짧은 막대들이 왼쪽 정렬
+                    svg.innerHTML = `
+                        <rect x="2" y="3" width="12" height="2" rx="1"/>
+                        <rect x="2" y="7" width="8" height="2" rx="1"/>
+                        <rect x="2" y="11" width="10" height="2" rx="1"/>
+                    `;
+                } else if (align === 'center') {
+                    // 가운데 정렬: 짧은 막대들이 가운데 정렬
+                    svg.innerHTML = `
+                        <rect x="2" y="3" width="12" height="2" rx="1"/>
+                        <rect x="4" y="7" width="8" height="2" rx="1"/>
+                        <rect x="3" y="11" width="10" height="2" rx="1"/>
+                    `;
+                } else if (align === 'right') {
+                    // 오른쪽 정렬: 짧은 막대들이 오른쪽 정렬
+                    svg.innerHTML = `
+                        <rect x="2" y="3" width="12" height="2" rx="1"/>
+                        <rect x="6" y="7" width="8" height="2" rx="1"/>
+                        <rect x="4" y="11" width="10" height="2" rx="1"/>
+                    `;
+                }
+
+                return svg;
+            };
+
+            // 정렬 버튼 생성 함수
+            const createAlignButton = (align, title) => {
+                const button = document.createElement('button');
+                button.className = 'align-button';
+                button.type = 'button';
+                button.title = title;
+                button.setAttribute('data-align', align);
+
+                // SVG 아이콘 추가
+                button.appendChild(createAlignIcon(align));
+
+                if (currentAlign === align) {
+                    button.classList.add('active');
+                }
+
+                button.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+
+                    console.log('[ImageAlign] 정렬 버튼 클릭:', align);
+
+                    currentAlign = align;
+                    figure.setAttribute('data-align', align);
+
+                    // 모든 버튼의 active 클래스 제거
+                    alignMenu.querySelectorAll('.align-button').forEach(btn => {
+                        btn.classList.remove('active');
+                    });
+                    // 현재 버튼에 active 클래스 추가
+                    button.classList.add('active');
+
+                    // 에디터에 저장
+                    if (typeof getPos === 'function') {
+                        const pos = getPos();
+                        try {
+                            const tr = editor.view.state.tr;
+                            const currentNode = editor.view.state.doc.nodeAt(pos);
+
+                            console.log('[ImageAlign] 현재 노드:', currentNode);
+                            console.log('[ImageAlign] 새 정렬:', align);
+
+                            tr.setNodeMarkup(pos, null, {
+                                src: currentNode.attrs.src,
+                                alt: currentNode.attrs.alt,
+                                caption: currentNode.attrs.caption,
+                                width: currentNode.attrs.width,
+                                align: align
+                            });
+                            editor.view.dispatch(tr);
+
+                            console.log('[ImageAlign] 정렬 저장 완료');
+                        } catch (error) {
+                            console.error('[ImageWithCaption] 정렬 저장 실패:', error);
+                        }
+                    }
+                });
+
+                return button;
+            };
+
+            // 정렬 버튼 추가
+            alignMenu.appendChild(createAlignButton('left', '왼쪽 정렬'));
+            alignMenu.appendChild(createAlignButton('center', '가운데 정렬'));
+            alignMenu.appendChild(createAlignButton('right', '오른쪽 정렬'));
+
+            imageContainer.appendChild(alignMenu);
 
             // 이미지
             const img = document.createElement('img');
@@ -166,7 +281,8 @@ export const ImageWithCaption = Node.create({
                                 src: node.attrs.src,
                                 alt: node.attrs.alt,
                                 caption: currentCaption,
-                                width: figure.style.width || node.attrs.width
+                                width: figure.style.width || node.attrs.width,
+                                align: currentAlign
                             });
                             editor.view.dispatch(tr);
                         } catch (error) {
@@ -261,7 +377,8 @@ export const ImageWithCaption = Node.create({
                             src: currentNode.attrs.src,
                             alt: currentNode.attrs.alt,
                             caption: currentNode.attrs.caption,
-                            width: finalWidth
+                            width: finalWidth,
+                            align: currentAlign
                         });
                         editor.view.dispatch(tr);
                     } catch (error) {
@@ -281,6 +398,7 @@ export const ImageWithCaption = Node.create({
                     lastEditableState = currentEditableState;
                     captionElement.readOnly = !currentEditableState;
                     resizeHandle.style.display = currentEditableState ? 'block' : 'none';
+                    alignMenu.style.display = currentEditableState ? 'flex' : 'none';
                 }
             };
 
@@ -311,6 +429,21 @@ export const ImageWithCaption = Node.create({
                         figure.style.width = updatedNode.attrs.width;
                     }
 
+                    // align이 변경되었으면 업데이트
+                    if (updatedNode.attrs.align !== currentAlign) {
+                        currentAlign = updatedNode.attrs.align || 'center';
+                        figure.setAttribute('data-align', currentAlign);
+
+                        // 정렬 버튼 active 상태 업데이트
+                        alignMenu.querySelectorAll('.align-button').forEach(btn => {
+                            if (btn.getAttribute('data-align') === currentAlign) {
+                                btn.classList.add('active');
+                            } else {
+                                btn.classList.remove('active');
+                            }
+                        });
+                    }
+
                     return true;
                 },
                 destroy: () => {
@@ -326,9 +459,9 @@ export const ImageWithCaption = Node.create({
                     document.removeEventListener('mouseup', onResizeEnd);
                 },
                 stopEvent: (event) => {
-                    // 쓰기모드에서 캡션 입력 필드 내부의 이벤트는 내부에서 처리
+                    // 쓰기모드에서 캡션 입력 필드와 정렬 메뉴 내부의 이벤트는 내부에서 처리
                     if (editor.isEditable) {
-                        return captionContainer.contains(event.target);
+                        return captionContainer.contains(event.target) || alignMenu.contains(event.target);
                     }
                     return false;
                 },
@@ -348,7 +481,9 @@ export const ImageWithCaption = Node.create({
                     attrs: {
                         src: options.src,
                         alt: options.alt || '',
-                        caption: options.caption || ''
+                        caption: options.caption || '',
+                        width: options.width || '100%',
+                        align: options.align || 'center'
                     }
                 });
             }
