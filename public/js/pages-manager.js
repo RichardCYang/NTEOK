@@ -6,6 +6,7 @@ import { secureFetch } from './ui-utils.js';
 import { escapeHtml, showErrorInEditor } from './ui-utils.js';
 import { startPageSync, stopPageSync, startCollectionSync, stopCollectionSync } from './sync-manager.js';
 import { showCover, hideCover, updateCoverButtonsVisibility } from './cover-manager.js';
+import { checkPublishStatus, updatePublishButton } from './publish-manager.js';
 
 // 전역 상태 (app.js에서 전달받음)
 let state = {
@@ -464,6 +465,9 @@ export async function loadPage(id) {
             startCollectionSync(page.collectionId);
         }
 
+        // 발행 상태 확인
+        await checkPublishStatus(page.id);
+
         // 모바일에서 페이지 로드 후 사이드바 닫기
         if (window.innerWidth <= 768) {
             window.closeSidebar();
@@ -666,6 +670,7 @@ export async function toggleEditMode() {
 
         // 읽기모드 진입 시 커버 버튼 숨김
         updateCoverButtonsVisibility();
+        updatePublishButton();
     } else {
         // 암호화된 페이지는 쓰기 모드 진입 차단
         if (state.currentPageIsEncrypted) {
@@ -708,6 +713,7 @@ export async function toggleEditMode() {
 
         // 쓰기모드 진입 시 커버 버튼 표시
         updateCoverButtonsVisibility();
+        updatePublishButton();
     }
 }
 

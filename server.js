@@ -721,6 +721,29 @@ async function initDb() {
         )
     `);
 
+    // 페이지 발행 링크 테이블
+    await pool.execute(`
+        CREATE TABLE IF NOT EXISTS page_publish_links (
+            id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            token VARCHAR(64) NOT NULL UNIQUE,
+            page_id VARCHAR(64) NOT NULL,
+            owner_user_id INT NOT NULL,
+            is_active TINYINT(1) NOT NULL DEFAULT 1,
+            created_at DATETIME NOT NULL,
+            updated_at DATETIME NOT NULL,
+            CONSTRAINT fk_page_publish_links_page
+                FOREIGN KEY (page_id)
+                REFERENCES pages(id)
+                ON DELETE CASCADE,
+            CONSTRAINT fk_page_publish_links_owner
+                FOREIGN KEY (owner_user_id)
+                REFERENCES users(id)
+                ON DELETE CASCADE,
+            INDEX idx_token_active (token, is_active),
+            INDEX idx_page_id (page_id)
+        )
+    `);
+
     // ============================================================
     // E2EE 시스템 재설계: 선택적 암호화 (마스터 키 시스템 제거)
     // ============================================================
@@ -837,6 +860,13 @@ async function hasEncryptedPages(collectionId) {
  * @returns {string} - 64자 hex 문자열
  */
 function generateShareToken() {
+    return crypto.randomBytes(32).toString('hex');
+}
+
+/**
+ * 페이지 발행 토큰 생성
+ */
+function generatePublishToken() {
     return crypto.randomBytes(32).toString('hex');
 }
 
@@ -1658,6 +1688,7 @@ function cleanupWebSocketConnection(ws) {
             getCollectionPermission,
             hasEncryptedPages,
             generateShareToken,
+            generatePublishToken,
             wsConnections,
             wsBroadcastToPage,
             wsBroadcastToCollection,

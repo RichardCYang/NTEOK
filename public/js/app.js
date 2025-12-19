@@ -68,6 +68,12 @@ import {
     hideCover,
     updateCoverButtonsVisibility
 } from './cover-manager.js';
+import {
+    initPublishManager,
+    bindPublishEvents,
+    checkPublishStatus,
+    updatePublishButton
+} from './publish-manager.js';
 
 // ==================== Global State ====================
 const appState = {
@@ -906,6 +912,9 @@ async function init() {
     // 커버 이미지 관리자 초기화
     initCoverManager(appState);
 
+    // 페이지 발행 관리자 초기화
+    initPublishManager(appState);
+
     // 검색 기능 초기화
     initSearch();
 
@@ -926,6 +935,7 @@ async function init() {
     bindEncryptPermissionModal();
     bindIconPickerModal();
     bindMobileSidebar();
+    bindPublishEvents();
     bindTotpModals();
     bindPasskeyModals();
     bindAccountManagementButtons();

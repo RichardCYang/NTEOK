@@ -85,6 +85,10 @@
                             <i class="fa-solid fa-image"></i>
                             <span>커버 추가</span>
                         </button>
+                        <button id="publish-btn" class="mode-toggle-btn" style="display: none;">
+                            <i class="fa-solid fa-share-nodes"></i>
+                            <span id="publish-btn-text">발행</span>
+                        </button>
                         <button id="mode-toggle-btn" class="mode-toggle-btn">
                             <i class="fa-solid fa-pencil"></i>
                             <span>쓰기모드</span>
@@ -1156,6 +1160,71 @@
                     <div id="icon-picker-grid" class="icon-picker-grid">
                         <!-- 아이콘들이 JavaScript로 동적 생성됨 -->
                     </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 페이지 발행 모달 -->
+        <div id="page-publish-modal" class="modal hidden">
+            <div class="modal-overlay"></div>
+            <div class="modal-content" style="max-width: 500px;">
+                <div class="modal-header">
+                    <h2>페이지 발행</h2>
+                    <button id="close-publish-modal-btn" class="modal-close-btn">
+                        <i class="fa-solid fa-xmark"></i>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <!-- 발행 전 -->
+                    <div id="publish-before-content">
+                        <p style="margin-bottom: 16px; color: #6b7280; font-size: 14px;">
+                            이 페이지를 인터넷에 공개하시겠습니까? 로그인하지 않은 사용자도 링크를 통해 페이지를 볼 수 있습니다.
+                        </p>
+                        <div style="padding: 12px; background-color: #f3f4f6; border-radius: 6px; margin-bottom: 16px;">
+                            <p style="margin: 0; font-size: 13px; color: #4b5563; line-height: 1.6;">
+                                <i class="fa-solid fa-info-circle"></i> 발행된 페이지는 읽기 전용으로 표시됩니다.
+                            </p>
+                        </div>
+                        <div style="display: flex; gap: 8px; justify-content: flex-end;">
+                            <button id="cancel-publish-btn" style="padding: 10px 20px; background: #6b7280; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px;">
+                                취소
+                            </button>
+                            <button id="confirm-publish-btn" class="primary-button" style="padding: 10px 20px; font-size: 14px;">
+                                발행하기
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- 발행 후 -->
+                    <div id="publish-after-content" style="display: none;">
+                        <div style="display: flex; flex-direction: column; gap: 12px; margin-bottom: 20px; padding: 16px; background: #f3f4f6; border-radius: 8px;">
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <i class="fa-solid fa-check-circle" style="color: #16a34a; font-size: 20px;"></i>
+                                <span style="font-weight: 600; color: #16a34a; font-size: 16px;">페이지가 발행되었습니다</span>
+                            </div>
+                        </div>
+                        <div style="margin-bottom: 20px;">
+                            <label style="display: block; margin-bottom: 8px; font-weight: 500; font-size: 13px;">
+                                공유 링크
+                            </label>
+                            <div style="display: flex; gap: 8px;">
+                                <input type="text" id="publish-link-input" readonly
+                                    style="flex: 1; padding: 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; background-color: #f9fafb; font-family: monospace;" />
+                                <button id="copy-publish-link-btn" class="primary-button" style="padding: 10px 16px; font-size: 14px; white-space: nowrap;">
+                                    <i class="fa-solid fa-copy"></i> 복사
+                                </button>
+                            </div>
+                        </div>
+                        <div style="display: flex; gap: 8px; justify-content: flex-end;">
+                            <button id="unpublish-btn" class="danger-button" style="padding: 10px 20px; font-size: 14px;">
+                                발행 취소
+                            </button>
+                            <button id="close-publish-success-btn" class="primary-button" style="padding: 10px 20px; font-size: 14px;">
+                                완료
+                            </button>
+                        </div>
+                    </div>
+                    <div id="publish-error" style="color: #ef4444; font-size: 12px; margin-top: 12px; min-height: 18px;"></div>
                 </div>
             </div>
         </div>

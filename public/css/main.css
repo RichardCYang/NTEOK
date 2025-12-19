@@ -668,6 +668,7 @@ body {
 .mode-toggle-btn {
     display: flex;
     align-items: center;
+    justify-content: center;
     gap: 6px;
     border: none;
     border-radius: 3px;
@@ -2383,4 +2384,18 @@ body {
 /* 백업/복구 버튼의 설명은 우측 정렬 */
 .settings-controls:has(> button.settings-button) .settings-description {
     text-align: right;
+}
+
+/* 발행 버튼 스타일 */
+#publish-btn {
+    transition: background-color 0.2s ease;
+}
+
+#publish-btn.published {
+    background-color: #16a34a;
+    color: white;
+}
+
+#publish-btn.published:hover {
+    background-color: #15803d;
 }

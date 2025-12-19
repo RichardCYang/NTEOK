@@ -26,6 +26,7 @@ module.exports = (dependencies) => {
         getCollectionPermission,
         wsBroadcastToCollection,
         logError,
+        generatePublishToken,
         coverUpload,
         editorImageUpload,
         path,
@@ -890,6 +891,163 @@ module.exports = (dependencies) => {
         } catch (error) {
             logError("POST /api/pages/:id/editor-image", error);
             res.status(500).json({ error: "이미지 업로드 실패" });
+        }
+    });
+
+    /**
+     * 페이지 발행 상태 확인
+     * GET /api/pages/:id/publish
+     */
+    router.get("/:id/publish", authMiddleware, async (req, res) => {
+        const pageId = req.params.id;
+        const userId = req.user.id;
+
+        try {
+            const [pageRows] = await pool.execute(
+                `SELECT p.id, p.user_id, p.collection_id, p.is_encrypted
+                 FROM pages p WHERE p.id = ?`,
+                [pageId]
+            );
+
+            if (!pageRows.length) {
+                return res.status(404).json({ error: "페이지를 찾을 수 없습니다." });
+            }
+
+            const page = pageRows[0];
+            const { permission } = await getCollectionPermission(page.collection_id, userId);
+            if (!permission) {
+                return res.status(403).json({ error: "권한이 없습니다." });
+            }
+
+            const [publishRows] = await pool.execute(
+                `SELECT token, created_at FROM page_publish_links
+                 WHERE page_id = ? AND is_active = 1`,
+                [pageId]
+            );
+
+            if (publishRows.length === 0) {
+                return res.json({ published: false });
+            }
+
+            const publish = publishRows[0];
+
+            res.json({
+                published: true,
+                token: publish.token,
+                url: `${process.env.BASE_URL || "https://localhost:3000"}/shared/page/${publish.token}`,
+                createdAt: toIsoString(publish.created_at)
+            });
+
+        } catch (error) {
+            logError("GET /api/pages/:id/publish", error);
+            res.status(500).json({ error: "발행 상태 확인 실패" });
+        }
+    });
+
+    /**
+     * 페이지 발행
+     * POST /api/pages/:id/publish
+     */
+    router.post("/:id/publish", authMiddleware, async (req, res) => {
+        const pageId = req.params.id;
+        const userId = req.user.id;
+
+        try {
+            const [pageRows] = await pool.execute(
+                `SELECT id, user_id, is_encrypted FROM pages WHERE id = ?`,
+                [pageId]
+            );
+
+            if (!pageRows.length) {
+                return res.status(404).json({ error: "페이지를 찾을 수 없습니다." });
+            }
+
+            const page = pageRows[0];
+
+            if (page.user_id !== userId) {
+                return res.status(403).json({ error: "페이지 소유자만 발행할 수 있습니다." });
+            }
+
+            if (page.is_encrypted === 1) {
+                return res.status(400).json({
+                    error: "암호화된 페이지는 발행할 수 없습니다."
+                });
+            }
+
+            // 이미 발행된 경우 기존 토큰 반환
+            const [existingRows] = await pool.execute(
+                `SELECT token FROM page_publish_links
+                 WHERE page_id = ? AND is_active = 1`,
+                [pageId]
+            );
+
+            if (existingRows.length > 0) {
+                const token = existingRows[0].token;
+                const url = `${process.env.BASE_URL || "https://localhost:3000"}/shared/page/${token}`;
+                return res.json({ ok: true, token, url });
+            }
+
+            // 새 토큰 생성
+            const token = generatePublishToken();
+            const now = new Date();
+            const nowStr = formatDateForDb(now);
+
+            await pool.execute(
+                `INSERT INTO page_publish_links
+                 (token, page_id, owner_user_id, is_active, created_at, updated_at)
+                 VALUES (?, ?, ?, 1, ?, ?)`,
+                [token, pageId, userId, nowStr, nowStr]
+            );
+
+            const url = `${process.env.BASE_URL || "https://localhost:3000"}/shared/page/${token}`;
+            console.log("POST /api/pages/:id/publish 발행 완료:", pageId, token);
+
+            res.json({ ok: true, token, url });
+
+        } catch (error) {
+            logError("POST /api/pages/:id/publish", error);
+            res.status(500).json({ error: "페이지 발행 실패" });
+        }
+    });
+
+    /**
+     * 페이지 발행 취소
+     * DELETE /api/pages/:id/publish
+     */
+    router.delete("/:id/publish", authMiddleware, async (req, res) => {
+        const pageId = req.params.id;
+        const userId = req.user.id;
+
+        try {
+            const [pageRows] = await pool.execute(
+                `SELECT id, user_id FROM pages WHERE id = ?`,
+                [pageId]
+            );
+
+            if (!pageRows.length) {
+                return res.status(404).json({ error: "페이지를 찾을 수 없습니다." });
+            }
+
+            if (pageRows[0].user_id !== userId) {
+                return res.status(403).json({ error: "페이지 소유자만 발행을 취소할 수 있습니다." });
+            }
+
+            const now = new Date();
+            const nowStr = formatDateForDb(now);
+
+            await pool.execute(
+                `UPDATE page_publish_links
+                 SET is_active = 0, updated_at = ?
+                 WHERE page_id = ? AND is_active = 1`,
+                [nowStr, pageId]
+            );
+
+            console.log("DELETE /api/pages/:id/publish 발행 취소 완료:", pageId);
+            res.json({ ok: true });
+
+        } catch (error) {
+            logError("DELETE /api/pages/:id/publish", error);
+            res.status(500).json({ error: "발행 취소 실패" });
         }
     });
 
