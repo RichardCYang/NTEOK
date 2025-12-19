@@ -655,7 +655,7 @@ ${JSON.stringify(pageMetadata, null, 2)}
                                 pageData.publishToken,
                                 pageId,
                                 userId,
-                                pageData.publishedAt || nowStr,
+                                pageData.publishedAt ? formatDateForDb(new Date(pageData.publishedAt)) : nowStr,
                                 nowStr
                             ]
                         );
