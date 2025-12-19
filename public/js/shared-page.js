@@ -172,6 +172,48 @@ function processBookmarkImages(container) {
     });
 }
 
+/**
+ * 체크박스(to-do list) 렌더링 함수
+ * @param {HTMLElement} container - 렌더링 대상 컨테이너
+ */
+function renderCheckboxes(container) {
+    // taskList 타입의 ul 요소를 모두 찾아서 처리
+    container.querySelectorAll('ul[data-type="taskList"]').forEach((ul) => {
+        // 각 li 항목 처리
+        ul.querySelectorAll('li').forEach((li) => {
+            const isChecked = li.getAttribute('data-checked') === 'true';
+
+            // 이미 렌더링된 경우 건너뛰기
+            if (li.querySelector('input[type="checkbox"]')) {
+                const checkbox = li.querySelector('input[type="checkbox"]');
+                checkbox.checked = isChecked;
+                return;
+            }
+
+            // 기존 내용 백업
+            const content = li.innerHTML;
+
+            // li 내용 재구성
+            li.innerHTML = '';
+
+            // label과 checkbox 생성
+            const label = document.createElement('label');
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.checked = isChecked;
+            checkbox.disabled = true; // 공개 페이지에서는 체크박스 비활성화
+
+            label.appendChild(checkbox);
+            li.appendChild(label);
+
+            // 콘텐츠 div 생성
+            const contentDiv = document.createElement('div');
+            contentDiv.innerHTML = content;
+            li.appendChild(contentDiv);
+        });
+    });
+}
+
 (async () => {
     try {
         // URL에서 토큰 추출
@@ -216,6 +258,9 @@ function processBookmarkImages(container) {
 
         // 북마크 블록 렌더링
         renderBookmarks(editorEl);
+
+        // 체크박스 렌더링
+        renderCheckboxes(editorEl);
 
         // KaTeX 수식 렌더링
         if (window.katex) {
