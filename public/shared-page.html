@@ -372,6 +372,62 @@
                 }
             }
 
+            /* ============ 수식 블록 스타일 ============ */
+            .shared-page-editor [data-type="math-block"] {
+                margin: 1em 0;
+                padding: 0;
+                border: 1px solid #d4cfc4;
+                border-radius: 6px;
+                background: #faf8f3;
+                transition: all 0.15s ease;
+                position: relative;
+                overflow: hidden;
+            }
+
+            .shared-page-editor [data-type="math-block"]:hover {
+                border-color: #c9c3b8;
+                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+            }
+
+            .shared-page-editor [data-type="math-block"] {
+                cursor: default;
+                padding: 1em 1.2em;
+                text-align: center;
+                overflow-x: auto;
+                color: #2d2d2d;
+                min-height: 60px;
+                transition: background 0.15s ease;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            }
+
+            /* KaTeX display mode 여백 조정 */
+            .shared-page-editor [data-type="math-block"] .katex-display {
+                margin: 0;
+            }
+
+            /* KaTeX rendering improvements */
+            .shared-page-editor .katex-display {
+                margin: 0;
+            }
+
+            .shared-page-editor .katex {
+                font-size: 1.1em;
+            }
+
+            /* 인라인 수식 - 읽기 전용 */
+            .shared-page-editor [data-type="math-inline"] {
+                display: inline;
+                padding: 2px 4px;
+                margin: 0 1px;
+                background: transparent;
+                border-radius: 3px;
+                font-family: inherit;
+                font-size: inherit;
+                vertical-align: baseline;
+            }
+
             /* ============ 체크리스트 스타일 ============ */
             .shared-page-editor ul[data-type="taskList"] {
                 list-style: none;

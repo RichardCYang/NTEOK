@@ -264,6 +264,39 @@ function renderCheckboxes(container) {
 
         // KaTeX 수식 렌더링
         if (window.katex) {
+            // 수식 블록 렌더링
+            editorEl.querySelectorAll('[data-type="math-block"]').forEach((el) => {
+                try {
+                    const latex = el.getAttribute('data-latex') || el.textContent;
+                    if (latex) {
+                        el.innerHTML = '';
+                        window.katex.render(latex, el, {
+                            displayMode: true,
+                            throwOnError: false
+                        });
+                    }
+                } catch (err) {
+                    console.error('[MathBlock] KaTeX 렌더링 오류:', err);
+                }
+            });
+
+            // 인라인 수식 렌더링 (혹시 있을 경우)
+            editorEl.querySelectorAll('[data-type="math-inline"]').forEach((el) => {
+                try {
+                    const latex = el.getAttribute('data-latex') || el.textContent;
+                    if (latex) {
+                        el.innerHTML = '';
+                        window.katex.render(latex, el, {
+                            displayMode: false,
+                            throwOnError: false
+                        });
+                    }
+                } catch (err) {
+                    console.error('[MathInline] KaTeX 렌더링 오류:', err);
+                }
+            });
+
+            // 레거시: 이전 형식 지원 (.katex-block, .katex-inline)
             document.querySelectorAll('.katex-block, .katex-inline').forEach((el) => {
                 try {
                     const isDisplay = el.classList.contains('katex-block');

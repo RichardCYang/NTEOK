@@ -43,7 +43,8 @@ export const MathBlock = Node.create({
             {
                 ...HTMLAttributes,
                 'data-type': 'math-block',
-                'class': 'math-block'
+                'class': 'math-block',
+                'data-latex': node.attrs.latex || ''
             }
         ];
     },
@@ -377,7 +378,8 @@ export const MathInline = Node.create({
             {
                 ...HTMLAttributes,
                 'data-type': 'math-inline',
-                'class': 'math-inline'
+                'class': 'math-inline',
+                'data-latex': node.attrs.latex || ''
             },
             node.attrs.latex || ''
         ];
