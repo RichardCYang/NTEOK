@@ -71,6 +71,7 @@ const DB_CONFIG = {
     user: process.env.DB_USER || "root",
     password: process.env.DB_PASSWORD || "admin",
     database: process.env.DB_NAME || "nteok",
+    charset: "utf8mb4",
     waitForConnections: true,
     connectionLimit: 10,
     queueLimit: 0
@@ -509,7 +510,7 @@ async function initDb() {
             totp_enabled TINYINT(1) NOT NULL DEFAULT 0,
             passkey_enabled TINYINT(1) NOT NULL DEFAULT 0,
             block_duplicate_login TINYINT(1) NOT NULL DEFAULT 0
-        )
+        ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
     `);
 
     // (TOTP 컬럼들은 이제 CREATE TABLE에 포함됨)
@@ -555,7 +556,7 @@ async function initDb() {
                 FOREIGN KEY (user_id)
                 REFERENCES users(id)
                 ON DELETE CASCADE
-        )
+        ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
     `);
 
     // pages 테이블 생성
@@ -584,8 +585,21 @@ async function initDb() {
                 FOREIGN KEY (parent_id)
                 REFERENCES pages(id)
                 ON DELETE CASCADE
-        )
+        ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
     `);
+
+    // 기존 테이블의 charset을 utf8mb4로 변경 (이모지 지원)
+    try {
+        await pool.execute(`
+            ALTER TABLE pages
+            CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
+        `);
+    } catch (error) {
+        // 이미 utf8mb4인 경우 무시
+        if (error && error.code !== 'ER_BAD_FIELD_ERROR') {
+            console.warn("pages 테이블 charset 변경 중 경고:", error.message);
+        }
+    }
 
     // pages 테이블에 collection_id 컬럼 추가 (없을 경우만)
     await pool.execute(`
@@ -637,7 +651,7 @@ async function initDb() {
                 UNIQUE (collection_id, shared_with_user_id),
             INDEX idx_shared_with_user (shared_with_user_id),
             INDEX idx_collection_permission (collection_id, permission)
-        )
+        ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
     `);
 
     // share_links 테이블 생성 (링크 기반 공유)
@@ -663,7 +677,7 @@ async function initDb() {
             INDEX idx_token_active (token, is_active),
             INDEX idx_collection_links (collection_id),
             INDEX idx_expires_at (expires_at)
-        )
+        ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
     `);
 
     // backup_codes 테이블 생성 (TOTP 백업 코드)
@@ -680,7 +694,7 @@ async function initDb() {
                 REFERENCES users(id)
                 ON DELETE CASCADE,
             INDEX idx_user_codes (user_id, used)
-        )
+        ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
     `);
 
     // (passkey_enabled, block_duplicate_login은 이제 CREATE TABLE에 포함됨)
@@ -704,7 +718,7 @@ async function initDb() {
                 ON DELETE CASCADE,
             INDEX idx_user_id (user_id),
             INDEX idx_credential_id (credential_id)
-        )
+        ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
     `);
 
     // webauthn_challenges 테이블 생성 (임시 챌린지 저장)
@@ -719,7 +733,7 @@ async function initDb() {
             expires_at DATETIME NOT NULL,
             INDEX idx_session_id (session_id),
             INDEX idx_expires_at (expires_at)
-        )
+        ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
     `);
 
     // 페이지 발행 링크 테이블
@@ -742,7 +756,7 @@ async function initDb() {
                 ON DELETE CASCADE,
             INDEX idx_token_active (token, is_active),
             INDEX idx_page_id (page_id)
-        )
+        ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
     `);
 
     // ============================================================
