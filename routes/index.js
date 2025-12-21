@@ -84,11 +84,74 @@ module.exports = (dependencies) => {
     });
 
     /**
+     * 공개 페이지 접근 시도 추적 (브루트포스 방지)
+     */
+    const sharedPageAccessAttempts = new Map(); // IP -> { count, resetTime, tokens: Set }
+    const SHARED_PAGE_RATE_LIMIT_WINDOW = 60 * 1000; // 1분
+    const SHARED_PAGE_MAX_ATTEMPTS = 20; // 분당 최대 20회 시도
+    const SHARED_PAGE_MAX_FAILED_TOKENS = 5; // 서로 다른 잘못된 토큰 최대 5개
+
+    function checkSharedPageAccess(clientIp, token, isValid) {
+        const now = Date.now();
+        let attempts = sharedPageAccessAttempts.get(clientIp);
+
+        if (attempts) {
+            if (now < attempts.resetTime) {
+                // 시간 윈도우 내
+                attempts.count++;
+
+                if (!isValid) {
+                    attempts.tokens.add(token);
+                }
+
+                // Rate limit 체크
+                if (attempts.count > SHARED_PAGE_MAX_ATTEMPTS) {
+                    console.warn(`[공개 페이지 보안] IP ${clientIp}의 과도한 접근 시도 차단 (${attempts.count}회)`);
+                    return false;
+                }
+
+                // 여러 잘못된 토큰 시도 체크
+                if (attempts.tokens.size > SHARED_PAGE_MAX_FAILED_TOKENS) {
+                    console.warn(`[공개 페이지 보안] IP ${clientIp}의 브루트포스 시도 감지 (${attempts.tokens.size}개의 잘못된 토큰)`);
+                    return false;
+                }
+            } else {
+                // 시간 윈도우가 지났으므로 리셋
+                sharedPageAccessAttempts.set(clientIp, {
+                    count: 1,
+                    resetTime: now + SHARED_PAGE_RATE_LIMIT_WINDOW,
+                    tokens: isValid ? new Set() : new Set([token])
+                });
+            }
+        } else {
+            // 첫 시도
+            sharedPageAccessAttempts.set(clientIp, {
+                count: 1,
+                resetTime: now + SHARED_PAGE_RATE_LIMIT_WINDOW,
+                tokens: isValid ? new Set() : new Set([token])
+            });
+        }
+
+        return true;
+    }
+
+    // 5분마다 만료된 접근 시도 기록 정리
+    setInterval(() => {
+        const now = Date.now();
+        for (const [ip, attempts] of sharedPageAccessAttempts.entries()) {
+            if (now > attempts.resetTime) {
+                sharedPageAccessAttempts.delete(ip);
+            }
+        }
+    }, 5 * 60 * 1000);
+
+    /**
      * 발행된 페이지 데이터 API
      * GET /api/shared/page/:token
      */
     router.get("/api/shared/page/:token", async (req, res) => {
         const token = req.params.token;
+        const clientIp = req.ip || req.socket.remoteAddress || req.headers['x-forwarded-for'] || 'unknown';
 
         try {
             const [publishRows] = await pool.execute(
@@ -97,7 +160,15 @@ module.exports = (dependencies) => {
                 [token]
             );
 
-            if (!publishRows.length) {
+            const isValid = publishRows.length > 0;
+
+            // Rate Limiting 체크
+            if (!checkSharedPageAccess(clientIp, token, isValid)) {
+                return res.status(429).json({ error: "너무 많은 요청입니다. 잠시 후 다시 시도해주세요." });
+            }
+
+            if (!isValid) {
+                console.log(`[공개 페이지 접근] 실패 - 토큰: ${token.substring(0, 8)}..., IP: ${clientIp}`);
                 return res.status(404).json({ error: "페이지를 찾을 수 없습니다." });
             }
 
@@ -111,10 +182,14 @@ module.exports = (dependencies) => {
             );
 
             if (!pageRows.length) {
+                console.log(`[공개 페이지 접근] 실패 - 페이지 없음, 토큰: ${token.substring(0, 8)}..., IP: ${clientIp}`);
                 return res.status(404).json({ error: "페이지를 찾을 수 없습니다." });
             }
 
             const page = pageRows[0];
+
+            // 성공 로깅
+            console.log(`[공개 페이지 접근] 성공 - 페이지: ${page.title}, 토큰: ${token.substring(0, 8)}..., IP: ${clientIp}`);
 
             res.json({
                 id: page.id,

@@ -1219,8 +1219,113 @@ app.use("/api", csrfMiddleware);
 app.use("/api", generalLimiter);
 
 app.use(express.static(path.join(__dirname, "public"), { index: false }));
-app.use('/covers', express.static(path.join(__dirname, 'covers')));
-app.use('/imgs', express.static(path.join(__dirname, 'imgs')));
+
+// 보안 개선: 정적 파일 접근 제어 (인증된 사용자만 접근 가능)
+// 기본 커버 이미지는 인증 없이 접근 가능
+app.use('/covers/default', express.static(path.join(__dirname, 'covers', 'default')));
+
+// 사용자별 커버 이미지 - 인증 필요
+app.get('/covers/:userId/:filename', authMiddleware, async (req, res) => {
+    const requestedUserId = parseInt(req.params.userId, 10);
+    const filename = req.params.filename;
+    const currentUserId = req.user.id;
+
+    try {
+        // 파일명 새니타이제이션 (경로 조작 방지)
+        const sanitizedFilename = path.basename(filename);
+        const filePath = path.join(__dirname, 'covers', String(requestedUserId), sanitizedFilename);
+
+        // 파일 존재 확인
+        if (!fs.existsSync(filePath)) {
+            return res.status(404).json({ error: '파일을 찾을 수 없습니다.' });
+        }
+
+        // 권한 확인: 본인 파일이거나, 공유받은 페이지의 커버인 경우
+        if (requestedUserId === currentUserId) {
+            // 본인 파일 - 접근 허용
+            return res.sendFile(filePath);
+        }
+
+        // 다른 사용자의 파일 - 공유받은 페이지의 커버인지 확인
+        const coverPath = `${requestedUserId}/${sanitizedFilename}`;
+        const [rows] = await pool.execute(
+            `SELECT p.id
+             FROM pages p
+             LEFT JOIN collections c ON p.collection_id = c.id
+             LEFT JOIN collection_shares cs ON c.id = cs.collection_id
+             WHERE p.cover_image = ?
+               AND (p.user_id = ? OR cs.shared_with_user_id = ?)
+             LIMIT 1`,
+            [coverPath, currentUserId, currentUserId]
+        );
+
+        if (rows.length > 0) {
+            // 공유받은 페이지의 커버 - 접근 허용
+            return res.sendFile(filePath);
+        }
+
+        // 권한 없음
+        console.warn(`[보안] 사용자 ${currentUserId}이(가) 권한 없이 커버 이미지 접근 시도: ${coverPath}`);
+        return res.status(403).json({ error: '접근 권한이 없습니다.' });
+
+    } catch (error) {
+        logError('GET /covers/:userId/:filename', error);
+        res.status(500).json({ error: '파일 로드 실패' });
+    }
+});
+
+// 에디터 이미지 - 인증 필요
+app.get('/imgs/:userId/:filename', authMiddleware, async (req, res) => {
+    const requestedUserId = parseInt(req.params.userId, 10);
+    const filename = req.params.filename;
+    const currentUserId = req.user.id;
+
+    try {
+        // 파일명 새니타이제이션 (경로 조작 방지)
+        const sanitizedFilename = path.basename(filename);
+        const filePath = path.join(__dirname, 'imgs', String(requestedUserId), sanitizedFilename);
+
+        // 파일 존재 확인
+        if (!fs.existsSync(filePath)) {
+            return res.status(404).json({ error: '파일을 찾을 수 없습니다.' });
+        }
+
+        // 권한 확인: 본인 파일이거나, 공유받은 페이지의 이미지인 경우
+        if (requestedUserId === currentUserId) {
+            // 본인 파일 - 접근 허용
+            return res.sendFile(filePath);
+        }
+
+        // 다른 사용자의 파일 - 공유받은 페이지의 이미지인지 확인
+        const imagePath = `${requestedUserId}/${sanitizedFilename}`;
+        const imageUrl = `/imgs/${imagePath}`;
+
+        // 이미지가 포함된 페이지가 공유되었는지 확인
+        const [rows] = await pool.execute(
+            `SELECT p.id
+             FROM pages p
+             LEFT JOIN collections c ON p.collection_id = c.id
+             LEFT JOIN collection_shares cs ON c.id = cs.collection_id
+             WHERE p.content LIKE ?
+               AND (p.user_id = ? OR cs.shared_with_user_id = ?)
+             LIMIT 1`,
+            [`%${imageUrl}%`, currentUserId, currentUserId]
+        );
+
+        if (rows.length > 0) {
+            // 공유받은 페이지의 이미지 - 접근 허용
+            return res.sendFile(filePath);
+        }
+
+        // 권한 없음
+        console.warn(`[보안] 사용자 ${currentUserId}이(가) 권한 없이 이미지 접근 시도: ${imagePath}`);
+        return res.status(403).json({ error: '접근 권한이 없습니다.' });
+
+    } catch (error) {
+        logError('GET /imgs/:userId/:filename', error);
+        res.status(500).json({ error: '파일 로드 실패' });
+    }
+});
 
 /**
  * multer 설정 (커버 이미지 업로드)
@@ -1233,7 +1338,7 @@ const coverStorage = multer.diskStorage({
         cb(null, userCoverDir);
     },
     filename: (req, file, cb) => {
-        const uniqueName = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}${path.extname(file.originalname)}`;
+        const uniqueName = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}${path.extname(file.originalname)}`;
         cb(null, uniqueName);
     }
 });
@@ -1262,7 +1367,7 @@ const editorImageStorage = multer.diskStorage({
         cb(null, userImgDir);
     },
     filename: (req, file, cb) => {
-        const uniqueName = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}${path.extname(file.originalname)}`;
+        const uniqueName = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}${path.extname(file.originalname)}`;
         cb(null, uniqueName);
     }
 });
@@ -1283,6 +1388,44 @@ const editorImageUpload = multer({
 });
 
 /**
+ * WebSocket 연결 Rate Limiting
+ */
+const wsConnectionLimiter = new Map(); // IP -> { count, resetTime }
+const WS_RATE_LIMIT_WINDOW = 60 * 1000; // 1분
+const WS_RATE_LIMIT_MAX_CONNECTIONS = 10; // 분당 최대 10회 연결
+
+function checkWebSocketRateLimit(clientIp) {
+    const now = Date.now();
+    const limit = wsConnectionLimiter.get(clientIp);
+
+    if (limit) {
+        if (now < limit.resetTime) {
+            if (limit.count >= WS_RATE_LIMIT_MAX_CONNECTIONS) {
+                return false; // Rate limit exceeded
+            }
+            limit.count++;
+        } else {
+            // 시간 윈도우가 지났으므로 리셋
+            wsConnectionLimiter.set(clientIp, { count: 1, resetTime: now + WS_RATE_LIMIT_WINDOW });
+        }
+    } else {
+        wsConnectionLimiter.set(clientIp, { count: 1, resetTime: now + WS_RATE_LIMIT_WINDOW });
+    }
+
+    return true; // 허용
+}
+
+// 5분마다 만료된 Rate Limit 엔트리 정리
+setInterval(() => {
+    const now = Date.now();
+    for (const [ip, limit] of wsConnectionLimiter.entries()) {
+        if (now > limit.resetTime) {
+            wsConnectionLimiter.delete(ip);
+        }
+    }
+}, 5 * 60 * 1000);
+
+/**
  * WebSocket 서버 초기화
  */
 function initWebSocketServer(server) {
@@ -1292,6 +1435,14 @@ function initWebSocketServer(server) {
     });
 
     wss.on('connection', async (ws, req) => {
+        // Rate Limiting 체크
+        const clientIp = req.socket.remoteAddress || req.headers['x-forwarded-for'] || 'unknown';
+        if (!checkWebSocketRateLimit(clientIp)) {
+            console.warn(`[WS Rate Limit] IP ${clientIp}의 연결 시도가 차단되었습니다.`);
+            ws.close(1008, 'Too many connection attempts. Please try again later.');
+            return;
+        }
+
         // 쿠키 파싱
         const cookies = {};
         if (req.headers.cookie) {

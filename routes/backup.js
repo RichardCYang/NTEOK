@@ -6,6 +6,7 @@ const { JSDOM } = require('jsdom');
 const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
+const crypto = require('crypto');
 
 /**
  * Backup Routes
@@ -29,7 +30,7 @@ const backupUpload = multer({
         },
         filename: (req, file, cb) => {
             // 파일명에 타임스탐프 추가로 중복 방지
-            const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+            const uniqueSuffix = Date.now() + '-' + crypto.randomBytes(6).toString('hex');
             cb(null, 'backup-' + uniqueSuffix + '.zip');
         }
     }),
