@@ -659,6 +659,20 @@ body {
     background-color: #f0ede7;
 }
 
+/* 인용문 스타일 */
+.editor .ProseMirror blockquote {
+    border-left: 4px solid #2d5f5d;
+    padding-left: 16px;
+    margin: 12px 0;
+    color: #5a6169;
+    font-style: italic;
+}
+
+.editor .ProseMirror blockquote p {
+    margin: 0;
+    padding: 4px 0;
+}
+
 /* 버튼 스타일: 한국식 절제된 디자인 */
 .primary-button {
 	border: none;
