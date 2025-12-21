@@ -577,6 +577,13 @@ ${JSON.stringify(pageMetadata, null, 2)}
 
                 const entryName = entry.entryName;
 
+                // ZIP Slip 방지: 경로 검증
+                const baseExtractDir = path.join(__dirname, '..');
+                if (!isSafePath(entryName, baseExtractDir)) {
+                    console.warn(`[보안] 위험한 ZIP 엔트리 건너뜀: ${entryName}`);
+                    continue;
+                }
+
                 // HTML 페이지 처리 (pages/ 폴더)
                 if (entryName.endsWith('.html') && entryName.startsWith('pages/')) {
                     const parts = entryName.split('/');
@@ -660,7 +667,9 @@ ${JSON.stringify(pageMetadata, null, 2)}
                                 nowStr
                             ]
                         );
-                        console.log(`[발행 정보 복원] ${pageData.title} - 토큰: ${pageData.publishToken}`);
+                        // 보안: 토큰 일부만 표시
+                        const maskedToken = pageData.publishToken.substring(0, 8) + '...';
+                        console.log(`[발행 정보 복원] ${pageData.title} - 토큰: ${maskedToken}`);
                     }
 
                     totalPages++;
@@ -687,6 +696,12 @@ ${JSON.stringify(pageMetadata, null, 2)}
 
                     // 이미지 타입 판별: userId/filename 형식이므로 첫 번째 부분을 제거하고 나머지는 filename
                     const filename = parts[parts.length - 1];
+
+                    // 파일명 추가 검증 (경로 조작 방지)
+                    if (filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
+                        console.warn(`[보안] 위험한 파일명 감지: ${filename}`);
+                        continue;
+                    }
 
                     // 백업에서 원래 어느 폴더에 있었는지 판별
                     // pageDataMap에서 이 이미지가 커버인지 확인
@@ -717,6 +732,14 @@ ${JSON.stringify(pageMetadata, null, 2)}
                     }
 
                     const targetPath = path.join(targetDir, filename);
+
+                    // 최종 경로 검증 (디렉토리 탈출 방지)
+                    const resolvedTargetPath = path.resolve(targetPath);
+                    const resolvedTargetDir = path.resolve(targetDir);
+                    if (!resolvedTargetPath.startsWith(resolvedTargetDir + path.sep)) {
+                        console.warn(`[보안] 디렉토리 탈출 시도 차단: ${targetPath}`);
+                        continue;
+                    }
 
                     // 이미지 저장
                     fs.writeFileSync(targetPath, entry.getData());
@@ -764,6 +787,48 @@ ${JSON.stringify(pageMetadata, null, 2)}
      */
     function sanitizeFilename(name) {
         return name.replace(/[<>:"/\\|?*]/g, '_').substring(0, 100);
+    }
+
+    /**
+     * 안전한 경로 검증 (ZIP Slip 방지)
+     * @param {string} entryPath - ZIP 엔트리 경로
+     * @param {string} baseDir - 기준 디렉토리
+     * @returns {boolean} - 안전한 경로면 true
+     */
+    function isSafePath(entryPath, baseDir) {
+        // 1. 경로 조작 문자열 검사
+        if (entryPath.includes('..') || entryPath.includes('./') || entryPath.includes('.\\')) {
+            console.warn(`[보안] 경로 조작 시도 감지: ${entryPath}`);
+            return false;
+        }
+
+        // 2. 절대 경로 검사
+        if (path.isAbsolute(entryPath)) {
+            console.warn(`[보안] 절대 경로 사용 시도: ${entryPath}`);
+            return false;
+        }
+
+        // 3. null byte 검사
+        if (entryPath.includes('\0')) {
+            console.warn(`[보안] null byte 감지: ${entryPath}`);
+            return false;
+        }
+
+        // 4. 최종 경로가 기준 디렉토리 내부인지 검증
+        try {
+            const resolvedPath = path.resolve(baseDir, entryPath);
+            const resolvedBase = path.resolve(baseDir);
+
+            if (!resolvedPath.startsWith(resolvedBase + path.sep) && resolvedPath !== resolvedBase) {
+                console.warn(`[보안] 디렉토리 탈출 시도: ${entryPath} -> ${resolvedPath}`);
+                return false;
+            }
+        } catch (error) {
+            console.error(`[보안] 경로 검증 오류: ${entryPath}`, error);
+            return false;
+        }
+
+        return true;
     }
 
     return router;

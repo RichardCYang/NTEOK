@@ -1307,7 +1307,8 @@ module.exports = (dependencies) => {
             );
 
             const url = `${process.env.BASE_URL || "https://localhost:3000"}/shared/page/${token}`;
-            console.log("POST /api/pages/:id/publish 발행 완료:", pageId, token);
+            // 보안: 토큰 일부만 표시
+            console.log(`POST /api/pages/:id/publish 발행 완료: ${pageId}, 토큰: ${token.substring(0, 8)}...`);
 
             res.json({ ok: true, token, url });
 

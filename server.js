@@ -334,11 +334,13 @@ function createSession(user) {
     // 중복 로그인 감지: 기존 세션 확인
     const existingSessions = userSessions.get(user.id);
     if (existingSessions && existingSessions.size > 0) {
-        console.log(`[중복 로그인 감지] 사용자 ID ${user.id} (${user.username})의 기존 세션 ${existingSessions.size}개 발견`);
+        // 보안: 사용자명 일부만 표시
+        const maskedUsername = user.username.substring(0, 2) + '***';
+        console.log(`[중복 로그인 감지] 사용자 ID ${user.id} (${maskedUsername})의 기존 세션 ${existingSessions.size}개 발견`);
 
         // 사용자 설정 확인: 중복 로그인 차단 모드
         if (user.blockDuplicateLogin) {
-            console.log(`[중복 로그인 차단] 사용자 ID ${user.id} (${user.username})의 새 로그인 시도 거부`);
+            console.log(`[중복 로그인 차단] 사용자 ID ${user.id} (${maskedUsername})의 새 로그인 시도 거부`);
             return {
                 success: false,
                 error: '이미 다른 위치에서 로그인 중입니다. 기존 세션을 먼저 종료하거나, 설정에서 "중복 로그인 차단" 옵션을 해제해주세요.'
@@ -354,7 +356,8 @@ function createSession(user) {
         // 기존 세션 모두 파기
         existingSessions.forEach(oldSessionId => {
             sessions.delete(oldSessionId);
-            console.log(`[세션 파기] 세션 ID: ${oldSessionId}`);
+            // 보안: 세션 ID 일부만 표시
+            console.log(`[세션 파기] 세션 ID: ${oldSessionId.substring(0, 8)}...`);
         });
 
         // 사용자 세션 목록 초기화
@@ -376,7 +379,9 @@ function createSession(user) {
     }
     userSessions.get(user.id).add(sessionId);
 
-    console.log(`[세션 생성] 사용자: ${user.username}, 세션 ID: ${sessionId}`);
+    // 보안: 세션 ID와 사용자명 일부만 표시
+    const maskedUsername = user.username.substring(0, 2) + '***';
+    console.log(`[세션 생성] 사용자: ${maskedUsername} (ID: ${user.id}), 세션 ID: ${sessionId.substring(0, 8)}...`);
 
     return { success: true, sessionId };
 }
@@ -450,7 +455,9 @@ function authMiddleware(req, res, next) {
 
     if (!session) {
         const sessionId = req.cookies[SESSION_COOKIE_NAME];
-        console.warn(`[인증 실패] ${req.method} ${req.path} - 세션 쿠키: ${sessionId ? '있음' : '없음'}, 유효한 세션: 없음`);
+        // 보안: 세션 ID 일부만 표시
+        const maskedSessionId = sessionId ? `${sessionId.substring(0, 8)}...` : '없음';
+        console.warn(`[인증 실패] ${req.method} ${req.path} - 세션 ID: ${maskedSessionId}, 유효한 세션: 없음, IP: ${req.ip}`);
         return res.status(401).json({ error: "로그인이 필요합니다." });
     }
 

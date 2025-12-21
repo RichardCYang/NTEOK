@@ -59,7 +59,8 @@ module.exports = (dependencies) => {
             );
 
             if (!rows.length) {
-                console.warn("로그인 실패 - 존재하지 않는 사용자 (IP: " + req.ip + ")");
+                // 보안: 사용자 존재 여부를 노출하지 않도록 통일된 메시지 사용
+                console.warn(`[로그인 실패] IP: ${req.ip}, 사유: 인증 실패`);
                 return res.status(401).json({ error: "아이디 또는 비밀번호가 올바르지 않습니다." });
             }
 
@@ -67,7 +68,8 @@ module.exports = (dependencies) => {
 
             const ok = await bcrypt.compare(password, user.password_hash);
             if (!ok) {
-                console.warn("로그인 실패 - 비밀번호 불일치 (IP: " + req.ip + ")");
+                // 보안: 사용자 존재 여부를 노출하지 않도록 통일된 메시지 사용
+                console.warn(`[로그인 실패] IP: ${req.ip}, 사유: 인증 실패`);
                 return res.status(401).json({ error: "아이디 또는 비밀번호가 올바르지 않습니다." });
             }
 
@@ -203,13 +205,17 @@ module.exports = (dependencies) => {
 
             const ok = await bcrypt.compare(password, user.password_hash);
             if (!ok) {
-                console.warn("계정 삭제 시도 - 비밀번호 불일치:", req.user.username);
+                // 보안: 민감 정보 마스킹 (사용자명 일부만 표시)
+                const maskedUsername = req.user.username.substring(0, 2) + '***';
+                console.warn(`[계정 삭제 실패] 사용자: ${maskedUsername}, IP: ${req.ip}, 사유: 비밀번호 불일치`);
                 return res.status(401).json({ error: "비밀번호가 올바르지 않습니다." });
             }
 
             await pool.execute(`DELETE FROM users WHERE id = ?`, [req.user.id]);
 
-            console.log(`계정 삭제 완료: 사용자 ID ${req.user.id} (${req.user.username})`);
+            // 보안: 민감 정보 마스킹 (사용자명 일부만 표시)
+            const maskedUsername = req.user.username.substring(0, 2) + '***';
+            console.log(`[계정 삭제 완료] 사용자 ID: ${req.user.id}, 사용자명: ${maskedUsername}`);
 
             const { getSessionFromRequest } = dependencies;
             const session = getSessionFromRequest(req);
@@ -413,7 +419,9 @@ module.exports = (dependencies) => {
                 [blockDuplicateLogin ? 1 : 0, req.user.id]
             );
 
-            console.log(`[보안 설정] 사용자 ID ${req.user.id} (${req.user.username}): 중복 로그인 차단 = ${blockDuplicateLogin}`);
+            // 보안: 사용자명 일부만 표시
+            const maskedUsername = req.user.username.substring(0, 2) + '***';
+            console.log(`[보안 설정] 사용자 ID ${req.user.id} (${maskedUsername}): 중복 로그인 차단 = ${blockDuplicateLogin}`);
 
             res.json({
                 ok: true,
