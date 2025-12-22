@@ -1450,6 +1450,43 @@ function initWebSocketServer(server) {
             return;
         }
 
+        // Origin 검증 (CSRF 방지)
+        const origin = req.headers.origin || req.headers.referer;
+        if (origin) {
+            try {
+                const originUrl = new URL(origin);
+                const baseUrl = new URL(BASE_URL);
+
+                // Origin의 호스트와 BASE_URL의 호스트가 일치하는지 확인
+                if (originUrl.host !== baseUrl.host) {
+                    console.warn(`[WS 보안] 잘못된 Origin에서의 연결 시도 차단 - Origin: ${originUrl.host}, 허용: ${baseUrl.host}, IP: ${clientIp}`);
+                    ws.close(1008, 'Invalid origin');
+                    return;
+                }
+
+                // 프로토콜 검증 (프로덕션에서는 https만 허용)
+                if (IS_PRODUCTION && originUrl.protocol !== 'https:') {
+                    console.warn(`[WS 보안] HTTP Origin 연결 시도 차단 - Origin: ${origin}, IP: ${clientIp}`);
+                    ws.close(1008, 'HTTPS required in production');
+                    return;
+                }
+            } catch (error) {
+                console.warn(`[WS 보안] Origin 파싱 실패 - Origin: ${origin}, IP: ${clientIp}`, error.message);
+                ws.close(1008, 'Invalid origin format');
+                return;
+            }
+        } else {
+            // Origin 헤더가 없는 경우 (일부 클라이언트 라이브러리)
+            // 프로덕션 환경에서는 차단, 개발 환경에서는 경고만
+            if (IS_PRODUCTION) {
+                console.warn(`[WS 보안] Origin 헤더 없는 연결 시도 차단 - IP: ${clientIp}`);
+                ws.close(1008, 'Origin header required');
+                return;
+            } else {
+                console.warn(`[WS 개발] Origin 헤더 없는 연결 허용 (개발 환경) - IP: ${clientIp}`);
+            }
+        }
+
         // 쿠키 파싱
         const cookies = {};
         if (req.headers.cookie) {
