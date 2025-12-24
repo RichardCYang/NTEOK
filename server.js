@@ -1880,7 +1880,7 @@ async function handleWebSocketMessage(ws, data) {
  * 페이지 구독
  */
 async function handleSubscribePage(ws, payload) {
-    const { pageId } = payload;
+    const { pageId, isReconnect } = payload;
     const userId = ws.userId;
 
     try {
@@ -1912,20 +1912,37 @@ async function handleSubscribePage(ws, payload) {
         const connection = { ws, userId, username: ws.username, color: userColor };
         wsConnections.pages.get(pageId).add(connection);
 
-        // Yjs 상태 전송
-        const ydoc = await loadOrCreateYjsDoc(pageId);
-        const stateVector = Y.encodeStateAsUpdate(ydoc);
-        const base64State = Buffer.from(stateVector).toString('base64');
+        // 재연결이 아닐 때만 init 이벤트 전송 (데이터 소실 방지)
+        if (!isReconnect) {
+            // Yjs 상태 전송
+            const ydoc = await loadOrCreateYjsDoc(pageId);
+            const stateVector = Y.encodeStateAsUpdate(ydoc);
+            const base64State = Buffer.from(stateVector).toString('base64');
 
-        ws.send(JSON.stringify({
-            event: 'init',
-            data: {
-                state: base64State,
-                userId,
-                username: ws.username,
-                color: userColor
-            }
-        }));
+            ws.send(JSON.stringify({
+                event: 'init',
+                data: {
+                    state: base64State,
+                    userId,
+                    username: ws.username,
+                    color: userColor
+                }
+            }));
+
+            console.log(`[WS] 페이지 초기 상태 전송: ${pageId} (사용자: ${ws.username})`);
+        } else {
+            // 재연결 시에는 구독만 확인하고 기존 클라이언트 상태 유지
+            ws.send(JSON.stringify({
+                event: 'reconnected',
+                data: {
+                    userId,
+                    username: ws.username,
+                    color: userColor
+                }
+            }));
+
+            console.log(`[WS] 페이지 재연결: ${pageId} (사용자: ${ws.username}) - 클라이언트 상태 유지`);
+        }
 
         // 다른 사용자들에게 입장 알림
         wsBroadcastToPage(pageId, 'user-joined', { userId, username: ws.username, color: userColor }, userId);

@@ -18,6 +18,7 @@ let currentPageId = null;
 let currentCollectionId = null;
 let lastLocalUpdateTime = 0;
 let updateTimeout = null;
+let hasInitializedPage = false; // 페이지 초기화 완료 플래그 (재연결 감지용)
 
 const state = {
     editor: null,
@@ -129,6 +130,10 @@ function handleWebSocketMessage(message) {
             break;
         case 'init':
             handleInit(data);
+            hasInitializedPage = true; // 초기화 완료 플래그 설정
+            break;
+        case 'reconnected':
+            console.log('[WS] 재연결 완료 - 기존 상태 유지');
             break;
         case 'yjs-update':
             handleYjsUpdate(data);
@@ -169,6 +174,11 @@ export async function startPageSync(pageId, isEncrypted) {
         return;
     }
 
+    // 페이지 전환 시에만 초기화 플래그 리셋
+    if (currentPageId !== pageId) {
+        hasInitializedPage = false;
+    }
+
     // 기존 연결 정리
     stopPageSync();
 
@@ -205,10 +215,13 @@ function subscribePage(pageId) {
 
     ws.send(JSON.stringify({
         type: 'subscribe-page',
-        payload: { pageId }
+        payload: {
+            pageId,
+            isReconnect: hasInitializedPage // 재연결 플래그 전송
+        }
     }));
 
-    console.log('[WS] 페이지 구독:', pageId);
+    console.log('[WS] 페이지 구독:', pageId, hasInitializedPage ? '(재연결)' : '(최초 연결)');
 }
 
 /**
@@ -232,6 +245,7 @@ export function stopPageSync() {
     currentPageId = null;
     state.currentPageId = null;
     lastLocalUpdateTime = 0;
+    hasInitializedPage = false; // 플래그 초기화
 }
 
 /**
