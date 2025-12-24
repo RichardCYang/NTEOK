@@ -273,6 +273,127 @@ export const SLASH_ITEMS = [
     }
 ];
 
+// 테이블 컨텍스트 메뉴 항목들
+const TABLE_MENU_ITEMS = [
+    {
+        id: "addColumnBefore",
+        label: "왼쪽에 열 추가",
+        icon: "←",
+        command: (editor) => editor.chain().focus().addColumnBefore().run(),
+        isEnabled: (editor) => editor.can().addColumnBefore()
+    },
+    {
+        id: "addColumnAfter",
+        label: "오른쪽에 열 추가",
+        icon: "→",
+        command: (editor) => editor.chain().focus().addColumnAfter().run(),
+        isEnabled: (editor) => editor.can().addColumnAfter()
+    },
+    {
+        id: "deleteColumn",
+        label: "열 삭제",
+        icon: "🗑️",
+        command: (editor) => deleteColumnSafe(editor),
+        isEnabled: (editor) => editor.can().deleteColumn(),
+        isDanger: true
+    },
+    { type: "separator" },
+    {
+        id: "addRowBefore",
+        label: "위에 행 추가",
+        icon: "↑",
+        command: (editor) => editor.chain().focus().addRowBefore().run(),
+        isEnabled: (editor) => editor.can().addRowBefore()
+    },
+    {
+        id: "addRowAfter",
+        label: "아래에 행 추가",
+        icon: "↓",
+        command: (editor) => editor.chain().focus().addRowAfter().run(),
+        isEnabled: (editor) => editor.can().addRowAfter()
+    },
+    {
+        id: "deleteRow",
+        label: "행 삭제",
+        icon: "🗑️",
+        command: (editor) => deleteRowSafe(editor),
+        isEnabled: (editor) => editor.can().deleteRow(),
+        isDanger: true
+    },
+    { type: "separator" },
+    {
+        id: "deleteTable",
+        label: "표 삭제",
+        icon: "✕",
+        command: (editor) => editor.chain().focus().deleteTable().run(),
+        isEnabled: (editor) => editor.can().deleteTable(),
+        isDanger: true
+    }
+];
+
+/**
+ * 안전하게 행 삭제 (최소 1행 유지)
+ */
+function deleteRowSafe(editor) {
+    const { state } = editor.view;
+
+    // 테이블의 전체 행 수 확인
+    let rowCount = 0;
+    let tableNode = null;
+
+    state.doc.descendants((node, pos) => {
+        if (node.type.name === "table") {
+            // 현재 선택된 위치가 이 테이블 안에 있는지 확인
+            const $anchor = state.selection.$anchor;
+            if ($anchor.pos >= pos && $anchor.pos <= pos + node.nodeSize) {
+                tableNode = node;
+                rowCount = node.childCount;
+                return false; // 테이블을 찾았으므로 더 이상 순회하지 않음
+            }
+        }
+    });
+
+    // 마지막 행인 경우 삭제 방지
+    if (rowCount <= 1) {
+        alert("표에는 최소 1개의 행이 있어야 합니다.");
+        return false;
+    }
+
+    return editor.chain().focus().deleteRow().run();
+}
+
+/**
+ * 안전하게 열 삭제 (최소 1열 유지)
+ */
+function deleteColumnSafe(editor) {
+    const { state } = editor.view;
+
+    // 테이블의 전체 열 수 확인
+    let colCount = 0;
+
+    state.doc.descendants((node, pos) => {
+        if (node.type.name === "table") {
+            // 현재 선택된 위치가 이 테이블 안에 있는지 확인
+            const $anchor = state.selection.$anchor;
+            if ($anchor.pos >= pos && $anchor.pos <= pos + node.nodeSize) {
+                const firstRow = node.firstChild;
+                if (firstRow) {
+                    colCount = firstRow.childCount;
+                }
+                return false; // 테이블을 찾았으므로 더 이상 순회하지 않음
+            }
+        }
+    });
+
+    // 마지막 열인 경우 삭제 방지
+    if (colCount <= 1) {
+        alert("표에는 최소 1개의 열이 있어야 합니다.");
+        return false;
+    }
+
+    return editor.chain().focus().deleteColumn().run();
+}
+
 // CustomEnter extension
 const CustomEnter = Extension.create({
     name: "customEnter",
@@ -300,6 +421,57 @@ const CustomEnter = Extension.create({
             },
             "Shift-Enter": ({ editor }) => {
                 return editor.commands.setHardBreak();
+            }
+        };
+    }
+});
+
+// 테이블 키보드 단축키 확장
+const TableKeyboardShortcuts = Extension.create({
+    name: "tableKeyboardShortcuts",
+    addKeyboardShortcuts() {
+        return {
+            // Ctrl+Shift+↑: 위에 행 추가
+            "Mod-Shift-ArrowUp": ({ editor }) => {
+                if (editor.isActive("table") && editor.can().addRowBefore()) {
+                    return editor.chain().focus().addRowBefore().run();
+                }
+                return false;
+            },
+            // Ctrl+Shift+↓: 아래에 행 추가
+            "Mod-Shift-ArrowDown": ({ editor }) => {
+                if (editor.isActive("table") && editor.can().addRowAfter()) {
+                    return editor.chain().focus().addRowAfter().run();
+                }
+                return false;
+            },
+            // Ctrl+Shift+←: 왼쪽에 열 추가
+            "Mod-Shift-ArrowLeft": ({ editor }) => {
+                if (editor.isActive("table") && editor.can().addColumnBefore()) {
+                    return editor.chain().focus().addColumnBefore().run();
+                }
+                return false;
+            },
+            // Ctrl+Shift+→: 오른쪽에 열 추가
+            "Mod-Shift-ArrowRight": ({ editor }) => {
+                if (editor.isActive("table") && editor.can().addColumnAfter()) {
+                    return editor.chain().focus().addColumnAfter().run();
+                }
+                return false;
+            },
+            // Ctrl+Backspace: 행 삭제
+            "Mod-Backspace": ({ editor }) => {
+                if (editor.isActive("table") && editor.can().deleteRow()) {
+                    return deleteRowSafe(editor);
+                }
+                return false;
+            },
+            // Ctrl+Shift+Backspace: 열 삭제
+            "Mod-Shift-Backspace": ({ editor }) => {
+                if (editor.isActive("table") && editor.can().deleteColumn()) {
+                    return deleteColumnSafe(editor);
+                }
+                return false;
             }
         };
     }
@@ -653,6 +825,7 @@ export function initEditor() {
         extensions: [
             StarterKit,
             CustomEnter,
+            TableKeyboardShortcuts,
             TextAlign.configure({
                 types: ["heading", "paragraph"],
                 alignments: ["left", "center", "right", "justify"],
@@ -761,6 +934,9 @@ export function initEditor() {
             }
         }
     });
+
+    // 테이블 컨텍스트 메뉴 바인딩
+    bindTableContextMenu(editor);
 
     return editor;
 }
@@ -1464,4 +1640,119 @@ function stopResize() {
             }
         }, 100);
     }
+}
+
+/**
+ * 테이블 컨텍스트 메뉴 숨기기
+ */
+function hideTableContextMenu() {
+    const menuEl = document.getElementById("context-menu");
+    if (menuEl) {
+        menuEl.classList.add("hidden");
+    }
+}
+
+/**
+ * 테이블 컨텍스트 메뉴 표시
+ */
+function showTableContextMenu(x, y, editor) {
+    const menuEl = document.getElementById("context-menu");
+    const contentEl = document.getElementById("context-menu-content");
+
+    if (!menuEl || !contentEl) {
+        console.error("컨텍스트 메뉴 요소를 찾을 수 없습니다.");
+        return;
+    }
+
+    // 메뉴 내용 생성
+    contentEl.innerHTML = "";
+    TABLE_MENU_ITEMS.forEach(item => {
+        if (item.type === "separator") {
+            const separator = document.createElement("div");
+            separator.className = "context-menu-separator";
+            contentEl.appendChild(separator);
+            return;
+        }
+
+        const button = document.createElement("button");
+        button.className = "context-menu-item";
+        if (item.isDanger) {
+            button.classList.add("danger");
+        }
+
+        // 명령 실행 가능 여부 확인
+        const enabled = item.isEnabled(editor);
+        if (!enabled) {
+            button.disabled = true;
+        }
+
+        button.innerHTML = `
+            <span class="context-menu-icon">${item.icon}</span>
+            <span>${item.label}</span>
+        `;
+
+        button.addEventListener("click", (e) => {
+            e.stopPropagation();
+            if (enabled) {
+                item.command(editor);
+                hideTableContextMenu();
+            }
+        });
+
+        contentEl.appendChild(button);
+    });
+
+    // 위치 설정
+    menuEl.classList.remove("hidden");
+    menuEl.style.left = `${x}px`;
+    menuEl.style.top = `${y}px`;
+
+    // 다음 프레임에서 위치 조정 (화면 밖으로 나가지 않도록)
+    requestAnimationFrame(() => {
+        const rect = menuEl.getBoundingClientRect();
+        if (rect.right > window.innerWidth) {
+            menuEl.style.left = `${x - rect.width}px`;
+        }
+        if (rect.bottom > window.innerHeight) {
+            menuEl.style.top = `${y - rect.height}px`;
+        }
+    });
+}
+
+/**
+ * 테이블 컨텍스트 메뉴 이벤트 바인딩
+ */
+export function bindTableContextMenu(editor) {
+    const editorElement = document.querySelector("#editor .ProseMirror");
+    if (!editorElement) return;
+
+    // 우클릭 이벤트 리스너
+    editorElement.addEventListener("contextmenu", (event) => {
+        // 테이블 셀 클릭 여부 확인
+        const target = event.target.closest("td, th");
+        if (!target) return;
+
+        // 읽기 모드에서는 메뉴 표시하지 않음
+        if (!editor.isEditable) return;
+
+        // 기본 컨텍스트 메뉴 방지
+        event.preventDefault();
+        event.stopPropagation();
+
+        // 셀에 포커스 설정
+        try {
+            const pos = editor.view.posAtDOM(target, 0);
+            editor.chain().focus().setTextSelection(pos).run();
+        } catch (error) {
+            console.error("셀 포커스 설정 오류:", error);
+        }
+
+        // 컨텍스트 메뉴 표시
+        showTableContextMenu(event.clientX, event.clientY, editor);
+    });
+
+    // 다른 곳 클릭 시 메뉴 닫기
+    document.addEventListener("click", () => {
+        hideTableContextMenu();
+    });
 }

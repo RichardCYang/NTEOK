@@ -2412,6 +2412,79 @@ body {
     cursor: row-resize;
 }
 
+/* ========== 테이블 컨텍스트 메뉴 ========== */
+
+/* 테이블 셀 호버 피드백 */
+.ProseMirror table td:hover,
+.ProseMirror table th:hover {
+    background-color: rgba(45, 95, 93, 0.05);
+}
+
+/* 컨텍스트 메뉴 */
+.context-menu {
+    position: fixed;
+    background: white;
+    border: 1px solid #d4cfc4;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    z-index: 10000;
+    min-width: 200px;
+    padding: 4px;
+}
+
+.context-menu.hidden {
+    display: none;
+}
+
+/* 컨텍스트 메뉴 아이템 */
+.context-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 10px 14px;
+    border: none;
+    background: none;
+    text-align: left;
+    font-size: 13px;
+    color: #2d2d2d;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: background-color 0.1s ease;
+}
+
+.context-menu-item:hover:not(:disabled) {
+    background-color: #ebe8e1;
+}
+
+.context-menu-item:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* 위험한 액션 (삭제) */
+.context-menu-item.danger {
+    color: #dc2626;
+}
+
+.context-menu-item.danger:hover:not(:disabled) {
+    background-color: #fee2e2;
+}
+
+/* 컨텍스트 메뉴 아이콘 */
+.context-menu-icon {
+    width: 20px;
+    text-align: center;
+    font-size: 14px;
+}
+
+/* 컨텍스트 메뉴 구분선 */
+.context-menu-separator {
+    height: 1px;
+    background: #d4cfc4;
+    margin: 4px 0;
+}
+
 /* ========== 커버 이미지 ========== */
 
 .page-cover-container {
