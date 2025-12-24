@@ -1442,7 +1442,7 @@ app.use((req, res, next) => {
         "style-src 'self' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://fonts.googleapis.com 'unsafe-inline'; " +
         "font-src 'self' https://cdnjs.cloudflare.com https://fonts.gstatic.com; " +
         "img-src 'self' data:; " +
-        "connect-src 'self';"
+        "connect-src 'self' https://cdn.jsdelivr.net https://esm.sh;"
     );
 
     // 추가 보안 헤더
@@ -1871,6 +1871,9 @@ async function handleWebSocketMessage(ws, data) {
         case 'yjs-update':
             await handleYjsUpdate(ws, payload);
             break;
+        case 'awareness-update':
+            handleAwarenessUpdate(ws, payload);
+            break;
         default:
             console.warn('[WS] 알 수 없는 메시지 타입:', type);
     }
@@ -2092,6 +2095,20 @@ async function handleYjsUpdate(ws, payload) {
         console.error('[WS] Yjs 업데이트 처리 오류:', error);
         ws.send(JSON.stringify({ event: 'error', data: { message: '업데이트 실패' } }));
     }
+}
+
+/**
+ * Awareness 업데이트 브로드캐스트
+ */
+function handleAwarenessUpdate(ws, payload) {
+    const { pageId, awarenessUpdate } = payload;
+    const userId = ws.userId;
+
+    // 같은 페이지의 다른 사용자들에게 브로드캐스트
+    wsBroadcastToPage(pageId, 'awareness-update', {
+        awarenessUpdate,
+        fromUserId: userId
+    }, userId);
 }
 
 /**

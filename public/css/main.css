@@ -2983,3 +2983,53 @@ body {
         gap: 4px !important;
     }
 }
+
+/* ==================== 원격 커서 스타일 ==================== */
+
+/* 커서 컨테이너 */
+.remote-cursor-container {
+    position: absolute;
+    pointer-events: none;
+    z-index: 9999;
+    transition: all 0.1s ease-out;
+}
+
+/* 커서 라인 */
+.remote-cursor {
+    position: absolute;
+    width: 2px;
+    height: 100%;
+    animation: cursor-blink 1s infinite;
+}
+
+/* 커서 깜빡임 애니메이션 */
+@keyframes cursor-blink {
+    0%, 49% { opacity: 1; }
+    50%, 100% { opacity: 0.3; }
+}
+
+/* 사용자 이름 라벨 */
+.remote-cursor-label {
+    position: absolute;
+    top: -24px;
+    left: 2px;
+    padding: 2px 6px;
+    border-radius: 3px;
+    color: white;
+    font-size: 11px;
+    font-weight: 500;
+    white-space: nowrap;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
+    pointer-events: none;
+}
+
+/* 선택 영역 하이라이트 */
+.remote-cursor.selection {
+    opacity: 0.3;
+    width: auto;
+}
+
+/* 에디터 내부에서만 표시 */
+#editor .remote-cursor-container {
+    display: block;
+}

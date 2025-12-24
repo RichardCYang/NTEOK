@@ -4,6 +4,7 @@
  */
 
 import * as Y from 'https://cdn.jsdelivr.net/npm/yjs@13.6.18/+esm';
+import { Awareness, encodeAwarenessUpdate, applyAwarenessUpdate } from 'https://esm.sh/y-protocols@1.0.6/awareness';
 import { escapeHtml, showErrorInEditor } from './ui-utils.js';
 import { showCover, hideCover } from './cover-manager.js';
 
@@ -19,6 +20,15 @@ let currentCollectionId = null;
 let lastLocalUpdateTime = 0;
 let updateTimeout = null;
 let hasInitializedPage = false; // 페이지 초기화 완료 플래그 (재연결 감지용)
+
+// 커서 공유 상태
+const cursorState = {
+    awareness: null,              // Awareness 인스턴스
+    remoteCursors: new Map(),     // clientId -> DOM element
+    localClientId: null,          // 로컬 클라이언트 ID
+    throttleTimer: null,          // Throttle 타이머
+    lastSentPosition: null        // 마지막 전송 위치 (중복 방지)
+};
 
 const state = {
     editor: null,
@@ -156,6 +166,9 @@ function handleWebSocketMessage(message) {
         case 'duplicate-login':
             handleDuplicateLogin(data);
             break;
+        case 'awareness-update':
+            handleRemoteAwarenessUpdate(data);
+            break;
         case 'error':
             console.error('[WS] 서버 오류:', data.message);
             break;
@@ -189,6 +202,11 @@ export async function startPageSync(pageId, isEncrypted) {
     ydoc = new Y.Doc();
     yXmlFragment = ydoc.getXmlFragment('prosemirror');
     yMetadata = ydoc.getMap('metadata');
+
+    // Awareness 초기화
+    cursorState.awareness = new Awareness(ydoc);
+    cursorState.localClientId = ydoc.clientID;
+    cursorState.awareness.on('change', handleAwarenessChange);
 
     // WebSocket으로 페이지 구독
     if (ws && ws.readyState === WebSocket.OPEN) {
@@ -234,6 +252,24 @@ export function stopPageSync() {
             payload: { pageId: currentPageId }
         }));
     }
+
+    // 모든 원격 커서 제거
+    cursorState.remoteCursors.forEach(element => element.remove());
+    cursorState.remoteCursors.clear();
+
+    // Awareness 정리
+    if (cursorState.awareness) {
+        cursorState.awareness.destroy();
+        cursorState.awareness = null;
+    }
+
+    // Throttle 타이머 정리
+    if (cursorState.throttleTimer) {
+        clearTimeout(cursorState.throttleTimer);
+        cursorState.throttleTimer = null;
+    }
+
+    cursorState.lastSentPosition = null;
 
     if (ydoc) {
         ydoc.destroy();
@@ -314,6 +350,15 @@ function handleInit(data) {
         // Yjs 상태 복원
         const stateUpdate = Uint8Array.from(atob(data.state), c => c.charCodeAt(0));
         Y.applyUpdate(ydoc, stateUpdate);
+
+        // 사용자 정보를 awareness에 설정
+        if (cursorState.awareness && data.userId && data.username && data.color) {
+            cursorState.awareness.setLocalStateField('user', {
+                userId: data.userId,
+                username: data.username,
+                color: data.color
+            });
+        }
 
         // Tiptap 에디터와 연결
         setupEditorBinding();
@@ -733,4 +778,204 @@ function setupEditorBinding() {
     state.editor._syncIsUpdating = false;
 
     console.log('[WS] 에디터 바인딩 완료');
+
+    // 커서 추적 시작
+    setupCursorTracking();
+}
+
+/**
+ * 커서 위치 추적 설정
+ */
+function setupCursorTracking() {
+    if (!state.editor || !cursorState.awareness) return;
+
+    // 에디터 selection 변경 감지
+    state.editor.on('selectionUpdate', ({ editor }) => {
+        throttledSendCursorPosition(editor);
+    });
+
+    // 포커스 해제 시 커서 제거
+    state.editor.on('blur', () => {
+        if (cursorState.awareness) {
+            cursorState.awareness.setLocalStateField('cursor', null);
+        }
+    });
+}
+
+/**
+ * Throttled 커서 위치 전송 (100ms)
+ */
+function throttledSendCursorPosition(editor) {
+    if (cursorState.throttleTimer) {
+        clearTimeout(cursorState.throttleTimer);
+    }
+
+    cursorState.throttleTimer = setTimeout(() => {
+        sendCursorPosition(editor);
+    }, 100);
+}
+
+/**
+ * 커서 위치 전송
+ */
+function sendCursorPosition(editor) {
+    if (!editor || !cursorState.awareness) return;
+
+    const { selection } = editor.state;
+    const { anchor, head } = selection;
+
+    // 중복 전송 방지
+    const position = { anchor, head };
+    if (JSON.stringify(position) === JSON.stringify(cursorState.lastSentPosition)) {
+        return;
+    }
+
+    cursorState.lastSentPosition = position;
+
+    // Awareness state 업데이트
+    cursorState.awareness.setLocalStateField('cursor', {
+        anchor,
+        head,
+        type: anchor === head ? 'cursor' : 'selection',
+        lastUpdate: Date.now()
+    });
+}
+
+/**
+ * Awareness 변경 감지 핸들러
+ */
+function handleAwarenessChange({ added, updated, removed }) {
+    // 제거된 사용자 커서 삭제
+    removed.forEach(clientId => {
+        removeCursor(clientId);
+    });
+
+    // 추가/업데이트된 사용자 커서 렌더링
+    [...added, ...updated].forEach(clientId => {
+        if (clientId === cursorState.localClientId) return; // 자신 제외
+
+        const awarenessState = cursorState.awareness.getStates().get(clientId);
+        if (awarenessState && awarenessState.cursor && awarenessState.user) {
+            renderCursor(clientId, awarenessState);
+        } else {
+            removeCursor(clientId);
+        }
+    });
+
+    // Awareness 업데이트를 서버로 전송
+    const update = encodeAwarenessUpdate(cursorState.awareness, [
+        ...added, ...updated, ...removed
+    ]);
+    sendAwarenessUpdate(update);
+}
+
+/**
+ * Awareness 업데이트 서버 전송
+ */
+function sendAwarenessUpdate(update) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+    const base64Update = btoa(String.fromCharCode(...new Uint8Array(update)));
+
+    ws.send(JSON.stringify({
+        type: 'awareness-update',
+        payload: {
+            pageId: currentPageId,
+            awarenessUpdate: base64Update
+        }
+    }));
+}
+
+/**
+ * 원격 Awareness 업데이트 처리
+ */
+function handleRemoteAwarenessUpdate(data) {
+    if (!cursorState.awareness) return;
+
+    try {
+        const update = Uint8Array.from(atob(data.awarenessUpdate), c => c.charCodeAt(0));
+        applyAwarenessUpdate(cursorState.awareness, update, 'remote');
+    } catch (error) {
+        console.error('[WS] Awareness 업데이트 처리 오류:', error);
+    }
+}
+
+/**
+ * 커서 렌더링
+ */
+function renderCursor(clientId, awarenessState) {
+    const { cursor, user } = awarenessState;
+    if (!cursor || !user || !state.editor) return;
+
+    // 기존 커서 요소 확인
+    let cursorElement = cursorState.remoteCursors.get(clientId);
+
+    if (!cursorElement) {
+        cursorElement = createCursorElement(user);
+        cursorState.remoteCursors.set(clientId, cursorElement);
+        document.body.appendChild(cursorElement);
+    }
+
+    // ProseMirror position을 DOM coordinates로 변환
+    try {
+        const editorView = state.editor.view;
+        const coords = editorView.coordsAtPos(cursor.head);
+        updateCursorPosition(cursorElement, coords, user);
+    } catch (error) {
+        console.warn('[Cursor] Position 변환 오류:', error);
+        removeCursor(clientId);
+    }
+}
+
+/**
+ * 커서 DOM 요소 생성
+ */
+function createCursorElement(user) {
+    const container = document.createElement('div');
+    container.className = 'remote-cursor-container';
+
+    // 커서 라인
+    const cursor = document.createElement('div');
+    cursor.className = 'remote-cursor';
+    cursor.style.backgroundColor = user.color;
+
+    // 사용자 이름 라벨
+    const label = document.createElement('div');
+    label.className = 'remote-cursor-label';
+    label.style.backgroundColor = user.color;
+    label.textContent = user.username;
+
+    container.appendChild(cursor);
+    container.appendChild(label);
+
+    return container;
+}
+
+/**
+ * 커서 위치 업데이트
+ */
+function updateCursorPosition(element, coords, user) {
+    const editorRect = state.editor.view.dom.getBoundingClientRect();
+
+    element.style.position = 'absolute';
+    element.style.left = `${coords.left}px`;
+    element.style.top = `${coords.top}px`;
+    element.style.height = `${coords.bottom - coords.top}px`;
+    element.style.display = 'block';
+
+    // 에디터 영역 벗어나면 숨김
+    if (coords.top < editorRect.top || coords.top > editorRect.bottom) {
+        element.style.display = 'none';
+    }
+}
+
+/**
+ * 커서 제거
+ */
+function removeCursor(clientId) {
+    const element = cursorState.remoteCursors.get(clientId);
+    if (element) {
+        element.remove();
+        cursorState.remoteCursors.delete(clientId);
+    }
 }
