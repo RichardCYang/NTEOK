@@ -204,8 +204,24 @@ function formatDateForDb(date) {
  */
 function getLocationFromIP(ip) {
     try {
+        if (!ip) {
+            return {
+                country: null,
+                region: null,
+                city: null,
+                timezone: null
+            };
+        }
+
+        // IPv6 매핑된 IPv4 주소 처리 (예: ::ffff:192.168.1.1)
+        let cleanIP = ip;
+        if (ip.startsWith('::ffff:')) {
+            cleanIP = ip.substring(7);
+        }
+
         // 사설 IP 또는 localhost는 null 반환 (국가 화이트리스트 체크에서 별도 처리)
-        if (!ip || ip === '::1' || ip === '127.0.0.1' || ip.startsWith('192.168.') || ip.startsWith('10.')) {
+        if (cleanIP === '::1' || cleanIP === '127.0.0.1' || cleanIP === 'localhost' ||
+            cleanIP.startsWith('192.168.') || cleanIP.startsWith('10.')) {
             return {
                 country: null,
                 region: null,
@@ -215,7 +231,7 @@ function getLocationFromIP(ip) {
         }
 
         // 172.16.0.0 ~ 172.31.255.255 범위 체크
-        const match = ip.match(/^172\.(\d+)\./);
+        const match = cleanIP.match(/^172\.(\d+)\./);
         if (match) {
             const secondOctet = parseInt(match[1]);
             if (secondOctet >= 16 && secondOctet <= 31) {
@@ -228,7 +244,7 @@ function getLocationFromIP(ip) {
             }
         }
 
-        const geo = geoip.lookup(ip);
+        const geo = geoip.lookup(cleanIP);
 
         if (!geo) {
             return {
@@ -262,11 +278,22 @@ function getLocationFromIP(ip) {
  * @returns {boolean} 사설 IP 또는 localhost 여부
  */
 function isPrivateOrLocalIP(ip) {
-    if (!ip || ip === '::1' || ip === '127.0.0.1') return true;
-    if (ip.startsWith('192.168.') || ip.startsWith('10.')) return true;
+    if (!ip) return true;
+
+    // IPv6 매핑된 IPv4 주소 처리 (예: ::ffff:192.168.1.1)
+    let cleanIP = ip;
+    if (ip.startsWith('::ffff:')) {
+        cleanIP = ip.substring(7);
+    }
+
+    // localhost 체크
+    if (cleanIP === '::1' || cleanIP === '127.0.0.1' || cleanIP === 'localhost') return true;
+
+    // 사설 IP 대역 체크
+    if (cleanIP.startsWith('192.168.') || cleanIP.startsWith('10.')) return true;
 
     // 172.16.0.0 ~ 172.31.255.255 범위 체크
-    const match = ip.match(/^172\.(\d+)\./);
+    const match = cleanIP.match(/^172\.(\d+)\./);
     if (match) {
         const secondOctet = parseInt(match[1]);
         if (secondOctet >= 16 && secondOctet <= 31) return true;
@@ -345,8 +372,18 @@ function checkCountryWhitelist(userSettings, ipAddress) {
 function maskIPAddress(ip) {
     if (!ip) return '알 수 없음';
 
+    // IPv6 매핑된 IPv4 주소 처리 (예: ::ffff:192.168.1.1)
+    if (ip.startsWith('::ffff:')) {
+        const ipv4Part = ip.substring(7);
+        const parts = ipv4Part.split('.');
+        if (parts.length === 4) {
+            parts[3] = '***';
+            return '::ffff:' + parts.join('.');
+        }
+    }
+
     // IPv4: 마지막 옥텟 마스킹 (예: 192.168.1.100 -> 192.168.1.***)
-    if (ip.includes('.')) {
+    if (ip.includes('.') && !ip.includes(':')) {
         const parts = ip.split('.');
         if (parts.length === 4) {
             parts[3] = '***';
