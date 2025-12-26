@@ -563,6 +563,12 @@ export async function saveCurrentPage() {
 
         let requestBody = {};
 
+        // 암호화된 페이지인 경우 수정 불가 (먼저 복호화 필요)
+        if (currentPage.isEncrypted) {
+            alert('암호화된 페이지는 수정할 수 없습니다. 먼저 복호화하세요.');
+            return false;
+        }
+
         // 공유 컬렉션 vs 개인 컬렉션 구분
         if (isSharedCollection) {
             if (collection.isEncrypted) {
@@ -572,29 +578,25 @@ export async function saveCurrentPage() {
                     title: title,  // 제목은 평문으로
                     content: '',  // 내용은 빈 문자열 (암호화됨)
                     encryptedContent: await cryptoManager.encryptWithKey(content, collectionKey),
-                    isEncrypted: true
+                    isEncrypted: true,
+                    icon: currentPage.icon || null  // 아이콘 유지
                 };
             } else {
                 // 평문 공유 컬렉션
                 requestBody = {
                     title,
                     content,
-                    isEncrypted: false
+                    isEncrypted: false,
+                    icon: currentPage.icon || null  // 아이콘 유지
                 };
             }
         } else {
             // 개인 컬렉션: 기본적으로 평문 저장 (선택적 암호화)
-            // 암호화된 페이지인 경우 수정 불가 (먼저 복호화 필요)
-            const currentPage = state.pages.find(p => p.id === state.currentPageId);
-            if (currentPage && currentPage.isEncrypted) {
-                alert('암호화된 페이지는 수정할 수 없습니다. 먼저 복호화하세요.');
-                return false;
-            }
-
             requestBody = {
                 title,
                 content,
-                isEncrypted: false
+                isEncrypted: false,
+                icon: currentPage.icon || null  // 아이콘 유지
             };
         }
 
@@ -620,7 +622,8 @@ export async function saveCurrentPage() {
                     title: decryptedTitle,
                     updatedAt: page.updatedAt,
                     parentId: page.parentId ?? p.parentId ?? null,
-                    sortOrder: typeof page.sortOrder === "number" ? page.sortOrder : (typeof p.sortOrder === "number" ? p.sortOrder : 0)
+                    sortOrder: typeof page.sortOrder === "number" ? page.sortOrder : (typeof p.sortOrder === "number" ? p.sortOrder : 0),
+                    icon: page.icon ?? p.icon ?? null  // 아이콘 업데이트
                 };
             }
             return p;

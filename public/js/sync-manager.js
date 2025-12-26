@@ -469,6 +469,16 @@ function subscribeUser() {
  */
 function handleMetadataChange(data) {
     try {
+        // 현재 페이지의 메타데이터 변경인 경우 Yjs 메타데이터도 업데이트
+        if (data.pageId === state.currentPageId && yMetadata) {
+            // Yjs 메타데이터에서 지원하는 필드만 업데이트
+            const supportedFields = ['title', 'icon', 'sortOrder', 'parentId'];
+            if (supportedFields.includes(data.field)) {
+                yMetadata.set(data.field, data.value);
+                console.log(`[Sync] Yjs 메타데이터 업데이트: ${data.field} = ${data.value}`);
+            }
+        }
+
         // 커버 이미지 동기화
         if (data.field === 'coverImage' && data.pageId === state.currentPageId) {
             if (data.value) {
