@@ -450,6 +450,151 @@ module.exports = (dependencies) => {
     });
 
     /**
+     * 페이지 순서 변경 (같은 컬렉션 내)
+     * PATCH /api/pages/reorder
+     * body: { collectionId: string, pageIds: string[], parentId: string | null }
+     */
+    router.patch("/reorder", authMiddleware, async (req, res) => {
+        const userId = req.user.id;
+        const { collectionId, pageIds, parentId } = req.body;
+
+        if (!collectionId || !Array.isArray(pageIds) || pageIds.length === 0) {
+            return res.status(400).json({ error: "collectionId와 pageIds 배열이 필요합니다." });
+        }
+
+        const conn = await pool.getConnection();
+        try {
+            // 권한 확인
+            const { permission } = await getCollectionPermission(collectionId, userId);
+            if (!permission || permission === 'READ') {
+                return res.status(403).json({ error: "페이지 순서를 변경할 권한이 없습니다." });
+            }
+
+            await conn.beginTransaction();
+
+            // 모든 페이지가 같은 컬렉션, 같은 부모에 속하는지 확인
+            const parentIdCondition = parentId ? `parent_id = ?` : `parent_id IS NULL`;
+            const placeholders = pageIds.map(() => '?').join(',');
+            const params = parentId
+                ? [collectionId, parentId, ...pageIds]
+                : [collectionId, ...pageIds];
+
+            const [rows] = await conn.execute(
+                `SELECT id FROM pages WHERE collection_id = ? AND ${parentIdCondition} AND id IN (${placeholders})`,
+                params
+            );
+
+            if (rows.length !== pageIds.length) {
+                await conn.rollback();
+                return res.status(400).json({ error: "일부 페이지가 조건에 맞지 않습니다." });
+            }
+
+            // 순서 업데이트
+            for (let i = 0; i < pageIds.length; i++) {
+                await conn.execute(
+                    `UPDATE pages SET sort_order = ?, updated_at = NOW() WHERE id = ?`,
+                    [i * 10, pageIds[i]]
+                );
+            }
+
+            await conn.commit();
+            console.log(`[Reorder] 페이지 순서 변경 완료: ${pageIds.length}개`);
+
+            // WebSocket 브로드캐스트
+            wsBroadcastToCollection(collectionId, 'pages-reordered', {
+                parentId,
+                pageIds
+            }, userId);
+
+            res.json({ ok: true, updated: pageIds.length });
+
+        } catch (error) {
+            await conn.rollback();
+            logError("PATCH /api/pages/reorder", error);
+            res.status(500).json({ error: "순서 변경 실패" });
+        } finally {
+            conn.release();
+        }
+    });
+
+    /**
+     * 페이지 이동 (다른 컬렉션으로)
+     * PATCH /api/pages/:id/move
+     * body: { targetCollectionId: string, targetParentId: string | null, sortOrder: number }
+     */
+    router.patch("/:id/move", authMiddleware, async (req, res) => {
+        const pageId = req.params.id;
+        const userId = req.user.id;
+        const { targetCollectionId, targetParentId, sortOrder } = req.body;
+
+        if (!targetCollectionId) {
+            return res.status(400).json({ error: "targetCollectionId가 필요합니다." });
+        }
+
+        try {
+            // 현재 페이지 정보 조회
+            const [pageRows] = await pool.execute(
+                `SELECT id, collection_id, parent_id, is_encrypted FROM pages WHERE id = ?`,
+                [pageId]
+            );
+
+            if (!pageRows.length) {
+                return res.status(404).json({ error: "페이지를 찾을 수 없습니다." });
+            }
+
+            const currentCollectionId = pageRows[0].collection_id;
+            const isEncrypted = pageRows[0].is_encrypted;
+
+            // 같은 컬렉션으로 이동 시 거부
+            if (currentCollectionId === targetCollectionId) {
+                return res.status(400).json({ error: "같은 컬렉션으로 이동할 수 없습니다. 순서 변경은 /reorder API를 사용하세요." });
+            }
+
+            // 암호화된 페이지는 이동 불가
+            if (isEncrypted) {
+                return res.status(400).json({ error: "암호화된 페이지는 다른 컬렉션으로 이동할 수 없습니다." });
+            }
+
+            // 출발 컬렉션 권한 확인
+            const { permission: sourcePerm } = await getCollectionPermission(currentCollectionId, userId);
+            if (!sourcePerm || sourcePerm === 'READ') {
+                return res.status(403).json({ error: "페이지를 이동할 권한이 없습니다." });
+            }
+
+            // 도착 컬렉션 권한 확인
+            const { permission: targetPerm } = await getCollectionPermission(targetCollectionId, userId);
+            if (!targetPerm || targetPerm === 'READ') {
+                return res.status(403).json({ error: "대상 컬렉션에 페이지를 추가할 권한이 없습니다." });
+            }
+
+            // 페이지 이동 (최상위로, 계층 구조 제거)
+            const newSortOrder = typeof sortOrder === 'number' ? sortOrder : 0;
+            await pool.execute(
+                `UPDATE pages SET collection_id = ?, parent_id = ?, sort_order = ?, updated_at = NOW() WHERE id = ?`,
+                [targetCollectionId, targetParentId || null, newSortOrder, pageId]
+            );
+
+            console.log(`[Move] 페이지 이동: ${pageId} (${currentCollectionId} → ${targetCollectionId})`);
+
+            // 실시간 동기화: 출발/도착 컬렉션 모두 알림
+            wsBroadcastToCollection(currentCollectionId, 'page-moved-out', {
+                pageId,
+                targetCollectionId
+            }, userId);
+            wsBroadcastToCollection(targetCollectionId, 'page-moved-in', {
+                pageId,
+                sourceCollectionId: currentCollectionId
+            }, userId);
+
+            res.json({ ok: true, pageId, newCollectionId: targetCollectionId });
+
+        } catch (error) {
+            logError("PATCH /api/pages/:id/move", error);
+            res.status(500).json({ error: "페이지 이동 실패" });
+        }
+    });
+
+    /**
      * 페이지 제목만 수정
      * PATCH /api/pages/:id
      * body: { title: string }

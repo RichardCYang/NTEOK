@@ -230,6 +230,8 @@ export function renderPageList() {
         if (expanded && hasPages) {
             const pageList = document.createElement("ul");
             pageList.className = "page-list";
+            pageList.dataset.collectionId = collection.id;
+            pageList.dataset.parentId = "null";
 
             if (!colPages.length) {
                 const empty = document.createElement("div");
@@ -317,10 +319,217 @@ export function renderPageList() {
 
                 tree.forEach((node) => renderNode(node, 0));
                 item.appendChild(pageList);
+
+                // 페이지 드래그 앤 드롭 초기화
+                initPageDragDrop(pageList, collection.id, null, collection.permission);
             }
         }
 
         listEl.appendChild(item);
+    });
+
+    // 컬렉션 드래그 앤 드롭 초기화
+    initCollectionDragDrop();
+}
+
+/**
+ * 컬렉션 드래그 앤 드롭 초기화
+ */
+function initCollectionDragDrop() {
+    const listEl = document.querySelector("#collection-list");
+    if (!listEl) return;
+
+    // 기존 Sortable 인스턴스 제거
+    if (listEl._sortable) {
+        listEl._sortable.destroy();
+    }
+
+    // Sortable 초기화
+    listEl._sortable = Sortable.create(listEl, {
+        animation: 150,
+        handle: '.collection-header',
+        draggable: '.collection-item',
+        ghostClass: 'sortable-ghost',
+        chosenClass: 'sortable-chosen',
+        dragClass: 'sortable-drag',
+
+        // 모바일 터치 지원
+        touchStartThreshold: 5,
+        delay: 100,
+        delayOnTouchOnly: true,
+
+        // 공유받은 컬렉션 필터링
+        filter: (evt, target) => {
+            const collectionItem = target.closest('.collection-item');
+            const collectionId = collectionItem?.dataset.collectionId;
+            const collection = state.collections.find(c => c.id === collectionId);
+            return collection && !collection.isOwner;
+        },
+
+        onEnd: async (evt) => {
+            if (evt.oldIndex === evt.newIndex) return;
+
+            const collectionItems = Array.from(listEl.querySelectorAll('.collection-item'));
+            const collectionIds = collectionItems.map(item => item.dataset.collectionId);
+
+            // 낙관적 업데이트
+            const movedCollection = state.collections.splice(evt.oldIndex, 1)[0];
+            state.collections.splice(evt.newIndex, 0, movedCollection);
+
+            try {
+                const res = await secureFetch('/api/collections/reorder', {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ collectionIds })
+                });
+
+                if (!res.ok) {
+                    const errorData = await res.json();
+                    throw new Error(errorData.error || '순서 변경 실패');
+                }
+
+                console.log('컬렉션 순서 변경 완료');
+
+            } catch (error) {
+                console.error('컬렉션 순서 변경 오류:', error);
+                alert(`순서 변경에 실패했습니다: ${error.message}`);
+
+                // 롤백
+                const rolledBack = state.collections.splice(evt.newIndex, 1)[0];
+                state.collections.splice(evt.oldIndex, 0, rolledBack);
+                renderPageList();
+            }
+        }
+    });
+}
+
+/**
+ * 페이지 드래그 앤 드롭 초기화
+ */
+function initPageDragDrop(pageListEl, collectionId, parentId, permission) {
+    if (!pageListEl || permission === 'READ') return;
+
+    if (pageListEl._sortable) {
+        pageListEl._sortable.destroy();
+    }
+
+    pageListEl._sortable = Sortable.create(pageListEl, {
+        animation: 150,
+        draggable: '.page-list-item',
+        handle: '.page-list-item',
+        ghostClass: 'sortable-ghost',
+        chosenClass: 'sortable-chosen',
+        dragClass: 'sortable-drag',
+        group: 'pages',
+
+        // 모바일 터치 지원
+        touchStartThreshold: 5,
+        delay: 100,
+        delayOnTouchOnly: true,
+
+        onMove: (evt) => {
+            const pageId = evt.dragged.dataset.pageId;
+            const page = state.pages.find(p => p.id === pageId);
+            const toCollectionId = evt.to.dataset.collectionId;
+            const fromCollectionId = evt.from.dataset.collectionId;
+
+            // 암호화된 페이지는 다른 컬렉션으로 이동 불가
+            if (page && page.isEncrypted && fromCollectionId !== toCollectionId) {
+                return false;
+            }
+
+            // 대상 컬렉션 권한 체크
+            const toCollection = state.collections.find(c => c.id === toCollectionId);
+            if (toCollection && toCollection.permission === 'READ') {
+                return false;
+            }
+
+            return true;
+        },
+
+        onEnd: async (evt) => {
+            const fromList = evt.from;
+            const toList = evt.to;
+            const fromCollectionId = fromList.dataset.collectionId;
+            const toCollectionId = toList.dataset.collectionId;
+            const fromParentId = fromList.dataset.parentId === "null" ? null : fromList.dataset.parentId;
+            const toParentId = toList.dataset.parentId === "null" ? null : toList.dataset.parentId;
+            const pageId = evt.item.dataset.pageId;
+
+            // 같은 컬렉션 내 순서 변경
+            if (fromCollectionId === toCollectionId && fromParentId === toParentId) {
+                if (evt.oldIndex === evt.newIndex) return;
+
+                const pageItems = Array.from(toList.querySelectorAll('.page-list-item'));
+                const pageIds = pageItems.map(item => item.dataset.pageId);
+
+                try {
+                    const res = await secureFetch('/api/pages/reorder', {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            collectionId: toCollectionId,
+                            pageIds,
+                            parentId: toParentId
+                        })
+                    });
+
+                    if (!res.ok) {
+                        const errorData = await res.json();
+                        throw new Error(errorData.error || '순서 변경 실패');
+                    }
+
+                    console.log('페이지 순서 변경 완료');
+
+                } catch (error) {
+                    console.error('페이지 순서 변경 오류:', error);
+                    alert(`순서 변경에 실패했습니다: ${error.message}`);
+                    await fetchPageList();
+                    renderPageList();
+                }
+
+            } else {
+                // 다른 컬렉션으로 이동
+                const page = state.pages.find(p => p.id === pageId);
+
+                if (page && page.isEncrypted) {
+                    alert('암호화된 페이지는 다른 컬렉션으로 이동할 수 없습니다.');
+                    await fetchPageList();
+                    renderPageList();
+                    return;
+                }
+
+                try {
+                    const newSortOrder = evt.newIndex * 10;
+
+                    const res = await secureFetch(`/api/pages/${pageId}/move`, {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            targetCollectionId: toCollectionId,
+                            targetParentId: toParentId,
+                            sortOrder: newSortOrder
+                        })
+                    });
+
+                    if (!res.ok) {
+                        const errorData = await res.json();
+                        throw new Error(errorData.error || '페이지 이동 실패');
+                    }
+
+                    console.log('페이지 이동 완료:', pageId, '→', toCollectionId);
+
+                    await fetchPageList();
+                    renderPageList();
+
+                } catch (error) {
+                    console.error('페이지 이동 오류:', error);
+                    alert(`페이지 이동에 실패했습니다: ${error.message}`);
+                    await fetchPageList();
+                    renderPageList();
+                }
+            }
+        }
     });
 }
 

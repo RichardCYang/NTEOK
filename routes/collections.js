@@ -291,5 +291,55 @@ module.exports = (dependencies) => {
         }
     });
 
+    /**
+     * 컬렉션 순서 변경
+     * PATCH /api/collections/reorder
+     * body: { collectionIds: string[] }
+     */
+    router.patch("/reorder", authMiddleware, async (req, res) => {
+        const userId = req.user.id;
+        const { collectionIds } = req.body;
+
+        if (!Array.isArray(collectionIds) || collectionIds.length === 0) {
+            return res.status(400).json({ error: "collectionIds 배열이 필요합니다." });
+        }
+
+        const conn = await pool.getConnection();
+        try {
+            await conn.beginTransaction();
+
+            // 모든 컬렉션이 사용자 소유인지 확인
+            const placeholders = collectionIds.map(() => '?').join(',');
+            const [rows] = await conn.execute(
+                `SELECT id FROM collections WHERE id IN (${placeholders}) AND user_id = ?`,
+                [...collectionIds, userId]
+            );
+
+            if (rows.length !== collectionIds.length) {
+                await conn.rollback();
+                return res.status(403).json({ error: "일부 컬렉션에 대한 권한이 없습니다." });
+            }
+
+            // 순서 업데이트 (인덱스 * 10)
+            for (let i = 0; i < collectionIds.length; i++) {
+                await conn.execute(
+                    `UPDATE collections SET sort_order = ?, updated_at = NOW() WHERE id = ?`,
+                    [i * 10, collectionIds[i]]
+                );
+            }
+
+            await conn.commit();
+            console.log(`[Reorder] 컬렉션 순서 변경 완료: ${collectionIds.length}개`);
+            res.json({ ok: true, updated: collectionIds.length });
+
+        } catch (error) {
+            await conn.rollback();
+            logError("PATCH /api/collections/reorder", error);
+            res.status(500).json({ error: "순서 변경 실패" });
+        } finally {
+            conn.release();
+        }
+    });
+
     return router;
 };

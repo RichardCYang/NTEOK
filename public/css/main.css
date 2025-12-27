@@ -3286,3 +3286,59 @@ body {
 .callout-block-wrapper.read-only .callout-content-textarea {
     cursor: default;
 }
+
+/* ============================================
+   드래그 앤 드롭 스타일
+   ============================================ */
+
+/* 드래그 중인 요소의 원래 위치 (반투명) */
+.sortable-ghost {
+    opacity: 0.4;
+    background-color: #d4cfc4 !important;
+}
+
+/* 드래그 시작 시 선택된 요소 */
+.sortable-chosen {
+    background-color: #e6e3db !important;
+}
+
+/* 드래그 중인 요소 (마우스/터치를 따라다님) */
+.sortable-drag {
+    opacity: 1;
+    background-color: #faf8f3 !important;
+    box-shadow: 0 5px 20px rgba(0, 0, 0, 0.2) !important;
+    cursor: grabbing !important;
+    transform: rotate(2deg);
+    transition: transform 0.2s ease;
+}
+
+/* 컬렉션 헤더 드래그 커서 */
+.collection-header {
+    cursor: grab;
+}
+
+.collection-header:active {
+    cursor: grabbing;
+}
+
+/* 페이지 아이템 드래그 */
+.page-list-item {
+    cursor: grab;
+    transition: background-color 0.1s ease, transform 0.1s ease;
+}
+
+.page-list-item:active {
+    cursor: grabbing;
+}
+
+.page-list-item.sortable-chosen {
+    background-color: #f0ede6;
+    transform: scale(1.02);
+}
+
+/* 모바일 터치 피드백 강화 */
+@media (max-width: 768px) {
+    .sortable-drag {
+        transform: rotate(3deg) scale(1.05);
+    }
+}
