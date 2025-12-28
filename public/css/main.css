@@ -1121,6 +1121,24 @@ body {
 }
 
 @media (max-width: 480px) {
+    .editor-header {
+        padding: 10px 12px;
+        gap: 6px;
+    }
+
+    .page-title-input {
+        flex: 0 1 auto;
+        max-width: 50%;
+        min-width: 0;
+    }
+
+    .mode-toggle-btn {
+        flex-shrink: 0;
+        padding: 6px 12px;
+        font-size: 12px;
+        min-width: 85px;
+    }
+
     .editor {
         padding: 16px 16px 16px 16px;
     }
@@ -1151,6 +1169,30 @@ body {
     .toolbar-font-menu .color-option {
         padding: 6px 8px;
         font-size: 12px;
+    }
+}
+
+/* 초소형 화면 (iPhone SE 1세대 등) */
+@media (max-width: 375px) {
+    .editor-header {
+        padding: 8px 10px;
+        gap: 4px;
+    }
+
+    .page-title-input {
+        flex: 0 1 auto;
+        max-width: 40%;
+        min-width: 0;
+        font-size: 16px;
+        padding: 5px 8px;
+    }
+
+    .mode-toggle-btn {
+        flex-shrink: 0;
+        padding: 5px 10px;
+        font-size: 11px;
+        min-width: 80px;
+        gap: 4px;
     }
 }
 
