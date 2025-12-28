@@ -64,7 +64,7 @@ module.exports = (dependencies) => {
 
             if (!rows.length) {
                 // 로그인 로그 기록
-                await recordLoginAttempt({
+                await recordLoginAttempt(pool, {
                     userId: null,
                     username: trimmedUsername,
                     ipAddress: req.ip || req.connection.remoteAddress,
@@ -84,7 +84,7 @@ module.exports = (dependencies) => {
             const ok = await bcrypt.compare(password, user.password_hash);
             if (!ok) {
                 // 로그인 로그 기록
-                await recordLoginAttempt({
+                await recordLoginAttempt(pool, {
                     userId: user.id,
                     username: user.username,
                     ipAddress: req.ip || req.connection.remoteAddress,
@@ -109,7 +109,7 @@ module.exports = (dependencies) => {
             );
 
             if (!countryCheck.allowed) {
-                await recordLoginAttempt({
+                await recordLoginAttempt(pool, {
                     userId: user.id,
                     username: user.username,
                     ipAddress: req.ip || req.connection.remoteAddress,
@@ -192,7 +192,7 @@ module.exports = (dependencies) => {
             });
 
             // 로그인 로그 기록 (비동기, 응답 후)
-            recordLoginAttempt({
+            recordLoginAttempt(pool, {
                 userId: user.id,
                 username: user.username,
                 ipAddress: req.ip || req.connection.remoteAddress,

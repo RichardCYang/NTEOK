@@ -315,7 +315,7 @@ module.exports = (dependencies) => {
                 const username = userRows.length > 0 ? userRows[0].username : '알 수 없음';
 
                 // 로그인 로그 기록
-                await recordLoginAttempt({
+                await recordLoginAttempt(pool, {
                     userId: userId,
                     username: username,
                     ipAddress: req.ip || req.connection.remoteAddress,
@@ -360,7 +360,7 @@ module.exports = (dependencies) => {
             );
 
             if (!countryCheck.allowed) {
-                await recordLoginAttempt({
+                await recordLoginAttempt(pool, {
                     userId: userId,
                     username: username,
                     ipAddress: req.ip || req.connection.remoteAddress,
@@ -417,7 +417,7 @@ module.exports = (dependencies) => {
             res.json({ success: true });
 
             // 로그인 로그 기록 (비동기, 응답 후)
-            recordLoginAttempt({
+            recordLoginAttempt(pool, {
                 userId: userId,
                 username: username,
                 ipAddress: req.ip || req.connection.remoteAddress,
@@ -571,7 +571,7 @@ module.exports = (dependencies) => {
                 const username = userRows.length > 0 ? userRows[0].username : '알 수 없음';
 
                 // 로그인 로그 기록
-                await recordLoginAttempt({
+                await recordLoginAttempt(pool, {
                     userId: userId,
                     username: username,
                     ipAddress: req.ip || req.connection.remoteAddress,
@@ -616,7 +616,7 @@ module.exports = (dependencies) => {
             );
 
             if (!countryCheck.allowed) {
-                await recordLoginAttempt({
+                await recordLoginAttempt(pool, {
                     userId: userId,
                     username: username,
                     ipAddress: req.ip || req.connection.remoteAddress,
@@ -673,7 +673,7 @@ module.exports = (dependencies) => {
             res.json({ success: true });
 
             // 로그인 로그 기록 (비동기, 응답 후)
-            recordLoginAttempt({
+            recordLoginAttempt(pool, {
                 userId: userId,
                 username: username,
                 ipAddress: req.ip || req.connection.remoteAddress,
@@ -819,7 +819,7 @@ module.exports = (dependencies) => {
                 const username = userRows.length > 0 ? userRows[0].username : '알 수 없음';
 
                 // 로그인 로그 기록
-                await recordLoginAttempt({
+                await recordLoginAttempt(pool, {
                     userId: userId,
                     username: username,
                     ipAddress: req.ip || req.connection.remoteAddress,
@@ -899,7 +899,7 @@ module.exports = (dependencies) => {
             res.json({ success: true });
 
             // 로그인 로그 기록 (비동기, 응답 후)
-            recordLoginAttempt({
+            recordLoginAttempt(pool, {
                 userId: userId,
                 username: username,
                 ipAddress: req.ip || req.connection.remoteAddress,
