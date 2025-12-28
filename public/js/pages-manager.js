@@ -138,6 +138,10 @@ export function buildPageTree(flatPages) {
 
 /**
  * 페이지 목록 렌더링
+ *
+ * 성능 최적화:
+ * - 페이지를 컬렉션별로 사전 그룹화 (O(n) -> O(1) 조회)
+ * - DocumentFragment 사용하여 DOM 조작 최소화
  */
 export function renderPageList() {
     const listEl = document.querySelector("#collection-list");
@@ -152,6 +156,19 @@ export function renderPageList() {
         listEl.appendChild(empty);
         return;
     }
+
+    // 성능 최적화: 페이지를 컬렉션별로 사전 그룹화 (O(n) 한 번만 수행)
+    const pagesByCollection = new Map();
+    state.pages.forEach((page) => {
+        const colId = page.collectionId;
+        if (!pagesByCollection.has(colId)) {
+            pagesByCollection.set(colId, []);
+        }
+        pagesByCollection.get(colId).push(page);
+    });
+
+    // DocumentFragment로 DOM 조작 최소화
+    const fragment = document.createDocumentFragment();
 
     state.collections.forEach((collection) => {
         const item = document.createElement("li");
@@ -168,7 +185,8 @@ export function renderPageList() {
         const title = document.createElement("div");
         title.className = "collection-title";
 
-        const colPages = state.pages.filter((p) => p.collectionId === collection.id);
+        // O(1) 조회로 변경
+        const colPages = pagesByCollection.get(collection.id) || [];
         const hasPages = colPages.length > 0;
 
         const isShared = collection.isOwner === false;
@@ -325,8 +343,11 @@ export function renderPageList() {
             }
         }
 
-        listEl.appendChild(item);
+        fragment.appendChild(item);
     });
+
+    // 한 번에 DOM에 추가 (성능 최적화)
+    listEl.appendChild(fragment);
 
     // 컬렉션 드래그 앤 드롭 초기화
     initCollectionDragDrop();

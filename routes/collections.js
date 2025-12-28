@@ -24,32 +24,61 @@ module.exports = (dependencies) => {
     /**
      * 컬렉션 목록 조회 (소유한 컬렉션 + 공유받은 컬렉션)
      * GET /api/collections
+     *
+     * 성능 최적화:
+     * - UNION ALL로 쿼리 분리하여 인덱스 활용 극대화
+     * - share_count는 별도 쿼리로 분리 (필요할 때만 계산)
+     * - 각 쿼리가 독립적인 인덱스 사용
      */
     router.get("/", authMiddleware, async (req, res) => {
         try {
             const userId = req.user.id;
 
-            // 성능 최적화: 서브쿼리를 LEFT JOIN으로 변경 (N+1 문제 해결)
+            // 성능 최적화: UNION ALL로 분리하여 인덱스 활용
+            // 1. 본인 소유 컬렉션 (인덱스: idx_collections_user_sort)
+            // 2. 공유받은 컬렉션 (인덱스: idx_shared_with_user)
             const [rows] = await pool.execute(
-                `SELECT c.id, c.name, c.sort_order, c.created_at, c.updated_at,
-                        c.user_id as owner_id, c.is_encrypted,
-                        c.default_encryption, c.enforce_encryption,
-                        CASE
-                            WHEN c.user_id = ? THEN 'OWNER'
-                            ELSE cs.permission
-                        END as permission,
-                        COALESCE(sc.share_count, 0) as share_count
-                 FROM collections c
-                 LEFT JOIN collection_shares cs ON c.id = cs.collection_id AND cs.shared_with_user_id = ?
-                 LEFT JOIN (
-                     SELECT collection_id, COUNT(*) as share_count
-                     FROM collection_shares
-                     GROUP BY collection_id
-                 ) sc ON c.id = sc.collection_id
-                 WHERE c.user_id = ? OR cs.shared_with_user_id IS NOT NULL
-                 ORDER BY c.sort_order ASC, c.updated_at DESC`,
-                [userId, userId, userId]
+                `(
+                    SELECT c.id, c.name, c.sort_order, c.created_at, c.updated_at,
+                           c.user_id as owner_id, c.is_encrypted,
+                           c.default_encryption, c.enforce_encryption,
+                           'OWNER' as permission
+                    FROM collections c
+                    WHERE c.user_id = ?
+                )
+                UNION ALL
+                (
+                    SELECT c.id, c.name, c.sort_order, c.created_at, c.updated_at,
+                           c.user_id as owner_id, c.is_encrypted,
+                           c.default_encryption, c.enforce_encryption,
+                           cs.permission as permission
+                    FROM collections c
+                    INNER JOIN collection_shares cs ON c.id = cs.collection_id
+                    WHERE cs.shared_with_user_id = ?
+                )
+                ORDER BY sort_order ASC, updated_at DESC`,
+                [userId, userId]
             );
+
+            // share_count를 별도로 계산 (한 번의 쿼리로)
+            const collectionIds = rows.map(row => row.id);
+            let shareCountMap = {};
+
+            if (collectionIds.length > 0) {
+                const placeholders = collectionIds.map(() => '?').join(',');
+                const [shareCounts] = await pool.execute(
+                    `SELECT collection_id, COUNT(*) as share_count
+                     FROM collection_shares
+                     WHERE collection_id IN (${placeholders})
+                     GROUP BY collection_id`,
+                    collectionIds
+                );
+
+                shareCountMap = shareCounts.reduce((map, row) => {
+                    map[row.collection_id] = row.share_count;
+                    return map;
+                }, {});
+            }
 
             const list = rows.map((row) => ({
                 id: row.id,
@@ -59,12 +88,13 @@ module.exports = (dependencies) => {
                 updatedAt: toIsoString(row.updated_at),
                 isOwner: row.owner_id === userId,
                 permission: row.permission,
-                isShared: row.share_count > 0,
+                isShared: (shareCountMap[row.id] || 0) > 0,
                 isEncrypted: Boolean(row.is_encrypted),
                 defaultEncryption: Boolean(row.default_encryption),
                 enforceEncryption: Boolean(row.enforce_encryption)
             }));
 
+            console.log("GET /api/collections 응답 개수:", list.length, "(최적화된 UNION 쿼리)");
             res.json(list);
         } catch (error) {
             logError("GET /api/collections", error);

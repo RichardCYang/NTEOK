@@ -118,6 +118,11 @@ module.exports = (dependencies) => {
     /**
      * 페이지 목록 조회 (소유한 페이지 + 공유받은 컬렉션의 페이지)
      * GET /api/pages
+     *
+     * 성능 최적화:
+     * - DISTINCT 제거, UNION ALL로 분리하여 인덱스 활용 극대화
+     * - 각 쿼리가 독립적인 인덱스 사용
+     * - 중복 제거 필요 없음 (두 쿼리가 겹치지 않음)
      */
     router.get("/", authMiddleware, async (req, res) => {
         try {
@@ -127,24 +132,36 @@ module.exports = (dependencies) => {
                     ? req.query.collectionId.trim()
                     : null;
 
+            // 성능 최적화: 쿼리를 UNION ALL로 분리 (DISTINCT 제거)
+            // 1. 본인 소유 페이지 (인덱스: idx_pages_collection_user)
+            // 2. 공유받은 컬렉션의 페이지 (인덱스: idx_shared_with_user)
             let query = `
-                SELECT DISTINCT p.id, p.title, p.updated_at, p.parent_id, p.sort_order, p.collection_id, p.is_encrypted, p.share_allowed, p.user_id, p.icon, p.cover_image, p.cover_position
-                FROM pages p
-                LEFT JOIN collections c ON p.collection_id = c.id
-                LEFT JOIN collection_shares cs ON p.collection_id = cs.collection_id AND cs.shared_with_user_id = ?
-                WHERE (p.user_id = ? OR c.user_id = ? OR cs.collection_id IS NOT NULL)
-                  AND NOT (p.is_encrypted = 1 AND p.share_allowed = 0 AND p.user_id != ?)
+                (
+                    SELECT p.id, p.title, p.updated_at, p.parent_id, p.sort_order,
+                           p.collection_id, p.is_encrypted, p.share_allowed, p.user_id,
+                           p.icon, p.cover_image, p.cover_position
+                    FROM pages p
+                    INNER JOIN collections c ON p.collection_id = c.id
+                    WHERE c.user_id = ?
+                    ${collectionId ? 'AND p.collection_id = ?' : ''}
+                )
+                UNION ALL
+                (
+                    SELECT p.id, p.title, p.updated_at, p.parent_id, p.sort_order,
+                           p.collection_id, p.is_encrypted, p.share_allowed, p.user_id,
+                           p.icon, p.cover_image, p.cover_position
+                    FROM pages p
+                    INNER JOIN collection_shares cs ON p.collection_id = cs.collection_id
+                    WHERE cs.shared_with_user_id = ?
+                      AND NOT (p.is_encrypted = 1 AND p.share_allowed = 0 AND p.user_id != ?)
+                    ${collectionId ? 'AND p.collection_id = ?' : ''}
+                )
+                ORDER BY collection_id ASC, parent_id IS NULL DESC, sort_order ASC, updated_at DESC
             `;
-            const params = [userId, userId, userId, userId];
 
-            if (collectionId) {
-                query += ` AND p.collection_id = ?`;
-                params.push(collectionId);
-            }
-
-            query += `
-                ORDER BY p.collection_id ASC, p.parent_id IS NULL DESC, p.sort_order ASC, p.updated_at DESC
-            `;
+            const params = collectionId
+                ? [userId, collectionId, userId, userId, collectionId]
+                : [userId, userId, userId];
 
             const [rows] = await pool.execute(query, params);
 
@@ -163,7 +180,7 @@ module.exports = (dependencies) => {
                 coverPosition: row.cover_position || 50
             }));
 
-            console.log("GET /api/pages 응답 개수:", list.length);
+            console.log("GET /api/pages 응답 개수:", list.length, "(최적화된 UNION 쿼리)");
 
             res.json(list);
         } catch (error) {
