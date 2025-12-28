@@ -134,6 +134,7 @@ export async function handleEncryption(event) {
         }
 
         await fetchPageList();
+        renderPageList();
 
         if (state.currentPageId === state.currentEncryptingPageId) {
             const titleInput = document.querySelector("#page-title-input");
@@ -356,6 +357,7 @@ export async function handlePermanentDecryption(pageId) {
 
         // 5. 페이지 목록 갱신 및 로드
         await fetchPageList();
+        renderPageList();
 
         // 6. 복호화된 페이지 로드
         await loadPage(pageId);

@@ -2,6 +2,10 @@
  * 설정 관리 모듈
  */
 
+// 캐시 변수 (성능 최적화)
+let cachedCountries = null;
+let cachedSecuritySettings = null;
+
 // 전역 상태
 let state = {
     currentUser: null,
@@ -396,13 +400,20 @@ export async function openSecuritySettingsModal() {
     try {
         const { secureFetch } = await import('./ui-utils.js');
 
-        // 보안 설정 로드
-        const response = await secureFetch('/api/auth/security-settings');
-        if (!response.ok) {
-            throw new Error('보안 설정 로드 실패');
+        // 보안 설정 로드 (캐싱 적용)
+        let data;
+        if (cachedSecuritySettings) {
+            // 캐시된 데이터 사용
+            data = cachedSecuritySettings;
+        } else {
+            // 최초 로드 시에만 API 호출
+            const response = await secureFetch('/api/auth/security-settings');
+            if (!response.ok) {
+                throw new Error('보안 설정 로드 실패');
+            }
+            data = await response.json();
+            cachedSecuritySettings = data;
         }
-
-        const data = await response.json();
 
         // UI에 값 설정
         const blockDuplicateLoginToggle = document.querySelector('#block-duplicate-login-toggle');
@@ -471,6 +482,9 @@ async function saveSecuritySettings() {
             throw new Error(errorData.error || '보안 설정 저장 실패');
         }
 
+        // 캐시 무효화 (최신 데이터 반영)
+        cachedSecuritySettings = payload;
+
         console.log('보안 설정 저장됨:', payload);
         closeSecuritySettingsModal();
         alert('보안 설정이 저장되었습니다.');
@@ -515,18 +529,26 @@ export async function openCountryWhitelistModal() {
     try {
         const { secureFetch } = await import('./ui-utils.js');
 
-        // 국가 목록 및 현재 설정 로드
-        const [countriesRes, settingsRes] = await Promise.all([
-            secureFetch('/api/auth/countries'),
-            secureFetch('/api/auth/security-settings')
-        ]);
+        // 국가 목록 및 현재 설정 로드 (캐싱 적용)
+        let countriesData, settingsData;
 
-        if (!countriesRes.ok || !settingsRes.ok) {
-            throw new Error('데이터 로드 실패');
+        // 국가 목록은 정적이므로 캐시 사용
+        if (!cachedCountries) {
+            const countriesRes = await secureFetch('/api/auth/countries');
+            if (!countriesRes.ok) {
+                throw new Error('국가 목록 로드 실패');
+            }
+            cachedCountries = await countriesRes.json();
         }
+        countriesData = cachedCountries;
 
-        const countriesData = await countriesRes.json();
-        const settingsData = await settingsRes.json();
+        // 보안 설정은 변경될 수 있으므로 항상 최신 데이터 로드
+        const settingsRes = await secureFetch('/api/auth/security-settings');
+        if (!settingsRes.ok) {
+            throw new Error('보안 설정 로드 실패');
+        }
+        settingsData = await settingsRes.json();
+        cachedSecuritySettings = settingsData;
 
         // 전역 상태에 저장
         state.availableCountries = countriesData.countries;

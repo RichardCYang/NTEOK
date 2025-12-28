@@ -46,7 +46,7 @@ export async function fetchCollections() {
             state.currentCollectionId = state.collections[0].id;
         }
 
-        renderPageList();
+        // renderPageList()는 호출하는 쪽에서 처리 (중복 호출 방지)
     } catch (error) {
         console.error("컬렉션 목록 요청 오류:", error);
         showErrorInEditor("컬렉션을 불러오는 데 실패했다: " + error.message, state.editor);
@@ -73,7 +73,7 @@ export async function fetchPageList() {
         state.pages.length = 0;
         state.pages.push(...pages);
 
-        renderPageList();
+        // renderPageList()는 호출하는 쪽에서 처리 (중복 호출 방지)
 
         if (!state.pages.length) {
             if (state.editor) {

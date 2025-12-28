@@ -944,18 +944,21 @@ async function init() {
     bindAccountManagementButtons();
     bindLoginLogsModal();
 
-    // 데이터 로드 - 병렬 처리로 최적화 (성능 개선)
+    // 데이터 로드 - 완전 병렬 처리로 최적화 (성능 개선)
     try {
-        // 1. 사용자 정보 먼저 로드 (다른 API 호출에 필요할 수 있음)
-        await fetchAndDisplayCurrentUser();
-
-        // 2. 컬렉션과 페이지 목록을 병렬로 로드
-        const [collectionsResult, pagesResult] = await Promise.allSettled([
+        // 사용자 정보, 컬렉션, 페이지를 모두 병렬로 로드
+        const [userResult, collectionsResult, pagesResult] = await Promise.allSettled([
+            fetchAndDisplayCurrentUser(),
             fetchCollections(),
             fetchPageList()
         ]);
 
         // 에러 처리
+        if (userResult.status === 'rejected') {
+            console.error('사용자 정보 로드 실패:', userResult.reason);
+            // 사용자 정보는 UI에 표시되지만 치명적이지 않음
+        }
+
         if (collectionsResult.status === 'rejected') {
             console.error('컬렉션 로드 실패:', collectionsResult.reason);
             showErrorInEditor('컬렉션을 불러오지 못했습니다.');
@@ -964,6 +967,11 @@ async function init() {
         if (pagesResult.status === 'rejected') {
             console.error('페이지 로드 실패:', pagesResult.reason);
             showErrorInEditor('페이지 목록을 불러오지 못했습니다.');
+        }
+
+        // 모든 데이터 로드 완료 후 UI 한 번만 렌더링 (중복 호출 방지)
+        if (collectionsResult.status === 'fulfilled' || pagesResult.status === 'fulfilled') {
+            renderPageList();
         }
     } catch (error) {
         console.error('초기화 중 오류:', error);
@@ -1080,7 +1088,7 @@ async function saveCollectionSettings(event) {
             throw new Error('컬렉션 설정 저장 실패');
         }
 
-        // 로컬 상태 업데이트
+        // 낙관적 업데이트: 로컬 상태만 업데이트 (서버 재요청 불필요)
         const collection = appState.collections.find(c => c.id === currentSettingsCollectionId);
         if (collection) {
             collection.name = name;
@@ -1088,8 +1096,7 @@ async function saveCollectionSettings(event) {
             collection.enforceEncryption = enforceEncryption;
         }
 
-        // 컬렉션 목록 UI 업데이트
-        await fetchCollections();
+        // UI만 업데이트 (전체 재로드 없이)
         renderPageList();
 
         closeCollectionSettingsModal();

@@ -7,6 +7,7 @@ import * as Y from 'https://cdn.jsdelivr.net/npm/yjs@13.6.18/+esm';
 import { Awareness, encodeAwarenessUpdate, applyAwarenessUpdate } from 'https://esm.sh/y-protocols@1.0.6/awareness';
 import { escapeHtml, showErrorInEditor } from './ui-utils.js';
 import { showCover, hideCover } from './cover-manager.js';
+import { renderPageList } from './pages-manager.js';
 
 // 전역 상태
 let ws = null;
@@ -510,7 +511,9 @@ function handlePageCreated(data) {
     try {
         // 페이지 목록 새로고침
         if (state.fetchPageList) {
-            state.fetchPageList();
+            state.fetchPageList().then(() => {
+                renderPageList();
+            });
         }
     } catch (error) {
         console.error('[WS] page-created 처리 오류:', error);
@@ -559,7 +562,9 @@ function handlePageDeleted(data) {
 
         // 페이지 목록 새로고침
         if (state.fetchPageList) {
-            state.fetchPageList();
+            state.fetchPageList().then(() => {
+                renderPageList();
+            });
         }
     } catch (error) {
         console.error('[WS] page-deleted 처리 오류:', error);
