@@ -1207,30 +1207,12 @@ module.exports = (dependencies) => {
             const ogImage = $('meta[property="og:image"]').attr('content');
             const twitterImage = $('meta[name="twitter:image"]').attr('content');
 
-            console.log(`[BookmarkAPI] URL: ${url}`);
-            console.log(`[BookmarkAPI] og:title=${ogTitle}, twitter:title=${twitterTitle}, title=${pageTitle}`);
-            console.log(`[BookmarkAPI] og:description=${ogDesc}`);
-            console.log(`[BookmarkAPI] og:image=${ogImage}, twitter:image=${twitterImage}`);
-
             const metadata = {
                 url: url,
-                title:
-                    ogTitle ||
-                    twitterTitle ||
-                    pageTitle ||
-                    '제목 없음',
-                description:
-                    ogDesc ||
-                    twitterDesc ||
-                    metaDesc ||
-                    '',
-                thumbnail:
-                    ogImage ||
-                    twitterImage ||
-                    ''
+                title: pageTitle || ogTitle || twitterTitle || '제목 없음',
+                description: ogDesc || twitterDesc || metaDesc || '',
+                thumbnail: ogImage || twitterImage || ''
             };
-
-            console.log(`[BookmarkAPI] 최종 metadata:`, metadata);
 
             // 상대 URL을 절대 URL로 변환
             if (metadata.thumbnail && !metadata.thumbnail.startsWith('http')) {
