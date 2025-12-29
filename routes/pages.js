@@ -1176,7 +1176,11 @@ module.exports = (dependencies) => {
                     timeout: 10000, // 10초 타임아웃
                     maxRedirects: 5,
                     headers: {
-                        'User-Agent': 'Mozilla/5.0 (compatible; NTEOK-Bot/1.0)'
+                        // 페이스북 봇인 척 위장 (해당 방법이 가장 호환성이 좋음) -> Reddit과 같은 클라이언트 측 렌더링(CSR) 페이지 우회용
+                        // Reddit과 같은 클라이언트 측 렌더링(CSR) 페이지들은 User-Agent를 봇으로 속이면, CSR용 빈 HTML을 제공하는 것이 아니라, 실제 데이터(og:title 등)를 바로 넘겨줌
+                        'User-Agent': 'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)'
+                        // 또는 트위터 봇: 'Twitterbot/1.0' -> (페이스북 봇이 안 통할 시)
+                        // 또는 구글 봇: 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)' -> (페이스북, 트위터 봇 둘 다 안 통할 시)
                     },
                     maxContentLength: 5 * 1024 * 1024 // 5MB 제한
                 });
