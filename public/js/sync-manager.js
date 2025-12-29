@@ -497,6 +497,24 @@ function handleMetadataChange(data) {
             }
         }
 
+        // 여백 동기화 (모바일에서는 기본 CSS 사용)
+        if (data.field === 'horizontalPadding' && data.pageId === state.currentPageId) {
+            const page = state.pages.find(p => p.id === data.pageId);
+            if (page) page.horizontalPadding = data.value;
+
+            const editorEl = document.querySelector('.editor');
+            if (editorEl) {
+                const isMobile = window.innerWidth <= 900;
+                if (data.value === null || isMobile) {
+                    editorEl.style.paddingLeft = '';
+                    editorEl.style.paddingRight = '';
+                } else {
+                    editorEl.style.paddingLeft = `${data.value}px`;
+                    editorEl.style.paddingRight = `${data.value}px`;
+                }
+            }
+        }
+
         // 사이드바 업데이트
         updatePageInSidebar(data.pageId, data.field, data.value);
     } catch (error) {

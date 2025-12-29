@@ -615,6 +615,120 @@ body {
     flex-shrink: 0;
 }
 
+/* 여백 조절 드롭다운 */
+.toolbar-padding-dropdown {
+    position: relative;
+    display: inline-block;
+}
+
+.toolbar-padding-dropdown .caret-icon {
+    transition: transform 0.12s ease-out;
+}
+
+.toolbar-padding-dropdown.open .caret-icon {
+    transform: rotate(180deg);
+}
+
+/* 여백 선택 메뉴 */
+.toolbar-padding-menu {
+    position: fixed;
+    padding: 8px;
+    background-color: #faf8f3;
+    border: 1px solid #d4cfc4;
+    border-radius: 4px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    z-index: 1000;
+    min-width: 200px;
+}
+
+.toolbar-padding-menu[hidden] {
+    display: none;
+}
+
+.toolbar-padding-menu .padding-option {
+    width: 100%;
+    padding: 8px 12px;
+    border: none;
+    background: transparent;
+    text-align: left;
+    cursor: pointer;
+    border-radius: 3px;
+    transition: background-color 0.1s;
+    font-size: 13px;
+    color: #1a1a1a;
+}
+
+.toolbar-padding-menu .padding-option:hover {
+    background-color: rgba(45, 95, 93, 0.1);
+}
+
+.toolbar-padding-menu .padding-option.active {
+    background-color: rgba(45, 95, 93, 0.15);
+    font-weight: 500;
+}
+
+.padding-divider {
+    height: 1px;
+    background-color: #d4cfc4;
+    margin: 6px 0;
+}
+
+/* 커스텀 입력 */
+.padding-custom {
+    padding: 8px 12px;
+}
+
+.padding-custom label {
+    display: block;
+    font-size: 11px;
+    color: #6b7280;
+    margin-bottom: 6px;
+    font-weight: 500;
+}
+
+.padding-custom-controls {
+    display: flex;
+    gap: 6px;
+}
+
+.padding-custom-controls input {
+    flex: 1;
+    padding: 6px 8px;
+    border: 1px solid #d4cfc4;
+    border-radius: 3px;
+    font-size: 13px;
+    background-color: #fff;
+}
+
+.padding-custom-controls input:focus {
+    outline: none;
+    border-color: #2d5f5d;
+}
+
+.padding-custom-controls button {
+    padding: 6px 10px;
+    border: none;
+    background-color: #2d5f5d;
+    color: #faf8f3;
+    border-radius: 3px;
+    cursor: pointer;
+}
+
+.padding-custom-controls button:hover {
+    background-color: #1f4746;
+}
+
+/* 모바일에서는 여백 조절 버튼 숨김 및 헤더 레이아웃 조정 */
+@media (max-width: 900px) {
+    .toolbar-padding-dropdown {
+        display: none;
+    }
+
+    .editor-header {
+        justify-content: flex-end;
+    }
+}
+
 .editor {
     flex: 1;
     min-height: 0;
@@ -1124,6 +1238,7 @@ body {
     .editor-header {
         padding: 10px 12px;
         gap: 6px;
+        justify-content: flex-end;
     }
 
     .page-title-input {

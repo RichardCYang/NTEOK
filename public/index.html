@@ -448,6 +448,91 @@
 
                         <span class="toolbar-separator"></span>
 
+                        <!-- 여백 조절 드롭다운 -->
+                        <div class="toolbar-padding-dropdown" data-role="padding-dropdown">
+                            <button
+                                type="button"
+                                class="toolbar-button"
+                                data-command="togglePaddingDropdown"
+                                title="좌우 여백 조절"
+                                aria-label="좌우 여백 조절"
+                            >
+                                <i class="fa-solid fa-arrows-left-right"></i>
+                                <i class="fa-solid fa-caret-down caret-icon"></i>
+                            </button>
+
+                            <div class="toolbar-padding-menu" data-padding-menu hidden>
+                                <!-- 기본값 -->
+                                <button
+                                    type="button"
+                                    class="padding-option"
+                                    data-command="setPadding"
+                                    data-padding="default"
+                                >
+                                    <span>기본값</span>
+                                </button>
+
+                                <!-- 프리셋 옵션 -->
+                                <button
+                                    type="button"
+                                    class="padding-option"
+                                    data-command="setPadding"
+                                    data-padding="60"
+                                >
+                                    <span>좁게 (60px)</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    class="padding-option"
+                                    data-command="setPadding"
+                                    data-padding="120"
+                                >
+                                    <span>보통 (120px)</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    class="padding-option"
+                                    data-command="setPadding"
+                                    data-padding="180"
+                                >
+                                    <span>넓게 (180px)</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    class="padding-option"
+                                    data-command="setPadding"
+                                    data-padding="240"
+                                >
+                                    <span>매우 넓게 (240px)</span>
+                                </button>
+
+                                <div class="padding-divider"></div>
+
+                                <!-- 커스텀 입력 -->
+                                <div class="padding-custom">
+                                    <label for="padding-custom-input">커스텀 (px)</label>
+                                    <div class="padding-custom-controls">
+                                        <input
+                                            type="number"
+                                            id="padding-custom-input"
+                                            min="0"
+                                            max="300"
+                                            step="10"
+                                            placeholder="60-240"
+                                        />
+                                        <button
+                                            type="button"
+                                            data-command="applyCustomPadding"
+                                        >
+                                            <i class="fa-solid fa-check"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <span class="toolbar-separator"></span>
+
                         <button type="button" data-command="blockquote">
                             “ 인용
                         </button>

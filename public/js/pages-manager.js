@@ -660,7 +660,8 @@ export async function loadPage(id) {
                 isEncrypted: page.isEncrypted,
                 updatedAt: page.updatedAt,
                 coverImage: page.coverImage,
-                coverPosition: page.coverPosition
+                coverPosition: page.coverPosition,
+                horizontalPadding: page.horizontalPadding
             };
         } else {
             // 페이지가 배열에 없으면 추가 (드문 경우)
@@ -674,7 +675,8 @@ export async function loadPage(id) {
                 coverImage: page.coverImage,
                 coverPosition: page.coverPosition,
                 parentId: page.parentId,
-                sortOrder: page.sortOrder
+                sortOrder: page.sortOrder,
+                horizontalPadding: page.horizontalPadding
             });
         }
 
@@ -685,6 +687,19 @@ export async function loadPage(id) {
             showCover(page.coverImage, page.coverPosition || 50);
         } else {
             hideCover();
+        }
+
+        // 여백 적용 (모바일에서는 기본 CSS 사용)
+        const editorEl = document.querySelector('.editor');
+        if (editorEl) {
+            const isMobile = window.innerWidth <= 900;
+            if (!isMobile && page.horizontalPadding !== null && page.horizontalPadding !== undefined) {
+                editorEl.style.paddingLeft = `${page.horizontalPadding}px`;
+                editorEl.style.paddingRight = `${page.horizontalPadding}px`;
+            } else {
+                editorEl.style.paddingLeft = '';
+                editorEl.style.paddingRight = '';
+            }
         }
 
         // 실시간 동기화 시작 (암호화 페이지는 제외)

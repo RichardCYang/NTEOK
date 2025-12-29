@@ -1067,6 +1067,11 @@ export function bindToolbar(editor) {
         ? fontDropdownElement.querySelector("[data-font-menu]")
         : null;
 
+    let paddingDropdownElement = toolbar.querySelector("[data-role='padding-dropdown']");
+    let paddingMenuElement = paddingDropdownElement
+        ? paddingDropdownElement.querySelector("[data-padding-menu]")
+        : null;
+
     // 폰트 드롭다운 메뉴에 폰트 옵션 동적 생성
     if (fontMenuElement) {
         fontMenuElement.innerHTML = "";
@@ -1133,6 +1138,30 @@ export function bindToolbar(editor) {
             return;
         }
 
+        // 여백 드롭다운 토글
+        if (command === "togglePaddingDropdown") {
+            if (!paddingMenuElement || !paddingDropdownElement) return;
+
+            const isOpen = !paddingMenuElement.hasAttribute("hidden");
+
+            if (isOpen) {
+                paddingMenuElement.setAttribute("hidden", "");
+                paddingDropdownElement.classList.remove("open");
+            } else {
+                // 버튼 위치 계산
+                const buttonRect = button.getBoundingClientRect();
+                paddingMenuElement.style.top = `${buttonRect.bottom + 4}px`;
+                paddingMenuElement.style.left = `${buttonRect.left}px`;
+
+                // 현재 여백 값 표시
+                updatePaddingMenuState();
+
+                paddingMenuElement.removeAttribute("hidden");
+                paddingDropdownElement.classList.add("open");
+            }
+            return;
+        }
+
         // 색상 선택
         if (command === "setColor" && colorValue) {
             editor.chain().focus().setColor(colorValue).run();
@@ -1173,6 +1202,38 @@ export function bindToolbar(editor) {
             }
 
             updateToolbarState(editor);
+            return;
+        }
+
+        // 여백 설정
+        if (command === "setPadding") {
+            const paddingValue = button.getAttribute("data-padding");
+            handlePaddingChange(paddingValue);
+
+            if (paddingMenuElement && paddingDropdownElement) {
+                paddingMenuElement.setAttribute("hidden", "");
+                paddingDropdownElement.classList.remove("open");
+            }
+            return;
+        }
+
+        // 커스텀 여백 적용
+        if (command === "applyCustomPadding") {
+            const input = document.getElementById("padding-custom-input");
+            if (input && input.value) {
+                const value = parseInt(input.value);
+                if (value >= 0 && value <= 300) {
+                    handlePaddingChange(value.toString());
+                    input.value = '';
+
+                    if (paddingMenuElement && paddingDropdownElement) {
+                        paddingMenuElement.setAttribute("hidden", "");
+                        paddingDropdownElement.classList.remove("open");
+                    }
+                } else {
+                    alert('여백은 0에서 300 사이의 값이어야 합니다.');
+                }
+            }
             return;
         }
 
@@ -1768,4 +1829,72 @@ export function bindTableContextMenu(editor) {
     document.addEventListener("click", () => {
         hideTableContextMenu();
     });
+}
+
+// 여백 변경 처리
+async function handlePaddingChange(paddingValue) {
+    const state = window.appState;
+    if (!state || !state.currentPageId) return;
+
+    const editorEl = document.querySelector('.editor');
+    const padding = paddingValue === 'default' ? null : parseInt(paddingValue);
+
+    // UI 즉시 업데이트 (모바일에서는 기본 CSS 사용)
+    if (editorEl) {
+        const isMobile = window.innerWidth <= 900;
+        if (padding === null || isMobile) {
+            editorEl.style.paddingLeft = '';
+            editorEl.style.paddingRight = '';
+        } else {
+            editorEl.style.paddingLeft = `${padding}px`;
+            editorEl.style.paddingRight = `${padding}px`;
+        }
+    }
+
+    // 서버에 저장
+    try {
+        const csrfToken = window.csrfUtils?.getCsrfToken();
+        const res = await fetch(`/api/pages/${state.currentPageId}`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-Token': csrfToken
+            },
+            credentials: 'include',
+            body: JSON.stringify({ horizontalPadding: padding })
+        });
+
+        if (!res.ok) throw new Error('여백 저장 실패');
+
+        // 로컬 상태 업데이트
+        const page = state.pages.find(p => p.id === state.currentPageId);
+        if (page) page.horizontalPadding = padding;
+
+        console.log('여백 저장 완료:', padding === null ? '기본값' : `${padding}px`);
+    } catch (error) {
+        console.error('여백 저장 오류:', error);
+        alert('여백 설정을 저장하는데 실패했습니다.');
+    }
+}
+
+// 메뉴 상태 업데이트
+function updatePaddingMenuState() {
+    const state = window.appState;
+    if (!state || !state.currentPageId) return;
+
+    const page = state.pages.find(p => p.id === state.currentPageId);
+    const currentPadding = page?.horizontalPadding;
+
+    document.querySelectorAll('.padding-option').forEach(option => {
+        option.classList.remove('active');
+    });
+
+    if (currentPadding === null || currentPadding === undefined) {
+        document.querySelector('.padding-option[data-padding="default"]')?.classList.add('active');
+    } else {
+        const matchingOption = document.querySelector(`.padding-option[data-padding="${currentPadding}"]`);
+        if (matchingOption) {
+            matchingOption.classList.add('active');
+        }
+    }
 }

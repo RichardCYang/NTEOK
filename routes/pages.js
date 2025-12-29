@@ -139,7 +139,7 @@ module.exports = (dependencies) => {
                 (
                     SELECT p.id, p.title, p.updated_at, p.parent_id, p.sort_order,
                            p.collection_id, p.is_encrypted, p.share_allowed, p.user_id,
-                           p.icon, p.cover_image, p.cover_position
+                           p.icon, p.cover_image, p.cover_position, p.horizontal_padding
                     FROM pages p
                     INNER JOIN collections c ON p.collection_id = c.id
                     WHERE c.user_id = ?
@@ -149,7 +149,7 @@ module.exports = (dependencies) => {
                 (
                     SELECT p.id, p.title, p.updated_at, p.parent_id, p.sort_order,
                            p.collection_id, p.is_encrypted, p.share_allowed, p.user_id,
-                           p.icon, p.cover_image, p.cover_position
+                           p.icon, p.cover_image, p.cover_position, p.horizontal_padding
                     FROM pages p
                     INNER JOIN collection_shares cs ON p.collection_id = cs.collection_id
                     WHERE cs.shared_with_user_id = ?
@@ -177,7 +177,8 @@ module.exports = (dependencies) => {
                 userId: row.user_id,
                 icon: row.icon || null,
                 coverImage: row.cover_image || null,
-                coverPosition: row.cover_position || 50
+                coverPosition: row.cover_position || 50,
+                horizontalPadding: row.horizontal_padding || null
             }));
 
             console.log("GET /api/pages 응답 개수:", list.length, "(최적화된 UNION 쿼리)");
@@ -201,7 +202,8 @@ module.exports = (dependencies) => {
             const [rows] = await pool.execute(
                 `SELECT p.id, p.title, p.content, p.encryption_salt, p.encrypted_content,
                         p.created_at, p.updated_at, p.parent_id, p.sort_order, p.collection_id,
-                        p.is_encrypted, p.share_allowed, p.user_id, p.icon, p.cover_image, p.cover_position
+                        p.is_encrypted, p.share_allowed, p.user_id, p.icon, p.cover_image, p.cover_position,
+                        p.horizontal_padding
                  FROM pages p
                  LEFT JOIN collections c ON p.collection_id = c.id
                  LEFT JOIN collection_shares cs ON p.collection_id = cs.collection_id AND cs.shared_with_user_id = ?
@@ -232,7 +234,8 @@ module.exports = (dependencies) => {
                 userId: row.user_id,
                 icon: row.icon || null,
                 coverImage: row.cover_image || null,
-                coverPosition: row.cover_position || 50
+                coverPosition: row.cover_position || 50,
+                horizontalPadding: row.horizontal_padding || null
             };
 
             console.log("GET /api/pages/:id 응답:", id);
@@ -349,20 +352,23 @@ module.exports = (dependencies) => {
         const contentFromBody = typeof req.body.content === "string" ? sanitizeHtmlContent(req.body.content) : null;
         const isEncryptedFromBody = typeof req.body.isEncrypted === "boolean" ? req.body.isEncrypted : null;
         const iconFromBody = typeof req.body.icon === "string" ? req.body.icon.trim() : undefined;
+        const horizontalPaddingFromBody = typeof req.body.horizontalPadding === 'number' ?
+            Math.max(0, Math.min(300, req.body.horizontalPadding)) : (req.body.horizontalPadding === null ? null : undefined);
 
         // 암호화 필드 (선택적 암호화)
         const encryptionSaltFromBody = typeof req.body.encryptionSalt === "string" ? req.body.encryptionSalt : null;
         const encryptedContentFromBody = typeof req.body.encryptedContent === "string" ? req.body.encryptedContent : null;
 
         if (!titleFromBody && !contentFromBody && isEncryptedFromBody === null && iconFromBody === undefined &&
-            !encryptionSaltFromBody && !encryptedContentFromBody) {
+            !encryptionSaltFromBody && !encryptedContentFromBody && horizontalPaddingFromBody === undefined) {
             return res.status(400).json({ error: "수정할 데이터 없음." });
         }
 
         try {
             const [rows] = await pool.execute(
                 `SELECT id, title, content, encryption_salt, encrypted_content,
-                        created_at, updated_at, parent_id, sort_order, collection_id, is_encrypted, user_id, icon
+                        created_at, updated_at, parent_id, sort_order, collection_id, is_encrypted, user_id, icon,
+                        horizontal_padding
                  FROM pages
                  WHERE id = ?`,
                 [id]
@@ -397,6 +403,7 @@ module.exports = (dependencies) => {
             }
 
             const newIcon = iconFromBody !== undefined ? (iconFromBody !== "" ? iconFromBody : null) : existing.icon;
+            const newHorizontalPadding = horizontalPaddingFromBody !== undefined ? horizontalPaddingFromBody : existing.horizontal_padding;
 
             // 암호화 필드 업데이트
             const newEncryptionSalt = encryptionSaltFromBody !== null ? encryptionSaltFromBody : existing.encryption_salt;
@@ -411,19 +418,19 @@ module.exports = (dependencies) => {
                 await pool.execute(
                     `UPDATE pages
                      SET title = ?, content = ?, encryption_salt = ?, encrypted_content = ?,
-                         is_encrypted = ?, icon = ?, user_id = ?, updated_at = ?
+                         is_encrypted = ?, icon = ?, horizontal_padding = ?, user_id = ?, updated_at = ?
                      WHERE id = ?`,
                     [newTitle, newContent, newEncryptionSalt, newEncryptedContent,
-                     newIsEncrypted, newIcon, userId, nowStr, id]
+                     newIsEncrypted, newIcon, newHorizontalPadding, userId, nowStr, id]
                 );
             } else {
                 await pool.execute(
                     `UPDATE pages
                      SET title = ?, content = ?, encryption_salt = ?, encrypted_content = ?,
-                         is_encrypted = ?, icon = ?, updated_at = ?
+                         is_encrypted = ?, icon = ?, horizontal_padding = ?, updated_at = ?
                      WHERE id = ?`,
                     [newTitle, newContent, newEncryptionSalt, newEncryptedContent,
-                     newIsEncrypted, newIcon, nowStr, id]
+                     newIsEncrypted, newIcon, newHorizontalPadding, nowStr, id]
                 );
             }
 
@@ -456,6 +463,14 @@ module.exports = (dependencies) => {
                     pageId: id,
                     field: 'icon',
                     value: newIcon
+                }, userId);
+            }
+
+            if (horizontalPaddingFromBody !== undefined && newHorizontalPadding !== existing.horizontal_padding) {
+                wsBroadcastToCollection(existing.collection_id, 'metadata-change', {
+                    pageId: id,
+                    field: 'horizontalPadding',
+                    value: newHorizontalPadding
                 }, userId);
             }
 

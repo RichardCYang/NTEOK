@@ -700,6 +700,13 @@ async function initDb() {
         }
     }
 
+    // pages 테이블에 horizontal_padding 컬럼 추가 (없을 경우만)
+    await pool.execute(`
+        ALTER TABLE pages
+        ADD COLUMN IF NOT EXISTS horizontal_padding INT NULL
+    `);
+    console.log('✓ horizontal_padding 컬럼 추가 확인');
+
     // (페이지 관련 컬럼들은 이제 CREATE TABLE에 포함됨)
 
     // collection_shares 테이블 생성 (사용자 간 직접 공유)
