@@ -24,11 +24,12 @@ let hasInitializedPage = false; // 페이지 초기화 완료 플래그 (재연�
 
 // 커서 공유 상태
 const cursorState = {
-    awareness: null,              // Awareness 인스턴스
-    remoteCursors: new Map(),     // clientId -> DOM element
-    localClientId: null,          // 로컬 클라이언트 ID
-    throttleTimer: null,          // Throttle 타이머
-    lastSentPosition: null        // 마지막 전송 위치 (중복 방지)
+    awareness: null,			// Awareness 인스턴스
+    remoteCursors: new Map(),	// clientId -> DOM element
+    localClientId: null,		// 로컬 클라이언트 ID
+    throttleTimer: null,		// Throttle 타이머
+    lastSentPosition: null,		// 마지막 전송 위치 (중복 방지)
+    localUserId: null			// 로컬 사용자 ID
 };
 
 const state = {
@@ -38,6 +39,50 @@ const state = {
     fetchPageList: null,
     pages: []
 };
+
+export function onLocalEditModeChanged(isWriteMode) {
+	// 로컬 커서 정리
+	if (cursorState.awareness) {
+		if (!isWriteMode) {
+		    cursorState.awareness.setLocalStateField('cursor', null);
+		    cursorState.lastSentPosition = null;
+		}
+	}
+
+	// 원격 커서 DOM 정리(내가 쓰기모드면 숨김 정책)
+	if (isWriteMode) {
+		cursorState.remoteCursors.forEach(el => el.remove());
+		cursorState.remoteCursors.clear();
+	}
+}
+
+export function updateAwarenessMode(isWrite) {
+	if (!cursorState.awareness) return;
+
+	cursorState.awareness.setLocalStateField('mode', isWrite ? 'write' : 'read');
+	cursorState.awareness.setLocalStateField('modeSince', Date.now());
+
+	if (!isWrite) {
+		cursorState.awareness.setLocalStateField('cursor', null);
+		cursorState.lastSentPosition = null;
+	}
+}
+
+function getPrimaryWriterClientId() {
+	let primary = null;
+	let best = Infinity;
+
+	cursorState.awareness.getStates().forEach((st, cid) => {
+		if (!st || st.mode !== 'write') return;
+		const since = typeof st.modeSince === 'number' ? st.modeSince : Infinity;
+		if (since < best || (since === best && (primary == null || cid < primary))) {
+		    best = since;
+		    primary = cid;
+		}
+	});
+
+	return primary;
+}
 
 /**
  * 초기화
@@ -207,7 +252,7 @@ export async function startPageSync(pageId, isEncrypted) {
     // Awareness 초기화
     cursorState.awareness = new Awareness(ydoc);
     cursorState.localClientId = ydoc.clientID;
-    cursorState.awareness.on('change', handleAwarenessChange);
+	cursorState.awareness.on('change', (changes, origin) => handleAwarenessChange(changes, origin));
 
     // WebSocket으로 페이지 구독
     if (ws && ws.readyState === WebSocket.OPEN) {
@@ -260,6 +305,7 @@ export function stopPageSync() {
 
     // Awareness 정리
     if (cursorState.awareness) {
+		cursorState.awareness.setLocalState(null);
         cursorState.awareness.destroy();
         cursorState.awareness = null;
     }
@@ -317,7 +363,15 @@ export function syncEditorFromMetadata() {
         if (content) {
             const currentContent = state.editor.getHTML();
             if (content !== currentContent) {
-                state.editor.commands.setContent(content, { emitUpdate: false });
+				state.editor._syncIsUpdating = true;
+				try
+				{
+					state.editor.commands.setContent(content, { emitUpdate: false });
+				}
+				finally
+				{
+					state.editor._syncIsUpdating = false;
+				}
             }
         }
     }
@@ -354,6 +408,9 @@ function handleInit(data) {
 
         // 사용자 정보를 awareness에 설정
         if (cursorState.awareness && data.userId && data.username && data.color) {
+       		// cursorState에 localUserId 저장
+        	cursorState.localUserId = data.userId;
+
             cursorState.awareness.setLocalStateField('user', {
                 userId: data.userId,
                 username: data.username,
@@ -759,7 +816,15 @@ function setupEditorBinding() {
                 } else {
                     // 타이핑 중이 아니거나 포커스가 없으면 즉시 업데이트
                     isUpdating = true;
-                    state.editor.commands.setContent(content, { emitUpdate: false });
+					state.editor._syncIsUpdating = true;
+					try
+					{
+						state.editor.commands.setContent(content, { emitUpdate: false });
+					}
+					finally
+					{
+						state.editor._syncIsUpdating = false;
+					}
                     isUpdating = false;
                 }
             }
@@ -801,7 +866,15 @@ function setupEditorBinding() {
     state.editor.on('blur', () => {
         if (remoteUpdatePending) {
             isUpdating = true;
-            state.editor.commands.setContent(remoteUpdatePending, { emitUpdate: false });
+			state.editor._syncIsUpdating = true;
+			try
+			{
+				state.editor.commands.setContent(remoteUpdatePending, { emitUpdate: false });
+			}
+			finally
+			{
+				state.editor._syncIsUpdating = false;
+			}
             remoteUpdatePending = null;
             isUpdating = false;
         }
@@ -836,6 +909,7 @@ function setupCursorTracking() {
     state.editor.on('blur', () => {
         if (cursorState.awareness) {
             cursorState.awareness.setLocalStateField('cursor', null);
+			cursorState.lastSentPosition = null;
         }
     });
 }
@@ -858,6 +932,22 @@ function throttledSendCursorPosition(editor) {
  */
 function sendCursorPosition(editor) {
     if (!editor || !cursorState.awareness) return;
+
+    // 읽기모드(or 편집 불가)이면 내 커서를 즉시 제거
+    if (!editor.isEditable) {
+	    cursorState.awareness.setLocalStateField('cursor', null);
+	    cursorState.lastSentPosition = null;
+	    return;
+    }
+
+    const hasFocus = !!(editor.view && editor.view.hasFocus && editor.view.hasFocus());
+    if (!hasFocus) {
+		cursorState.awareness.setLocalStateField('cursor', null);
+		cursorState.lastSentPosition = null;
+		return;
+    }
+
+    if (editor._syncIsUpdating) return;
 
     const { selection } = editor.state;
     const { anchor, head } = selection;
@@ -882,29 +972,60 @@ function sendCursorPosition(editor) {
 /**
  * Awareness 변경 감지 핸들러
  */
-function handleAwarenessChange({ added, updated, removed }) {
+function handleAwarenessChange({ added, updated, removed }, origin) {
     // 제거된 사용자 커서 삭제
     removed.forEach(clientId => {
         removeCursor(clientId);
     });
 
-    // 추가/업데이트된 사용자 커서 렌더링
-    [...added, ...updated].forEach(clientId => {
-        if (clientId === cursorState.localClientId) return; // 자신 제외
+    const local = cursorState.awareness.getLocalState() || {};
+    const localMode = local.mode || (state.isWriteMode ? 'write' : 'read');
 
-        const awarenessState = cursorState.awareness.getStates().get(clientId);
-        if (awarenessState && awarenessState.cursor && awarenessState.user) {
-            renderCursor(clientId, awarenessState);
-        } else {
-            removeCursor(clientId);
-        }
-    });
+    const primaryWriter = getPrimaryWriterClientId();
+    const iAmPrimary = primaryWriter === cursorState.localClientId;
+
+    // 내가 write인데 primary가 아니면? 화면엔 커서 0개
+    const shouldRenderAnyRemote = (localMode !== 'write') || iAmPrimary;
+
+    // 편집 커서를 렌더링해야 하는 상황이 아니라면 전부 지움
+    if (!shouldRenderAnyRemote)
+    {
+    	[...added, ...updated].forEach(clientId => removeCursor(clientId));
+    }
+    else
+    {
+	   	// 추가/업데이트된 사용자 커서 렌더링
+	    [...added, ...updated].forEach(clientId => {
+	    	const awarenessState = cursorState.awareness.getStates().get(clientId);
+
+	    	// 내 세션(clientId) 제외
+	        if (clientId === cursorState.localClientId) {
+				removeCursor(clientId);
+				return;
+	        }
+
+	        // 내 유저(userId)가 다른 clientId로 떠도 제외 (고스트 커서 방지)
+	        if (awarenessState?.user?.userId != null && awarenessState.user.userId === cursorState.localUserId) {
+				removeCursor(clientId);
+				return;
+	        }
+
+	        if (awarenessState && awarenessState.cursor && awarenessState.user) {
+	            renderCursor(clientId, awarenessState);
+	        } else {
+	            removeCursor(clientId);
+	        }
+	    });
+    }
 
     // Awareness 업데이트를 서버로 전송
-    const update = encodeAwarenessUpdate(cursorState.awareness, [
-        ...added, ...updated, ...removed
-    ]);
-    sendAwarenessUpdate(update);
+    // 로컬 변화만 서버로 전송
+    if (origin !== 'remote') {
+	    const update = encodeAwarenessUpdate(cursorState.awareness, [
+	        ...added, ...updated, ...removed
+	    ]);
+	    sendAwarenessUpdate(update);
+    }
 }
 
 /**

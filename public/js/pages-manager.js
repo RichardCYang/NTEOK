@@ -4,7 +4,7 @@
 
 import { secureFetch } from './ui-utils.js';
 import { escapeHtml, showErrorInEditor } from './ui-utils.js';
-import { startPageSync, stopPageSync, startCollectionSync, stopCollectionSync, flushPendingUpdates, syncEditorFromMetadata } from './sync-manager.js';
+import { startPageSync, stopPageSync, startCollectionSync, stopCollectionSync, flushPendingUpdates, syncEditorFromMetadata, onLocalEditModeChanged, updateAwarenessMode } from './sync-manager.js';
 import { showCover, hideCover, updateCoverButtonsVisibility } from './cover-manager.js';
 import { checkPublishStatus, updatePublishButton } from './publish-manager.js';
 
@@ -925,6 +925,8 @@ export async function toggleEditMode() {
 
         state.isWriteMode = false;
         state.editor.setEditable(false);
+		updateAwarenessMode(state.isWriteMode);
+
         if (titleInput) {
             titleInput.setAttribute("readonly", "");
         }
@@ -940,6 +942,8 @@ export async function toggleEditMode() {
             textEl.textContent = "쓰기모드";
         }
 
+        onLocalEditModeChanged();
+
         // 읽기모드 진입 시 커버 버튼 숨김
         updateCoverButtonsVisibility();
         updatePublishButton();
@@ -954,6 +958,8 @@ export async function toggleEditMode() {
 
         state.isWriteMode = true;
         state.editor.setEditable(true);
+		updateAwarenessMode(state.isWriteMode);
+
         if (titleInput) {
             titleInput.removeAttribute("readonly");
         }
@@ -968,6 +974,8 @@ export async function toggleEditMode() {
         if (textEl) {
             textEl.textContent = "읽기모드";
         }
+
+		onLocalEditModeChanged();
 
         // 쓰기모드 진입 시 커버 버튼 표시
         updateCoverButtonsVisibility();
