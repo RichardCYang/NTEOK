@@ -1,6 +1,11 @@
 const express = require('express');
 const router = express.Router();
 const crypto = require('crypto');
+const dns = require("node:dns").promises;
+const http = require("node:http");
+const https = require("node:https");
+const net = require("node:net");
+const ipaddr = require("ipaddr.js");
 
 /**
  * Pages Routes
@@ -32,6 +37,99 @@ module.exports = (dependencies) => {
         path,
         fs
     } = dependencies;
+
+    const ALLOWED_PROTOCOLS = new Set(["http:", "https:"]);
+    const ALLOWED_PORTS = new Set([80, 443]);
+
+    function isPublicRoutableIp(address) {
+	    try {
+		    // net.isIP: 0(아님), 4, 6
+		    if (!net.isIP(address)) return false;
+		    const parsed = ipaddr.parse(address);
+
+		    // ipaddr.js range()가 unicast가 아니면 내부/특수 대역으로 취급 (보수적으로 차단)
+		    return parsed.range() === "unicast";
+	    } catch {
+		    return false;
+	    }
+    }
+
+    async function resolveAndValidateHost(hostname) {
+	    // hostname이 이미 IP면 그대로 검증
+	    if (net.isIP(hostname)) {
+		    if (!isPublicRoutableIp(hostname)) throw new Error("Disallowed IP");
+		    return { address: hostname, family: net.isIP(hostname) };
+	    }
+
+	    const results = await dns.lookup(hostname, { all: true, verbatim: true });
+	    if (!results || results.length === 0) throw new Error("DNS lookup failed");
+
+	    // 하나라도 비공개/특수 대역이 섞여 있으면 차단 (우회 여지 제거)
+	    for (const r of results) {
+		    if (!isPublicRoutableIp(r.address)) throw new Error("Disallowed resolved IP");
+	    }
+
+	    // 핀ning용으로 첫 번째 주소 선택(원하면 랜덤 선택 가능)
+	    return results[0];
+    }
+
+    async function assertSafeExternalUrl(rawUrl) {
+	    const u = new URL(rawUrl);
+
+	    if (!ALLOWED_PROTOCOLS.has(u.protocol)) throw new Error("Only http/https allowed");
+	    if (u.username || u.password) throw new Error("Userinfo not allowed");
+
+	    const port = u.port ? Number(u.port) : (u.protocol === "https:" ? 443 : 80);
+	    if (!ALLOWED_PORTS.has(port)) throw new Error("Port not allowed");
+
+	    const resolved = await resolveAndValidateHost(u.hostname);
+
+	    // DNS 고정: lookup을 강제로 고정해서 DNS 재할당 위험을 낮춤
+		const lookup = (hostname, options, cb) => {
+			const opts = typeof options === "number" ? { family: options } : (options || {});
+			const addr = resolved.address;
+			const fam = resolved.family;
+
+			if (!addr) return cb(new Error("Resolved address missing"));
+
+			if (opts.all) {
+				return cb(null, [{ address: addr, family: fam }]);
+			}
+			return cb(null, addr, fam);
+		};
+
+	    const httpAgent = new http.Agent({ lookup });
+	    const httpsAgent = new https.Agent({ lookup });
+
+	    return { urlObj: u, httpAgent, httpsAgent };
+    }
+
+    async function safeAxiosGet(rawUrl, axios, axiosOpts = {}, { maxRedirects = 2 } = {}) {
+	    let current = rawUrl;
+
+	    for (let i = 0; i <= maxRedirects; i++) {
+		    const { urlObj, httpAgent, httpsAgent } = await assertSafeExternalUrl(current);
+
+		    const resp = await axios.get(urlObj.toString(), {
+		        ...axiosOpts,
+		        httpAgent,
+		        httpsAgent,
+		        maxRedirects: 0, // OWASP 권고: 자동 리다이렉트는 비활성화 후 직접 검증하며 따라가기 :contentReference[oaicite:1]{index=1}
+		        validateStatus: (s) => s >= 200 && s < 400
+		    });
+
+		    // 수동 리다이렉트 처리(필요할 때만)
+		    if (resp.status >= 300 && resp.status < 400 && resp.headers.location) {
+		        const next = new URL(resp.headers.location, urlObj).toString();
+		        current = next;
+		        continue;
+		    }
+
+		    return resp;
+	    }
+
+	    throw new Error("Too many redirects");
+    }
 
     /**
      * 사용자 업로드 커버 이미지 목록 조회
@@ -84,7 +182,20 @@ module.exports = (dependencies) => {
         const filename = req.params.filename;
 
         try {
-            const coverPath = `${userId}/${filename}`;
+        	const safeName = path.basename(filename);
+
+        	// path.basename() 함수를 통하면 입력값 파일 정보에서 순수하게 파일명.확장자 정보만 가져오고 나머지 상위 경로 정보는 모두 지움
+         	// 그런데 그렇게 basename() 함수를 통하여 순수 확장자만 남은 파일이름과 실제 클라이언트 요청 정보가 다르다면, 요청 정보에 서버 전체 경로를 요구할 가능성이 있으므로 차단
+			if (safeName !== filename) {
+				return res.status(400).json({ error: "잘못된 파일명입니다." });
+			}
+
+			// 확장자/문자 허용 목록 확인
+			if (!/^[a-zA-Z0-9._-]+\.(png|jpe?g|webp|gif)$/i.test(safeName)) {
+				return res.status(400).json({ error: "허용되지 않은 파일 형식입니다." });
+			}
+
+			const coverPath = path.join(userId, safeName);
             const filePath = path.join(__dirname, '..', 'covers', coverPath);
 
             // 파일 존재 확인
@@ -388,6 +499,11 @@ module.exports = (dependencies) => {
 
             // 암호화 여부 결정
             const newIsEncrypted = isEncryptedFromBody !== null ? (isEncryptedFromBody ? 1 : 0) : existing.is_encrypted;
+            const isChangingEncryptionState = existing.is_encrypted !== newIsEncrypted;
+
+            if (isChangingEncryptionState && permission !== "ADMIN") {
+            	return res.status(403).json({ error: "암호화 설정 변경 권한이 없습니다." });
+            }
 
             // 제목은 항상 평문으로 저장
             const newTitle = titleFromBody && titleFromBody !== "" ? titleFromBody : existing.title;
@@ -418,10 +534,10 @@ module.exports = (dependencies) => {
                 await pool.execute(
                     `UPDATE pages
                      SET title = ?, content = ?, encryption_salt = ?, encrypted_content = ?,
-                         is_encrypted = ?, icon = ?, horizontal_padding = ?, user_id = ?, updated_at = ?
+                         is_encrypted = ?, icon = ?, horizontal_padding = ?, updated_at = ?
                      WHERE id = ?`,
                     [newTitle, newContent, newEncryptionSalt, newEncryptedContent,
-                     newIsEncrypted, newIcon, newHorizontalPadding, userId, nowStr, id]
+                     newIsEncrypted, newIcon, newHorizontalPadding, nowStr, id]
                 );
             } else {
                 await pool.execute(
@@ -1162,50 +1278,22 @@ module.exports = (dependencies) => {
 
             // SSRF 방지: 내부 IP 주소 차단
             const hostname = parsedUrl.hostname.toLowerCase();
-            const blockedPatterns = [
-                /^localhost$/,
-                /^127\./,
-                /^192\.168\./,
-                /^10\./,
-                /^172\.(1[6-9]|2[0-9]|3[01])\./,
-                /^0\.0\.0\.0$/,
-                /^::1$/,  // IPv6 localhost
-                /^fc00:/,  // IPv6 private
-                /^fe80:/   // IPv6 link-local
-            ];
-
-            if (blockedPatterns.some(pattern => pattern.test(hostname))) {
-                return res.status(400).json({
-                    success: false,
-                    error: "내부 네트워크 주소는 사용할 수 없습니다."
-                });
-            }
 
             // URL에서 HTML 가져오기
             const axios = require('axios');
             const cheerio = require('cheerio');
-
-            let response;
-            try {
-                response = await axios.get(url, {
-                    timeout: 10000, // 10초 타임아웃
-                    maxRedirects: 5,
-                    headers: {
-                        // 페이스북 봇인 척 위장 (해당 방법이 가장 호환성이 좋음) -> Reddit과 같은 클라이언트 측 렌더링(CSR) 페이지 우회용
-                        // Reddit과 같은 클라이언트 측 렌더링(CSR) 페이지들은 User-Agent를 봇으로 속이면, CSR용 빈 HTML을 제공하는 것이 아니라, 실제 데이터(og:title 등)를 바로 넘겨줌
-                        'User-Agent': 'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)'
-                        // 또는 트위터 봇: 'Twitterbot/1.0' -> (페이스북 봇이 안 통할 시)
-                        // 또는 구글 봇: 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)' -> (페이스북, 트위터 봇 둘 다 안 통할 시)
-                    },
-                    maxContentLength: 5 * 1024 * 1024 // 5MB 제한
-                });
-            } catch (error) {
-                console.error('[BookmarkAPI] URL 가져오기 실패:', error.message);
-                return res.status(400).json({
-                    success: false,
-                    error: "URL에 접근할 수 없습니다. CORS 또는 네트워크 오류일 수 있습니다."
-                });
-            }
+			const response = await safeAxiosGet(url, axios, {
+            	timeout: 8000,
+             	maxBodyLength: 5 * 1024 * 1024,		// 5MB 제한
+             	maxContentLength: 5 * 1024 * 1024,	// 5MB 제한
+              	headers: {
+             		// 페이스북 봇인 척 위장 (해당 방법이 가장 호환성이 좋음) -> Reddit과 같은 클라이언트 측 렌더링(CSR) 페이지 우회용
+					// Reddit과 같은 클라이언트 측 렌더링(CSR) 페이지들은 User-Agent를 봇으로 속이면, CSR용 빈 HTML을 제공하는 것이 아니라, 실제 데이터(og:title 등)를 바로 넘겨줌
+					'User-Agent': 'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)'
+					// 또는 트위터 봇: 'Twitterbot/1.0' -> (페이스북 봇이 안 통할 시)
+					// 또는 구글 봇: 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)' -> (페이스북, 트위터 봇 둘 다 안 통할 시)
+				}
+			}, { maxRedirects: 2 });
 
             // HTML 파싱
             const $ = cheerio.load(response.data);
@@ -1279,40 +1367,18 @@ module.exports = (dependencies) => {
 
             // SSRF 방지: 내부 IP 주소 차단
             const hostname = parsedUrl.hostname.toLowerCase();
-            const blockedPatterns = [
-                /^localhost$/,
-                /^127\./,
-                /^192\.168\./,
-                /^10\./,
-                /^172\.(1[6-9]|2[0-9]|3[01])\./,
-                /^0\.0\.0\.0$/,
-                /^::1$/,
-                /^fc00:/,
-                /^fe80:/
-            ];
-
-            if (blockedPatterns.some(pattern => pattern.test(hostname))) {
-                return res.status(400).json({ error: "내부 네트워크 주소는 사용할 수 없습니다." });
-            }
 
             // 이미지 가져오기
             const axios = require('axios');
-
-            let response;
-            try {
-                response = await axios.get(url, {
-                    timeout: 10000,
-                    maxRedirects: 5,
-                    headers: {
-                        'User-Agent': 'Mozilla/5.0 (compatible; NTEOK-Bot/1.0)'
-                    },
-                    maxContentLength: 5 * 1024 * 1024, // 5MB 제한
-                    responseType: 'arraybuffer' // 바이너리로 받기
-                });
-            } catch (error) {
-                console.error('[ProxyImage] 이미지 가져오기 실패:', error.message);
-                return res.status(400).json({ error: "이미지를 가져올 수 없습니다." });
-            }
+			const response = await safeAxiosGet(url, axios, {
+				timeout: 8000,
+				maxBodyLength: 5 * 1024 * 1024,		// 5MB 제한
+				maxContentLength: 5 * 1024 * 1024,	// 5MB 제한
+				responseType: 'arraybuffer',		// 바이너리로 받기
+				headers: {
+					'User-Agent': 'Mozilla/5.0 (compatible; NTEOK-Bot/1.0)'
+				},
+			}, { maxRedirects: 0 });
 
             // 이미지 타입 검증
             let contentType = response.headers['content-type'] || 'image/jpeg';
