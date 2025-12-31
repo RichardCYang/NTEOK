@@ -244,7 +244,7 @@ module.exports = (dependencies) => {
 
             if (!verified) {
                 // 로그인 로그 기록
-                await recordLoginAttempt({
+                await recordLoginAttempt(pool, {
                     userId: userId,
                     username: username,
                     ipAddress: req.ip || req.connection.remoteAddress,
@@ -267,7 +267,7 @@ module.exports = (dependencies) => {
             );
 
             if (!countryCheck.allowed) {
-                await recordLoginAttempt({
+                await recordLoginAttempt(pool, {
                     userId: userId,
                     username: username,
                     ipAddress: req.ip || req.connection.remoteAddress,
@@ -323,7 +323,7 @@ module.exports = (dependencies) => {
             res.json({ success: true });
 
             // 로그인 로그 기록 (비동기, 응답 후)
-            recordLoginAttempt({
+            recordLoginAttempt(pool, {
                 userId: userId,
                 username: username,
                 ipAddress: req.ip || req.connection.remoteAddress,
