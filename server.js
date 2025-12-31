@@ -409,6 +409,7 @@ function createSession(user) {
 
     // 새 세션 생성
     sessions.set(sessionId, {
+    	type: "auth",
         userId: user.id,
         username: user.username,
         expiresAt,
@@ -434,19 +435,26 @@ function createSession(user) {
  * 보안 개선: idle timeout과 absolute timeout 모두 검증
  */
 function getSessionFromRequest(req) {
-    if (!req.cookies) {
+    if (!req.cookies)
         return null;
-    }
 
     const sessionId = req.cookies[SESSION_COOKIE_NAME];
-    if (!sessionId) {
-        return null;
-    }
+    if (!sessionId)
+    	return null;
 
     const session = sessions.get(sessionId);
-    if (!session) {
-        return null;
-    }
+    if (!session)
+    	return null;
+
+    // 2FA 인증을 위한 임시 세션이 아닌 정식 인증 세션 인정하도록 코드 수정
+	if (session.type !== 'auth' || !session.userId)
+		return null;
+
+	// 세션 만료 정보가 없는 세션 정보이면 무효 처리
+	if (!session.expiresAt || !session.absoluteExpiry) {
+		sessions.delete(sessionId);
+		return null;
+	}
 
     const now = Date.now();
 
