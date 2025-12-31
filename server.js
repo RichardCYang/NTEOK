@@ -344,15 +344,21 @@ function verifyCsrfToken(req) {
     const tokenFromHeader = req.headers["x-csrf-token"];
     const tokenFromCookie = req.cookies[CSRF_COOKIE_NAME];
 
-    if (!tokenFromHeader || !tokenFromCookie) {
-        return false;
-    }
+    if (typeof tokenFromHeader !== "string" || typeof tokenFromCookie !== "string") return false;
+    if (tokenFromHeader.length !== tokenFromCookie.length) return false;
 
-    // 타이밍 공격 방지를 위한 상수 시간 비교
-    return crypto.timingSafeEqual(
-        Buffer.from(tokenFromHeader),
-        Buffer.from(tokenFromCookie)
-    );
+    try
+    {
+	   	// 타이밍 공격 방지를 위한 상수 시간 비교
+	    return crypto.timingSafeEqual(
+	        Buffer.from(tokenFromHeader, "utf8"),
+	        Buffer.from(tokenFromCookie, "utf8")
+	    );
+    }
+    catch
+    {
+		return false;
+    }
 }
 
 /**
