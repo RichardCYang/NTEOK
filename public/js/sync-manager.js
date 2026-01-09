@@ -1060,6 +1060,15 @@ function handleRemoteAwarenessUpdate(data) {
 }
 
 /**
+* 원격 커서를 올려둘 스크롤 컨테이너 반환
+* - 이 프로젝트는 #editor 자체가 overflow-y: auto 인 스크롤 컨테이너임
+* - body에 붙이면 #editor 스크롤과 분리되어 커서가 스크롤을 따라다니는 현상이 발생
+*/
+function getEditorScrollContainer() {
+    return document.getElementById('editor') || state?.editor?.view?.dom;
+}
+
+/**
  * 커서 렌더링
  */
 function renderCursor(clientId, awarenessState) {
@@ -1067,19 +1076,24 @@ function renderCursor(clientId, awarenessState) {
     if (!cursor || !user || !state.editor) return;
 
     // 기존 커서 요소 확인
-    let cursorElement = cursorState.remoteCursors.get(clientId);
+	let cursorElement = cursorState.remoteCursors.get(clientId);
 
-    if (!cursorElement) {
+	const scrollContainer = getEditorScrollContainer();
+	if (!scrollContainer) return;
+
+	if (!cursorElement) {
         cursorElement = createCursorElement(user);
         cursorState.remoteCursors.set(clientId, cursorElement);
-        document.body.appendChild(cursorElement);
+		scrollContainer.appendChild(cursorElement);
+	} else if (cursorElement.parentElement !== scrollContainer) {
+		scrollContainer.appendChild(cursorElement);
     }
 
     // ProseMirror position을 DOM coordinates로 변환
     try {
         const editorView = state.editor.view;
         const coords = editorView.coordsAtPos(cursor.head);
-        updateCursorPosition(cursorElement, coords, user);
+        updateCursorPosition(cursorElement, coords, user, scrollContainer);
     } catch (error) {
         console.warn('[Cursor] Position 변환 오류:', error);
         removeCursor(clientId);
@@ -1113,19 +1127,26 @@ function createCursorElement(user) {
 /**
  * 커서 위치 업데이트
  */
-function updateCursorPosition(element, coords, user) {
-    const editorRect = state.editor.view.dom.getBoundingClientRect();
+function updateCursorPosition(element, coords, user, scrollContainer) {
+	const container = scrollContainer || getEditorScrollContainer();
+	if (!container) return;
+
+	if (getComputedStyle(container).position === 'static')
+		container.style.position = 'relative';
+
+	const containerRect = container.getBoundingClientRect();
+	const left = (coords.left - containerRect.left) + container.scrollLeft;
+	const top = (coords.top - containerRect.top) + container.scrollTop;
 
     element.style.position = 'absolute';
-    element.style.left = `${coords.left}px`;
-    element.style.top = `${coords.top}px`;
+    element.style.left = `${left}px`;
+    element.style.top = `${top}px`;
     element.style.height = `${coords.bottom - coords.top}px`;
     element.style.display = 'block';
 
     // 에디터 영역 벗어나면 숨김
-    if (coords.top < editorRect.top || coords.top > editorRect.bottom) {
+    if (coords.top < containerRect.top || coords.top > containerRect.bottom)
         element.style.display = 'none';
-    }
 }
 
 /**
