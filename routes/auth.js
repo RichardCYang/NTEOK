@@ -27,7 +27,8 @@ module.exports = (dependencies) => {
         SESSION_COOKIE_NAME,
         CSRF_COOKIE_NAME,
         SESSION_TTL_MS,
-        IS_PRODUCTION,
+		IS_PRODUCTION,
+        BASE_URL,
         BCRYPT_SALT_ROUNDS,
         createCollection,
         authMiddleware,
@@ -35,14 +36,59 @@ module.exports = (dependencies) => {
         recordLoginAttempt,
         maskIPAddress,
         checkCountryWhitelist
-    } = dependencies;
+	} = dependencies;
+
+    /**
+    * Login CSRF 방지: 로그인/회원가입은 CSRF 토큰이 없더라도 호출되기 쉬우므로,
+    * Origin/Referer + Sec-Fetch-Site 기반으로 동일 출처 요청만 허용합니다.
+    *
+    * 참고: BASE_URL은 server.js에서 주입됩니다.
+    */
+    function requireSameOriginForAuth(req, res, next) {
+        try {
+            const allowedOrigins = new Set(
+                String(process.env.ALLOWED_ORIGINS || BASE_URL || "")
+                    .split(",")
+                    .map(s => s.trim())
+                    .filter(Boolean)
+                    .map(u => new URL(u).origin)
+            );
+
+            // Sec-Fetch-Site: modern browsers (recommended hardening)
+            const sfs = req.headers["sec-fetch-site"];
+            if (typeof sfs === "string" && sfs && sfs !== "same-origin" && sfs !== "same-site") {
+                return res.status(403).json({ error: "요청 출처가 유효하지 않습니다." });
+            }
+
+            const origin = req.headers.origin;
+            const referer = req.headers.referer;
+
+            let reqOrigin = null;
+            if (typeof origin === "string" && origin) {
+                reqOrigin = origin;
+            } else if (typeof referer === "string" && referer) {
+                reqOrigin = new URL(referer).origin;
+            }
+
+            // Origin/Referer가 없으면 차단 (Login CSRF 방지)
+            if (!reqOrigin)
+                return res.status(403).json({ error: "요청 출처가 유효하지 않습니다." });
+
+            if (!allowedOrigins.has(reqOrigin))
+                return res.status(403).json({ error: "요청 출처가 유효하지 않습니다." });
+
+            return next();
+        } catch (e) {
+            return res.status(403).json({ error: "요청 출처가 유효하지 않습니다." });
+        }
+    }
 
     /**
      * 로그인
      * POST /api/auth/login
      * body: { username: string, password: string }
      */
-    router.post("/login", authLimiter, async (req, res) => {
+    router.post("/login", authLimiter, requireSameOriginForAuth, async (req, res) => {
         const { username, password } = req.body || {};
 
         if (typeof username !== "string" || typeof password !== "string") {
@@ -317,7 +363,7 @@ module.exports = (dependencies) => {
      * POST /api/auth/register
      * body: { username: string, password: string }
      */
-    router.post("/register", authLimiter, async (req, res) => {
+    router.post("/register", authLimiter, requireSameOriginForAuth, async (req, res) => {
         const { username, password } = req.body || {};
 
         if (typeof username !== "string" || typeof password !== "string") {

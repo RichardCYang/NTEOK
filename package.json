@@ -15,7 +15,7 @@
 		"acme-client": "^5.4.0",
 		"adm-zip": "^0.5.16",
 		"archiver": "^7.0.1",
-		"axios": "^1.6.0",
+		"axios": "^1.13.2",
 		"bcrypt": "^6.0.0",
 		"cheerio": "^1.0.0-rc.12",
 		"compression": "^1.8.1",

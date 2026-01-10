@@ -69,7 +69,92 @@ module.exports = (dependencies) => {
         'default/img4.png',
         'default/img5.png',
         'default/img6.png'
-    ];
+	];
+
+	/**
+	* 백업 Import 보안 하드닝
+	* - ZIP Bomb / 리소스 고갈 방지 (엔트리 수/총 해제 용량/개별 해제 용량 제한)
+	* - 허용된 파일/이미지 타입만 처리
+	*/
+	const BACKUP_IMPORT_MAX_ENTRIES = Number(process.env.BACKUP_IMPORT_MAX_ENTRIES || 5000);
+	const BACKUP_IMPORT_MAX_TOTAL_UNCOMPRESSED = Number(process.env.BACKUP_IMPORT_MAX_TOTAL_UNCOMPRESSED || (300 * 1024 * 1024)); // 300MB
+	const BACKUP_IMPORT_MAX_ENTRY_UNCOMPRESSED = Number(process.env.BACKUP_IMPORT_MAX_ENTRY_UNCOMPRESSED || (20 * 1024 * 1024)); // 20MB
+
+	const ALLOWED_IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
+
+	function getUncompressedSize(entry) {
+	    // adm-zip: entry.header.size 는 uncompressed size (number)
+	    const size = entry?.header?.size;
+	    if (typeof size !== "number" || !Number.isFinite(size) || size < 0)
+	        return null;
+	    return size;
+	}
+
+	function validateZipEntriesForImport(zipEntries) {
+	    if (!Array.isArray(zipEntries))
+	        throw new Error("유효하지 않은 백업 파일입니다.");
+
+	    if (zipEntries.length > BACKUP_IMPORT_MAX_ENTRIES)
+	        throw new Error(`백업 파일 내 항목이 너무 많습니다. (최대 ${BACKUP_IMPORT_MAX_ENTRIES}개)`);
+
+	    let total = 0;
+
+	    for (const entry of zipEntries) {
+	        if (!entry || entry.isDirectory) continue;
+
+	        // Windows 구분자(\) 등 비정상 경로 방지
+	        if (typeof entry.entryName === "string" && entry.entryName.includes("\\"))
+	            throw new Error("백업 파일 경로 형식이 유효하지 않습니다.");
+
+	        const size = getUncompressedSize(entry);
+	        if (size === null) {
+	            // 크기를 알 수 없는 엔트리는 처리하지 않음 (안전 우선)
+	            throw new Error("백업 파일의 일부 항목 크기를 확인할 수 없습니다.");
+	        }
+
+	        if (size > BACKUP_IMPORT_MAX_ENTRY_UNCOMPRESSED)
+	            throw new Error("백업 파일 내 일부 항목이 너무 큽니다.");
+
+	        total += size;
+	        if (total > BACKUP_IMPORT_MAX_TOTAL_UNCOMPRESSED)
+	            throw new Error("백업 파일의 전체 해제 용량이 너무 큽니다.");
+	    }
+	}
+
+	function isAllowedImageFilename(filename) {
+	    const ext = path.extname(filename).toLowerCase();
+	    return ALLOWED_IMAGE_EXTENSIONS.has(ext);
+	}
+
+	function isSupportedImageBuffer(buf, filename) {
+	    if (!Buffer.isBuffer(buf) || buf.length < 12) return false;
+
+	    const ext = path.extname(filename).toLowerCase();
+
+	    // PNG: 89 50 4E 47 0D 0A 1A 0A
+	    if (ext === ".png") {
+	        return buf.length >= 8 &&
+	            buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47 &&
+	            buf[4] === 0x0D && buf[5] === 0x0A && buf[6] === 0x1A && buf[7] === 0x0A;
+	    }
+
+	    // JPEG: FF D8 FF
+	    if (ext === ".jpg" || ext === ".jpeg")
+	        return buf.length >= 3 && buf[0] === 0xFF && buf[1] === 0xD8 && buf[2] === 0xFF;
+
+	    // GIF: 47 49 46 38
+	    if (ext === ".gif")
+	        return buf.length >= 4 && buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x38;
+
+	    // WEBP: "RIFF"...."WEBP"
+	    if (ext === ".webp") {
+	        return buf.length >= 12 &&
+	            buf.toString("ascii", 0, 4) === "RIFF" &&
+	            buf.toString("ascii", 8, 12) === "WEBP";
+	    }
+
+	    return false;
+	}
 
     /**
      * 페이지 내용을 HTML로 변환
@@ -481,20 +566,23 @@ ${JSON.stringify(pageMetadata, null, 2)}
         let connection;
 
         try {
-            // 1. ZIP 파일 열기
+            // ZIP 파일 열기
             const zip = new AdmZip(uploadedFile.path);
             const zipEntries = zip.getEntries();
 
-            console.log(`[백업 불러오기] 사용자 ${userId} - 파일 개수: ${zipEntries.length}`);
+			console.log(`[백업 불러오기] 사용자 ${userId} - 파일 개수: ${zipEntries.length}`);
 
-            // 2. 백업 정보 확인
+			// ZIP Bomb / 리소스 고갈 방지: 엔트리 수/해제 용량 검증
+			validateZipEntriesForImport(zipEntries);
+
+			// 백업 정보 확인
             const backupInfoEntry = zipEntries.find(entry => entry.entryName === 'backup-info.json');
             if (backupInfoEntry) {
                 const backupInfo = JSON.parse(backupInfoEntry.getData().toString('utf8'));
                 console.log('[백업 정보]', backupInfo);
             }
 
-            // 3. 컬렉션 메타데이터 파일 읽기
+            // 컬렉션 메타데이터 파일 읽기
             const collectionMetadataEntries = zipEntries.filter(entry =>
                 entry.entryName.startsWith('collections/') && entry.entryName.endsWith('.json')
             );
@@ -508,7 +596,7 @@ ${JSON.stringify(pageMetadata, null, 2)}
             let totalPages = 0;
             let totalImages = 0;
 
-            // 4. 컬렉션 생성 (메타데이터 포함)
+            // 컬렉션 생성 (메타데이터 포함)
             for (const entry of collectionMetadataEntries) {
                 const metadataJson = entry.getData().toString('utf8');
                 const metadata = JSON.parse(metadataJson);
@@ -571,7 +659,7 @@ ${JSON.stringify(pageMetadata, null, 2)}
                 }
             }
 
-            // 5. 페이지 및 이미지 복원
+            // 페이지 및 이미지 복원
             for (const entry of zipEntries) {
                 if (entry.isDirectory) continue;
 
@@ -695,9 +783,15 @@ ${JSON.stringify(pageMetadata, null, 2)}
                     }
 
                     // 이미지 타입 판별: userId/filename 형식이므로 첫 번째 부분을 제거하고 나머지는 filename
-                    const filename = parts[parts.length - 1];
+					const filename = parts[parts.length - 1];
 
-                    // 파일명 추가 검증 (경로 조작 방지)
+					// 허용된 이미지 확장자만 복원
+					if (!isAllowedImageFilename(filename)) {
+					    console.warn(`[보안] 허용되지 않은 이미지 확장자: ${filename}`);
+					    continue;
+					}
+
+					// 파일명 추가 검증 (경로 조작 방지)
                     if (filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
                         console.warn(`[보안] 위험한 파일명 감지: ${filename}`);
                         continue;
@@ -741,8 +835,16 @@ ${JSON.stringify(pageMetadata, null, 2)}
                         continue;
                     }
 
-                    // 이미지 저장
-                    fs.writeFileSync(targetPath, entry.getData());
+                    // 이미지 저장 (매직바이트 확인)
+					const imageData = entry.getData();
+					if (!isSupportedImageBuffer(imageData, filename)) {
+						console.warn(`[보안] 이미지 시그니처 불일치(스푸핑 가능): ${filename}`);
+						continue;
+					}
+
+					// 최종 필터 통과된 데이터 쓰기
+					fs.writeFileSync(targetPath, imageData);
+
                     totalImages++;
                     console.log(`[이미지 복원 완료] ${imagePath} -> ${filename}`);
                 }
@@ -773,8 +875,12 @@ ${JSON.stringify(pageMetadata, null, 2)}
                 fs.unlinkSync(uploadedFile.path);
             }
 
-            logError('POST /api/backup/import', error);
-            res.status(500).json({ error: '백업 불러오기 실패: ' + error.message });
+			logError('POST /api/backup/import', error);
+
+			// 입력(백업 파일) 문제는 400으로 반환
+			const msg = String(error?.message || '백업 불러오기 실패');
+			const isBadRequest = /백업 파일|유효하지 않은|허용되지 않은|경로 형식|시그니처/.test(msg);
+			res.status(isBadRequest ? 400 : 500).json({ error: '백업 불러오기 실패: ' + msg });
         } finally {
             if (connection) {
                 connection.release();
@@ -795,26 +901,32 @@ ${JSON.stringify(pageMetadata, null, 2)}
      * @param {string} baseDir - 기준 디렉토리
      * @returns {boolean} - 안전한 경로면 true
      */
-    function isSafePath(entryPath, baseDir) {
-        // 1. 경로 조작 문자열 검사
+	function isSafePath(entryPath, baseDir) {
+		// Windows 경로 구분자(\\) 차단
+		if (entryPath.includes('\\')) {
+		    console.warn(`[보안] Windows 경로 구분자 감지: ${entryPath}`);
+		    return false;
+		}
+
+        // 경로 조작 문자열 검사
         if (entryPath.includes('..') || entryPath.includes('./') || entryPath.includes('.\\')) {
             console.warn(`[보안] 경로 조작 시도 감지: ${entryPath}`);
             return false;
         }
 
-        // 2. 절대 경로 검사
+        // 절대 경로 검사
         if (path.isAbsolute(entryPath)) {
             console.warn(`[보안] 절대 경로 사용 시도: ${entryPath}`);
             return false;
         }
 
-        // 3. null byte 검사
+        // null byte 검사
         if (entryPath.includes('\0')) {
             console.warn(`[보안] null byte 감지: ${entryPath}`);
             return false;
         }
 
-        // 4. 최종 경로가 기준 디렉토리 내부인지 검증
+        // 최종 경로가 기준 디렉토리 내부인지 검증
         try {
             const resolvedPath = path.resolve(baseDir, entryPath);
             const resolvedBase = path.resolve(baseDir);
