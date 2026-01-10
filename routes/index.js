@@ -12,7 +12,26 @@ const router = express.Router();
  */
 
 module.exports = (dependencies) => {
-    const { getSessionFromRequest, pool, logError, toIsoString } = dependencies;
+	const { getSessionFromRequest, fs } = dependencies;
+
+    function sendHtmlWithNonce(res, filename) {
+        const filePath = path.join(__dirname, "..", "public", filename);
+        fs.readFile(filePath, "utf8", (err, html) => {
+            if (err) {
+                console.error("[HTML] load error:", err);
+                return res.status(500).send("Failed to load page");
+            }
+
+            const nonce = res.locals?.cspNonce || "";
+            const out = html.replace(/__CSP_NONCE__/g, nonce);
+
+            // HTML은 캐시 비권장 (nonce/보안/업데이트)
+            res.setHeader("Content-Type", "text/html; charset=utf-8");
+            res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+            res.setHeader("Pragma", "no-cache");
+            res.send(out);
+        });
+    }
 
     /**
      * 메인 화면
@@ -25,7 +44,7 @@ module.exports = (dependencies) => {
             return res.redirect("/login");
         }
 
-        return res.sendFile(path.join(__dirname, "..", "public", "index.html"));
+        return sendHtmlWithNonce(res, "index.html");
     });
 
     /**
@@ -39,7 +58,7 @@ module.exports = (dependencies) => {
             return res.redirect("/");
         }
 
-        return res.sendFile(path.join(__dirname, "..", "public", "login.html"));
+        return sendHtmlWithNonce(res, "login.html");
     });
 
     /**
@@ -53,7 +72,7 @@ module.exports = (dependencies) => {
             return res.redirect("/");
         }
 
-        return res.sendFile(path.join(__dirname, "..", "public", "register.html"));
+        return sendHtmlWithNonce(res, "register.html");
     });
 
     /**
@@ -80,7 +99,7 @@ module.exports = (dependencies) => {
      * GET /shared/page/:token
      */
     router.get("/shared/page/:token", (req, res) => {
-        return res.sendFile(path.join(__dirname, "..", "public", "shared-page.html"));
+    	return sendHtmlWithNonce(res, "shared-page.html");
     });
 
     /**

@@ -664,6 +664,7 @@ async function initDb() {
             is_encrypted TINYINT(1) NOT NULL DEFAULT 0,
             encryption_salt VARCHAR(255) NULL,
             encrypted_content MEDIUMTEXT NULL,
+            yjs_state	LONGBLOB NULL,
             share_allowed TINYINT(1) NOT NULL DEFAULT 0,
             icon VARCHAR(100) NULL,
             cover_image VARCHAR(255) NULL,
@@ -684,6 +685,12 @@ async function initDb() {
         await pool.execute(`
             ALTER TABLE pages
             CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
+        `);
+
+        // pages 테이블에 yjs_state 컬럼 추가 (기존 컬럼 없을 경우만) - 실시간 동시 편집(Yjs) 상태 저장
+        await pool.execute(`
+            ALTER TABLE pages
+            ADD COLUMN IF NOT EXISTS yjs_state LONGBLOB NULL
         `);
     } catch (error) {
         // 이미 utf8mb4인 경우 무시
@@ -1150,14 +1157,22 @@ const sseConnectionLimiter = rateLimit({
 app.use(express.json());
 app.use(cookieParser());
 
+// CSP nonce 생성 (요청마다 새로 발급)
+app.use((req, res, next) => {
+	res.locals.cspNonce = crypto.randomBytes(16).toString("base64");
+	next();
+});
+
 // 보안 개선: 기본 보안 헤더 추가 (XSS, 클릭재킹 방지 등)
 app.use((req, res, next) => {
     // 보안 개선: CSP 강화 - unsafe-inline 제거 권장
     // 참고: 모든 인라인 스타일을 외부 CSS로 이동하면 'unsafe-inline' 제거 가능
-    // 또는 nonce 기반 CSP로 전환 가능
-    res.setHeader('Content-Security-Policy',
+    // -> nonce 기반 CSP로 전환
+    const nonce = res.locals.cspNonce;
+    res.setHeader(
+        "Content-Security-Policy",
         "default-src 'self'; " +
-        "script-src 'self' https://cdn.jsdelivr.net https://esm.sh; " +
+        `script-src 'self' 'nonce-${nonce}' https://cdn.jsdelivr.net https://esm.sh; ` +
         "style-src 'self' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://fonts.googleapis.com 'unsafe-inline'; " +
         "font-src 'self' https://cdnjs.cloudflare.com https://fonts.gstatic.com; " +
         "img-src 'self' data:; " +

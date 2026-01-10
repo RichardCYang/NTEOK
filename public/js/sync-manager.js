@@ -3,8 +3,11 @@
  * 실시간 협업 편집을 위한 클라이언트 측 동기화 로직
  */
 
-import * as Y from 'https://cdn.jsdelivr.net/npm/yjs@13.6.18/+esm';
-import { Awareness, encodeAwarenessUpdate, applyAwarenessUpdate } from 'https://esm.sh/y-protocols@1.0.6/awareness';
+import * as Y from 'yjs'
+import { Awareness, encodeAwarenessUpdate, applyAwarenessUpdate } from 'y-protocols/awareness';
+import { ySyncPlugin, yCursorPlugin, yUndoPlugin, undo, redo, prosemirrorToYXmlFragment } from 'y-prosemirror';
+import { keymap } from 'prosemirror-keymap';
+import { DOMParser } from 'prosemirror-model';
 import { escapeHtml, showErrorInEditor } from './ui-utils.js';
 import { showCover, hideCover } from './cover-manager.js';
 import { renderPageList } from './pages-manager.js';
@@ -20,7 +23,8 @@ let currentPageId = null;
 let currentCollectionId = null;
 let lastLocalUpdateTime = 0;
 let updateTimeout = null;
-let hasInitializedPage = false; // 페이지 초기화 완료 플래그 (재연결 감지용)
+let yjsPmPlugins = [];				// y-prosemirror(동시편집) 플러그인 추적/해제용
+let yjsPmPluginKeys = new Set();	// y-prosemirror(동시편집) 플러그인 중복 확인용
 
 // 커서 공유 상태
 const cursorState = {
@@ -29,7 +33,11 @@ const cursorState = {
     localClientId: null,		// 로컬 클라이언트 ID
     throttleTimer: null,		// Throttle 타이머
     lastSentPosition: null,		// 마지막 전송 위치 (중복 방지)
-    localUserId: null			// 로컬 사용자 ID
+	localUserId: null,			// 로컬 사용자 ID
+	// 커서 추적(이벤트 리스너) 중복 설치 방지/정리용
+    trackingEditor: null,
+    selectionUpdateHandler: null,
+    blurHandler: null
 };
 
 const state = {
@@ -39,6 +47,27 @@ const state = {
     fetchPageList: null,
     pages: []
 };
+
+// ------------------------------
+// base64 helpers (large update 안전)
+// ------------------------------
+function uint8ToBase64(update) {
+	const u8 = update instanceof Uint8Array ? update : new Uint8Array(update);
+	let s = '';
+	const chunk = 0x8000;
+	for (let i = 0; i < u8.length; i += chunk)
+		s += String.fromCharCode(...u8.subarray(i, i + chunk));
+	return btoa(s);
+}
+
+function base64ToUint8(b64) {
+	const bin = atob(b64);
+	const out = new Uint8Array(bin.length);
+	for (let i = 0; i < bin.length; i++)
+		out[i] = bin.charCodeAt(i);
+	return out;
+}
+
 
 export function onLocalEditModeChanged(isWriteMode) {
 	// 로컬 커서 정리
@@ -186,7 +215,6 @@ function handleWebSocketMessage(message) {
             break;
         case 'init':
             handleInit(data);
-            hasInitializedPage = true; // 초기화 완료 플래그 설정
             break;
         case 'reconnected':
             console.log('[WS] 재연결 완료 - 기존 상태 유지');
@@ -233,11 +261,6 @@ export async function startPageSync(pageId, isEncrypted) {
         return;
     }
 
-    // 페이지 전환 시에만 초기화 플래그 리셋
-    if (currentPageId !== pageId) {
-        hasInitializedPage = false;
-    }
-
     // 기존 연결 정리
     stopPageSync();
 
@@ -281,17 +304,30 @@ function subscribePage(pageId) {
         type: 'subscribe-page',
         payload: {
             pageId,
-            isReconnect: hasInitializedPage // 재연결 플래그 전송
+            isReconnect: false
         }
     }));
-
-    console.log('[WS] 페이지 구독:', pageId, hasInitializedPage ? '(재연결)' : '(최초 연결)');
 }
 
 /**
  * 페이지 동기화 중지
  */
 export function stopPageSync() {
+	detachYjsProsemirrorBinding();
+	// setupEditorBindingWithXmlFragment에서 붙인 스냅샷 핸들러 정리
+	if (state.editor && state.editor._snapshotHandler) {
+		state.editor.off?.('update', state.editor._snapshotHandler);
+		state.editor._snapshotHandler = null;
+	}
+
+	// 커서 추적 리스너 정리(재연결 시 중복 설치 방지)
+	teardownCursorTracking();
+
+	if (updateTimeout) {
+		clearTimeout(updateTimeout);
+		updateTimeout = null;
+	}
+
     if (currentPageId && ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({
             type: 'unsubscribe-page',
@@ -328,7 +364,6 @@ export function stopPageSync() {
     currentPageId = null;
     state.currentPageId = null;
     lastLocalUpdateTime = 0;
-    hasInitializedPage = false; // 플래그 초기화
 }
 
 /**
@@ -386,7 +421,7 @@ function sendYjsUpdate(pageId, update) {
         return;
     }
 
-    const base64Update = btoa(String.fromCharCode(...new Uint8Array(update)));
+	const base64Update = uint8ToBase64(update);
 
     ws.send(JSON.stringify({
         type: 'yjs-update',
@@ -403,23 +438,25 @@ function sendYjsUpdate(pageId, update) {
 function handleInit(data) {
     try {
         // Yjs 상태 복원
-        const stateUpdate = Uint8Array.from(atob(data.state), c => c.charCodeAt(0));
-        Y.applyUpdate(ydoc, stateUpdate);
+		const stateUpdate = base64ToUint8(data.state);
+		// init update는 원격으로 취급해서 다시 서버로 브로드캐스트하지 않게 origin 지정
+		Y.applyUpdate(ydoc, stateUpdate, 'remote');
 
-        // 사용자 정보를 awareness에 설정
+		// 사용자 정보를 awareness에 설정
         if (cursorState.awareness && data.userId && data.username && data.color) {
        		// cursorState에 localUserId 저장
         	cursorState.localUserId = data.userId;
 
             cursorState.awareness.setLocalStateField('user', {
                 userId: data.userId,
-                username: data.username,
+				username: data.username,
+                name: data.username,
                 color: data.color
             });
-        }
+		}
 
-        // Tiptap 에디터와 연결
-        setupEditorBinding();
+        // 진짜 동시편집 바인딩 (Y.XmlFragment <-> ProseMirror)
+        setupEditorBindingWithXmlFragment();
 
         console.log('[WS] 초기 상태 로드 완료');
     } catch (error) {
@@ -431,8 +468,8 @@ function handleInit(data) {
  * Yjs 업데이트 처리
  */
 function handleYjsUpdate(data) {
-    try {
-        const update = Uint8Array.from(atob(data.update), c => c.charCodeAt(0));
+	try {
+		const update = base64ToUint8(data.update);
 
         // 원격 업데이트는 'remote' origin으로 표시
         // yMetadata.observe()가 자동으로 에디터를 업데이트함
@@ -770,148 +807,174 @@ function handleVisibilityChange() {
     }
 }
 
-/**
- * Tiptap 에디터와 Yjs 바인딩 설정
- */
-function setupEditorBinding() {
-    if (!state.editor || !ydoc || !yMetadata) {
-        console.error('[WS] 에디터 바인딩 실패: 필수 요소 없음');
-        return;
-    }
+function detachYjsProsemirrorBinding() {
+	if (!state.editor || !state.editor.view) return;
+	const view = state.editor.view;
 
-    // 현재 에디터 콘텐츠를 Yjs에 저장
-    const currentContent = state.editor.getHTML();
-    yMetadata.set('content', currentContent);
+	// yjsPmPluginKeys에 기록된 key를 가진 플러그인들을 전부 제거
+	if (yjsPmPluginKeys.size > 0) {
+		const plugins = view.state.plugins.filter(p => !yjsPmPluginKeys.has(p.key));
+		view.updateState(view.state.reconfigure({ plugins }));
+	} else if (yjsPmPlugins?.length) {
+		// (예비) 예전 방식(인스턴스) 제거
+		const plugins = view.state.plugins.filter(p => !yjsPmPlugins.includes(p));
+		view.updateState(view.state.reconfigure({ plugins }));
+	}
 
-    // 보류 중인 원격 업데이트
-    let remoteUpdatePending = null;
+	yjsPmPlugins = [];
+}
 
-    // Tiptap 에디터 변경 시 Yjs 업데이트
-    let isUpdating = false;
+function buildCursorDOM(user) {
+	const cursor = document.createElement('span');
+	cursor.classList.add('ProseMirror-yjs-cursor');
+	cursor.style.borderLeftColor = user?.color || '#999';
 
-    // yMetadata 변경 감지 → 에디터 업데이트 (원격 변경만)
-    yMetadata.observe((event, transaction) => {
-        if (isUpdating) {
-            return;
-        }
+	const label = document.createElement('div');
+	label.classList.add('ProseMirror-yjs-cursor-label');
+	label.style.backgroundColor = user?.color || '#999';
+	label.textContent = user?.name || user?.username || 'User';
+	cursor.appendChild(label);
+	return cursor;
+}
 
-        // 로컬 변경은 무시 (에디터가 이미 최신 상태)
-        // 원격 변경(origin === 'remote')만 에디터에 적용
-        if (transaction.origin !== 'remote') {
-            return;
-        }
+function attachYjsProsemirrorBinding() {
+	if (!state.editor?.view) return;
+  	const view = state.editor.view;
 
-        const content = yMetadata.get('content');
-        if (content && state.editor) {
-            const currentContent = state.editor.getHTML();
-            if (content !== currentContent) {
-                // 에디터에 포커스가 있고 최근 200ms 이내에 로컬 업데이트가 있었는지 확인
-                const editorHasFocus = state.editor.view.hasFocus();
-                const timeSinceLastUpdate = Date.now() - lastLocalUpdateTime;
-                const isRecentlyTyping = timeSinceLastUpdate < 200;
+   	// 새 협업 플러그인 생성
+    const syncPlugin = ySyncPlugin(yXmlFragment);
+    const cursorPlugin = yCursorPlugin(cursorState.awareness, { cursorBuilder: buildCursorDOM });
+    const undoPlugin = yUndoPlugin();
+    const keymapPlugin = keymap({ 'Mod-z': undo, 'Mod-y': redo, 'Mod-Shift-z': redo });
 
-                if (editorHasFocus && isRecentlyTyping) {
-                    // 사용자가 타이핑 중이면 업데이트 보류
-                    remoteUpdatePending = content;
-                } else {
-                    // 타이핑 중이 아니거나 포커스가 없으면 즉시 업데이트
-                    isUpdating = true;
-					state.editor._syncIsUpdating = true;
-					try
-					{
-						state.editor.commands.setContent(content, { emitUpdate: false });
-					}
-					finally
-					{
-						state.editor._syncIsUpdating = false;
-					}
-                    isUpdating = false;
-                }
-            }
-        }
-    });
+	const collabPlugins = [syncPlugin, cursorPlugin, undoPlugin, keymapPlugin];
+	yjsPmPlugins = collabPlugins;
 
-    state.editor.on('update', ({ editor }) => {
-        console.log('[Sync] update 이벤트 감지, isUpdating:', isUpdating);
+	// 키 기록 (keymapPlugin은 보통 고유키라 중복문제 없지만, 기록해도 무방)
+	collabPlugins.forEach(p => {
+		if (p?.key)
+			yjsPmPluginKeys.add(p.key);
+	});
 
-        // 원격 업데이트로 인한 변경은 무시
-        if (isUpdating) {
-            return;
-        }
+	// 기존 플러그인 중에서 yjs 키를 가진 것들은 제거하고 다시 붙인다 (중복 방지)
+	const basePlugins = view.state.plugins.filter(p => !yjsPmPluginKeys.has(p.key));
 
-        // 마지막 로컬 업데이트 시간 기록
-        lastLocalUpdateTime = Date.now();
+	view.updateState(
+		view.state.reconfigure({
+		    plugins: [...collabPlugins, ...basePlugins], // collab을 앞에
+		})
+	);
+}
 
-        // Debounce (50ms) - 실시간 반응
-        if (updateTimeout) {
-            clearTimeout(updateTimeout);
-        }
+function seedYjsFromCurrentEditorHtmlIfNeeded() {
+	const alreadySeeded = yMetadata.get('seeded') === true;
+	const fragmentEmpty = (typeof yXmlFragment.length === 'number') ? (yXmlFragment.length === 0) : false;
+	if (alreadySeeded && !fragmentEmpty) return;
 
-        updateTimeout = setTimeout(() => {
-            const newContent = editor.getHTML();
-            const oldContent = yMetadata.get('content');
+	const html = state.editor.getHTML() || '<p></p>';
+	const div = document.createElement('div');
+	div.innerHTML = html;
+	const pmDoc = DOMParser.fromSchema(state.editor.schema).parse(div);
 
-            console.log('[Sync] 동기화 체크 - 변경됨:', newContent !== oldContent);
+	ydoc.transact(() => {
+		try { yXmlFragment.delete(0, yXmlFragment.length); } catch (_) {}
+		prosemirrorToYXmlFragment(pmDoc, yXmlFragment);
+		yMetadata.set('seeded', true);
+		yMetadata.set('content', html);
+	}, 'seed');
+}
 
-            if (newContent !== oldContent) {
-                // origin을 지정하지 않으면 로컬 업데이트로 처리됨
-                yMetadata.set('content', newContent);
-                console.log('[Sync] Yjs에 저장 완료');
-            }
-            updateTimeout = null; // 타이머 초기화
-        }, 50);
-    });
+function setupEditorBindingWithXmlFragment() {
+	if (!state.editor || !ydoc) {
+		console.error('[WS] 에디터 바인딩 실패: editor/ydoc 없음');
+		return;
+	}
 
-    // 에디터 포커스 해제 시 보류 중인 원격 업데이트 적용
-    state.editor.on('blur', () => {
-        if (remoteUpdatePending) {
-            isUpdating = true;
-			state.editor._syncIsUpdating = true;
-			try
-			{
-				state.editor.commands.setContent(remoteUpdatePending, { emitUpdate: false });
-			}
-			finally
-			{
-				state.editor._syncIsUpdating = false;
-			}
-            remoteUpdatePending = null;
-            isUpdating = false;
-        }
-    });
+	const editor = state.editor;
+	const view = editor.view;
+	const schema = view.state.schema;
 
-    // 보류 중인 업데이트를 저장하는 함수
-    state.editor._setPendingRemoteUpdate = (content) => {
-        remoteUpdatePending = content;
-    };
+	// 공유 문서(진짜 협업 데이터)
+	yXmlFragment = ydoc.getXmlFragment('prosemirror');
+	yMetadata = ydoc.getMap('metadata'); // (옵션) 저장용 스냅샷/메타데이터
 
-    // Yjs 원격 업데이트를 에디터에 적용할 때 사용할 플래그 저장
-    state.editor._syncIsUpdating = false;
+	// Yjs <-> ProseMirror 동시편집 플러그인 부착
+	attachYjsProsemirrorBinding();
 
-    console.log('[WS] 에디터 바인딩 완료');
+	// 만약 서버/DB에서 HTML만 있고 fragment가 비어있다면, 최초 1회만 HTML을 fragment로 주입
+	const htmlSnapshot = yMetadata.get('content');
+	const fragEmpty = (yXmlFragment.toJSON?.() ?? []).length === 0;
+	if (fragEmpty && typeof htmlSnapshot === 'string' && htmlSnapshot.trim())
+		editor.commands.setContent(htmlSnapshot, { emitUpdate: true });
 
-    // 커서 추적 시작
-    setupCursorTracking();
+	// 저장용 스냅샷(HTML)만 yMetadata에 유지 (서버 저장 로직 호환)
+	editor.off?.('update', editor._snapshotHandler);
+	editor._snapshotHandler = ({ editor }) => {
+		clearTimeout(updateTimeout);
+		updateTimeout = setTimeout(() => {
+		    try {
+			    const html = editor.getHTML();
+				if (yMetadata.get('content') !== html)
+					yMetadata.set('content', html);
+		    } catch {}
+		}, 250);
+	};
+	editor.on('update', editor._snapshotHandler);
+
+	// 커서 추적(blur/selectionUpdate) 이벤트 연결
+	setupCursorTracking();
+
+	console.log('[WS] yXmlFragment 기반 동시편집 바인딩 완료');
+}
+
+function teardownCursorTracking() {
+	const editor = cursorState.trackingEditor;
+	if (!editor) return;
+
+	// 이벤트 리스너 제거
+	if (cursorState.selectionUpdateHandler) {
+		editor.off?.('selectionUpdate', cursorState.selectionUpdateHandler);
+	}
+	if (cursorState.blurHandler) {
+		editor.off?.('blur', cursorState.blurHandler);
+	}
+
+	cursorState.trackingEditor = null;
+	cursorState.selectionUpdateHandler = null;
+	cursorState.blurHandler = null;
 }
 
 /**
  * 커서 위치 추적 설정
  */
 function setupCursorTracking() {
-    if (!state.editor || !cursorState.awareness) return;
+	if (!state.editor || !cursorState.awareness) return;
 
-    // 에디터 selection 변경 감지
-    state.editor.on('selectionUpdate', ({ editor }) => {
-        throttledSendCursorPosition(editor);
-    });
+	// 에디터 인스턴스가 바뀌었거나(재연결/재생성) 기존 핸들러가 남아있으면 정리 후 재설치
+	if (cursorState.trackingEditor && cursorState.trackingEditor !== state.editor)
+		teardownCursorTracking();
 
-    // 포커스 해제 시 커서 제거
-    state.editor.on('blur', () => {
-        if (cursorState.awareness) {
-            cursorState.awareness.setLocalStateField('cursor', null);
+	// 이미 설치된 경우 재설치 방지
+	if (cursorState.trackingEditor === state.editor && cursorState.selectionUpdateHandler && cursorState.blurHandler)
+		return;
+
+	cursorState.trackingEditor = state.editor;
+
+	// 에디터 selection 변경 감지
+	cursorState.selectionUpdateHandler = ({ editor }) => {
+		throttledSendCursorPosition(editor);
+	};
+
+	// 포커스 해제 시 커서 제거
+	cursorState.blurHandler = () => {
+		if (cursorState.awareness) {
+			cursorState.awareness.setLocalStateField('cursor', null);
 			cursorState.lastSentPosition = null;
-        }
-    });
+   		}
+	};
+
+	state.editor.on('selectionUpdate', cursorState.selectionUpdateHandler);
+	state.editor.on('blur', cursorState.blurHandler);
 }
 
 /**
@@ -973,59 +1036,14 @@ function sendCursorPosition(editor) {
  * Awareness 변경 감지 핸들러
  */
 function handleAwarenessChange({ added, updated, removed }, origin) {
-    // 제거된 사용자 커서 삭제
-    removed.forEach(clientId => {
-        removeCursor(clientId);
-    });
-
-    const local = cursorState.awareness.getLocalState() || {};
-    const localMode = local.mode || (state.isWriteMode ? 'write' : 'read');
-
-    const primaryWriter = getPrimaryWriterClientId();
-    const iAmPrimary = primaryWriter === cursorState.localClientId;
-
-    // 내가 write인데 primary가 아니면? 화면엔 커서 0개
-    const shouldRenderAnyRemote = (localMode !== 'write') || iAmPrimary;
-
-    // 편집 커서를 렌더링해야 하는 상황이 아니라면 전부 지움
-    if (!shouldRenderAnyRemote)
-    {
-    	[...added, ...updated].forEach(clientId => removeCursor(clientId));
-    }
-    else
-    {
-	   	// 추가/업데이트된 사용자 커서 렌더링
-	    [...added, ...updated].forEach(clientId => {
-	    	const awarenessState = cursorState.awareness.getStates().get(clientId);
-
-	    	// 내 세션(clientId) 제외
-	        if (clientId === cursorState.localClientId) {
-				removeCursor(clientId);
-				return;
-	        }
-
-	        // 내 유저(userId)가 다른 clientId로 떠도 제외 (고스트 커서 방지)
-	        if (awarenessState?.user?.userId != null && awarenessState.user.userId === cursorState.localUserId) {
-				removeCursor(clientId);
-				return;
-	        }
-
-	        if (awarenessState && awarenessState.cursor && awarenessState.user) {
-	            renderCursor(clientId, awarenessState);
-	        } else {
-	            removeCursor(clientId);
-	        }
-	    });
-    }
-
-    // Awareness 업데이트를 서버로 전송
-    // 로컬 변화만 서버로 전송
-    if (origin !== 'remote') {
+	// yCursorPlugin이 커서 렌더링을 ProseMirror decoration으로 처리하므로
+	// 여기서는 네트워크 전송만 담당한다.
+	if (origin !== 'remote') {
 	    const update = encodeAwarenessUpdate(cursorState.awareness, [
-	        ...added, ...updated, ...removed
+		    ...added, ...updated, ...removed,
 	    ]);
 	    sendAwarenessUpdate(update);
-    }
+	}
 }
 
 /**
@@ -1034,7 +1052,7 @@ function handleAwarenessChange({ added, updated, removed }, origin) {
 function sendAwarenessUpdate(update) {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
 
-    const base64Update = btoa(String.fromCharCode(...new Uint8Array(update)));
+	const base64Update = uint8ToBase64(update);
 
     ws.send(JSON.stringify({
         type: 'awareness-update',
@@ -1052,7 +1070,7 @@ function handleRemoteAwarenessUpdate(data) {
     if (!cursorState.awareness) return;
 
     try {
-        const update = Uint8Array.from(atob(data.awarenessUpdate), c => c.charCodeAt(0));
+		const update = base64ToUint8(data.awarenessUpdate);
         applyAwarenessUpdate(cursorState.awareness, update, 'remote');
     } catch (error) {
         console.error('[WS] Awareness 업데이트 처리 오류:', error);

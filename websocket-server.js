@@ -79,13 +79,20 @@ async function saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc) {
         let finalContent = content;
         if (rows.length > 0 && rows[0].is_encrypted === 1) {
             finalContent = '';  // 암호화된 페이지는 content 비움
-        }
+		}
+
+        // Yjs 상태(바이너리)를 DB에 같이 저장 (진짜 동시편집 상태 복원용)
+		// - 암호화 페이지는 평문이 유출될 수 있으므로 yjs_state를 저장하지 않음
+		let yjsStateToSave = null;
+		if (!(rows.length > 0 && rows[0].is_encrypted === 1)) {
+		    yjsStateToSave = Buffer.from(Y.encodeStateAsUpdate(ydoc));
+		}
 
         await pool.execute(
             `UPDATE pages
-             SET title = ?, content = ?, icon = ?, sort_order = ?, parent_id = ?, updated_at = NOW()
+             SET title = ?, content = ?, icon = ?, sort_order = ?, parent_id = ?, yjs_state = ?, updated_at = NOW()
              WHERE id = ?`,
-            [title, finalContent, icon, sortOrder, parentId, pageId]
+            [title, finalContent, icon, sortOrder, parentId, yjsStateToSave, pageId]
         );
     } catch (error) {
         console.error(`[SSE] 페이지 저장 실패 (${pageId}):`, error);
@@ -121,7 +128,7 @@ async function loadOrCreateYjsDoc(pool, pageId) {
 
     // 데이터베이스에서 페이지 로드
     const [rows] = await pool.execute(
-        'SELECT title, content, icon, sort_order, parent_id FROM pages WHERE id = ?',
+        'SELECT title, content, icon, sort_order, parent_id, yjs_state FROM pages WHERE id = ?',
         [pageId]
     );
 
@@ -129,14 +136,32 @@ async function loadOrCreateYjsDoc(pool, pageId) {
     const yXmlFragment = ydoc.getXmlFragment('prosemirror');
     const yMetadata = ydoc.getMap('metadata');
 
-    if (rows.length > 0) {
-        const page = rows[0];
-        yMetadata.set('title', page.title || '제목 없음');
-        yMetadata.set('icon', page.icon || null);
-        yMetadata.set('sortOrder', page.sort_order || 0);
-        yMetadata.set('parentId', page.parent_id || null);
-        yMetadata.set('content', page.content || '<p></p>');
-    }
+	if (rows.length > 0) {
+	    const page = rows[0];
+
+	    // DB에 저장된 Yjs 상태가 있으면 우선 복원 (진짜 동시편집 상태)
+	    if (page.yjs_state) {
+	        try {
+	            const update = page.yjs_state instanceof Buffer ? page.yjs_state : Buffer.from(page.yjs_state);
+	            Y.applyUpdate(ydoc, update);
+	            yMetadata.set('seeded', true);
+	        } catch (e) {
+	            console.warn(`[WS] yjs_state 복원 실패 (${pageId}) - HTML 스냅샷으로 대체:`, e);
+	            yMetadata.set('seeded', false);
+	        }
+	    } else {
+	        yMetadata.set('seeded', false);
+	    }
+
+	    // 메타데이터 기본값 채움 (이미 문서에 있으면 덮어쓰지 않음)
+	    if (yMetadata.get('title') == null) yMetadata.set('title', page.title || '제목 없음');
+	    if (yMetadata.get('icon') == null) yMetadata.set('icon', page.icon || null);
+	    if (yMetadata.get('sortOrder') == null) yMetadata.set('sortOrder', page.sort_order || 0);
+	    if (yMetadata.get('parentId') == null) yMetadata.set('parentId', page.parent_id || null);
+
+	    // HTML 스냅샷(content)은 검색/발행/미리보기용
+	    if (yMetadata.get('content') == null) yMetadata.set('content', page.content || '<p></p>');
+	}
 
     yjsDocuments.set(pageId, {
         ydoc,
@@ -410,7 +435,7 @@ async function handleWebSocketMessage(ws, data, pool, getCollectionPermission, s
  * 페이지 구독
  */
 async function handleSubscribePage(ws, payload, pool) {
-    const { pageId, isReconnect } = payload;
+    const { pageId } = payload;
     const userId = ws.userId;
 
     try {
@@ -442,37 +467,23 @@ async function handleSubscribePage(ws, payload, pool) {
         const connection = { ws, userId, username: ws.username, color: userColor };
         wsConnections.pages.get(pageId).add(connection);
 
-        // 재연결이 아닐 때만 init 이벤트 전송 (데이터 소실 방지)
-        if (!isReconnect) {
-            // Yjs 상태 전송
-            const ydoc = await loadOrCreateYjsDoc(pool, pageId);
-            const stateVector = Y.encodeStateAsUpdate(ydoc);
-            const base64State = Buffer.from(stateVector).toString('base64');
+        // 재연결 여부와 상관없이 항상 init state를 보낸다.
+        // Yjs update는 병합되므로 재전송은 안전하며, 클라이언트 상태 파괴/재생성에도 견고해진다.
+        const ydoc = await loadOrCreateYjsDoc(pool, pageId);
+        const stateVector = Y.encodeStateAsUpdate(ydoc);
+        const base64State = Buffer.from(stateVector).toString('base64');
 
-            ws.send(JSON.stringify({
-                event: 'init',
-                data: {
-                    state: base64State,
-                    userId,
-                    username: ws.username,
-                    color: userColor
-                }
-            }));
+        ws.send(JSON.stringify({
+            event: 'init',
+            data: {
+                state: base64State,
+                userId,
+                username: ws.username,
+                color: userColor
+            }
+        }));
 
-            console.log(`[WS] 페이지 초기 상태 전송: ${pageId} (사용자: ${ws.username})`);
-        } else {
-            // 재연결 시에는 구독만 확인하고 기존 클라이언트 상태 유지
-            ws.send(JSON.stringify({
-                event: 'reconnected',
-                data: {
-                    userId,
-                    username: ws.username,
-                    color: userColor
-                }
-            }));
-
-            console.log(`[WS] 페이지 재연결: ${pageId} (사용자: ${ws.username}) - 클라이언트 상태 유지`);
-        }
+        console.log(`[WS] 페이지 init 상태 전송: ${pageId} (사용자: ${ws.username})`);
 
         // 다른 사용자들에게 입장 알림
         wsBroadcastToPage(pageId, 'user-joined', { userId, username: ws.username, color: userColor }, userId);

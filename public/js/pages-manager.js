@@ -924,7 +924,13 @@ export async function toggleEditMode() {
         await savePageTitle();
 
         state.isWriteMode = false;
-        state.editor.setEditable(false);
+		state.editor.setEditable(false);
+
+		// 읽기 모드로 전환 시 에디터 포커스를 명시적으로 해제해야
+    	// 원격 사용자에게 내 커서가 남아있는 현상을 방지할 수 있음.
+        state.editor.commands?.blur?.();
+        state.editor.view?.dom?.blur?.();
+
 		updateAwarenessMode(state.isWriteMode);
 
         if (titleInput) {
@@ -942,7 +948,7 @@ export async function toggleEditMode() {
             textEl.textContent = "쓰기모드";
         }
 
-        onLocalEditModeChanged();
+        onLocalEditModeChanged(state.isWriteMode);
 
         // 읽기모드 진입 시 커버 버튼 숨김
         updateCoverButtonsVisibility();
@@ -975,7 +981,7 @@ export async function toggleEditMode() {
             textEl.textContent = "읽기모드";
         }
 
-		onLocalEditModeChanged();
+		onLocalEditModeChanged(state.isWriteMode);
 
         // 쓰기모드 진입 시 커버 버튼 표시
         updateCoverButtonsVisibility();
