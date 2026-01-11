@@ -181,7 +181,7 @@ module.exports = (dependencies) => {
                 	type: "2fa",
                     pendingUserId: user.id,
                     createdAt: now.getTime(),
-                    expiresAt: 10 * 60 * 1000, // 2단계 인증을 위한 임시 세션 만료 시간 : 10분
+                    expiresAt: now.getTime() + 10 * 60 * 1000, // 2단계 인증을 위한 임시 세션 만료 시간 : 10분
                     lastAccessedAt: now.getTime()
                 });
 

@@ -1171,7 +1171,11 @@ app.use((req, res, next) => {
     const nonce = res.locals.cspNonce;
     res.setHeader(
         "Content-Security-Policy",
-        "default-src 'self'; " +
+		"default-src 'self'; " +
+		"base-uri 'self'; " +
+        "object-src 'none'; " +
+        "frame-ancestors 'none'; " +
+        "form-action 'self'; " +
         `script-src 'self' 'nonce-${nonce}' https://cdn.jsdelivr.net https://esm.sh; ` +
         "style-src 'self' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://fonts.googleapis.com 'unsafe-inline'; " +
         "font-src 'self' https://cdnjs.cloudflare.com https://fonts.gstatic.com; " +
@@ -1183,9 +1187,16 @@ app.use((req, res, next) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('X-Frame-Options', 'DENY');
     // X-XSS-Protection은 구식이며 CSP로 충분히 대체됨 (제거)
-    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+	res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
 
-    next();
+	// Permissions Policy (필요 시 허용 목록으로 조정)
+    res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
+
+    // HSTS (HTTPS에서만, production 권장)
+    if (IS_PRODUCTION)
+        res.setHeader('Strict-Transport-Security', 'max-age=15552000; includeSubDomains');
+
+	next();
 });
 
 // CSRF 토큰 쿠키 설정 미들웨어 (모든 요청에 대해)

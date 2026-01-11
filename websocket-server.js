@@ -27,6 +27,8 @@ const USER_COLORS = [
 const wsConnectionLimiter = new Map(); // IP -> { count, resetTime }
 const WS_RATE_LIMIT_WINDOW = 60 * 1000; // 1분
 const WS_RATE_LIMIT_MAX_CONNECTIONS = 10; // 분당 최대 10회 연결
+const WS_MAX_MESSAGE_BYTES = 2 * 1024 * 1024; // 2MiB (필요 시 조정)
+const WS_MAX_AWARENESS_UPDATE_BYTES = 32 * 1024; // 32KiB (필요 시 조정)
 
 /**
  * 사용자 ID 기반 색상 할당
@@ -265,7 +267,8 @@ function checkWebSocketRateLimit(clientIp) {
 function initWebSocketServer(server, sessions, getCollectionPermission, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, SESSION_COOKIE_NAME) {
     const wss = new WebSocket.Server({
         server,
-        path: '/ws'
+		path: '/ws',
+        maxPayload: WS_MAX_MESSAGE_BYTES
     });
 
     wss.on('connection', async (ws, req) => {
@@ -348,7 +351,16 @@ function initWebSocketServer(server, sessions, getCollectionPermission, pool, sa
         });
 
         // 메시지 핸들러
-        ws.on('message', async (message) => {
+		ws.on('message', async (message) => {
+			// 과도하게 큰 메시지는 즉시 차단 (DoS 방지)
+            const messageBytes = typeof message === 'string'
+                ? Buffer.byteLength(message, 'utf8')
+                : message?.length;
+            if (messageBytes && messageBytes > WS_MAX_MESSAGE_BYTES) {
+                ws.close(1009, 'Message too big');
+                return;
+            }
+
             try {
                 const data = JSON.parse(message);
                 await handleWebSocketMessage(ws, data, pool, getCollectionPermission, sanitizeHtmlContent);
@@ -636,13 +648,41 @@ async function handleYjsUpdate(ws, payload, pool, sanitizeHtmlContent) {
 }
 
 /**
+ * 해당 ws가 특정 페이지를 구독 중인지 확인
+ */
+function isSubscribedToPage(ws, pageId) {
+    const connections = wsConnections.pages.get(pageId);
+	if (!connections)
+		return false;
+
+    for (const conn of connections) {
+		if (conn.ws === ws)
+			return true;
+    }
+    return false;
+}
+
+/**
  * Awareness 업데이트 브로드캐스트
  */
 function handleAwarenessUpdate(ws, payload) {
     const { pageId, awarenessUpdate } = payload;
-    const userId = ws.userId;
+	const userId = ws.userId;
 
-    // 같은 페이지의 다른 사용자들에게 브로드캐스트
+	// 구독(권한) 체크: subscribe-page를 거치지 않은 연결은 브로드캐스트 금지
+    if (!pageId || !isSubscribedToPage(ws, pageId)) {
+        console.warn(`[WS] awareness-update 차단 (구독되지 않은 pageId: ${pageId}, userId: ${userId})`);
+        return;
+    }
+
+    // 과도하게 큰 awareness 업데이트는 차단 (UI 교란/DoS 방지)
+    const awarenessBytes = Buffer.byteLength(JSON.stringify(awarenessUpdate ?? null), 'utf8');
+    if (awarenessBytes > WS_MAX_AWARENESS_UPDATE_BYTES) {
+        console.warn(`[WS] awareness-update 차단 (payload too big: ${awarenessBytes} bytes, userId: ${userId}, pageId: ${pageId})`);
+        return;
+    }
+
+	// 같은 페이지의 다른 사용자들에게 브로드캐스트
     wsBroadcastToPage(pageId, 'awareness-update', {
         awarenessUpdate,
         fromUserId: userId
