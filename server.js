@@ -37,7 +37,8 @@ const {
     startInactiveConnectionsCleanup,
     wsConnections,
     yjsDocuments,
-    saveYjsDocToDatabase
+	saveYjsDocToDatabase,
+	wsCloseConnectionsForSession
 } = require("./websocket-server");
 
 const app = express();
@@ -142,7 +143,12 @@ function cleanupExpiredSessions() {
             shouldDelete = true;
         }
 
-        if (shouldDelete) {
+		if (shouldDelete) {
+			// 세션 만료 시 해당 세션으로 열린 WebSocket 연결도 즉시 종료
+			try {
+			    wsCloseConnectionsForSession(sessionId, 1008, 'Session expired');
+			} catch (e) {}
+
             sessions.delete(sessionId);
             cleanedCount++;
 
@@ -397,7 +403,12 @@ function createSession(user) {
         });
 
         // 기존 세션 모두 파기
-        existingSessions.forEach(oldSessionId => {
+		existingSessions.forEach(oldSessionId => {
+			// 기존 세션에 매달린 WebSocket 연결도 즉시 종료
+			try {
+			    wsCloseConnectionsForSession(oldSessionId, 1008, 'Duplicate login');
+			} catch (e) {}
+
             sessions.delete(oldSessionId);
             // 보안: 세션 ID 일부만 표시
             console.log(`[세션 파기] 세션 ID: ${oldSessionId.substring(0, 8)}...`);
@@ -1431,6 +1442,16 @@ const editorImageUpload = multer({
     }
 });
 
+/**
+ * WebSocket용 세션 검증 헬퍼
+ * - getSessionFromRequest()와 동일한 만료/idle 갱신 로직을 재사용
+ */
+function getSessionFromId(sessionId) {
+    if (!sessionId) return null;
+    // getSessionFromRequest는 req.cookies만 사용하므로 최소 객체로 호출
+    return getSessionFromRequest({ cookies: { [SESSION_COOKIE_NAME]: sessionId } });
+}
+
 // WebSocket Rate Limiting, 서버 초기화, 메시지 핸들러 등은 websocket-server.js 모듈로 이동됨
 
 /**
@@ -1482,7 +1503,8 @@ const editorImageUpload = multer({
             wsConnections,
             wsBroadcastToPage,
             wsBroadcastToCollection,
-            wsBroadcastToUser,
+			wsBroadcastToUser,
+			wsCloseConnectionsForSession,
             saveYjsDocToDatabase,
             yjsDocuments,
             authLimiter,
@@ -1563,7 +1585,7 @@ const editorImageUpload = multer({
                 });
 
                 // WebSocket 서버 초기화
-                initWebSocketServer(httpsServer, sessions, getCollectionPermission, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, SESSION_COOKIE_NAME);
+                initWebSocketServer(httpsServer, sessions, getCollectionPermission, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, SESSION_COOKIE_NAME, getSessionFromId);
 
                 // WebSocket Rate Limit 정리 작업 시작
                 startRateLimitCleanup();
@@ -1606,7 +1628,9 @@ const editorImageUpload = multer({
                 });
 
                 // WebSocket 서버 초기화
-                initWebSocketServer(httpServer, sessions, getCollectionPermission, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, SESSION_COOKIE_NAME);
+                // HTTP 모드에서도 WebSocket 메시지 처리 시 세션 검증 로직(getSessionFromId)을 사용해야
+                // 동기화 메시지가 "Session expired"로 오판되어 연결이 반복 종료되는 문제를 방지할 수 있습니다.
+                initWebSocketServer(httpServer, sessions, getCollectionPermission, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, SESSION_COOKIE_NAME, getSessionFromId);
 
                 // WebSocket Rate Limit 정리 작업 시작
                 startRateLimitCleanup();
@@ -1628,7 +1652,9 @@ const editorImageUpload = multer({
             });
 
             // WebSocket 서버 초기화
-            initWebSocketServer(httpServer, sessions, getCollectionPermission, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, SESSION_COOKIE_NAME);
+            // HTTP 모드에서도 WebSocket 메시지 처리 시 세션 검증 로직(getSessionFromId)을 사용해야
+            // 동기화 메시지가 "Session expired"로 오판되어 연결이 반복 종료되는 문제를 방지할 수 있습니다.
+            initWebSocketServer(httpServer, sessions, getCollectionPermission, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, SESSION_COOKIE_NAME, getSessionFromId);
 
             // WebSocket Rate Limit 정리 작업 시작
             startRateLimitCleanup();

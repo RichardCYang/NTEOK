@@ -11,7 +11,8 @@ const { formatDateForDb } = require("./network-utils");
 const wsConnections = {
     pages: new Map(), // pageId -> Set<{ws, userId, username, color}>
     collections: new Map(), // collectionId -> Set<{ws, userId, permission}>
-    users: new Map() // userId -> Set<{ws, sessionId}>
+	users: new Map(), // userId -> Set<{ws, sessionId}>
+    sessions: new Map() // sessionId -> Set<WebSocket>
 };
 
 // Yjs 문서 캐시 (메모리 관리)
@@ -29,6 +30,44 @@ const WS_RATE_LIMIT_WINDOW = 60 * 1000; // 1분
 const WS_RATE_LIMIT_MAX_CONNECTIONS = 10; // 분당 최대 10회 연결
 const WS_MAX_MESSAGE_BYTES = 2 * 1024 * 1024; // 2MiB (필요 시 조정)
 const WS_MAX_AWARENESS_UPDATE_BYTES = 32 * 1024; // 32KiB (필요 시 조정)
+
+/**
+ * 세션ID -> WebSocket 연결 매핑
+ * - 로그아웃/세션 만료 시 즉시 연결을 끊기 위해 사용
+ */
+function registerSessionConnection(sessionId, ws) {
+    if (!sessionId) return;
+    if (!wsConnections.sessions.has(sessionId))
+        wsConnections.sessions.set(sessionId, new Set());
+    wsConnections.sessions.get(sessionId).add(ws);
+}
+
+function unregisterSessionConnection(sessionId, ws) {
+    if (!sessionId) return;
+    const set = wsConnections.sessions.get(sessionId);
+    if (!set) return;
+    set.delete(ws);
+    if (set.size === 0)
+        wsConnections.sessions.delete(sessionId);
+}
+
+/**
+ * 특정 세션의 모든 WebSocket 연결 종료
+ */
+function wsCloseConnectionsForSession(sessionId, code = 1008, reason = 'Session invalidated') {
+    const set = wsConnections.sessions.get(sessionId);
+    if (!set || set.size === 0) return;
+
+    for (const ws of set) {
+        try {
+            if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)
+                ws.close(code, reason);
+        } catch (err) {
+            // 아무 동작도 안함
+        }
+    }
+    wsConnections.sessions.delete(sessionId);
+}
 
 /**
  * 사용자 ID 기반 색상 할당
@@ -264,7 +303,7 @@ function checkWebSocketRateLimit(clientIp) {
 /**
  * WebSocket 서버 초기화
  */
-function initWebSocketServer(server, sessions, getCollectionPermission, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, SESSION_COOKIE_NAME) {
+function initWebSocketServer(server, sessions, getCollectionPermission, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, SESSION_COOKIE_NAME, getSessionFromId) {
     const wss = new WebSocket.Server({
         server,
 		path: '/ws',
@@ -273,7 +312,21 @@ function initWebSocketServer(server, sessions, getCollectionPermission, pool, sa
 
     wss.on('connection', async (ws, req) => {
         // Rate Limiting 체크
-        const clientIp = req.socket.remoteAddress || req.headers['x-forwarded-for'] || 'unknown';
+		// - 개발(직접 접속): req.socket.remoteAddress 사용
+		// - 리버스 프록시(Nginx/Caddy/Cloudflare 등) 뒤: remoteAddress가 ::1/127.0.0.1로
+		//   고정되는 경우가 있어 X-Forwarded-For/X-Real-IP를 우선 반영(단, 루프백일 때만)
+		const remoteAddress = req.socket?.remoteAddress;
+		const xForwardedFor = req.headers['x-forwarded-for'];
+		const xRealIp = req.headers['x-real-ip'];
+		const forwardedIp = typeof xForwardedFor === 'string'
+			? xForwardedFor.split(',')[0].trim()
+			: (typeof xRealIp === 'string' ? xRealIp.trim() : null);
+		const isLoopback = remoteAddress === '::1'
+			|| remoteAddress === '127.0.0.1'
+			|| (typeof remoteAddress === 'string' && remoteAddress.startsWith('::ffff:127.'));
+		const clientIp = (forwardedIp && (isLoopback || !remoteAddress))
+			? forwardedIp
+			: (remoteAddress || 'unknown');
         if (!checkWebSocketRateLimit(clientIp)) {
             console.warn(`[WS Rate Limit] IP ${clientIp}의 연결 시도가 차단되었습니다.`);
             ws.close(1008, 'Too many connection attempts. Please try again later.');
@@ -333,7 +386,7 @@ function initWebSocketServer(server, sessions, getCollectionPermission, pool, sa
             return;
         }
 
-        const session = sessions.get(sessionId);
+        const session = typeof getSessionFromId === 'function' ? getSessionFromId(sessionId) : sessions.get(sessionId);
         if (!session || !session.userId) {
             ws.close(1008, 'Unauthorized');
             return;
@@ -343,9 +396,12 @@ function initWebSocketServer(server, sessions, getCollectionPermission, pool, sa
         ws.userId = session.userId;
         ws.username = session.username;
         ws.sessionId = sessionId;
-        ws.isAlive = true;
+		ws.isAlive = true;
 
-        // 핑/퐁 heartbeat
+		// 세션 -> WebSocket 연결 매핑 등록 (로그아웃/세션 만료 대응)
+		registerSessionConnection(sessionId, ws);
+
+		// 핑/퐁 heartbeat
         ws.on('pong', () => {
             ws.isAlive = true;
         });
@@ -363,7 +419,7 @@ function initWebSocketServer(server, sessions, getCollectionPermission, pool, sa
 
             try {
                 const data = JSON.parse(message);
-                await handleWebSocketMessage(ws, data, pool, getCollectionPermission, sanitizeHtmlContent);
+                await handleWebSocketMessage(ws, data, pool, getCollectionPermission, sanitizeHtmlContent, getSessionFromId);
             } catch (error) {
                 console.error('[WS] 메시지 처리 오류:', error);
                 ws.send(JSON.stringify({ event: 'error', data: { message: '메시지 처리 실패' } }));
@@ -413,10 +469,22 @@ function initWebSocketServer(server, sessions, getCollectionPermission, pool, sa
 /**
  * WebSocket 메시지 핸들러
  */
-async function handleWebSocketMessage(ws, data, pool, getCollectionPermission, sanitizeHtmlContent) {
-    const { type, payload } = data;
+async function handleWebSocketMessage(ws, data, pool, getCollectionPermission, sanitizeHtmlContent, getSessionFromId) {
+	const { type, payload } = data;
 
-    switch (type) {
+	// 매 메시지마다 세션 유효성 확인 (세션 만료/로그아웃 즉시 반영)
+	// getSessionFromId가 주입되지 않은 환경에서는(예: HTTP 폴백 구성 누락)
+	// null로 평가되어 모든 메시지 처리 시 연결이 종료되는 문제가 생길 수 있으므로,
+	// 주입된 경우에만 검증을 수행합니다.
+	if (ws.sessionId && typeof getSessionFromId === 'function') {
+	    const session = getSessionFromId(ws.sessionId);
+	    if (!session || !session.userId) {
+	        try { ws.close(1008, 'Session expired'); } catch (e) {}
+	        return;
+	    }
+	}
+
+	switch (type) {
         case 'subscribe-page':
             await handleSubscribePage(ws, payload, pool);
             break;
@@ -693,9 +761,13 @@ function handleAwarenessUpdate(ws, payload) {
  * WebSocket 연결 정리
  */
 function cleanupWebSocketConnection(ws, pool, sanitizeHtmlContent) {
-    const userId = ws.userId;
+	const userId = ws.userId;
+	const sessionId = ws.sessionId;
 
-    // 페이지 연결 정리
+	// 세션 매핑 정리
+	unregisterSessionConnection(sessionId, ws);
+
+	// 페이지 연결 정리
     wsConnections.pages.forEach((connections, pageId) => {
         connections.forEach(conn => {
             if (conn.ws === ws) {
@@ -777,5 +849,6 @@ module.exports = {
     startInactiveConnectionsCleanup,
     wsConnections,
     yjsDocuments,
-    saveYjsDocToDatabase
+	saveYjsDocToDatabase,
+	wsCloseConnectionsForSession
 };

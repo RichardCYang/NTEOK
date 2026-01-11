@@ -260,9 +260,14 @@ module.exports = (dependencies) => {
      * POST /api/auth/logout
      */
     router.post("/logout", (req, res) => {
-        const { getSessionFromRequest } = dependencies;
+        const { getSessionFromRequest, wsCloseConnectionsForSession } = dependencies;
         const session = getSessionFromRequest(req);
-        if (session) {
+		if (session) {
+			// 로그아웃 시 해당 세션의 WebSocket 연결을 즉시 종료
+			try {
+			    wsCloseConnectionsForSession(session.id, 1008, 'Logout');
+			} catch (e) {}
+
             sessions.delete(session.id);
 
             // userSessions에서도 제거
@@ -328,22 +333,17 @@ module.exports = (dependencies) => {
             const maskedUsername = req.user.username.substring(0, 2) + '***';
             console.log(`[계정 삭제 완료] 사용자 ID: ${req.user.id}, 사용자명: ${maskedUsername}`);
 
-            const { getSessionFromRequest } = dependencies;
-            const session = getSessionFromRequest(req);
-            if (session) {
-                sessions.delete(session.id);
-
-                // userSessions에서도 제거
-                if (session.userId) {
-                    const userSessionSet = userSessions.get(session.userId);
-                    if (userSessionSet) {
-                        userSessionSet.delete(session.id);
-                        if (userSessionSet.size === 0) {
-                            userSessions.delete(session.userId);
-                        }
-                    }
-                }
+            const { wsCloseConnectionsForSession } = dependencies;
+            // 계정 삭제 시 해당 사용자의 모든 세션/WS 연결을 즉시 파기
+            const userId = req.user.id;
+            const sessionIds = userSessions.get(userId);
+            if (sessionIds && sessionIds.size > 0) {
+                sessionIds.forEach(sessionId => {
+                    try { wsCloseConnectionsForSession(sessionId, 1008, 'Account deleted'); } catch (e) {}
+                    sessions.delete(sessionId);
+                });
             }
+            userSessions.delete(userId);
 
             res.clearCookie(SESSION_COOKIE_NAME, {
                 httpOnly: true,
