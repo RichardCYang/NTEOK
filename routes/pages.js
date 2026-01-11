@@ -1106,9 +1106,35 @@ module.exports = (dependencies) => {
             const updates = [];
             const values = [];
 
+           	// coverImage 입력 검증 (IDOR/권한 우회 방지)
+            // - default/... 은 공개 기본 커버로 허용
+            // - 사용자 업로드 커버는 반드시 본인(userId) 디렉토리의 파일만 허용
+            let normalizedCoverImage = coverImage;
             if (coverImage !== undefined) {
+                if (coverImage === null || coverImage === '') {
+                    normalizedCoverImage = null;
+                } else if (typeof coverImage !== 'string') {
+                    return res.status(400).json({ error: "coverImage는 문자열이어야 합니다." });
+                } else {
+                    const trimmed = coverImage.trim();
+                    const isDefaultCover = /^default[\\/][^/\\]+\.(?:png|jpe?g|gif|webp)$/i.test(trimmed);
+                    if (isDefaultCover) {
+                        normalizedCoverImage = trimmed;
+                    } else {
+                        const m = trimmed.match(/^(\d+)[\\/]([A-Za-z0-9._-]+\.(?:png|jpe?g|gif|webp))$/i);
+                        if (!m) return res.status(400).json({ error: "유효하지 않은 coverImage 형식입니다." });
+                        const ownerId = parseInt(m[1], 10);
+                        const fname = path.basename(m[2]);
+                        if (!Number.isFinite(ownerId) || ownerId !== userId)
+                            return res.status(403).json({ error: "다른 사용자의 커버 이미지는 선택할 수 없습니다." });
+                        const coverFsPath = path.join(__dirname, '..', 'covers', String(userId), fname);
+                        if (!fs.existsSync(coverFsPath))
+                            return res.status(400).json({ error: "존재하지 않는 커버 이미지입니다." });
+                        normalizedCoverImage = `${userId}/${fname}`;
+                    }
+                }
                 updates.push('cover_image = ?');
-                values.push(coverImage);
+                values.push(normalizedCoverImage);
             }
 
             if (typeof coverPosition === 'number') {
@@ -1133,7 +1159,7 @@ module.exports = (dependencies) => {
                 wsBroadcastToCollection(rows[0].collection_id, 'metadata-change', {
                     pageId: id,
                     field: 'coverImage',
-                    value: coverImage
+                    value: normalizedCoverImage
                 }, userId);
             }
             if (typeof coverPosition === 'number') {

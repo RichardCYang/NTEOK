@@ -1253,8 +1253,12 @@ app.use('/covers/default', express.static(path.join(__dirname, 'covers', 'defaul
 
 // 사용자별 커버 이미지 - 인증 필요
 app.get('/covers/:userId/:filename', authMiddleware, async (req, res) => {
-    const requestedUserId = parseInt(req.params.userId, 10);
-    const filename = req.params.filename;
+	const requestedUserId = parseInt(req.params.userId, 10);
+
+	if (!Number.isFinite(requestedUserId))
+		return res.status(400).json({ error: '잘못된 요청입니다.' });
+
+	const filename = req.params.filename;
     const currentUserId = req.user.id;
 
     try {
@@ -1273,17 +1277,20 @@ app.get('/covers/:userId/:filename', authMiddleware, async (req, res) => {
             return res.sendFile(filePath);
         }
 
-        // 다른 사용자의 파일 - 공유받은 페이지의 커버인지 확인
+        // 다른 사용자의 파일 - (1) 현재 사용자가 접근 가능한 컬렉션인지
+        // (2) 파일 소유자(requestedUserId) 또한 그 컬렉션의 참여자인지 검증
         const coverPath = `${requestedUserId}/${sanitizedFilename}`;
         const [rows] = await pool.execute(
             `SELECT p.id
-             FROM pages p
-             LEFT JOIN collections c ON p.collection_id = c.id
-             LEFT JOIN collection_shares cs ON c.id = cs.collection_id
-             WHERE p.cover_image = ?
-               AND (p.user_id = ? OR cs.shared_with_user_id = ?)
-             LIMIT 1`,
-            [coverPath, currentUserId, currentUserId]
+                FROM pages p
+                JOIN collections c ON p.collection_id = c.id
+                LEFT JOIN collection_shares cs_cur ON c.id = cs_cur.collection_id AND cs_cur.shared_with_user_id = ?
+                LEFT JOIN collection_shares cs_req ON c.id = cs_req.collection_id AND cs_req.shared_with_user_id = ?
+                WHERE p.cover_image = ?
+                AND (c.user_id = ? OR cs_cur.shared_with_user_id IS NOT NULL)
+                AND (c.user_id = ? OR cs_req.shared_with_user_id IS NOT NULL)
+                LIMIT 1`,
+            [currentUserId, requestedUserId, coverPath, currentUserId, requestedUserId]
         );
 
         if (rows.length > 0) {
@@ -1303,8 +1310,12 @@ app.get('/covers/:userId/:filename', authMiddleware, async (req, res) => {
 
 // 에디터 이미지 - 인증 필요
 app.get('/imgs/:userId/:filename', authMiddleware, async (req, res) => {
-    const requestedUserId = parseInt(req.params.userId, 10);
-    const filename = req.params.filename;
+	const requestedUserId = parseInt(req.params.userId, 10);
+
+	if (!Number.isFinite(requestedUserId))
+		return res.status(400).json({ error: '잘못된 요청입니다.' });
+
+	const filename = req.params.filename;
     const currentUserId = req.user.id;
 
     try {
@@ -1327,16 +1338,22 @@ app.get('/imgs/:userId/:filename', authMiddleware, async (req, res) => {
         const imagePath = `${requestedUserId}/${sanitizedFilename}`;
         const imageUrl = `/imgs/${imagePath}`;
 
+        // LIKE 와일드카드(%, _) 및 \\ 이스케이프 (패턴 오인 방지)
+        const escapeLike = (s) => String(s).replace(/[\\%_]/g, (m) => `\\${m}`);
+        const likePattern = `%${escapeLike(imageUrl)}%`;
+
         // 이미지가 포함된 페이지가 공유되었는지 확인
         const [rows] = await pool.execute(
             `SELECT p.id
-             FROM pages p
-             LEFT JOIN collections c ON p.collection_id = c.id
-             LEFT JOIN collection_shares cs ON c.id = cs.collection_id
-             WHERE p.content LIKE ?
-               AND (p.user_id = ? OR cs.shared_with_user_id = ?)
-             LIMIT 1`,
-            [`%${imageUrl}%`, currentUserId, currentUserId]
+                FROM pages p
+                JOIN collections c ON p.collection_id = c.id
+                LEFT JOIN collection_shares cs_cur ON c.id = cs_cur.collection_id AND cs_cur.shared_with_user_id = ?
+                LEFT JOIN collection_shares cs_req ON c.id = cs_req.collection_id AND cs_req.shared_with_user_id = ?
+                WHERE p.content LIKE ? ESCAPE '\\\\'
+                AND (c.user_id = ? OR cs_cur.shared_with_user_id IS NOT NULL)
+                AND (c.user_id = ? OR cs_req.shared_with_user_id IS NOT NULL)
+                LIMIT 1`,
+            [currentUserId, requestedUserId, likePattern, currentUserId, requestedUserId]
         );
 
         if (rows.length > 0) {
