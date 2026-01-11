@@ -668,10 +668,24 @@ function handleSubscribeUser(ws, payload) {
  * Yjs 업데이트 처리
  */
 async function handleYjsUpdate(ws, payload, pool, sanitizeHtmlContent) {
-    const { pageId, update } = payload;
+	const { pageId, update } = payload || {};
     const userId = ws.userId;
 
-    try {
+	try {
+		// subscribe-page 우회 방지: 구독(연결 풀 등록) 없이 yjs-update를 처리하면, 임의 pageId로 DB 로드/캐시 생성/저장 루프를
+        // 유발할 수 있어 리소스 고갈(DoS) 공격면 발생 -> WebSocket은 메시지 단위로 검증/인가를 강제해야 함. (OWASP 권고)
+        if (!pageId || typeof update !== 'string' || update.length === 0) {
+            ws.send(JSON.stringify({ event: 'error', data: { message: '잘못된 요청' } }));
+            return;
+        }
+
+        // 반드시 subscribe-page를 거친 연결만 업데이트 허용
+        if (!isSubscribedToPage(ws, pageId)) {
+            console.warn(`[WS] yjs-update 차단 (구독되지 않은 pageId: ${pageId}, userId: ${userId})`);
+            ws.send(JSON.stringify({ event: 'error', data: { message: '페이지를 구독하지 않았습니다.' } }));
+            return;
+        }
+
         // 권한 확인
         const [rows] = await pool.execute(
             `SELECT p.id FROM pages p
@@ -688,7 +702,11 @@ async function handleYjsUpdate(ws, payload, pool, sanitizeHtmlContent) {
         }
 
         // Base64 디코딩
-        const updateData = Buffer.from(update, 'base64');
+		const updateData = Buffer.from(update, 'base64');
+		if (!updateData || updateData.length === 0) {
+            ws.send(JSON.stringify({ event: 'error', data: { message: '업데이트 형식이 올바르지 않습니다.' } }));
+            return;
+        }
 
         // Yjs 문서에 적용
         const ydoc = await loadOrCreateYjsDoc(pool, pageId);
