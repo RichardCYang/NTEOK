@@ -12,7 +12,7 @@ const router = express.Router();
  */
 
 module.exports = (dependencies) => {
-	const { getSessionFromRequest, fs } = dependencies;
+	const { getSessionFromRequest, fs, pool, logError } = dependencies;
 
     function sendHtmlWithNonce(res, filename) {
         const filePath = path.join(__dirname, "..", "public", filename);

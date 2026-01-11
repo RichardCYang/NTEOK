@@ -39,9 +39,44 @@ module.exports = (dependencies) => {
     } = dependencies;
 
     const ALLOWED_PROTOCOLS = new Set(["http:", "https:"]);
-    const ALLOWED_PORTS = new Set([80, 443]);
+	const ALLOWED_PORTS = new Set([80, 443]);
 
-    function isPublicRoutableIp(address) {
+	// 아이콘 입력 검증/정규화 (HTML 주입 및 이상한 class 문자열 차단)
+    // - 이모지(짧은 텍스트) 또는 FontAwesome class list만 허용
+    function validateAndNormalizeIcon(raw) {
+        if (raw === undefined || raw === null) return null;
+        if (typeof raw !== "string") return null;
+
+        const icon = raw.trim();
+        if (icon === "") return null;
+
+        // 마크업/속성 주입 시도 차단 (서버 저장 단계에서 방어)
+        if (/[<>]/.test(icon)) {
+            const err = new Error("INVALID_ICON");
+            err.code = "INVALID_ICON";
+            throw err;
+        }
+
+        // FontAwesome: 예) "fa-solid fa-star" / "fa-regular fa-file" / "fa-brands fa-github"
+        const FA_CLASS_RE = /^(fa-(solid|regular|brands|light|thin|duotone|sharp|sharp-solid|sharp-regular|sharp-light|sharp-thin|sharp-duotone))\s+fa-[a-z0-9-]+(?:\s+fa-[a-z0-9-]+)*$/i;
+
+        // (기존 로직 호환) 단일 클래스만 오는 경우: "fa-star"
+        const FA_SINGLE_RE = /^fa-[a-z0-9-]+$/i;
+
+        if (FA_CLASS_RE.test(icon) || FA_SINGLE_RE.test(icon))
+            return icon;
+
+        // 이모지/짧은 텍스트(공백/제어문자/따옴표/앰퍼샌드 제외)만 허용
+        // (길이는 넉넉히 8로 제한: variation selector 등을 어느 정도 허용)
+        if (icon.length <= 8 && !/\s/.test(icon) && !/["'`&]/.test(icon))
+            return icon;
+
+        const err = new Error("INVALID_ICON");
+        err.code = "INVALID_ICON";
+        throw err;
+    }
+
+	function isPublicRoutableIp(address) {
 	    try {
 		    // net.isIP: 0(아님), 4, 6
 		    if (!net.isIP(address)) return false;
@@ -318,8 +353,9 @@ module.exports = (dependencies) => {
                  FROM pages p
                  LEFT JOIN collections c ON p.collection_id = c.id
                  LEFT JOIN collection_shares cs ON p.collection_id = cs.collection_id AND cs.shared_with_user_id = ?
-                 WHERE p.id = ? AND (p.user_id = ? OR c.user_id = ? OR cs.collection_id IS NOT NULL)`,
-                [userId, id, userId, userId]
+                 WHERE p.id = ? AND (p.user_id = ? OR c.user_id = ? OR cs.collection_id IS NOT NULL)
+                 AND NOT (p.is_encrypted = 1 AND p.share_allowed = 0 AND p.user_id != ?)`,
+                [userId, id, userId, userId, userId]
             );
 
             if (!rows.length) {
@@ -386,14 +422,19 @@ module.exports = (dependencies) => {
             typeof req.body.collectionId === "string" && req.body.collectionId.trim() !== ""
                 ? req.body.collectionId.trim()
                 : null;
-        const icon =
-            typeof req.body.icon === "string" && req.body.icon.trim() !== ""
-                ? req.body.icon.trim()
-                : null;
 
-        if (!collectionId) {
-            return res.status(400).json({ error: "collectionId가 필요합니다." });
+        let icon = null;
+        try {
+            icon = validateAndNormalizeIcon(req.body.icon);
+        } catch (e) {
+            if (e && e.code === "INVALID_ICON")
+                return res.status(400).json({ error: "유효하지 않은 아이콘 값입니다." });
+            throw e;
         }
+
+		if (!collectionId) {
+            return res.status(400).json({ error: "collectionId가 필요합니다." });
+		}
 
         try {
             const { permission } = await getCollectionPermission(collectionId, userId);
@@ -462,7 +503,18 @@ module.exports = (dependencies) => {
         const titleFromBody = typeof req.body.title === "string" ? sanitizeInput(req.body.title.trim()) : null;
         const contentFromBody = typeof req.body.content === "string" ? sanitizeHtmlContent(req.body.content) : null;
         const isEncryptedFromBody = typeof req.body.isEncrypted === "boolean" ? req.body.isEncrypted : null;
-        const iconFromBody = typeof req.body.icon === "string" ? req.body.icon.trim() : undefined;
+
+        let iconFromBody = undefined;
+        if (typeof req.body.icon === "string") {
+            try {
+                iconFromBody = validateAndNormalizeIcon(req.body.icon);
+            } catch (e) {
+                if (e && e.code === "INVALID_ICON")
+                    return res.status(400).json({ error: "유효하지 않은 아이콘 값입니다." });
+                throw e;
+            }
+        }
+
         const horizontalPaddingFromBody = typeof req.body.horizontalPadding === 'number' ?
             Math.max(0, Math.min(300, req.body.horizontalPadding)) : (req.body.horizontalPadding === null ? null : undefined);
 
@@ -836,17 +888,22 @@ module.exports = (dependencies) => {
                 const parts = imageUrl.split('/');
                 if (parts.length !== 2) continue;
 
-                const [imgUserId, filename] = parts;
+				const [imgUserId, filename] = parts;
 
-                // 해당 이미지를 참조하는 다른 페이지가 있는지 확인
+				// 소유자(업로드 사용자) 외에는 파일 삭제 금지
+                const imgUserIdNum = parseInt(imgUserId, 10);
+                if (!Number.isFinite(imgUserIdNum) || imgUserIdNum !== userId)
+                    continue;
+
+				// 해당 이미지를 참조하는 다른 페이지가 있는지 확인
                 const [contentRows] = await pool.execute(
-                    `SELECT COUNT(*) as count FROM pages WHERE user_id = ? AND content LIKE ?`,
-                    [userId, `%/imgs/${imageUrl}%`]
+                	`SELECT COUNT(*) as count FROM pages WHERE content LIKE ?`,
+                    [`%/imgs/${imageUrl}%`]
                 );
 
                 const [coverRows] = await pool.execute(
-                    `SELECT COUNT(*) as count FROM pages WHERE user_id = ? AND cover_image = ?`,
-                    [userId, imageUrl]
+                	`SELECT COUNT(*) as count FROM pages WHERE cover_image = ?`,
+                    [imageUrl]
                 );
 
                 const totalReferences = contentRows[0].count + coverRows[0].count;

@@ -280,23 +280,43 @@ export function renderPageList() {
                     const titleSpan = document.createElement("span");
                     titleSpan.className = "page-list-item-title";
 
-                    // 아이콘 표시 로직
-                    let iconHtml = '';
-                    if (node.icon) {
-                        // 사용자가 설정한 아이콘 표시
-                        if (node.icon.startsWith('fa-')) {
-                            // Font Awesome 아이콘
-                            iconHtml = `<i class="${node.icon}" style="margin-right: 6px; color: #2d5f5d;"></i>`;
-                        } else {
-                            // 이모지
-                            iconHtml = `<span style="margin-right: 6px; font-size: 16px;">${node.icon}</span>`;
-                        }
-                    } else if (node.isEncrypted) {
-                        // 암호화 페이지는 자물쇠 아이콘 표시
-                        iconHtml = `<i class="fa-solid fa-lock" style="margin-right: 6px; color: #2d5f5d;"></i>`;
-                    }
+                    // 아이콘 표시 로직 (innerHTML 사용 금지: DOM 기반으로 안전하게 렌더링)
+                    const iconEl = (() => {
+                        // 사용자 아이콘
+                        if (node.icon) {
+                            // Font Awesome class list (예: "fa-solid fa-star" 또는 "fa-star")
+                            if (node.icon.startsWith('fa-')) {
+                                const i = document.createElement('i');
+                                i.className = node.icon;
+                                i.style.marginRight = "6px";
+                                i.style.color = "#2d5f5d";
+                                return i;
+                            }
 
-                    titleSpan.innerHTML = iconHtml + escapeHtml(node.title || "제목 없음");
+                            // Emoji / plain text
+                            const s = document.createElement('span');
+                            s.style.marginRight = "6px";
+                            s.style.fontSize = "16px";
+                            s.textContent = node.icon;
+                            return s;
+                        }
+
+                        // 암호화 페이지는 자물쇠 아이콘 표시
+                        if (node.isEncrypted) {
+                            const i = document.createElement('i');
+                            i.className = "fa-solid fa-lock";
+                            i.style.marginRight = "6px";
+                            i.style.color = "#2d5f5d";
+                            return i;
+                        }
+
+                        return null;
+                    })();
+
+                    // 제목 (textContent 사용)
+                    titleSpan.textContent = "";
+                    if (iconEl) titleSpan.appendChild(iconEl);
+                    titleSpan.appendChild(document.createTextNode(node.title || "제목 없음"));
 
                     const dateSpan = document.createElement("span");
                     dateSpan.className = "page-list-item-date";
