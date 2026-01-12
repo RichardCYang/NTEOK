@@ -1536,7 +1536,12 @@ module.exports = (dependencies) => {
             const { permission } = await getCollectionPermission(page.collection_id, userId);
             if (!permission) {
                 return res.status(403).json({ error: "권한이 없습니다." });
-            }
+			}
+
+			// 보안: 발행 토큰(token)은 페이지 소유자(또는 ADMIN)에게만 공개
+			// - 공유받은 READ/EDIT 사용자는 published 여부만 알 수 있도록 제한
+			const isOwner = page.user_id === userId;
+			const isAdmin = permission === "ADMIN";
 
             const [publishRows] = await pool.execute(
                 `SELECT token, created_at FROM page_publish_links
@@ -1544,13 +1549,16 @@ module.exports = (dependencies) => {
                 [pageId]
             );
 
-            if (publishRows.length === 0) {
+            if (publishRows.length === 0)
                 return res.json({ published: false });
-            }
 
             const publish = publishRows[0];
 
-            res.json({
+            // 소유자/ADMIN이 아니면 token/url 노출 금지
+            if (!isOwner && !isAdmin)
+                return res.json({ published: true });
+
+            return res.json({
                 published: true,
                 token: publish.token,
                 url: `${process.env.BASE_URL || "https://localhost:3000"}/shared/page/${publish.token}`,

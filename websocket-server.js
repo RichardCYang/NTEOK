@@ -333,23 +333,52 @@ function initWebSocketServer(server, sessions, getCollectionPermission, pool, sa
             return;
         }
 
-        // Origin 검증 (CSRF 방지)
-        const origin = req.headers.origin || req.headers.referer;
-        if (origin) {
-            try {
-                const originUrl = new URL(origin);
-                const baseUrl = new URL(BASE_URL);
+        // Origin 검증 (CSWSH 방지 강화)
+        // - 기본 정책: Origin/Referer가 없으면 차단
+        // - 예외가 필요하면 WS_ALLOW_NO_ORIGIN=true 로 opt-in
+        const allowNoOrigin = String(process.env.WS_ALLOW_NO_ORIGIN || "false").toLowerCase() === "true";
 
-                // Origin의 호스트와 BASE_URL의 호스트가 일치하는지 확인
-                if (originUrl.host !== baseUrl.host) {
-                    console.warn(`[WS 보안] 잘못된 Origin에서의 연결 시도 차단 - Origin: ${originUrl.host}, 허용: ${baseUrl.host}, IP: ${clientIp}`);
+        // 허용 Origin 목록: ALLOWED_ORIGINS(콤마) 우선, 없으면 BASE_URL만 허용
+        let allowedOrigins = new Set();
+        try {
+            allowedOrigins = new Set(
+                String(process.env.ALLOWED_ORIGINS || BASE_URL || "")
+                    .split(",")
+                    .map(s => s.trim())
+                    .filter(Boolean)
+                    .map(u => new URL(u).origin)
+            );
+        } catch (_) {
+            // 파싱 실패 시 보수적으로 BASE_URL origin만 허용
+            try {
+                allowedOrigins = new Set([new URL(BASE_URL).origin]);
+            } catch {}
+        }
+
+        const originHeader = req.headers.origin;
+        const refererHeader = req.headers.referer;
+        let reqOrigin = null;
+        if (typeof originHeader === "string" && originHeader) reqOrigin = originHeader;
+        else if (typeof refererHeader === "string" && refererHeader) reqOrigin = new URL(refererHeader).origin;
+
+        if (!reqOrigin && !allowNoOrigin) {
+            console.warn(`[WS 보안] Origin/Referer 없는 연결 차단 - IP: ${clientIp}`);
+            ws.close(1008, 'Origin required');
+            return;
+        }
+
+		if (reqOrigin) {
+			try {
+				const originUrl = new URL(reqOrigin).origin;
+                if (!allowedOrigins.has(originUrl)) {
+                    console.warn(`[WS 보안] 허용되지 않은 Origin 차단 - Origin: ${originUrl}, IP: ${clientIp}`);
                     ws.close(1008, 'Invalid origin');
                     return;
                 }
 
-                // 프로토콜 검증 (프로덕션에서는 https만 허용)
-                if (IS_PRODUCTION && originUrl.protocol !== 'https:') {
-                    console.warn(`[WS 보안] HTTP Origin 연결 시도 차단 - Origin: ${origin}, IP: ${clientIp}`);
+                // 프로덕션에서는 https Origin만 허용(선택적으로 강화)
+                if (IS_PRODUCTION && originUrl.startsWith("http://")) {
+                    console.warn(`[WS 보안] HTTP Origin 차단(Production) - Origin: ${originUrl}, IP: ${clientIp}`);
                     ws.close(1008, 'HTTPS required in production');
                     return;
                 }
@@ -358,7 +387,7 @@ function initWebSocketServer(server, sessions, getCollectionPermission, pool, sa
                 ws.close(1008, 'Invalid origin format');
                 return;
             }
-        } else {
+		} else {
             // Origin 헤더가 없는 경우 (일부 클라이언트 라이브러리)
             // 프로덕션 환경에서는 차단, 개발 환경에서는 경고만
             if (IS_PRODUCTION) {
