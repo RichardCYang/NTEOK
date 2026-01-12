@@ -34,8 +34,20 @@ module.exports = (dependencies) => {
         BCRYPT_SALT_ROUNDS,
         logError,
         recordLoginAttempt,
-        checkCountryWhitelist
+        checkCountryWhitelist,
+        getClientIpFromRequest
     } = dependencies;
+
+    function getClientIp(req) {
+        return (
+            req.clientIp ||
+            (typeof getClientIpFromRequest === 'function' ? getClientIpFromRequest(req) : null) ||
+            req.ip ||
+            req.connection?.remoteAddress ||
+            req.socket?.remoteAddress ||
+            'unknown'
+        );
+    }
 
     /**
      * TOTP 활성화 상태 확인
@@ -247,7 +259,7 @@ module.exports = (dependencies) => {
                 await recordLoginAttempt(pool, {
                     userId: userId,
                     username: username,
-                    ipAddress: req.ip || req.connection.remoteAddress,
+                    ipAddress: getClientIp(req),
                     port: req.connection.remotePort || 0,
                     success: false,
                     failureReason: 'TOTP 인증 실패',
@@ -263,14 +275,14 @@ module.exports = (dependencies) => {
                     country_whitelist_enabled: country_whitelist_enabled,
                     allowed_login_countries: allowed_login_countries
                 },
-                req.ip || req.connection.remoteAddress
+                getClientIp(req)
             );
 
             if (!countryCheck.allowed) {
                 await recordLoginAttempt(pool, {
                     userId: userId,
                     username: username,
-                    ipAddress: req.ip || req.connection.remoteAddress,
+                    ipAddress: getClientIp(req),
                     port: req.connection.remotePort || 0,
                     success: false,
                     failureReason: countryCheck.reason,
@@ -326,7 +338,7 @@ module.exports = (dependencies) => {
             recordLoginAttempt(pool, {
                 userId: userId,
                 username: username,
-                ipAddress: req.ip || req.connection.remoteAddress,
+                ipAddress: getClientIp(req),
                 port: req.connection.remotePort || 0,
                 success: true,
                 failureReason: null,

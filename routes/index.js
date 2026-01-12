@@ -12,7 +12,7 @@ const router = express.Router();
  */
 
 module.exports = (dependencies) => {
-	const { getSessionFromRequest, fs, pool, logError } = dependencies;
+	const { getSessionFromRequest, fs, pool, logError, getClientIpFromRequest } = dependencies;
 
     function sendHtmlWithNonce(res, filename) {
         const filePath = path.join(__dirname, "..", "public", filename);
@@ -170,7 +170,7 @@ module.exports = (dependencies) => {
      */
     router.get("/api/shared/page/:token", async (req, res) => {
         const token = req.params.token;
-        const clientIp = req.ip || req.socket.remoteAddress || req.headers['x-forwarded-for'] || 'unknown';
+        const clientIp = typeof getClientIpFromRequest === 'function' ? getClientIpFromRequest(req) : (req.ip || req.socket?.remoteAddress || 'unknown');
 
         try {
             const [publishRows] = await pool.execute(

@@ -35,8 +35,20 @@ module.exports = (dependencies) => {
         authLimiter,
         recordLoginAttempt,
         maskIPAddress,
-        checkCountryWhitelist
+        checkCountryWhitelist,
+        getClientIpFromRequest
 	} = dependencies;
+
+    function getClientIp(req) {
+        return (
+            req.clientIp ||
+            (typeof getClientIpFromRequest === 'function' ? getClientIpFromRequest(req) : null) ||
+            req.ip ||
+            req.connection?.remoteAddress ||
+            req.socket?.remoteAddress ||
+            'unknown'
+        );
+    }
 
     /**
     * Login CSRF 방지: 로그인/회원가입은 CSRF 토큰이 없더라도 호출되기 쉬우므로,
@@ -113,7 +125,7 @@ module.exports = (dependencies) => {
                 await recordLoginAttempt(pool, {
                     userId: null,
                     username: trimmedUsername,
-                    ipAddress: req.ip || req.connection.remoteAddress,
+                    ipAddress: getClientIp(req),
                     port: req.connection.remotePort || 0,
                     success: false,
                     failureReason: '존재하지 않는 사용자',
@@ -133,7 +145,7 @@ module.exports = (dependencies) => {
                 await recordLoginAttempt(pool, {
                     userId: user.id,
                     username: user.username,
-                    ipAddress: req.ip || req.connection.remoteAddress,
+                    ipAddress: getClientIp(req),
                     port: req.connection.remotePort || 0,
                     success: false,
                     failureReason: '비밀번호 불일치',
@@ -158,7 +170,7 @@ module.exports = (dependencies) => {
                 await recordLoginAttempt(pool, {
                     userId: user.id,
                     username: user.username,
-                    ipAddress: req.ip || req.connection.remoteAddress,
+                    ipAddress: getClientIp(req),
                     port: req.connection.remotePort || 0,
                     success: false,
                     failureReason: countryCheck.reason,
@@ -243,7 +255,7 @@ module.exports = (dependencies) => {
             recordLoginAttempt(pool, {
                 userId: user.id,
                 username: user.username,
-                ipAddress: req.ip || req.connection.remoteAddress,
+                ipAddress: getClientIp(req),
                 port: req.connection.remotePort || 0,
                 success: true,
                 failureReason: null,

@@ -6,7 +6,8 @@ const mysql = require("mysql2/promise");
 const bcrypt = require("bcrypt");
 const cookieParser = require("cookie-parser");
 const crypto = require("crypto");
-const rateLimit = require("express-rate-limit");
+const expressRateLimit = require("express-rate-limit");
+const rateLimit = expressRateLimit.rateLimit || expressRateLimit;
 const DOMPurify = require("isomorphic-dompurify");
 const speakeasy = require("speakeasy");
 const QRCode = require("qrcode");
@@ -17,6 +18,15 @@ const certManager = require("./cert-manager");
 const multer = require("multer");
 const fs = require("fs");
 const compression = require("compression");
+const ipKeyGenerator = expressRateLimit.ipKeyGenerator || (expressRateLimit.default && expressRateLimit.default.ipKeyGenerator);
+
+if (typeof ipKeyGenerator !== "function")
+	throw new Error("express-rate-limit의 ipKeyGenerator를 찾지 못했습니다. 라이브러리 버전을 확인해 주세요.");
+
+const RATE_LIMIT_IPV6_SUBNET = (() => {
+    const n = Number(process.env.RATE_LIMIT_IPV6_SUBNET || 56);
+    return Number.isFinite(n) ? n : 56;
+})();
 
 // 분리된 모듈 import
 const {
@@ -25,7 +35,9 @@ const {
     checkCountryWhitelist,
     maskIPAddress,
     formatDateForDb,
-    recordLoginAttempt
+    recordLoginAttempt,
+    getClientIpFromRequest,
+    normalizeIp
 } = require("./network-utils");
 
 const {
@@ -56,6 +68,15 @@ app.use(compression({
     threshold: 1024 // 1KB 이상만 압축
 }));
 
+// req.clientIp 에 실제 클라이언트 IP를 저장.
+// - 직접 접속: remoteAddress
+// - 같은 호스트 리버스 프록시: X-Forwarded-For / X-Real-IP 반영
+// - 그 외 프록시: TRUST_PROXY_CIDRS로 명시적으로 허용한 프록시만 신뢰
+app.use((req, res, next) => {
+    req.clientIp = getClientIpFromRequest(req);
+    next();
+});
+
 // 세션 / 인증 관련 설정
 const SESSION_COOKIE_NAME = "nteok_session";
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7; // 7일 (idle timeout)
@@ -64,26 +85,43 @@ const CSRF_COOKIE_NAME = "nteok_csrf";
 const IS_PRODUCTION = process.env.NODE_ENV === "production";
 const BASE_URL = process.env.BASE_URL || (IS_PRODUCTION ? "https://localhost:3000" : "http://localhost:3000");
 
-// 보안 개선: 기본 관리자 계정 비밀번호를 강제로 변경하도록 경고
-// 환경변수로 설정하지 않으면 무작위 비밀번호를 생성하고 콘솔에 출력
-const DEFAULT_ADMIN_USERNAME = process.env.ADMIN_USERNAME || "admin";
-const DEFAULT_ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || crypto.randomBytes(16).toString("hex");
-const BCRYPT_SALT_ROUNDS = Number(process.env.BCRYPT_SALT_ROUNDS || 12);
+function getClientIp(req) {
+    // trust proxy가 설정되면 req.ips가 채워짐(최초가 원 클라이언트)
+    const ips = Array.isArray(req.ips) ? req.ips : [];
+    const candidate = ips.length > 0 ? ips[0] : req.socket?.remoteAddress;
+    return normalizeIp(candidate);
+}
 
-// 기본 비밀번호가 환경변수로 설정되지 않았다면 경고 메시지 출력
-if (!process.env.ADMIN_PASSWORD) {
+// 보안 개선: 기본 관리자 계정 비밀번호를 강제로 변경하도록 경고
+// 운영(PROD)에서는 ADMIN_PASSWORD 미설정 상태로 부팅하지 않도록 fail-closed 처리
+const DEFAULT_ADMIN_USERNAME = process.env.ADMIN_USERNAME || "admin";
+
+let DEFAULT_ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
+if (!DEFAULT_ADMIN_PASSWORD) {
+    if (IS_PRODUCTION) {
+        console.error("\n" + "=".repeat(80));
+        console.error("❌ 프로덕션 환경에서 ADMIN_PASSWORD가 설정되지 않았습니다.");
+        console.error("   - 보안을 위해 랜덤 비밀번호를 생성/로그로 출력하지 않습니다.");
+        console.error("   - .env 또는 배포 환경변수에 ADMIN_PASSWORD를 설정한 뒤 다시 실행하세요.");
+        console.error("=".repeat(80) + "\n");
+        process.exit(1);
+    }
+
+    // 개발/로컬 환경: 편의상 임시 랜덤 비밀번호 생성 + 콘솔 경고
+    DEFAULT_ADMIN_PASSWORD = crypto.randomBytes(16).toString("hex");
     console.warn("\n" + "=".repeat(80));
-    console.warn("⚠️  보안 경고: 기본 관리자 비밀번호가 환경변수로 설정되지 않았습니다!");
+    console.warn("⚠️  보안 경고: 기본 관리자 비밀번호가 환경변수로 설정되지 않았습니다! (개발/로컬)");
     console.warn(`   관리자 계정: ${DEFAULT_ADMIN_USERNAME}`);
     console.warn(`   임시 비밀번호: ${DEFAULT_ADMIN_PASSWORD}`);
     console.warn("   첫 로그인 후 반드시 비밀번호를 변경하세요!");
-    console.warn("   프로덕션 환경에서는 ADMIN_PASSWORD 환경변수를 반드시 설정하세요.");
     console.warn("=".repeat(80) + "\n");
 }
 
+const BCRYPT_SALT_ROUNDS = Number(process.env.BCRYPT_SALT_ROUNDS || 12);
+
 // 프로덕션 환경에서 필수 환경변수 검증
 if (IS_PRODUCTION) {
-    const requiredEnvVars = ['DB_HOST', 'DB_USER', 'DB_PASSWORD', 'DB_NAME', 'BASE_URL'];
+    const requiredEnvVars = ['DB_HOST', 'DB_USER', 'DB_PASSWORD', 'DB_NAME', 'BASE_URL', 'ADMIN_PASSWORD'];
     const missingVars = requiredEnvVars.filter(key => !process.env[key]);
 
     if (missingVars.length > 0) {
@@ -519,7 +557,7 @@ function authMiddleware(req, res, next) {
         const sessionId = req.cookies[SESSION_COOKIE_NAME];
         // 보안: 세션 ID 일부만 표시
         const maskedSessionId = sessionId ? `${sessionId.substring(0, 8)}...` : '없음';
-        console.warn(`[인증 실패] ${req.method} ${req.path} - 세션 ID: ${maskedSessionId}, 유효한 세션: 없음, IP: ${req.ip}`);
+        console.warn(`[인증 실패] ${req.method} ${req.path} - 세션 ID: ${maskedSessionId}, 유효한 세션: 없음, IP: ${req.clientIp || req.ip}`);
         return res.status(401).json({ error: "로그인이 필요합니다." });
     }
 
@@ -1120,6 +1158,7 @@ const generalLimiter = rateLimit({
     message: { error: "너무 많은 요청이 발생했습니다. 잠시 후 다시 시도해 주세요." },
     standardHeaders: true,
     legacyHeaders: false,
+    keyGenerator: (req) => ipKeyGenerator(req.clientIp, RATE_LIMIT_IPV6_SUBNET)
 });
 
 // 로그인/회원가입 레이트 리밋 (브루트포스 방지)
@@ -1129,6 +1168,7 @@ const authLimiter = rateLimit({
     message: { error: "너무 많은 로그인 시도가 발생했습니다. 15분 후 다시 시도해 주세요." },
     standardHeaders: true,
     legacyHeaders: false,
+    keyGenerator: (req) => ipKeyGenerator(req.clientIp, RATE_LIMIT_IPV6_SUBNET),
     skipSuccessfulRequests: true, // 성공한 요청은 카운트하지 않음
 });
 
@@ -1139,6 +1179,7 @@ const totpLimiter = rateLimit({
     message: { error: "너무 많은 인증 시도가 발생했습니다. 15분 후 다시 시도해 주세요." },
     standardHeaders: true,
     legacyHeaders: false,
+    keyGenerator: (req) => ipKeyGenerator(req.clientIp, RATE_LIMIT_IPV6_SUBNET)
 });
 
 // 패스키 인증 레이트 리밋 (브루트포스 방지)
@@ -1148,6 +1189,7 @@ const passkeyLimiter = rateLimit({
     message: { error: "너무 많은 패스키 인증 요청이 발생했습니다. 잠시 후 다시 시도해 주세요." },
     standardHeaders: true,
     legacyHeaders: false,
+    keyGenerator: (req) => ipKeyGenerator(req.clientIp, RATE_LIMIT_IPV6_SUBNET)
 });
 
 // SSE 연결 레이트 리밋
@@ -1157,7 +1199,7 @@ const sseConnectionLimiter = rateLimit({
     message: { error: "SSE 연결 제한 초과" },
     standardHeaders: true,
     legacyHeaders: false,
-    keyGenerator: (req) => req.user?.id?.toString() || 'anonymous'
+    keyGenerator: (req) => (req.user?.id ? `user:${req.user.id}` : ipKeyGenerator(req.clientIp, RATE_LIMIT_IPV6_SUBNET))
 });
 
 // WebSocket 및 실시간 동기화 기능은 websocket-server.js 모듈로 이동됨
@@ -1170,6 +1212,7 @@ app.use(cookieParser());
 
 // CSP nonce 생성 (요청마다 새로 발급)
 app.use((req, res, next) => {
+	req.clientIp = getClientIp(req);
 	res.locals.cspNonce = crypto.randomBytes(16).toString("base64");
 	next();
 });
@@ -1526,7 +1569,8 @@ function getSessionFromId(sessionId) {
             getLocationFromIP,
             maskIPAddress,
             isPrivateOrLocalIP,
-            checkCountryWhitelist
+            checkCountryWhitelist,
+            getClientIpFromRequest
         };
 
         // 라우트 파일 Import
