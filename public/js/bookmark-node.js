@@ -3,7 +3,7 @@
  * URL에서 메타데이터를 추출하여 북마크 카드를 표시하는 커스텀 노드
  */
 
-import { secureFetch } from './ui-utils.js';
+import { secureFetch, addIcon } from './ui-utils.js';
 
 const Node = Tiptap.Core.Node;
 
@@ -588,7 +588,7 @@ export const BookmarkContainerBlock = Node.create({
                         btn.title = iconValue;
 
                         if (tab === 'theme') {
-                            btn.innerHTML = `<i class="${iconValue}"></i>`;
+							addIcon(btn, iconValue);
                         } else {
                             btn.textContent = iconValue;
                         }

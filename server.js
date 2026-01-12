@@ -1207,8 +1207,18 @@ const sseConnectionLimiter = rateLimit({
 /**
  * 미들웨어 설정
  */
-app.use(express.json());
+
+// 보안: JSON 바디 크기 제한(DoS 완화)
+// 필요하면 .env에서 JSON_BODY_LIMIT=2mb 등으로 조정
+const JSON_BODY_LIMIT = process.env.JSON_BODY_LIMIT || "1mb";
+app.use(express.json({ limit: JSON_BODY_LIMIT }));
+
+// urlencoded를 쓰는 폼 요청이 있다면 함께 제한(없으면 유지해도 무방)
+app.use(express.urlencoded({ extended: false, limit: JSON_BODY_LIMIT }));
 app.use(cookieParser());
+
+// 정보 노출 완화 (헤더 불필요한 정보 제거)
+app.disable("x-powered-by");
 
 // CSP nonce 생성 (요청마다 새로 발급)
 app.use((req, res, next) => {

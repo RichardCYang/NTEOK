@@ -26,6 +26,20 @@ export function escapeHtml(text) {
 }
 
 /**
+ * XSS 방지용 버튼 아이콘 추가 함수
+ */
+export function addIcon(button, icon) {
+	// 보안: innerHTML 대신 DOM API 사용 (DOM XSS 방지)
+	button.textContent = "";
+	const iEl = document.createElement("i");
+	// icon은 서버에서 정규화되더라도 프런트에서 한 번 더 방어
+	// (허용 문자 외 제거: 공백, 하이픈, 언더스코어 정도만 허용)
+	const safeIcon = String(icon || "").replace(/[^a-zA-Z0-9 _-]/g, "").trim();
+	iEl.className = safeIcon;
+	button.appendChild(iEl);
+}
+
+/**
  * 에디터에 에러 메시지 표시
  */
 export function showErrorInEditor(message, editor) {

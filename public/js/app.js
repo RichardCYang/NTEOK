@@ -4,7 +4,7 @@
  */
 
 // ==================== Imports ====================
-import { secureFetch, escapeHtml, showErrorInEditor, closeAllDropdowns, openDropdown, showContextMenu, closeContextMenu } from './ui-utils.js';
+import { secureFetch, escapeHtml, showErrorInEditor, closeAllDropdowns, openDropdown, showContextMenu, closeContextMenu, addIcon } from './ui-utils.js';
 import { initEditor, bindToolbar, bindSlashKeyHandlers, updateToolbarState } from './editor.js';
 import {
     initPagesManager,
@@ -1475,8 +1475,8 @@ function renderIconGrid() {
 
         if (currentIconTab === 'theme') {
             // Font Awesome 아이콘
-            button.innerHTML = `<i class="${icon}"></i>`;
-        } else {
+			addIcon(button, icon);
+		} else {
             // 이모지
             button.textContent = icon;
             button.style.fontSize = '24px';

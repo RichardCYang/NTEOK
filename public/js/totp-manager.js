@@ -100,7 +100,19 @@ export async function openTotpSetupModal() {
             const qrcodeEl = document.querySelector('#totp-qrcode');
             const secretEl = document.querySelector('#totp-secret-display');
             if (qrcodeEl) {
-                qrcodeEl.innerHTML = `<img src="${data.qrCode}" alt="QR Code" style="max-width: 200px;">`;
+            	// 보안: innerHTML 대신 DOM API 사용
+                qrcodeEl.textContent = "";
+                const img = document.createElement("img");
+                // qrCode는 일반적으로 data:image/png;base64,... 형태를 기대
+                const src = String(data.qrCode || "");
+                if (!src.startsWith("data:image/")) {
+                    // 예상치 못한 스키마 차단
+                    throw new Error("Invalid QR code image source");
+                }
+                img.src = src;
+                img.alt = "QR Code";
+                img.style.maxWidth = "200px";
+                qrcodeEl.appendChild(img);
             }
             if (secretEl) {
                 secretEl.textContent = data.secret;
