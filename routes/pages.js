@@ -35,6 +35,7 @@ module.exports = (dependencies) => {
         generatePublishToken,
         coverUpload,
         editorImageUpload,
+        outboundFetchLimiter,
         path,
         fs
     } = dependencies;
@@ -1338,7 +1339,7 @@ module.exports = (dependencies) => {
      * 북마크 메타데이터 추출
      * POST /api/pages/:id/bookmark-metadata
      */
-    router.post("/:id/bookmark-metadata", authMiddleware, async (req, res) => {
+    router.post("/:id/bookmark-metadata", authMiddleware, outboundFetchLimiter, async (req, res) => {
         const pageId = req.params.id;
         const userId = req.user.id;
         const { url } = req.body;
@@ -1438,7 +1439,7 @@ module.exports = (dependencies) => {
      * 북마크 이미지 프록시 (CSP 정책 우회)
      * GET /api/pages/proxy/image?url=...
      */
-    router.get("/proxy/image", authMiddleware, async (req, res) => {
+    router.get("/proxy/image", authMiddleware, outboundFetchLimiter, async (req, res) => {
         const { url } = req.query;
 
         try {

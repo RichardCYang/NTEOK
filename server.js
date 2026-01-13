@@ -1202,6 +1202,16 @@ const sseConnectionLimiter = rateLimit({
     keyGenerator: (req) => (req.user?.id ? `user:${req.user.id}` : ipKeyGenerator(req.clientIp, RATE_LIMIT_IPV6_SUBNET))
 });
 
+// 외부 fetch(프록시/메타데이터) 전용 레이트 리밋
+const outboundFetchLimiter = rateLimit({
+    windowMs: 1 * 60 * 1000,
+    max: 20,
+    message: { error: "외부 리소스 요청이 너무 많습니다. 잠시 후 다시 시도해 주세요." },
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) => (req.user?.id ? `user:${req.user.id}` : ipKeyGenerator(req.clientIp, RATE_LIMIT_IPV6_SUBNET))
+});
+
 // WebSocket 및 실시간 동기화 기능은 websocket-server.js 모듈로 이동됨
 
 /**
@@ -1563,6 +1573,7 @@ function getSessionFromId(sessionId) {
             authLimiter,
             totpLimiter,
             passkeyLimiter,
+            outboundFetchLimiter,
             sseConnectionLimiter,
             SESSION_COOKIE_NAME,
             CSRF_COOKIE_NAME,
