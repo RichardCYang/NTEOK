@@ -407,11 +407,6 @@ body {
     color: #2d2d2d;
 }
 
-.page-list-item-date {
-    font-size: 11px;
-    color: #6b7280;
-}
-
 /* 에디터 영역 */
 .editor-area {
     flex: 1;
@@ -430,6 +425,18 @@ body {
     line-height: 1.5;
     box-sizing: border-box;
     color: #1a1a1a;
+}
+
+/* 페이지 업데이트 시간 표시 (문서 메인 영역 상단) */
+.page-updated-at-container {
+    padding: 12px 16px 8px;
+    border-bottom: 1px solid #e5e7eb;
+}
+
+.page-updated-at {
+    font-size: 12px;
+    color: #6b7280;
+    line-height: 1.4;
 }
 
 .editor-actions {

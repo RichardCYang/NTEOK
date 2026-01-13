@@ -318,14 +318,7 @@ export function renderPageList() {
                     if (iconEl) titleSpan.appendChild(iconEl);
                     titleSpan.appendChild(document.createTextNode(node.title || "제목 없음"));
 
-                    const dateSpan = document.createElement("span");
-                    dateSpan.className = "page-list-item-date";
-                    dateSpan.textContent = node.updatedAt
-                        ? new Date(node.updatedAt).toLocaleString()
-                        : "";
-
                     titleWrap.appendChild(titleSpan);
-                    titleWrap.appendChild(dateSpan);
 
                     const pageMenuBtn = document.createElement("button");
                     pageMenuBtn.type = "button";
@@ -663,6 +656,18 @@ export async function loadPage(id) {
         const titleInput = document.querySelector("#page-title-input");
         if (titleInput) {
             titleInput.value = title;
+        }
+
+        // 페이지 업데이트 시간 표시
+        const updatedAtContainer = document.querySelector("#page-updated-at-container");
+        const updatedAtEl = document.querySelector("#page-updated-at");
+        if (updatedAtContainer && updatedAtEl) {
+            if (page.updatedAt) {
+                updatedAtEl.textContent = new Date(page.updatedAt).toLocaleString();
+                updatedAtContainer.style.display = "block";
+            } else {
+                updatedAtContainer.style.display = "none";
+            }
         }
 
         if (state.editor) {
