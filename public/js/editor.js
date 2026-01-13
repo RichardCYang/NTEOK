@@ -494,10 +494,105 @@ let slashMenuEl = null;
 let slashActiveIndex = 0;
 let slashState = {
     active: false,
+    ready: false,
     fromPos: null,
     filterText: '',
     filteredItems: []
 };
+
+/**
+ * 현재 pos가 속한 가장 가까운 textblock(문단/제목/테이블 셀 내 문단 등)의 시작 포지션을 반환
+ * - slash 명령은 "같은 textblock 안"에서만 유효해야 하므로 context 검증에 사용
+ */
+function getNearestTextblockStart(doc, pos) {
+    const $pos = doc.resolve(pos);
+    for (let d = $pos.depth; d > 0; d--) {
+        const node = $pos.node(d);
+        if (node && node.isTextblock)
+            return $pos.start(d);
+    }
+    return null;
+}
+
+/**
+ * slash 메뉴가 계속 열려있어야 하는 컨텍스트인지 검증
+ * - 슬래시가 실제로 존재해야 함
+ * - 커서는 슬래시 뒤에 있어야 함
+ * - 커서/슬래시가 같은 textblock에 있어야 함
+ * - 범위 선택(드래그 선택 등) 상태면 닫음
+ */
+function isSlashContextValid(editor) {
+    if (!slashState.active || typeof slashState.fromPos !== 'number') return false;
+
+    const { doc, selection } = editor.state;
+    if (!selection.empty) return false;
+
+    // 커서가 슬래시 앞(또는 동일 위치)으로 이동하면 더 이상 slash 명령 컨텍스트가 아님
+    if (selection.from < slashState.fromPos + 1) return false;
+
+    // 동일 textblock 안에서만 유효
+    const selBlockStart = getNearestTextblockStart(doc, selection.from);
+    const slashBlockStart = getNearestTextblockStart(doc, slashState.fromPos);
+    if (selBlockStart == null || slashBlockStart == null || selBlockStart !== slashBlockStart)
+        return false;
+
+    // fromPos 위치의 문자가 정말 "/"인지 확인
+    try {
+        const char = doc.textBetween(slashState.fromPos, slashState.fromPos + 1);
+        if (char !== '/') return false;
+    } catch {
+        return false;
+    }
+
+    return true;
+}
+
+/**
+ * slash 메뉴 상태를 에디터 상태(doc/selection)에 맞게 동기화
+ * - keydown에서 열린 직후에는 doc에 '/'가 아직 없을 수 있으므로(ready=false) 그 전엔 닫지 않음
+ * - '/'가 실제로 doc에 들어온 이후(ready=true)부터는 엄격하게 컨텍스트 검증
+ */
+function syncSlashMenu(editor) {
+    if (!slashState.active || slashState.fromPos === null) return;
+
+    const { doc, selection } = editor.state;
+
+    // 범위 선택이면 slash 컨텍스트가 아님
+    if (!selection.empty) {
+        closeSlashMenu();
+        return;
+    }
+
+    // 커서가 '/' 이전(또는 같은 위치)으로 오면 닫기
+    if (selection.from <= slashState.fromPos) {
+        closeSlashMenu();
+        return;
+    }
+
+    // keydown 직후 첫 업데이트에서 '/'가 실제로 삽입되었는지 확인 -> ready 전환
+    try {
+        const ch = doc.textBetween(slashState.fromPos, slashState.fromPos + 1);
+        if (ch === "/") {
+            slashState.ready = true;
+        } else {
+            // 아직 '/'가 doc에 없으면(삽입 전 프레임) 닫지 말고 대기
+            if (!slashState.ready) return;
+            // ready인데 '/'가 아니라면(삭제/치환됨) 닫기
+            closeSlashMenu();
+            return;
+        }
+    } catch (e) {
+        closeSlashMenu();
+        return;
+    }
+
+    // 필터 텍스트/목록 업데이트
+    const text = getSlashCommandText(editor);
+    if (text === slashState.filterText) return;
+    slashState.filterText = text;
+    slashState.filteredItems = filterSlashItems(text);
+    renderSlashMenuItems();
+}
 
 /**
  * 슬래시 메뉴 필터링 함수
@@ -622,6 +717,7 @@ function openSlashMenu(coords, fromPos, editor) {
     }
 
     slashState.active = true;
+    slashState.ready = false;
     slashState.fromPos = fromPos;
     slashState.editor = editor;
     slashState.filterText = '';
@@ -662,12 +758,15 @@ function openSlashMenu(coords, fromPos, editor) {
  */
 function closeSlashMenu() {
     slashState.active = false;
+    slashState.ready = false;
     slashState.fromPos = null;
     slashState.editor = null;
     slashState.filterText = '';
     slashState.filteredItems = [];
     if (slashMenuEl) {
         slashMenuEl.classList.add("hidden");
+		// 열기(open)에서 visibility를 쓰기 때문에 닫을 때도 명시적으로 숨김
+		slashMenuEl.style.visibility = "hidden";
     }
 }
 
@@ -799,6 +898,28 @@ export function bindSlashKeyHandlers(editor) {
                 return;
             }
 
+            // '/' 자체가 삭제되는 케이스면 즉시 닫기 (onUpdate 타이밍 꼬임 방지)
+            if ((event.key === "Backspace" || event.key === "Delete") && slashState.fromPos !== null) {
+                const sel = editor.state.selection;
+                if (!sel.empty) {
+                    // 선택 범위가 '/'를 포함하면 닫기
+                    if (sel.from <= slashState.fromPos && sel.to >= slashState.fromPos + 1) {
+                        closeSlashMenu();
+                    }
+                    return;
+                }
+                // 커서가 '/' 바로 뒤에서 Backspace -> '/' 삭제
+                if (event.key === "Backspace" && sel.from === slashState.fromPos + 1) {
+                    closeSlashMenu();
+                    return;
+                }
+                // 커서가 '/' 바로 앞에서 Delete -> '/' 삭제
+                if (event.key === "Delete" && sel.from === slashState.fromPos) {
+                    closeSlashMenu();
+                    return;
+                }
+            }
+
             // "/" 다음 문자가 입력/삭제되면 메뉴 필터링 업데이트
             // 실제 입력은 에디터의 기본 동작에 맡기고,
             // 다음 업데이트에서 필터링 적용
@@ -901,12 +1022,25 @@ export function initEditor() {
         content: "<p>불러오는 중...</p>",
         onSelectionUpdate() {
             updateToolbarState(editor);
+            // 문서 변경 없이 커서만 이동해도(←/→ 클릭 이동) 메뉴 컨텍스트가 깨지면 닫혀야 함
+            if (slashState.active)
+            	syncSlashMenu(editor);
         },
-        onTransaction() {
+        onTransaction({ transaction }) {
             updateToolbarState(editor);
+
             // 크기 조절 중이 아닐 때만 핸들 재생성
             if (!isResizingTable) {
                 setTimeout(() => addTableResizeHandles(editor), 50);
+            }
+
+            // doc이 바뀌면 fromPos가 틀어질 수 있어 mapping 보정(삽입 경계 왼쪽에 붙도록 assoc=-1)
+            if (slashState.active && slashState.fromPos !== null && transaction?.docChanged) {
+                try {
+                    slashState.fromPos = transaction.mapping.map(slashState.fromPos, -1);
+                } catch (e) {
+                    closeSlashMenu();
+                }
             }
         },
         onCreate() {
@@ -918,33 +1052,9 @@ export function initEditor() {
             // 내용 업데이트 시 핸들 재생성
             setTimeout(() => addTableResizeHandles(editor), 50);
 
-            // 슬래시 메뉴 필터링 업데이트
-            if (slashState.active) {
-                const selection = editor.state.selection;
-
-                // "/" 문자가 삭제되었거나, 커서가 "/" 이전으로 이동했으면 메뉴 닫기
-                if (slashState.fromPos !== null && selection.from <= slashState.fromPos) {
-                    closeSlashMenu();
-                    return;
-                }
-
-                // fromPos 위치의 문자가 정말 "/"인지 확인
-                try {
-                    const char = editor.state.doc.textBetween(slashState.fromPos, slashState.fromPos + 1);
-                    if (char !== '/') {
-                        closeSlashMenu();
-                        return;
-                    }
-                } catch (e) {
-                    closeSlashMenu();
-                    return;
-                }
-
-                const text = getSlashCommandText(editor);
-                slashState.filterText = text;
-                slashState.filteredItems = filterSlashItems(text);
-                renderSlashMenuItems();
-            }
+			// 슬래시 메뉴 동기화(삭제/이동/필터 등)
+			if (slashState.active)
+				syncSlashMenu(editor);
         }
     });
 
