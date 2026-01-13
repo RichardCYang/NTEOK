@@ -556,15 +556,19 @@ function syncSlashMenu(editor) {
     if (!slashState.active || slashState.fromPos === null) return;
 
     const { doc, selection } = editor.state;
+    const composing = !!editor?.view?.composing;
 
     // 범위 선택이면 slash 컨텍스트가 아님
-    if (!selection.empty) {
+	// IME(한글/일본어/중국어 등) 조합 중에는 ProseMirror 상태(selection/doc)가
+	// 실제 화면(DOM)과 잠시 불일치할 수 있어, 이 타이밍에 닫아버리면
+	// 초성만 남고 입력이 끊기는 현상이 생길 수 있음.
+    if (!selection.empty && !composing) {
         closeSlashMenu();
         return;
     }
 
     // 커서가 '/' 이전(또는 같은 위치)으로 오면 닫기
-    if (selection.from <= slashState.fromPos) {
+    if (!composing && selection.from <= slashState.fromPos) {
         closeSlashMenu();
         return;
     }
@@ -842,14 +846,32 @@ function runSlashCommandActive() {
 function getSlashCommandText(editor) {
     if (!slashState.active || slashState.fromPos === null) return '';
 
-    const selection = editor.state.selection;
+    const view = editor?.view;
     const from = slashState.fromPos + 1; // "/" 다음 위치부터
-    const to = selection.from;
 
-    if (to <= from) return '';
+    // IME 조합 중에는 state.doc/state.selection이 즉시 반영되지 않아
+    // textBetween 결과가 "ㄱ" 처럼 초성만 나오거나 아예 갱신이 멈출 수 있음.
+    // 이때는 DOM selection 기준으로 범위를 잘라 실제 화면에 보이는 텍스트를 사용.
+    if (view?.composing) {
+        try {
+            const sel = view.dom.ownerDocument.getSelection();
+            if (!sel || sel.rangeCount === 0) return '';
+            if (!sel.focusNode || !view.dom.contains(sel.focusNode)) return '';
 
-    const text = editor.state.doc.textBetween(from, to);
-    return text;
+            const start = view.domAtPos(from);
+            const range = view.dom.ownerDocument.createRange();
+            range.setStart(start.node, start.offset);
+            range.setEnd(sel.focusNode, sel.focusOffset);
+            return range.toString();
+        } catch {
+            return '';
+        }
+    }
+
+	const selection = editor.state.selection;
+	const to = selection.from;
+	if (to <= from) return '';
+	return editor.state.doc.textBetween(from, to);
 }
 
 /**
@@ -858,6 +880,11 @@ function getSlashCommandText(editor) {
 export function bindSlashKeyHandlers(editor) {
     document.addEventListener("keydown", (event) => {
         if (!editor) return;
+
+        // IME 조합(한글/일본어/중국어 등) 중에는 Enter/Arrow 등이
+        // 조합 확정/후보 선택에 쓰일 수 있으므로 slash 메뉴 단축키로 가로채면
+        // 조합이 깨져 초성만 남고 입력이 멈추는 현상이 발생할 수 있음.
+        const composing = !!(event.isComposing || editor?.view?.composing || event.key === 'Process' || event.keyCode === 229);
 
         const target = event.target;
         const inEditor = target && target.closest && target.closest(".ProseMirror");
@@ -877,6 +904,11 @@ export function bindSlashKeyHandlers(editor) {
 
         // 슬래시 메뉴가 열려 있을 때의 키 처리
         if (slashState.active) {
+			// IME 조합 중엔 메뉴 내 키바인딩을 적용하지 않고, 입력 자체를 우선.
+			// (필터링은 composition 이벤트에서 DOM 기준으로 동기화)
+			if (composing)
+			    return;
+
             if (event.key === "ArrowDown") {
                 event.preventDefault();
                 moveSlashActive(1);
@@ -931,9 +963,18 @@ export function bindSlashKeyHandlers(editor) {
         }
     });
 
-    // 에디터 업데이트 시 슬래시 메뉴 필터링 업데이트
-    // 이 부분은 bindSlashKeyHandlers가 아니라 initEditor에서 처리하는 것이 좋음
-    // editor의 onUpdate 콜백에서 메뉴 필터링 실행
+    // IME 조합 중에는 editor.onUpdate가 즉시 호출되지 않는 경우가 있어
+    // composition 이벤트에서 필터 텍스트를 DOM 기준으로 동기화한다.
+    // (bindSlashKeyHandlers가 여러 번 호출될 수 있으므로 한 번만 바인딩)
+    if (!bindSlashKeyHandlers.__imeBound && editor?.view?.dom) {
+        bindSlashKeyHandlers.__imeBound = true;
+        const dom = editor.view.dom;
+        const sync = () => {
+            if (slashState.active) syncSlashMenu(editor);
+        };
+        dom.addEventListener('compositionupdate', sync);
+        dom.addEventListener('compositionend', sync);
+    }
 
     // 외부 영역 클릭 시 슬래시 메뉴 닫기
     document.addEventListener("click", (event) => {
