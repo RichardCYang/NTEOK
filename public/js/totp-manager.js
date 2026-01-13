@@ -2,6 +2,8 @@
  * TOTP 2단계 인증 관리 모듈
  */
 
+import { hideParentModalForChild, restoreParentModalFromChild } from './modal-parent-manager.js';
+
 /**
  * CSRF 쿠키 가져오기
  */
@@ -63,6 +65,9 @@ export async function openTotpSetupModal() {
 
     if (!modal) return;
 
+	// 보안 설정 모달(부모)을 잠깐 닫고, TOTP 모달만 단독으로 띄움
+	hideParentModalForChild('#security-settings-modal', modal);
+
     // 모든 단계 숨기기
     if (step1) step1.style.display = 'none';
     if (step2) step2.style.display = 'none';
@@ -91,6 +96,8 @@ export async function openTotpSetupModal() {
 
             if (!response.ok) {
                 alert('TOTP 설정을 시작할 수 없습니다.');
+				// 부모 모달 복구
+				restoreParentModalFromChild(modal);
                 return;
             }
 
@@ -130,6 +137,8 @@ export async function openTotpSetupModal() {
         } catch (error) {
             console.error('TOTP 설정 실패:', error);
             alert('TOTP 설정 중 오류가 발생했습니다.');
+			// 부모 모달 복구
+			restoreParentModalFromChild(modal);
             return;
         }
     }
@@ -144,6 +153,8 @@ export function closeTotpSetupModal() {
     const modal = document.querySelector('#totp-setup-modal');
     if (modal) {
         modal.classList.add('hidden');
+		// 부모 모달(보안 설정) 복구
+		restoreParentModalFromChild(modal);
     }
 }
 

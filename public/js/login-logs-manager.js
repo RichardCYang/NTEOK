@@ -3,6 +3,8 @@
  * 로그인 성공/실패 기록을 조회하고 표시하는 기능을 제공합니다.
  */
 
+import { hideParentModalForChild, restoreParentModalFromChild } from './modal-parent-manager.js';
+
 // 페이지네이션 설정
 const LOGS_PER_PAGE = 20;
 let currentPage = 1;
@@ -242,10 +244,15 @@ function goToPage(page) {
  * 로그인 로그 모달 열기
  */
 function openLoginLogsModal() {
-    const modal = document.getElementById('login-logs-modal');
-    modal.style.display = 'flex';
+	const modal = document.getElementById('login-logs-modal');
+	if (!modal) return;
 
-    // 데이터 로드
+	// 보안 설정 모달(부모)을 잠깐 닫고, 로그인 로그 모달만 단독으로 띄움
+	hideParentModalForChild('#security-settings-modal', modal);
+
+	modal.classList.remove('hidden');
+
+	// 데이터 로드
     currentPage = 1;
     loadLoginLogsStats();
     loadLoginLogs(1);
@@ -255,8 +262,13 @@ function openLoginLogsModal() {
  * 로그인 로그 모달 닫기
  */
 function closeLoginLogsModal() {
-    const modal = document.getElementById('login-logs-modal');
-    modal.style.display = 'none';
+	const modal = document.getElementById('login-logs-modal');
+	if (!modal) return;
+
+	modal.classList.add('hidden');
+
+	// 부모 모달(보안 설정) 복구
+	restoreParentModalFromChild(modal);
 }
 
 /**
@@ -275,13 +287,11 @@ export function bindLoginLogsModal() {
         closeBtn.addEventListener('click', closeLoginLogsModal);
     }
 
-    // 모달 외부 클릭 시 닫기
+    // 모달 오버레이(바깥 영역) 클릭 시 닫기
     if (modal) {
-        modal.addEventListener('click', (e) => {
-            if (e.target === modal) {
-                closeLoginLogsModal();
-            }
-        });
+	   	const overlay = modal.querySelector('.modal-overlay');
+	    if (overlay)
+	        overlay.addEventListener('click', closeLoginLogsModal);
     }
 }
 
