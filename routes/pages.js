@@ -6,6 +6,7 @@ const http = require("node:http");
 const https = require("node:https");
 const net = require("node:net");
 const ipaddr = require("ipaddr.js");
+const { assertImageFileSignature } = require("../security-utils.js");
 
 /**
  * Pages Routes
@@ -230,7 +231,7 @@ module.exports = (dependencies) => {
 				return res.status(400).json({ error: "허용되지 않은 파일 형식입니다." });
 			}
 
-			const coverPath = path.join(userId, safeName);
+			const coverPath = path.join(userId.toString(), safeName);
             const filePath = path.join(__dirname, '..', 'covers', coverPath);
 
             // 파일 존재 확인
@@ -1041,6 +1042,10 @@ module.exports = (dependencies) => {
         const userId = req.user.id;
 
         try {
+			// 업로드 파일 시그니처 검증 (Content-Type 스푸핑 방지)
+			const allowed = new Set(['jpg','jpeg','png','gif','webp']);
+			assertImageFileSignature(req.file.path, allowed);
+
             // 권한 확인
             const [rows] = await pool.execute(
                 `SELECT p.collection_id, p.cover_image FROM pages p WHERE p.id = ?`,
@@ -1276,6 +1281,10 @@ module.exports = (dependencies) => {
         const userId = req.user.id;
 
         try {
+			// 업로드 파일 시그니처 검증 (Content-Type 스푸핑 방지)
+			const allowed = new Set(['jpg','jpeg','png','gif','webp']);
+			assertImageFileSignature(req.file.path, allowed);
+
             // 권한 확인
             const [rows] = await pool.execute(
                 `SELECT p.collection_id FROM pages p WHERE p.id = ?`,

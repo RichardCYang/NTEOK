@@ -1409,15 +1409,15 @@ app.get('/imgs/:userId/:filename', authMiddleware, async (req, res) => {
         // 이미지가 포함된 페이지가 공유되었는지 확인
         const [rows] = await pool.execute(
             `SELECT p.id
-                FROM pages p
-                JOIN collections c ON p.collection_id = c.id
-                LEFT JOIN collection_shares cs_cur ON c.id = cs_cur.collection_id AND cs_cur.shared_with_user_id = ?
-                LEFT JOIN collection_shares cs_req ON c.id = cs_req.collection_id AND cs_req.shared_with_user_id = ?
-                WHERE p.content LIKE ? ESCAPE '\\\\'
-                AND (c.user_id = ? OR cs_cur.shared_with_user_id IS NOT NULL)
-                AND (c.user_id = ? OR cs_req.shared_with_user_id IS NOT NULL)
-                LIMIT 1`,
-            [currentUserId, requestedUserId, likePattern, currentUserId, requestedUserId]
+	            FROM pages p
+	            JOIN collections c ON p.collection_id = c.id
+	            LEFT JOIN collection_shares cs_cur ON c.id = cs_cur.collection_id AND cs_cur.shared_with_user_id = ?
+	            WHERE p.content LIKE ? ESCAPE '\\\\'
+	            AND (c.user_id = ? OR cs_cur.shared_with_user_id IS NOT NULL)
+	            -- 보안패치 : 이미지 소유자가 실제로 참여/생성한 페이지 or 컬렉션에서만 허용
+	            AND (p.user_id = ? OR c.user_id = ?)
+	            LIMIT 1`,
+            [currentUserId, likePattern, currentUserId, requestedUserId, requestedUserId]
         );
 
         if (rows.length > 0) {
