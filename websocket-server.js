@@ -572,9 +572,26 @@ async function handleSubscribePage(ws, payload, pool) {
             wsConnections.pages.set(pageId, new Set());
         }
 
+        const pageConnections = wsConnections.pages.get(pageId);
+
+        // 새로고침/재연결로 동일 userId가 중복 subscribe 되면,
+        // 기존 연결을 제거/종료해서 awareness clientId(=cid) 커서가 2개 뜨는 현상 방지
+        let hadDuplicate = false;
+        for (const conn of Array.from(pageConnections)) {
+            if (conn.userId === userId && conn.ws !== ws) {
+                hadDuplicate = true;
+                pageConnections.delete(conn);
+                try { conn.ws.close(1008, 'Duplicate page connection'); } catch (e) {}
+            }
+        }
+        if (hadDuplicate) {
+            // 클라이언트가 user-left를 수신하면 해당 userId의 모든 cid 커서를 정리하도록 유도
+            wsBroadcastToPage(pageId, 'user-left', { userId, reason: 'duplicate-connection' }, userId);
+        }
+
         const userColor = getUserColor(userId);
         const connection = { ws, userId, username: ws.username, color: userColor };
-        wsConnections.pages.get(pageId).add(connection);
+        pageConnections.add(connection);
 
         // 재연결 여부와 상관없이 항상 init state를 보낸다.
         // Yjs update는 병합되므로 재전송은 안전하며, 클라이언트 상태 파괴/재생성에도 견고해진다.

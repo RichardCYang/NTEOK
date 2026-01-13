@@ -4,7 +4,7 @@
  */
 
 import * as Y from 'yjs'
-import { Awareness, encodeAwarenessUpdate, applyAwarenessUpdate } from 'y-protocols/awareness';
+import { Awareness, encodeAwarenessUpdate, applyAwarenessUpdate, removeAwarenessStates } from 'y-protocols/awareness';
 import { ySyncPlugin, yCursorPlugin, yUndoPlugin, undo, redo, prosemirrorToYXmlFragment } from 'y-prosemirror';
 import { keymap } from 'prosemirror-keymap';
 import { DOMParser } from 'prosemirror-model';
@@ -494,7 +494,26 @@ function handleUserJoined(data) {
  * 사용자 퇴장 처리
  */
 function handleUserLeft(data) {
-    // 필요 시 처리
+    try {
+        if (!cursorState.awareness || !data?.userId) return;
+
+        // 서버에서 user-left 이벤트가 오면, 해당 userId에 매핑된 모든 cid(=awareness clientId) 커서를 제거
+        const removeClientIds = [];
+        cursorState.awareness.getStates().forEach((st, cid) => {
+            if (st?.user?.userId === data.userId)
+                removeClientIds.push(cid);
+        });
+
+        if (removeClientIds.length > 0) {
+            removeAwarenessStates(cursorState.awareness, removeClientIds, 'remote');
+            // (옵션) 커스텀 DOM 커서가 켜져 있는 경우 대비
+            removeClientIds.forEach(cid => {
+                try { removeCursor(cid); } catch (e) {}
+            });
+        }
+    } catch (error) {
+        console.error('[WS] user-left 처리 오류:', error);
+    }
 }
 
 /**
@@ -1064,14 +1083,41 @@ function sendAwarenessUpdate(update) {
 }
 
 /**
+ * 중복 커서 확인 함수
+ */
+function dedupeAwarenessByUserId(userId) {
+    if (!cursorState.awareness || !userId) return;
+
+    const entries = [];
+    cursorState.awareness.getStates().forEach((st, cid) => {
+        if (st?.user?.userId === userId)
+            entries.push([cid, st]);
+    });
+
+    if (entries.length <= 1) return;
+
+    // lastUpdate가 가장 큰(가장 최근 움직인) cid 1개만 남김
+    entries.sort((a, b) => ((b[1]?.cursor?.lastUpdate ?? 0) - (a[1]?.cursor?.lastUpdate ?? 0)));
+    const removeClientIds = entries.slice(1).map(([cid]) => cid);
+
+    removeAwarenessStates(cursorState.awareness, removeClientIds, 'remote');
+    removeClientIds.forEach(cid => {
+        try { removeCursor(cid); } catch (e) {}
+    });
+}
+
+/**
  * 원격 Awareness 업데이트 처리
  */
 function handleRemoteAwarenessUpdate(data) {
     if (!cursorState.awareness) return;
-
     try {
 		const update = base64ToUint8(data.awarenessUpdate);
         applyAwarenessUpdate(cursorState.awareness, update, 'remote');
+
+        // 같은 userId가 새로고침 등으로 여러 cid를 남기면, 가장 최신 커서(lastUpdate) 1개만 남긴다.
+		if (data?.fromUserId)
+		    dedupeAwarenessByUserId(data.fromUserId);
     } catch (error) {
         console.error('[WS] Awareness 업데이트 처리 오류:', error);
     }
