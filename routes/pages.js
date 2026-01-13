@@ -625,7 +625,7 @@ module.exports = (dependencies) => {
                     pageId: id,
                     field: 'title',
                     value: newTitle
-                }, userId);
+                });
             }
 
             if (iconFromBody !== undefined && newIcon !== existing.icon) {
@@ -633,7 +633,7 @@ module.exports = (dependencies) => {
                     pageId: id,
                     field: 'icon',
                     value: newIcon
-                }, userId);
+                });
             }
 
             if (horizontalPaddingFromBody !== undefined && newHorizontalPadding !== existing.horizontal_padding) {
@@ -641,7 +641,7 @@ module.exports = (dependencies) => {
                     pageId: id,
                     field: 'horizontalPadding',
                     value: newHorizontalPadding
-                }, userId);
+                });
             }
 
             res.json(page);
@@ -842,7 +842,7 @@ module.exports = (dependencies) => {
                 pageId: id,
                 field: 'title',
                 value: sanitizedTitle
-            }, userId);
+            });
 
             res.json({ success: true, title: sanitizedTitle });
         } catch (error) {
