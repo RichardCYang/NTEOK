@@ -500,6 +500,12 @@ let slashState = {
     filteredItems: []
 };
 
+// 일부 브라우저/IME 조합에서는 ProseMirror의 view.composing 플래그가
+// compositionupdate 타이밍에 false로 유지되는 경우가 있어(특히 Windows + 일부 Chromium 계열)
+// slash 필터 텍스트를 state.doc에서 읽으면 마지막에 스페이스(조합 확정)를 치기 전까지
+// 검색어가 갱신되지 않는 현상이 발생할 수 있음 -> composition 이벤트로 IME 조합 상태를 직접 트래킹해서, 필요 시 DOM 기준으로 검색어를 추출
+let slashImeComposing = false;
+
 /**
  * 현재 pos가 속한 가장 가까운 textblock(문단/제목/테이블 셀 내 문단 등)의 시작 포지션을 반환
  * - slash 명령은 "같은 textblock 안"에서만 유효해야 하므로 context 검증에 사용
@@ -552,23 +558,27 @@ function isSlashContextValid(editor) {
  * - keydown에서 열린 직후에는 doc에 '/'가 아직 없을 수 있으므로(ready=false) 그 전엔 닫지 않음
  * - '/'가 실제로 doc에 들어온 이후(ready=true)부터는 엄격하게 컨텍스트 검증
  */
-function syncSlashMenu(editor) {
+function syncSlashMenu(editor, opts = {}) {
     if (!slashState.active || slashState.fromPos === null) return;
 
     const { doc, selection } = editor.state;
-    const composing = !!editor?.view?.composing;
+	const composing = !!(slashImeComposing || editor?.view?.composing);
+	const forceDom = !!opts.forceDom;
 
     // 범위 선택이면 slash 컨텍스트가 아님
 	// IME(한글/일본어/중국어 등) 조합 중에는 ProseMirror 상태(selection/doc)가
 	// 실제 화면(DOM)과 잠시 불일치할 수 있어, 이 타이밍에 닫아버리면
 	// 초성만 남고 입력이 끊기는 현상이 생길 수 있음.
-    if (!selection.empty && !composing) {
+	// keydown에서 메뉴를 연 직후에는 아직 '/'가 doc에 반영되기 전 프레임이 있을 수 있음.
+	// (특히 input 이벤트가 먼저 들어오면 selection.from이 fromPos와 같아져서 즉시 닫히는 버그 발생)
+	// => '/'가 실제로 doc에 들어온 이후(ready=true)부터만 엄격하게 닫기 조건을 적용한다. (slashState.ready 조건 추가)
+    if (slashState.ready && !selection.empty && !composing) {
         closeSlashMenu();
         return;
     }
 
     // 커서가 '/' 이전(또는 같은 위치)으로 오면 닫기
-    if (!composing && selection.from <= slashState.fromPos) {
+    if (slashState.ready && !composing && selection.from <= slashState.fromPos) {
         closeSlashMenu();
         return;
     }
@@ -591,7 +601,7 @@ function syncSlashMenu(editor) {
     }
 
     // 필터 텍스트/목록 업데이트
-    const text = getSlashCommandText(editor);
+    const text = getSlashCommandText(editor, { forceDom });
     if (text === slashState.filterText) return;
     slashState.filterText = text;
     slashState.filteredItems = filterSlashItems(text);
@@ -602,14 +612,12 @@ function syncSlashMenu(editor) {
  * 슬래시 메뉴 필터링 함수
  */
 function filterSlashItems(filterText) {
-    if (!filterText.trim()) {
-        return SLASH_ITEMS;
-    }
+	const normalized = (filterText || '').trim().toLowerCase();
+	if (!normalized) return SLASH_ITEMS;
 
-    const lowerFilter = filterText.toLowerCase();
     return SLASH_ITEMS.filter(item =>
-        item.label.toLowerCase().includes(lowerFilter) ||
-        item.description.toLowerCase().includes(lowerFilter)
+		item.label.toLowerCase().includes(normalized) ||
+		item.description.toLowerCase().includes(normalized)
     );
 }
 
@@ -653,10 +661,11 @@ function renderSlashMenuItems() {
     listEl.innerHTML = "";
 
     // 필터 텍스트가 있으면 검색 결과 표시
-    if (slashState.filterText) {
+    const displayFilter = (slashState.filterText || '').trim();
+    if (displayFilter) {
         const filterInfo = document.createElement("li");
         filterInfo.className = "slash-menu-filter-info";
-        filterInfo.innerHTML = `검색: <strong>${escapeHtml(slashState.filterText)}</strong>`;
+        filterInfo.innerHTML = `검색: <strong>${escapeHtml(displayFilter)}</strong>`;
         filterInfo.style.padding = "8px 16px";
         filterInfo.style.fontSize = "12px";
         filterInfo.style.color = "#999";
@@ -767,6 +776,7 @@ function closeSlashMenu() {
     slashState.editor = null;
     slashState.filterText = '';
     slashState.filteredItems = [];
+    slashImeComposing = false;
     if (slashMenuEl) {
         slashMenuEl.classList.add("hidden");
 		// 열기(open)에서 visibility를 쓰기 때문에 닫을 때도 명시적으로 숨김
@@ -843,16 +853,17 @@ function runSlashCommandActive() {
 /**
  * 슬래시 메뉴 텍스트 추출 (fromPos부터 현재 커서까지)
  */
-function getSlashCommandText(editor) {
+function getSlashCommandText(editor, opts = {}) {
     if (!slashState.active || slashState.fromPos === null) return '';
 
     const view = editor?.view;
     const from = slashState.fromPos + 1; // "/" 다음 위치부터
+    const forceDom = !!opts.forceDom;
 
     // IME 조합 중에는 state.doc/state.selection이 즉시 반영되지 않아
     // textBetween 결과가 "ㄱ" 처럼 초성만 나오거나 아예 갱신이 멈출 수 있음.
     // 이때는 DOM selection 기준으로 범위를 잘라 실제 화면에 보이는 텍스트를 사용.
-    if (view?.composing) {
+    if (forceDom || view?.composing || slashImeComposing) {
         try {
             const sel = view.dom.ownerDocument.getSelection();
             if (!sel || sel.rangeCount === 0) return '';
@@ -884,7 +895,8 @@ export function bindSlashKeyHandlers(editor) {
         // IME 조합(한글/일본어/중국어 등) 중에는 Enter/Arrow 등이
         // 조합 확정/후보 선택에 쓰일 수 있으므로 slash 메뉴 단축키로 가로채면
         // 조합이 깨져 초성만 남고 입력이 멈추는 현상이 발생할 수 있음.
-        const composing = !!(event.isComposing || editor?.view?.composing || event.key === 'Process' || event.keyCode === 229);
+		const imeComp = (typeof slashImeComposing !== 'undefined') && slashImeComposing;
+		const composing = !!(imeComp || event.isComposing || editor?.view?.composing || event.key === 'Process' || event.keyCode === 229);
 
         const target = event.target;
         const inEditor = target && target.closest && target.closest(".ProseMirror");
@@ -964,16 +976,37 @@ export function bindSlashKeyHandlers(editor) {
     });
 
     // IME 조합 중에는 editor.onUpdate가 즉시 호출되지 않는 경우가 있어
-    // composition 이벤트에서 필터 텍스트를 DOM 기준으로 동기화한다.
+    // composition/input 이벤트에서 필터 텍스트를 DOM 기준으로 동기화한다.
     // (bindSlashKeyHandlers가 여러 번 호출될 수 있으므로 한 번만 바인딩)
     if (!bindSlashKeyHandlers.__imeBound && editor?.view?.dom) {
         bindSlashKeyHandlers.__imeBound = true;
         const dom = editor.view.dom;
-        const sync = () => {
+        const syncDom = () => {
+            if (slashState.active) syncSlashMenu(editor, { forceDom: true });
+        };
+        const onCompStart = () => {
+            slashImeComposing = true;
+            syncDom();
+        };
+        const onCompEnd = () => {
+            slashImeComposing = false;
+            // 조합 확정 후에는 state.doc에도 반영되므로 일반 동기화로 정리
             if (slashState.active) syncSlashMenu(editor);
         };
-        dom.addEventListener('compositionupdate', sync);
-        dom.addEventListener('compositionend', sync);
+
+        dom.addEventListener('compositionstart', onCompStart);
+        dom.addEventListener('compositionupdate', syncDom);
+        dom.addEventListener('compositionend', onCompEnd);
+        // 일부 환경에서는 compositionupdate만으로는 즉시 반영이 안 되는 경우가 있어 input도 보조로 사용
+        dom.addEventListener('input', () => {
+            if (!slashState.active) return;
+            // input이 ProseMirror transaction 반영보다 먼저 들어오는 환경이 있어서 1프레임 지연
+            requestAnimationFrame(() => {
+                if (!slashState.active) return;
+                if (slashImeComposing) syncSlashMenu(editor, { forceDom: true });
+                else syncSlashMenu(editor);
+            });
+        });
     }
 
     // 외부 영역 클릭 시 슬래시 메뉴 닫기
