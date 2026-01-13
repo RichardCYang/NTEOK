@@ -3520,3 +3520,43 @@ body {
 	white-space: nowrap;
 	pointer-events: none;
 }
+
+/* ==================== PDF Export Styles ==================== */
+/* PDF 내보내기 전용 스타일 */
+#pdf-export-container {
+    /* 기본 스타일은 JavaScript에서 인라인으로 적용 */
+}
+
+#pdf-export-container h1,
+#pdf-export-container h2,
+#pdf-export-container h3 {
+    page-break-after: avoid;
+    margin-top: 1em;
+    margin-bottom: 0.5em;
+}
+
+#pdf-export-container p {
+    orphans: 3;
+    widows: 3;
+}
+
+#pdf-export-container img {
+    max-width: 100%;
+    height: auto;
+    page-break-inside: avoid;
+}
+
+#pdf-export-container pre,
+#pdf-export-container blockquote {
+    page-break-inside: avoid;
+}
+
+/* KaTeX 수식 스타일 보존 */
+#pdf-export-container .katex {
+    font-size: 1.1em;
+}
+
+#pdf-export-container .katex-display {
+    margin: 1em 0;
+    text-align: center;
+}

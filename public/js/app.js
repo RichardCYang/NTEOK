@@ -77,6 +77,9 @@ import {
 import {
     bindLoginLogsModal
 } from './login-logs-manager.js';
+import {
+    exportPageToPDF
+} from './pdf-export.js';
 
 // ==================== Global State ====================
 const appState = {
@@ -304,6 +307,10 @@ async function handlePageListClick(event, state) {
                         <i class="fa-solid fa-icons"></i>
                         아이콘 설정
                     </button>
+                    <button data-action="export-pdf" data-page-id="${escapeHtml(pageId)}">
+                        <i class="fa-solid fa-file-pdf"></i>
+                        PDF로 내보내기
+                    </button>
                     <button data-action="permanent-decrypt" data-page-id="${escapeHtml(pageId)}">
                         <i class="fa-solid fa-unlock"></i>
                         암호화 해제
@@ -323,6 +330,10 @@ async function handlePageListClick(event, state) {
                         <i class="fa-solid fa-icons"></i>
                         아이콘 설정
                     </button>
+                    <button data-action="export-pdf" data-page-id="${escapeHtml(pageId)}">
+                        <i class="fa-solid fa-file-pdf"></i>
+                        PDF로 내보내기
+                    </button>
                     <button data-action="permanent-decrypt" data-page-id="${escapeHtml(pageId)}">
                         <i class="fa-solid fa-unlock"></i>
                         암호화 해제
@@ -338,6 +349,10 @@ async function handlePageListClick(event, state) {
                 <button data-action="set-icon" data-page-id="${escapeHtml(pageId)}">
                     <i class="fa-solid fa-icons"></i>
                     아이콘 설정
+                </button>
+                <button data-action="export-pdf" data-page-id="${escapeHtml(pageId)}">
+                    <i class="fa-solid fa-file-pdf"></i>
+                    PDF로 내보내기
                 </button>
                 <button data-action="encrypt-page" data-page-id="${escapeHtml(pageId)}">
                     <i class="fa-solid fa-lock"></i>
@@ -355,7 +370,7 @@ async function handlePageListClick(event, state) {
     }
 
     // 페이지 메뉴 액션
-    const pageMenuAction = event.target.closest("#context-menu button[data-action^='set-icon'], #context-menu button[data-action^='encrypt-page'], #context-menu button[data-action^='permanent-decrypt'], #context-menu button[data-action^='delete-page'], #context-menu button[data-action^='toggle-share']");
+    const pageMenuAction = event.target.closest("#context-menu button[data-action^='set-icon'], #context-menu button[data-action^='export-pdf'], #context-menu button[data-action^='encrypt-page'], #context-menu button[data-action^='permanent-decrypt'], #context-menu button[data-action^='delete-page'], #context-menu button[data-action^='toggle-share']");
     if (pageMenuAction) {
         const action = pageMenuAction.dataset.action;
         const pageId = pageMenuAction.dataset.pageId;
@@ -363,6 +378,12 @@ async function handlePageListClick(event, state) {
         if (action === "set-icon" && pageId) {
             showIconPickerModal(pageId);
             closeContextMenu();
+            return;
+        }
+
+        if (action === "export-pdf" && pageId) {
+            closeContextMenu();
+            await handleExportPDF(pageId);
             return;
         }
 
@@ -1574,6 +1595,19 @@ function bindIconPickerModal() {
     removeBtn.addEventListener('click', removeIcon);
     themeTabBtn.addEventListener('click', () => switchIconTab('theme'));
     colorTabBtn.addEventListener('click', () => switchIconTab('color'));
+}
+
+// ==================== PDF Export Handler ====================
+/**
+ * PDF 내보내기 핸들러
+ */
+async function handleExportPDF(pageId) {
+    try {
+        await exportPageToPDF(pageId);
+    } catch (error) {
+        console.error('PDF 내보내기 실패:', error);
+        alert('PDF 내보내기에 실패했습니다.');
+    }
 }
 
 // ==================== Global Window Functions ====================
