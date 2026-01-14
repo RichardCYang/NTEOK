@@ -402,22 +402,22 @@ export async function openSecuritySettingsModal() {
     try {
         const { secureFetch } = await import('./ui-utils.js');
 
-        // ?? ?? ?? (?? ??)
+        // 보안 설정 로드 (캐싱 적용)
         let data;
         if (cachedSecuritySettings) {
-            // ??? ??? ??
+            // 캐시된 데이터 사용
             data = cachedSecuritySettings;
         } else {
-            // ?? ?? ??? API ??
+            // 최초 로드 시에만 API 호출
             const response = await secureFetch('/api/auth/security-settings');
             if (!response.ok) {
-                throw new Error('?? ?? ?? ??');
+                throw new Error('보안 설정 로드 실패');
             }
             data = await response.json();
             cachedSecuritySettings = data;
         }
 
-        // UI ????
+        // UI에 값 설정
         const blockDuplicateLoginToggle = document.querySelector('#block-duplicate-login-toggle');
         const countryWhitelistToggle = document.querySelector('#country-whitelist-toggle');
 
@@ -430,10 +430,10 @@ export async function openSecuritySettingsModal() {
             state.allowedLoginCountries = data.allowedLoginCountries || [];
         }
     } catch (error) {
-        console.error('?? ?? ?? ??:', error);
+        console.error('보안 설정 로드 실패:', error);
         closeSecuritySettingsModal();
         restoreParentModalFromChild(modal);
-        alert('?? ??? ????? ??????.');
+        alert('보안 설정을 불러오는데 실패했습니다.');
     }
 }
 

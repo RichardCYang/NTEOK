@@ -191,18 +191,18 @@ function renderPagination(total, currentPage) {
 
     let html = '';
 
-    // ?? ??
+    // 이전 버튼
     if (currentPage > 1) {
         html += `<button class="pagination-btn" data-page="${currentPage - 1}">
-            <i class="fa-solid fa-chevron-left"></i> ??
+            <i class="fa-solid fa-chevron-left"></i> 이전
         </button>`;
     } else {
         html += `<button class="pagination-btn" disabled>
-            <i class="fa-solid fa-chevron-left"></i> ??
+            <i class="fa-solid fa-chevron-left"></i> 이전
         </button>`;
     }
 
-    // ??? ?? ??
+    // 페이지 번호 버튼
     const maxButtons = 5;
     let startPage = Math.max(1, currentPage - Math.floor(maxButtons / 2));
     let endPage = Math.min(totalPages, startPage + maxButtons - 1);
@@ -219,20 +219,23 @@ function renderPagination(total, currentPage) {
         }
     }
 
-    // ?? ??
+    // 다음 버튼
     if (currentPage < totalPages) {
         html += `<button class="pagination-btn" data-page="${currentPage + 1}">
-            ?? <i class="fa-solid fa-chevron-right"></i>
+            다음 <i class="fa-solid fa-chevron-right"></i>
         </button>`;
     } else {
         html += `<button class="pagination-btn" disabled>
-            ?? <i class="fa-solid fa-chevron-right"></i>
+            다음 <i class="fa-solid fa-chevron-right"></i>
         </button>`;
     }
 
     container.innerHTML = html;
 }
 
+/**
+ * 특정 페이지로 이동
+ */
 function goToPage(page) {
     loadLoginLogs(page);
 }
