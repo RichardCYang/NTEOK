@@ -1881,9 +1881,40 @@ body {
     display: none;
 }
 
-.bookmark-thumbnail.error .bookmark-thumbnail-error {
-    display: block;
+
+
+.loading-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: transparent; /* Make sure this is transparent for the gradient to show */
+    background-image: linear-gradient(to bottom right, var(--primary-color), var(--secondary-color));
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 9999;
 }
+
+.loading-spinner {
+    border: 4px solid rgba(0, 0, 0, 0.1);
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    border-left-color: #09f;
+    animation: spin 1s ease-in-out infinite;
+}
+
+@keyframes spin {
+    0% {
+        transform: rotate(0deg);
+    }
+    100% {
+        transform: rotate(360deg);
+    }
+}
+
 
 /* ?몄쭛 踰꾪듉 */
 .bookmark-edit-button {
@@ -3733,3 +3764,7 @@ body {
     background-color: #fef3c7;
 }
 
+
+.loading-overlay.hidden {
+    display: none;
+}

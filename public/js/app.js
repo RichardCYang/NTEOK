@@ -116,6 +116,21 @@ let colorMenuElement = null;
 let fontDropdownElement = null;
 let fontMenuElement = null;
 
+// ==================== Loading Overlay Functions ====================
+function showLoadingOverlay() {
+    const overlay = document.querySelector('.loading-overlay');
+    if (overlay) {
+        overlay.classList.remove('hidden');
+    }
+}
+
+function hideLoadingOverlay() {
+    const overlay = document.querySelector('.loading-overlay');
+    if (overlay) {
+        overlay.classList.add('hidden');
+    }
+}
+
 // ==================== Helper Functions ====================
 
 /**
@@ -973,128 +988,132 @@ function initToolbarElements() {
 
 // ==================== Initialization ====================
 async function init() {
-    // appState를 전역으로 노출 (에디터 등에서 접근 가능하도록)
-    window.appState = appState;
-
-    // 설정 로드
-    const loadedSettings = loadSettings();
-    appState.userSettings = loadedSettings;
-
-    // 에디터 초기화 (Yjs 동기화 준비 전)
-    appState.editor = await initEditor(null);
-    initToolbarElements();
-    bindToolbar(appState.editor);
-    bindSlashKeyHandlers(appState.editor);
-
-    // 페이지 관리자 초기화
-    initPagesManager(appState);
-
-    // 암호화 관리자 초기화
-    appState.fetchPageList = fetchPageList;
-    initEncryptionManager(appState);
-
-    // 설정 관리자 초기화
-    initSettingsManager(appState);
-
-    // 실시간 동기화 관리자 초기화
-    initSyncManager(appState);
-
-    // 커버 이미지 관리자 초기화
-    initCoverManager(appState);
-
-    // 페이지 발행 관리자 초기화
-    initPublishManager(appState);
-
-    // 하위 페이지 관리자 초기화
-    initSubpagesManager(appState);
-
-    // 검색 기능 초기화
-    initSearch();
-
-    // 이벤트 바인딩
-    initEvent();
-    bindPageListClick();
-    bindContextMenuClick();
-    bindNewCollectionButton();
-    bindModeToggle();
-    bindLogoutButton();
-    bindSettingsModal();
-    bindEncryptionModal();
-    bindDecryptionModal();
-    bindShareModal();
-    bindCollectionSettingsModal();
-    bindReadonlyWarningModal();
-    bindDeletePermissionModal();
-    bindEncryptPermissionModal();
-    bindIconPickerModal();
-    bindMobileSidebar();
-    bindPublishEvents();
-    bindTotpModals();
-    bindPasskeyModals();
-    bindAccountManagementButtons();
-    bindLoginLogsModal();
-
+    showLoadingOverlay();
     try {
-        const bootstrapRes = await fetch("/api/bootstrap");
-        if (!bootstrapRes.ok) {
-            throw new Error("HTTP " + bootstrapRes.status);
+        // appState를 전역으로 노출 (에디터 등에서 접근 가능하도록)
+        window.appState = appState;
+
+        // 설정 로드
+        const loadedSettings = loadSettings();
+        appState.userSettings = loadedSettings;
+
+        // 에디터 초기화 (Yjs 동기화 준비 전)
+        appState.editor = await initEditor(null);
+        initToolbarElements();
+        bindToolbar(appState.editor);
+        bindSlashKeyHandlers(appState.editor);
+
+        // 페이지 관리자 초기화
+        initPagesManager(appState);
+
+        // 암호화 관리자 초기화
+        appState.fetchPageList = fetchPageList;
+        initEncryptionManager(appState);
+
+        // 설정 관리자 초기화
+        initSettingsManager(appState);
+
+        // 실시간 동기화 관리자 초기화
+        initSyncManager(appState);
+
+        // 커버 이미지 관리자 초기화
+        initCoverManager(appState);
+
+        // 페이지 발행 관리자 초기화
+        initPublishManager(appState);
+
+        // 하위 페이지 관리자 초기화
+        initSubpagesManager(appState);
+
+        // 검색 기능 초기화
+        initSearch();
+
+        // 이벤트 바인딩
+        initEvent();
+        bindPageListClick();
+        bindContextMenuClick();
+        bindNewCollectionButton();
+        bindModeToggle();
+        bindLogoutButton();
+        bindSettingsModal();
+        bindEncryptionModal();
+        bindDecryptionModal();
+        bindShareModal();
+        bindCollectionSettingsModal();
+        bindReadonlyWarningModal();
+        bindDeletePermissionModal();
+        bindEncryptPermissionModal();
+        bindIconPickerModal();
+        bindMobileSidebar();
+        bindPublishEvents();
+        bindTotpModals();
+        bindPasskeyModals();
+        bindAccountManagementButtons();
+        bindLoginLogsModal();
+
+        try {
+            const bootstrapRes = await fetch("/api/bootstrap");
+            if (!bootstrapRes.ok) {
+                throw new Error("HTTP " + bootstrapRes.status);
+            }
+
+            const bootstrap = await bootstrapRes.json();
+
+            if (bootstrap.user) {
+                applyCurrentUser(bootstrap.user);
+            }
+
+            if (Array.isArray(bootstrap.collections)) {
+                applyCollectionsData(bootstrap.collections);
+            }
+
+            if (Array.isArray(bootstrap.pages)) {
+                applyPagesData(bootstrap.pages);
+            }
+
+            if (Array.isArray(bootstrap.collections) || Array.isArray(bootstrap.pages)) {
+                renderPageList();
+            }
+
+        } catch (error) {
+            console.warn("Bootstrap load failed, falling back to legacy flow:", error);
         }
 
-        const bootstrap = await bootstrapRes.json();
+        // 데이터 로드 - 완전 병렬 처리로 최적화 (성능 개선)
+        try {
+            // 사용자 정보, 컬렉션, 페이지를 모두 병렬로 로드
+            const [userResult, collectionsResult, pagesResult] = await Promise.allSettled([
+                fetchAndDisplayCurrentUser(),
+                fetchCollections(),
+                fetchPageList()
+            ]);
 
-        if (bootstrap.user) {
-            applyCurrentUser(bootstrap.user);
+            // 에러 처리
+            if (userResult.status === 'rejected') {
+                console.error('사용자 정보 로드 실패:', userResult.reason);
+                // 사용자 정보는 UI에 표시되지만 치명적이지 않음
+            }
+
+            if (collectionsResult.status === 'rejected') {
+                console.error('컬렉션 로드 실패:', collectionsResult.reason);
+                showErrorInEditor('컬렉션을 불러오지 못했습니다.');
+            }
+
+            if (pagesResult.status === 'rejected') {
+                console.error('페이지 로드 실패:', pagesResult.reason);
+                showErrorInEditor('페이지 목록을 불러오지 못했습니다.');
+            }
+
+            // 모든 데이터 로드 완료 후 UI 한 번만 렌더링 (중복 호출 방지)
+            if (collectionsResult.status === 'fulfilled' || pagesResult.status === 'fulfilled') {
+                renderPageList();
+            }
+        } catch (error) {
+            console.error('초기화 중 오류:', error);
+            showErrorInEditor('데이터 로드에 실패했습니다. 페이지를 새로고침하세요.');
         }
-
-        if (Array.isArray(bootstrap.collections)) {
-            applyCollectionsData(bootstrap.collections);
-        }
-
-        if (Array.isArray(bootstrap.pages)) {
-            applyPagesData(bootstrap.pages);
-        }
-
-        if (Array.isArray(bootstrap.collections) || Array.isArray(bootstrap.pages)) {
-            renderPageList();
-        }
-
-        return;
-    } catch (error) {
-        console.warn("Bootstrap load failed, falling back to legacy flow:", error);
-    }
-
-    // 데이터 로드 - 완전 병렬 처리로 최적화 (성능 개선)
-    try {
-        // 사용자 정보, 컬렉션, 페이지를 모두 병렬로 로드
-        const [userResult, collectionsResult, pagesResult] = await Promise.allSettled([
-            fetchAndDisplayCurrentUser(),
-            fetchCollections(),
-            fetchPageList()
-        ]);
-
-        // 에러 처리
-        if (userResult.status === 'rejected') {
-            console.error('사용자 정보 로드 실패:', userResult.reason);
-            // 사용자 정보는 UI에 표시되지만 치명적이지 않음
-        }
-
-        if (collectionsResult.status === 'rejected') {
-            console.error('컬렉션 로드 실패:', collectionsResult.reason);
-            showErrorInEditor('컬렉션을 불러오지 못했습니다.');
-        }
-
-        if (pagesResult.status === 'rejected') {
-            console.error('페이지 로드 실패:', pagesResult.reason);
-            showErrorInEditor('페이지 목록을 불러오지 못했습니다.');
-        }
-
-        // 모든 데이터 로드 완료 후 UI 한 번만 렌더링 (중복 호출 방지)
-        if (collectionsResult.status === 'fulfilled' || pagesResult.status === 'fulfilled') {
-            renderPageList();
-        }
-    } catch (error) {
-        console.error('초기화 중 오류:', error);
-        showErrorInEditor('데이터 로드에 실패했습니다. 페이지를 새로고침하세요.');
+    } finally {
+        hideLoadingOverlay();
     }
 }
 
