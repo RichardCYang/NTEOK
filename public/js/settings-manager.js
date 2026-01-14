@@ -2,6 +2,8 @@
  * 설정 관리 모듈
  */
 
+import { hideParentModalForChild, restoreParentModalFromChild } from './modal-parent-manager.js';
+
 // 캐시 변수 (성능 최적화)
 let cachedCountries = null;
 let cachedSecuritySettings = null;
@@ -394,28 +396,28 @@ export async function openSecuritySettingsModal() {
     const modal = document.querySelector("#security-settings-modal");
     if (!modal) return;
 
-    // 메인 설정 모달 닫기
-    closeSettingsModal();
+    modal.classList.remove('hidden');
+    hideParentModalForChild('#settings-modal', modal);
 
     try {
         const { secureFetch } = await import('./ui-utils.js');
 
-        // 보안 설정 로드 (캐싱 적용)
+        // ?? ?? ?? (?? ??)
         let data;
         if (cachedSecuritySettings) {
-            // 캐시된 데이터 사용
+            // ??? ??? ??
             data = cachedSecuritySettings;
         } else {
-            // 최초 로드 시에만 API 호출
+            // ?? ?? ??? API ??
             const response = await secureFetch('/api/auth/security-settings');
             if (!response.ok) {
-                throw new Error('보안 설정 로드 실패');
+                throw new Error('?? ?? ?? ??');
             }
             data = await response.json();
             cachedSecuritySettings = data;
         }
 
-        // UI에 값 설정
+        // UI ????
         const blockDuplicateLoginToggle = document.querySelector('#block-duplicate-login-toggle');
         const countryWhitelistToggle = document.querySelector('#country-whitelist-toggle');
 
@@ -427,11 +429,11 @@ export async function openSecuritySettingsModal() {
             countryWhitelistToggle.checked = data.countryWhitelistEnabled;
             state.allowedLoginCountries = data.allowedLoginCountries || [];
         }
-
-        modal.classList.remove('hidden');
     } catch (error) {
-        console.error('보안 설정 로드 실패:', error);
-        alert('보안 설정을 불러오는데 실패했습니다.');
+        console.error('?? ?? ?? ??:', error);
+        closeSecuritySettingsModal();
+        restoreParentModalFromChild(modal);
+        alert('?? ??? ????? ??????.');
     }
 }
 
@@ -442,6 +444,7 @@ function closeSecuritySettingsModal() {
     const modal = document.querySelector("#security-settings-modal");
     if (modal) {
         modal.classList.add('hidden');
+        restoreParentModalFromChild(modal);
     }
 }
 
