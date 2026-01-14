@@ -12,17 +12,40 @@ let cachedSecuritySettings = null;
 let state = {
     currentUser: null,
     userSettings: {
-        defaultMode: 'read'
+        defaultMode: 'read',
+        theme: 'default'
     },
     availableCountries: [],
     allowedLoginCountries: []
 };
 
 /**
+ * 테마 적용
+ * @param {string} themeName - 적용할 테마 이름 (e.g., 'default', 'dark')
+ */
+function applyTheme(themeName) {
+    const themeLink = document.querySelector('#theme-link');
+    if (themeLink) {
+        themeLink.href = `/themes/${themeName}.css`;
+    } else {
+        const newThemeLink = document.createElement('link');
+        newThemeLink.id = 'theme-link';
+        newThemeLink.rel = 'stylesheet';
+        newThemeLink.href = `/themes/${themeName}.css`;
+        document.head.appendChild(newThemeLink);
+    }
+    state.userSettings.theme = themeName;
+    localStorage.setItem("userSettings", JSON.stringify(state.userSettings));
+}
+
+
+/**
  * 상태 초기화
  */
 export function initSettingsManager(appState) {
     state = appState;
+    loadSettings();
+    applyTheme(state.userSettings.theme);
 }
 
 /**
@@ -32,6 +55,7 @@ export async function openSettingsModal() {
     const modal = document.querySelector("#settings-modal");
     const usernameEl = document.querySelector("#settings-username");
     const defaultModeSelect = document.querySelector("#settings-default-mode");
+    const themeSelect = document.querySelector("#settings-theme-select");
 
     if (!modal) return;
 
@@ -48,6 +72,26 @@ export async function openSettingsModal() {
     // 현재 설정 값 표시
     if (defaultModeSelect) {
         defaultModeSelect.value = state.userSettings.defaultMode;
+    }
+
+    if (themeSelect) {
+        try {
+            const { secureFetch } = await import('./ui-utils.js');
+            const response = await secureFetch('/api/themes');
+            const themes = await response.json();
+            
+            themeSelect.innerHTML = '';
+            themes.forEach(theme => {
+                const option = document.createElement('option');
+                option.value = theme.name;
+                option.textContent = theme.name;
+                themeSelect.appendChild(option);
+            });
+
+            themeSelect.value = state.userSettings.theme;
+        } catch (error) {
+            console.error('테마 목록 로드 실패:', error);
+        }
     }
 
     modal.classList.remove("hidden");
@@ -68,13 +112,19 @@ export function closeSettingsModal() {
  */
 export async function saveSettings() {
     const defaultModeSelect = document.querySelector("#settings-default-mode");
+    const themeSelect = document.querySelector("#settings-theme-select");
 
     // 로컬 설정 저장
     if (defaultModeSelect) {
         state.userSettings.defaultMode = defaultModeSelect.value;
-        localStorage.setItem("userSettings", JSON.stringify(state.userSettings));
-        console.log("설정 저장됨:", state.userSettings);
     }
+    if (themeSelect) {
+        state.userSettings.theme = themeSelect.value;
+        applyTheme(themeSelect.value);
+    }
+    
+    localStorage.setItem("userSettings", JSON.stringify(state.userSettings));
+    console.log("설정 저장됨:", state.userSettings);
 
     closeSettingsModal();
     alert("설정이 저장되었습니다.");
@@ -107,6 +157,9 @@ export function bindSettingsModal() {
     const exportBackupBtn = document.querySelector("#export-backup-btn");
     const importBackupBtn = document.querySelector("#import-backup-btn");
     const importBackupInput = document.querySelector("#import-backup-input");
+    const themeSelect = document.querySelector("#settings-theme-select");
+    const themeUploadBtn = document.querySelector("#theme-upload-btn");
+    const themeUploadInput = document.querySelector("#theme-upload-input");
 
     if (settingsBtn) {
         settingsBtn.addEventListener("click", () => {
@@ -129,6 +182,28 @@ export function bindSettingsModal() {
     if (overlay) {
         overlay.addEventListener("click", () => {
             closeSettingsModal();
+        });
+    }
+
+    if (themeSelect) {
+        themeSelect.addEventListener('change', (e) => {
+            applyTheme(e.target.value);
+        });
+    }
+
+    if (themeUploadBtn) {
+        themeUploadBtn.addEventListener('click', () => {
+            themeUploadInput.click();
+        });
+    }
+
+    if (themeUploadInput) {
+        themeUploadInput.addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                await uploadTheme(file);
+                themeUploadInput.value = ''; // Reset input
+            }
         });
     }
 
@@ -407,6 +482,44 @@ async function importBackup(file) {
     } catch (error) {
         console.error('백업 불러오기 실패:', error);
         alert(`백업 불러오기에 실패했습니다: ${error.message}`);
+    }
+}
+
+/**
+ * 테마 파일 업로드
+ */
+async function uploadTheme(file) {
+    if (!file || !file.name.endsWith('.css')) {
+        alert('CSS 파일만 선택할 수 있습니다.');
+        return;
+    }
+
+    try {
+        const { secureFetch } = await import('./ui-utils.js');
+        const formData = new FormData();
+        formData.append('themeFile', file);
+
+        const response = await secureFetch('/api/themes/upload', {
+            method: 'POST',
+            body: formData
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.error || '테마 업로드 실패');
+        }
+
+        const result = await response.json();
+        console.log('테마 업로드 완료:', result);
+
+        // 다시 테마 목록을 불러와서 UI에 반영
+        await openSettingsModal();
+        
+        alert(`테마 '${result.theme.name}'이(가) 성공적으로 업로드되었습니다.`);
+
+    } catch (error) {
+        console.error('테마 업로드 실패:', error);
+        alert(`테마 업로드에 실패했습니다: ${error.message}`);
     }
 }
 

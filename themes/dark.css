@@ -1,0 +1,32 @@
+:root {
+    --primary-color: #1e1e1e; /* App header, editor background */
+    --secondary-color: #121212; /* Body background */
+    --tertiary-color: #2c2c2c; /* Sidebar background */
+    --quaternary-color: #3c3c3c; /* Sidebar header background */
+    --font-color: #e0e0e0; /* Main font color */
+    --sub-font-color: #b0b0b0; /* Sub font color */
+    --point-color: #5d9cec; /* Primary button, active elements */
+    --point-hover-color: #4a8dcf;
+    --danger-color: #ff4d4f;
+    --danger-hover-color: #d9363e;
+    --border-color: #444444; /* General border color */
+    --modal-backdrop-color: rgba(0, 0, 0, 0.7);
+    --box-shadow-color: rgba(255, 255, 255, 0.05);
+    --editor-bg-color: #1e1e1e;
+    --item-hover-bg-color: #3c3c3c;
+    --button-text-color: #ffffff;
+    --input-bg-color: #252525;
+    --input-border-color: #444444;
+    --link-color: #5d9cec;
+    --code-bg-color: #2c2c2c;
+    --blockquote-border-color: #5d9cec;
+    --blockquote-text-color: #b0b0b0;
+    --placeholder-color: #6b7280;
+    --menu-bg-color: #2c2c2c;
+    --menu-border-color: #444444;
+    --menu-hover-bg-color: #3c3c3c;
+    --menu-item-text-color: #e0e0e0;
+    --scrollbar-track-color: #121212;
+    --scrollbar-thumb-color: #444444;
+    --scrollbar-thumb-hover-color: #5d9cec;
+}

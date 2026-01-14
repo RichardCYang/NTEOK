@@ -1321,6 +1321,9 @@ app.use(express.static(path.join(__dirname, "public"), {
     }
 }));
 
+// Serve themes statically
+app.use('/themes', express.static(path.join(__dirname, 'themes')));
+
 // 보안 개선: 정적 파일 접근 제어 (인증된 사용자만 접근 가능)
 // 기본 커버 이미지는 인증 없이 접근 가능
 app.use('/covers/default', express.static(path.join(__dirname, 'covers', 'default')));
@@ -1505,6 +1508,35 @@ const editorImageUpload = multer({
     }
 });
 
+// 테마 업로드를 위한 multer 설정
+const themeStorage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        const themesDir = path.join(__dirname, 'themes');
+        fs.mkdirSync(themesDir, { recursive: true });
+        cb(null, themesDir);
+    },
+    filename: (req, file, cb) => {
+        // Sanitize filename
+        const sanitizedFilename = path.basename(file.originalname, '.css').replace(/[^a-zA-Z0-9-]/g, '') + '.css';
+        cb(null, sanitizedFilename);
+    }
+});
+
+const themeUpload = multer({
+    storage: themeStorage,
+    limits: { fileSize: 100 * 1024 }, // 100KB
+    fileFilter: (req, file, cb) => {
+        const allowedTypes = /css/;
+        const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
+        const mimetype = file.mimetype === 'text/css';
+        if (extname && mimetype) {
+            cb(null, true);
+        } else {
+            cb(new Error('CSS 파일만 업로드 가능합니다.'));
+        }
+    }
+});
+
 /**
  * WebSocket용 세션 검증 헬퍼
  * - getSessionFromRequest()와 동일한 만료/idle 갱신 로직을 재사용
@@ -1583,6 +1615,7 @@ function getSessionFromId(sessionId) {
             BASE_URL,
             coverUpload,
             editorImageUpload,
+            themeUpload,
             path,
             fs,
             // 네트워크 관련 (network-utils.js 모듈에서 import)
@@ -1604,6 +1637,7 @@ function getSessionFromId(sessionId) {
         const totpRoutes = require('./routes/totp')(routeDependencies);
         const passkeyRoutes = require('./routes/passkey')(routeDependencies);
         const backupRoutes = require('./routes/backup')(routeDependencies);
+        const themesRoutes = require('./routes/themes')(routeDependencies);
 
         // 라우트 등록
         app.use('/', indexRoutes);
@@ -1615,6 +1649,7 @@ function getSessionFromId(sessionId) {
         app.use('/api/totp', totpRoutes);
         app.use('/api/passkey', passkeyRoutes);
         app.use('/api/backup', backupRoutes);
+        app.use('/api/themes', themesRoutes);
 
         // DuckDNS 설정 확인
         const DUCKDNS_DOMAIN = process.env.DUCKDNS_DOMAIN;

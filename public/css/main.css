@@ -13,7 +13,7 @@ body {
 }
 
 body {
-    background-color: #f5f2ed;
+    background-color: var(--secondary-color);
 }
 
 .app {
@@ -27,9 +27,9 @@ body {
     align-items: center;
     justify-content: space-between;
     padding: 10px 20px 10px 28px;
-    border-bottom: 1px solid #d4cfc4;
-    background-color: #faf8f3;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+    border-bottom: 1px solid var(--border-color);
+    background-color: var(--primary-color);
+    box-shadow: 0 1px 3px var(--box-shadow-color);
     position: relative;
 }
 
@@ -40,7 +40,7 @@ body {
     border: none;
     border-radius: 3px;
     background-color: transparent;
-    color: #5a6169;
+    color: var(--sub-font-color);
     cursor: pointer;
     align-items: center;
     justify-content: center;
@@ -51,8 +51,8 @@ body {
 }
 
 .mobile-menu-btn:hover {
-    background-color: #ebe8e1;
-    color: #2d2d2d;
+    background-color: var(--tertiary-color);
+    color: var(--font-color);
 }
 
 .app-header-left {
@@ -71,7 +71,7 @@ body {
     font-family: "Malgun Gothic", "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
     font-weight: 700;
     font-size: 17px;
-    color: #5a6169;
+    color: var(--sub-font-color);
     letter-spacing: 0.02em;
 }
 
@@ -92,8 +92,8 @@ body {
 /* ?ъ씠?쒕컮 */
 .sidebar {
     width: 260px;
-    border-right: 1px solid #d4cfc4;
-    background-color: #ebe8e1;
+    border-right: 1px solid var(--border-color);
+    background-color: var(--tertiary-color);
     display: flex;
     flex-direction: column;
     min-height: 0;
@@ -109,7 +109,7 @@ body {
     left: 0;
     width: 100%;
     height: 100%;
-    background-color: rgba(0, 0, 0, 0.5);
+    background-color: var(--modal-backdrop-color);
     z-index: 998;
 }
 
@@ -118,11 +118,11 @@ body {
     align-items: center;
     justify-content: space-between;
     gap: 8px;
-    border-bottom: 1px solid #d4cfc4;
+    border-bottom: 1px solid var(--border-color);
     padding: 12px 16px;
     box-sizing: border-box;
     height: 64px;
-    background-color: #e6e3db;
+    background-color: var(--quaternary-color);
 }
 
 .editor-header {
@@ -133,7 +133,7 @@ body {
     padding: 12px 16px;
     height: 64px;
     box-sizing: border-box;
-    border-bottom: 1px solid #d4cfc4;
+    border-bottom: 1px solid var(--border-color);
 }
 
 .user-profile {
@@ -148,11 +148,11 @@ body {
     width: 36px;
     height: 36px;
     border-radius: 50%;
-    background-color: #2d5f5d;
+    background-color: var(--point-color);
     display: flex;
     align-items: center;
     justify-content: center;
-    color: #ffffff;
+    color: var(--button-text-color);
     font-size: 16px;
     font-weight: 600;
     flex-shrink: 0;
@@ -161,7 +161,7 @@ body {
 .user-name {
     font-size: 14px;
     font-weight: 500;
-    color: #2d2d2d;
+    color: var(--font-color);
     line-height: 1.4;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -174,7 +174,7 @@ body {
     border: none;
     border-radius: 3px;
     background-color: transparent;
-    color: #5a6169;
+    color: var(--sub-font-color);
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -184,8 +184,8 @@ body {
 }
 
 .settings-btn:hover {
-    background-color: #ddd9d0;
-    color: #2d2d2d;
+    background-color: var(--item-hover-bg-color);
+    color: var(--font-color);
 }
 
 .sidebar-actions {
@@ -233,7 +233,7 @@ body {
 }
 
 .collection-header:hover {
-    background-color: #ddd9d0;
+    background-color: var(--item-hover-bg-color);
 }
 
 .collection-actions {
@@ -255,7 +255,7 @@ body {
 
 .collection-menu-btn:hover,
 .page-menu-btn:hover {
-    background-color: #d4cfc4;
+    background-color: var(--border-color);
     color: #1a1a1a;
 }
 
@@ -269,7 +269,7 @@ body {
 }
 
 .collection-add-page-btn:hover {
-    background-color: #d4cfc4;
+    background-color: var(--border-color);
     color: #1a1a1a;
 }
 
@@ -277,10 +277,10 @@ body {
     position: absolute;
     left: calc(100% + 6px);
     top: 0;
-    background-color: #faf8f3;
-    border: 1px solid #d4cfc4;
+    background-color: var(--menu-bg-color);
+    border: 1px solid var(--menu-border-color);
     border-radius: 3px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+    box-shadow: 0 4px 12px var(--box-shadow-color);
     min-width: 140px;
     z-index: 900;
     padding: 4px 0;
@@ -305,21 +305,21 @@ body {
     background: none;
     padding: 8px 12px;
     font-size: 13px;
-    color: #2d2d2d;
+    color: var(--menu-item-text-color);
     cursor: pointer;
 }
 
 .dropdown-menu button:hover {
-    background-color: #ebe8e1;
+    background-color: var(--menu-hover-bg-color);
 }
 
 /* Context Menu (body??吏곸젒 異붽??섎뒗 怨듭슜 硫붾돱) */
 .context-menu {
     position: fixed;
-    background-color: #faf8f3;
-    border: 1px solid #d4cfc4;
+    background-color: var(--menu-bg-color);
+    border: 1px solid var(--menu-border-color);
     border-radius: 3px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+    box-shadow: 0 4px 12px var(--box-shadow-color);
     min-width: 140px;
     z-index: 950;
     padding: 4px 0;
@@ -338,12 +338,12 @@ body {
     background: none;
     padding: 8px 12px;
     font-size: 13px;
-    color: #2d2d2d;
+    color: var(--menu-item-text-color);
     cursor: pointer;
 }
 
 .context-menu button:hover {
-    background-color: #ebe8e1;
+    background-color: var(--menu-hover-bg-color);
 }
 
 .collection-title {
@@ -352,7 +352,7 @@ body {
     display: flex;
     align-items: center;
     gap: 6px;
-    color: #2d2d2d;
+    color: var(--font-color);
 }
 
 .collection-toggle {
@@ -361,7 +361,7 @@ body {
     justify-content: center;
     width: 14px;
     transition: transform 0.12s ease;
-    color: #5a6169;
+    color: var(--sub-font-color);
 }
 
 .collection-toggle.expanded {
@@ -404,7 +404,7 @@ body {
 
 .page-list-item-title {
     font-weight: 500;
-    color: #2d2d2d;
+    color: var(--font-color);
 }
 
 /* 페이지 리스트 항목에 + 버튼 추가 */
@@ -424,7 +424,7 @@ body {
 }
 
 .page-add-subpage-btn:hover {
-    background-color: #d4cfc4;
+    background-color: var(--border-color);
     color: #1a1a1a;
 }
 
@@ -445,7 +445,7 @@ body {
     background-color: transparent;
     line-height: 1.5;
     box-sizing: border-box;
-    color: #1a1a1a;
+    color: var(--font-color);
 }
 
 /* ?섏씠吏 ?낅뜲?댄듃 ?쒓컙 ?쒖떆 (臾몄꽌 硫붿씤 ?곸뿭 ?곷떒) */
@@ -470,7 +470,7 @@ body {
     display: flex;
     flex-direction: column;
     min-height: 0;
-    background-color: #faf8f3;
+    background-color: var(--editor-bg-color);
 }
 
 .editor-toolbar {
@@ -478,8 +478,8 @@ body {
     align-items: center;
     gap: 4px;
     padding: 6px 10px;
-    border-bottom: 1px solid #d4cfc4;
-    background-color: #f5f2ed;
+    border-bottom: 1px solid var(--border-color);
+    background-color: var(--secondary-color);
     flex-wrap: nowrap;
     overflow-x: auto;
     overflow-y: visible;
@@ -502,13 +502,13 @@ body {
 }
 
 .editor-toolbar button:hover {
-    background-color: #e6e3db;
+    background-color: var(--quaternary-color);
     color: #1a1a1a;
 }
 
 .editor-toolbar button.active {
-    background-color: #2d5f5d;
-    color: #ffffff;
+    background-color: var(--point-color);
+    color: var(--button-text-color);
 }
 
 .editor-toolbar button:disabled {
@@ -527,16 +527,16 @@ body {
 }
 
 .editor-toolbar::-webkit-scrollbar-track {
-    background: #f5f2ed;
+    background: var(--scrollbar-track-color);
 }
 
 .editor-toolbar::-webkit-scrollbar-thumb {
-    background: #d4cfc4;
+    background: var(--scrollbar-thumb-color);
     border-radius: 2px;
 }
 
 .editor-toolbar::-webkit-scrollbar-thumb:hover {
-    background: #2d5f5d;
+    background: var(--scrollbar-thumb-hover-color);
 }
 
 /* ?됱긽 ?쒕∼?ㅼ슫 ?꾩껜 ?섑띁 */
@@ -563,10 +563,10 @@ body {
 .toolbar-color-menu {
     position: fixed;
     padding: 4px;
-    background-color: #faf8f3;
-    border: 1px solid #d4cfc4;
+    background-color: var(--menu-bg-color);
+    border: 1px solid var(--menu-border-color);
     border-radius: 3px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+    box-shadow: 0 4px 12px var(--box-shadow-color);
     display: flex;
     flex-direction: column;
     gap: 2px;
@@ -593,7 +593,7 @@ body {
     width: 16px;
     height: 16px;
     border-radius: 2px;
-    border: 1px solid #d4cfc4;
+    border: 1px solid var(--border-color);
     flex-shrink: 0;
 }
 
@@ -611,10 +611,10 @@ body {
 .toolbar-font-menu {
     position: fixed;
     padding: 4px;
-    background-color: #faf8f3;
-    border: 1px solid #d4cfc4;
+    background-color: var(--menu-bg-color);
+    border: 1px solid var(--menu-border-color);
     border-radius: 3px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+    box-shadow: 0 4px 12px var(--box-shadow-color);
     display: flex;
     flex-direction: column;
     gap: 2px;
@@ -639,7 +639,7 @@ body {
 .toolbar-separator {
     width: 1px;
     height: 18px;
-    background-color: #d4cfc4;
+    background-color: var(--border-color);
     flex-shrink: 0;
 }
 
@@ -661,8 +661,8 @@ body {
 .toolbar-padding-menu {
     position: fixed;
     padding: 8px;
-    background-color: #faf8f3;
-    border: 1px solid #d4cfc4;
+    background-color: var(--menu-bg-color);
+    border: 1px solid var(--menu-border-color);
     border-radius: 4px;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
     z-index: 1000;
@@ -683,7 +683,7 @@ body {
     border-radius: 3px;
     transition: background-color 0.1s;
     font-size: 13px;
-    color: #1a1a1a;
+    color: var(--font-color);
 }
 
 .toolbar-padding-menu .padding-option:hover {
@@ -697,7 +697,7 @@ body {
 
 .padding-divider {
     height: 1px;
-    background-color: #d4cfc4;
+    background-color: var(--border-color);
     margin: 6px 0;
 }
 
@@ -722,28 +722,28 @@ body {
 .padding-custom-controls input {
     flex: 1;
     padding: 6px 8px;
-    border: 1px solid #d4cfc4;
+    border: 1px solid var(--input-border-color);
     border-radius: 3px;
     font-size: 13px;
-    background-color: #fff;
+    background-color: var(--input-bg-color);
 }
 
 .padding-custom-controls input:focus {
     outline: none;
-    border-color: #2d5f5d;
+    border-color: var(--point-color);
 }
 
 .padding-custom-controls button {
     padding: 6px 10px;
     border: none;
-    background-color: #2d5f5d;
-    color: #faf8f3;
+    background-color: var(--point-color);
+    color: var(--primary-color);
     border-radius: 3px;
     cursor: pointer;
 }
 
 .padding-custom-controls button:hover {
-    background-color: #1f4746;
+    background-color: var(--point-hover-color);
 }
 
 /* 紐⑤컮?쇱뿉?쒕뒗 ?щ갚 議곗젅 踰꾪듉 ?④? 諛??ㅻ뜑 ?덉씠?꾩썐 議곗젙 */
@@ -783,7 +783,7 @@ body {
     outline: none;
     padding: 16px 18px;
     min-height: 300px;
-    color: #1a1a1a;
+    color: var(--font-color);
     line-height: 1.7;
 }
 
@@ -795,19 +795,19 @@ body {
 }
 
 .editor .ProseMirror p.is-editor-empty:first-child::before {
-    color: #9ca3af;
+    color: var(--placeholder-color);
 }
 
 .editor .ProseMirror p:hover {
-    background-color: #f0ede7;
+    background-color: var(--code-bg-color);
 }
 
 /* ?몄슜臾??ㅽ???*/
 .editor .ProseMirror blockquote {
-    border-left: 4px solid #2d5f5d;
+    border-left: 4px solid var(--blockquote-border-color);
     padding-left: 16px;
     margin: 12px 0;
-    color: #5a6169;
+    color: var(--blockquote-text-color);
     font-style: italic;
 }
 
@@ -823,13 +823,13 @@ body {
     padding: 6px 14px;
     font-size: 13px;
     cursor: pointer;
-    background-color: #2d5f5d;
-    color: #ffffff;
+    background-color: var(--point-color);
+    color: var(--button-text-color);
     font-weight: 500;
 }
 
 .primary-button:hover {
-    background-color: #1e4d4a;
+    background-color: var(--point-hover-color);
 }
 
 .mode-toggle-btn {
@@ -842,22 +842,22 @@ body {
     padding: 6px 14px;
     font-size: 13px;
     cursor: pointer;
-    background-color: #2d5f5d;
-    color: #ffffff;
+    background-color: var(--point-color);
+    color: var(--button-text-color);
     font-weight: 500;
     min-width: 100px;
 }
 
 .mode-toggle-btn:hover {
-    background-color: #1e4d4a;
+    background-color: var(--point-hover-color);
 }
 
 .mode-toggle-btn.write-mode {
-    background-color: #9b5555;
+    background-color: var(--danger-color);
 }
 
 .mode-toggle-btn.write-mode:hover {
-    background-color: #7d4444;
+    background-color: var(--danger-hover-color);
 }
 
 .danger-button {
@@ -866,13 +866,13 @@ body {
     padding: 6px 14px;
     font-size: 13px;
     cursor: pointer;
-    background-color: #9b5555;
-    color: #ffffff;
+    background-color: var(--danger-color);
+    color: var(--button-text-color);
     font-weight: 500;
 }
 
 .danger-button:hover {
-    background-color: #7d4444;
+    background-color: var(--danger-hover-color);
 }
 
 /* ?щ옒??紐낅졊 硫붾돱: ?쒓뎅??誘몃땲硫 */
@@ -881,10 +881,10 @@ body {
     z-index: 50;
     width: 260px;
     max-height: 260px;
-    background-color: #faf8f3;
+    background-color: var(--menu-bg-color);
     border-radius: 3px;
-    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.1);
-    border: 1px solid #d4cfc4;
+    box-shadow: 0 6px 16px var(--box-shadow-color);
+    border: 1px solid var(--menu-border-color);
     padding: 6px;
     overflow-y: auto;
     font-size: 13px;
@@ -911,14 +911,14 @@ body {
 
 .slash-menu-item:hover,
 .slash-menu-item.active {
-    background-color: #ebe8e1;
+    background-color: var(--menu-hover-bg-color);
 }
 
 .slash-menu-item-icon {
     width: 24px;
     height: 24px;
     border-radius: 3px;
-    background-color: #e6e3db;
+    background-color: var(--quaternary-color);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -935,7 +935,7 @@ body {
 
 .slash-menu-item-label {
     font-weight: 500;
-    color: #2d2d2d;
+    color: var(--font-color);
 }
 
 .slash-menu-item-desc {
@@ -970,15 +970,15 @@ body {
     height: 16px;
     margin: 0;
     cursor: pointer;
-    border: 1px solid #d4cfc4;
+    border: 1px solid var(--border-color);
     border-radius: 3px;
-    background-color: #faf8f3;
+    background-color: var(--primary-color);
     flex-shrink: 0;
 }
 
 .editor .ProseMirror ul[data-type="taskList"] li > label input[type="checkbox"]:checked {
-    background-color: #2d5f5d;
-    border-color: #2d5f5d;
+    background-color: var(--point-color);
+    border-color: var(--point-color);
 }
 
 .editor .ProseMirror ul[data-type="taskList"] li > div {
@@ -1001,8 +1001,8 @@ body {
 /* ?ъ씠?쒕컮 ?섎떒 踰꾪듉: ?쒓뎅???덉젣???ㅽ???*/
 .sidebar-footer {
     padding: 12px 14px 14px;
-    border-top: 1px solid #d4cfc4;
-    background-color: #e6e3db;
+    border-top: 1px solid var(--border-color);
+    background-color: var(--quaternary-color);
     display: flex;
     flex-direction: column;
     gap: 8px;
@@ -1014,13 +1014,13 @@ body {
     align-items: center;
     justify-content: center;
     gap: 6px;
-    background-color: #2d5f5d;
-    color: #ffffff;
+    background-color: var(--point-color);
+    color: var(--button-text-color);
     font-weight: 500;
 }
 
 .sidebar-new-collection-button:hover {
-    background-color: #1e4d4a;
+    background-color: var(--point-hover-color);
 }
 
 .sidebar-logout-button {
@@ -1029,13 +1029,13 @@ body {
     align-items: center;
     justify-content: center;
     gap: 6px;
-    background-color: #9b5555;
-    color: #ffffff;
+    background-color: var(--danger-color);
+    color: var(--button-text-color);
     font-weight: 500;
 }
 
 .sidebar-logout-button:hover {
-    background-color: #7d4444;
+    background-color: var(--danger-hover-color);
 }
 
 .sidebar-new-page-button {
@@ -1075,14 +1075,14 @@ body {
     left: 0;
     width: 100%;
     height: 100%;
-    background-color: rgba(0, 0, 0, 0.5);
+    background-color: var(--modal-backdrop-color);
 }
 
 .modal-content {
     position: relative;
-    background-color: #faf8f3;
+    background-color: var(--primary-color);
     border-radius: 6px;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+    box-shadow: 0 8px 24px var(--box-shadow-color);
     width: 90%;
     max-width: 500px;
     max-height: 80vh;
@@ -1096,14 +1096,14 @@ body {
     align-items: center;
     justify-content: space-between;
     padding: 20px 24px;
-    border-bottom: 1px solid #d4cfc4;
+    border-bottom: 1px solid var(--border-color);
 }
 
 .modal-header h2 {
     margin: 0;
     font-size: 18px;
     font-weight: 600;
-    color: #2d2d2d;
+    color: var(--font-color);
 }
 
 .modal-close-btn {
@@ -1112,7 +1112,7 @@ body {
     border: none;
     border-radius: 3px;
     background-color: transparent;
-    color: #5a6169;
+    color: var(--sub-font-color);
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -1122,8 +1122,8 @@ body {
 }
 
 .modal-close-btn:hover {
-    background-color: #ebe8e1;
-    color: #2d2d2d;
+    background-color: var(--tertiary-color);
+    color: var(--font-color);
 }
 
 .modal-back-btn {
@@ -1132,7 +1132,7 @@ body {
     border: none;
     border-radius: 3px;
     background-color: transparent;
-    color: #5a6169;
+    color: var(--sub-font-color);
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -1143,8 +1143,8 @@ body {
 }
 
 .modal-back-btn:hover {
-    background-color: #ebe8e1;
-    color: #2d2d2d;
+    background-color: var(--tertiary-color);
+    color: var(--font-color);
 }
 
 .modal-body {
@@ -1155,7 +1155,7 @@ body {
 
 .modal-footer {
     padding: 16px 24px;
-    border-top: 1px solid #d4cfc4;
+    border-top: 1px solid var(--border-color);
     display: flex;
     justify-content: flex-end;
     gap: 8px;
@@ -1173,7 +1173,7 @@ body {
     margin: 0 0 12px 0;
     font-size: 14px;
     font-weight: 600;
-    color: #5a6169;
+    color: var(--sub-font-color);
     text-transform: uppercase;
     letter-spacing: 0.05em;
 }
@@ -1183,7 +1183,7 @@ body {
     align-items: center;
     justify-content: space-between;
     padding: 12px 0;
-    border-bottom: 1px solid #ebe8e1;
+    border-bottom: 1px solid var(--tertiary-color);
 }
 
 .settings-item:last-child {
@@ -1193,7 +1193,7 @@ body {
 .settings-item > label:first-child {
     font-size: 14px;
     font-weight: 500;
-    color: #2d2d2d;
+    color: var(--font-color);
     flex-shrink: 0;
     min-width: 160px;
 }
@@ -1205,17 +1205,17 @@ body {
 
 .settings-select {
     padding: 6px 12px;
-    border: 1px solid #d4cfc4;
+    border: 1px solid var(--border-color);
     border-radius: 3px;
-    background-color: #ffffff;
-    color: #2d2d2d;
+    background-color: var(--input-bg-color);
+    color: var(--font-color);
     font-size: 13px;
     cursor: pointer;
     outline: none;
 }
 
 .settings-select:focus {
-    border-color: #2d5f5d;
+    border-color: var(--point-color);
 }
 
 /* 諛섏쓳??*/
@@ -1356,9 +1356,9 @@ body {
     align-items: center;
     justify-content: space-between;
     padding: 12px;
-    background-color: #f5f2ed;
+    background-color: var(--secondary-color);
     border-radius: 3px;
-    border: 1px solid #d4cfc4;
+    border: 1px solid var(--border-color);
 }
 
 .share-item-info {
@@ -1370,7 +1370,7 @@ body {
 .share-item-username {
     font-weight: 500;
     font-size: 14px;
-    color: #2d2d2d;
+    color: var(--font-color);
 }
 
 .share-item-permission {
@@ -1386,8 +1386,8 @@ body {
 .shared-collection-indicator {
     margin-left: 6px;
     padding: 2px 6px;
-    background-color: #2d5f5d;
-    color: #ffffff;
+    background-color: var(--point-color);
+    color: var(--button-text-color);
     border-radius: 2px;
     font-size: 10px;
     font-weight: 600;
@@ -1397,9 +1397,9 @@ body {
 .math-block-wrapper {
     margin: 1em 0;
     padding: 0;
-    border: 1px solid #d4cfc4;
+    border: 1px solid var(--border-color);
     border-radius: 6px;
-    background: #faf8f3;
+    background: var(--primary-color);
     transition: all 0.15s ease;
     position: relative;
     overflow: hidden;
@@ -1407,7 +1407,7 @@ body {
 
 .math-block-wrapper:hover {
     border-color: #c9c3b8;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    box-shadow: 0 2px 8px var(--box-shadow-color);
 }
 
 .math-rendered {
@@ -1415,7 +1415,7 @@ body {
     padding: 1em 1.2em;
     text-align: center;
     overflow-x: auto;
-    color: #2d2d2d;
+    color: var(--font-color);
     min-height: 60px;
     transition: background 0.15s ease;
     display: flex;
@@ -1446,9 +1446,9 @@ body {
     padding: 8px 11px;
     font-family: 'Courier New', monospace;
     font-size: 13px;
-    border: 1px solid #d4cfc4;
+    border: 1px solid var(--border-color);
     border-radius: 4px;
-    background: #ffffff;
+    background: var(--input-bg-color);
     resize: vertical;
     box-sizing: border-box;
     outline: none;
@@ -1468,7 +1468,7 @@ body {
 .math-save-button,
 .math-cancel-button {
     padding: 6px 12px;
-    border: 1px solid #d4cfc4;
+    border: 1px solid var(--border-color);
     border-radius: 4px;
     font-size: 12px;
     font-weight: 500;
@@ -1477,9 +1477,9 @@ body {
 }
 
 .math-save-button {
-    background: #5a6169;
+    background: var(--sub-font-color);
     color: white;
-    border-color: #5a6169;
+    border-color: var(--sub-font-color);
 }
 
 .math-save-button:hover {
@@ -1488,8 +1488,8 @@ body {
 }
 
 .math-cancel-button {
-    background: #ebe8e1;
-    color: #5a6169;
+    background: var(--tertiary-color);
+    color: var(--sub-font-color);
 }
 
 .math-cancel-button:hover {
@@ -1537,7 +1537,7 @@ body {
     border-radius: 8px;
     overflow: hidden;
     border: 1px solid #e5e7eb;
-    background: #f9fafb;
+    background: var(--secondary-color);
 }
 
 .caption-image {
@@ -1567,11 +1567,11 @@ body {
 .image-caption-input:not([readonly]):focus {
     outline: none;
     border-color: #d1d5db;
-    background: #f9fafb;
+    background: var(--secondary-color);
 }
 
 .image-caption-input:not([readonly]):hover {
-    background: #f9fafb;
+    background: var(--secondary-color);
 }
 
 .image-caption-input[readonly] {
@@ -1580,7 +1580,7 @@ body {
 }
 
 .image-caption-input::placeholder {
-    color: #9ca3af;
+    color: var(--placeholder-color);
 }
 
 .image-caption {
@@ -1602,7 +1602,7 @@ body {
     border: 2px solid white;
     border-radius: 50%;
     cursor: nwse-resize;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+    box-shadow: 0 2px 4px var(--box-shadow-color);
     z-index: 10;
     transition: all 0.2s ease;
 }
@@ -1624,11 +1624,11 @@ body {
     left: 8px;
     display: flex;
     gap: 4px;
-    background: rgba(255, 255, 255, 0.95);
+    background: var(--menu-bg-color);
     backdrop-filter: blur(8px);
     border-radius: 6px;
     padding: 4px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    box-shadow: 0 2px 8px var(--box-shadow-color);
     z-index: 10;
 }
 
@@ -1638,9 +1638,9 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
-    border: 1px solid #e5e7eb;
+    border: 1px solid var(--border-color);
     border-radius: 4px;
-    background: white;
+    background: var(--input-bg-color);
     cursor: pointer;
     transition: all 0.2s ease;
     padding: 0;
@@ -1654,7 +1654,7 @@ body {
 }
 
 .align-button:hover {
-    background: #f3f4f6;
+    background: var(--tertiary-color);
     border-color: #d1d5db;
     transform: scale(1.05);
     color: #374151;
@@ -1691,11 +1691,11 @@ body {
 
 /* 遺곷쭏??而⑦뀒?대꼫 */
 .bookmark-container-wrapper {
-    border: 1px solid #d4cfc4;
+    border: 1px solid var(--border-color);
     border-radius: 6px;
     padding: 12px;
     margin: 1em 0;
-    background: #faf8f3;
+    background: var(--primary-color);
 }
 
 .bookmark-container-header {
@@ -1723,7 +1723,7 @@ body {
 .bookmark-container-title {
     font-size: 16px;
     font-weight: 600;
-    color: #2d2d2d;
+    color: var(--font-color);
     outline: none;
     padding: 2px 4px;
     border-radius: 3px;
@@ -1737,13 +1737,13 @@ body {
 
 .bookmark-container-title:focus {
     background: rgba(90, 97, 105, 0.05);
-    border: 1px solid #d4cfc4;
+    border: 1px solid var(--border-color);
 }
 
 .bookmark-container-icon-btn {
     padding: 4px 8px;
-    background: #ebe8e1;
-    border: 1px solid #d4cfc4;
+    background: var(--tertiary-color);
+    border: 1px solid var(--border-color);
     border-radius: 4px;
     font-size: 12px;
     cursor: pointer;
@@ -1771,10 +1771,10 @@ body {
 .bookmark-add-button {
     display: inline-block;
     padding: 8px 14px;
-    background: #ebe8e1;
-    border: 1px solid #d4cfc4;
+    background: var(--tertiary-color);
+    border: 1px solid var(--border-color);
     border-radius: 4px;
-    color: #5a6169;
+    color: var(--sub-font-color);
     font-size: 12px;
     font-weight: 500;
     cursor: pointer;
@@ -1796,18 +1796,18 @@ body {
 .bookmark-card {
     display: flex;
     flex-direction: column;
-    border: 1px solid #d4cfc4;
+    border: 1px solid var(--border-color);
     border-radius: 6px;
     overflow: hidden;
     text-decoration: none;
     color: inherit;
-    background: #faf8f3;
+    background: var(--primary-color);
     transition: all 0.15s ease;
 }
 
 .bookmark-card:hover {
     border-color: #c9c3b8;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    box-shadow: 0 2px 8px var(--box-shadow-color);
 }
 
 .bookmark-text {
@@ -1822,7 +1822,7 @@ body {
 .bookmark-title {
     font-size: 14px;
     font-weight: 500;
-    color: #2d2d2d;
+    color: var(--font-color);
     line-height: 1.4;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1842,7 +1842,7 @@ body {
 
 .bookmark-url {
     font-size: 11px;
-    color: #9ca3af;
+    color: var(--placeholder-color);
     margin-top: auto;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1853,7 +1853,7 @@ body {
     width: 100%;
     height: 150px;
     flex-shrink: 0;
-    background: #ebe8e1;
+    background: var(--tertiary-color);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1875,7 +1875,7 @@ body {
 
 .bookmark-thumbnail-error {
     font-size: 11px;
-    color: #9ca3af;
+    color: var(--placeholder-color);
     text-align: center;
     padding: 12px 8px;
     display: none;
@@ -1891,15 +1891,15 @@ body {
     top: 6px;
     right: 6px;
     padding: 4px 10px;
-    background: #faf8f3;
-    border: 1px solid #d4cfc4;
+    background: var(--primary-color);
+    border: 1px solid var(--border-color);
     border-radius: 3px;
     font-size: 11px;
     cursor: pointer;
     opacity: 0;
     transition: opacity 0.15s;
     z-index: 10;
-    color: #5a6169;
+    color: var(--sub-font-color);
 }
 
 .bookmark-block-wrapper:hover .bookmark-edit-button {
@@ -1907,7 +1907,7 @@ body {
 }
 
 .bookmark-edit-button:hover {
-    background: #ebe8e1;
+    background: var(--tertiary-color);
     border-color: #c9c3b8;
 }
 
@@ -1917,22 +1917,22 @@ body {
     flex-direction: column;
     gap: 10px;
     padding: 14px;
-    border: 1px solid #d4cfc4;
+    border: 1px solid var(--border-color);
     border-radius: 6px;
-    background: #faf8f3;
+    background: var(--primary-color);
 }
 
 .bookmark-url-input {
     width: 100%;
     padding: 8px 11px;
-    border: 1px solid #d4cfc4;
+    border: 1px solid var(--border-color);
     border-radius: 4px;
     font-size: 13px;
     font-family: inherit;
     outline: none;
     transition: border-color 0.15s;
     box-sizing: border-box;
-    background: #ffffff;
+    background: var(--input-bg-color);
 }
 
 .bookmark-url-input:focus {
@@ -1948,7 +1948,7 @@ body {
 .bookmark-save-button,
 .bookmark-cancel-button {
     padding: 6px 12px;
-    border: 1px solid #d4cfc4;
+    border: 1px solid var(--border-color);
     border-radius: 4px;
     font-size: 12px;
     font-weight: 500;
@@ -1957,9 +1957,9 @@ body {
 }
 
 .bookmark-save-button {
-    background: #5a6169;
+    background: var(--sub-font-color);
     color: white;
-    border-color: #5a6169;
+    border-color: var(--sub-font-color);
 }
 
 .bookmark-save-button:hover {
@@ -1968,8 +1968,8 @@ body {
 }
 
 .bookmark-cancel-button {
-    background: #ebe8e1;
-    color: #5a6169;
+    background: var(--tertiary-color);
+    color: var(--sub-font-color);
 }
 
 .bookmark-cancel-button:hover {
@@ -1982,9 +1982,9 @@ body {
     text-align: center;
     color: #6b7280;
     font-size: 13px;
-    border: 1px solid #d4cfc4;
+    border: 1px solid var(--border-color);
     border-radius: 6px;
-    background: #faf8f3;
+    background: var(--primary-color);
 }
 
 /* 諛섏쓳???붿옄??*/
