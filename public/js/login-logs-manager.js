@@ -191,18 +191,18 @@ function renderPagination(total, currentPage) {
 
     let html = '';
 
-    // 이전 버튼
+    // ?? ??
     if (currentPage > 1) {
-        html += `<button class="pagination-btn" onclick="loginLogsManager.goToPage(${currentPage - 1})">
-            <i class="fa-solid fa-chevron-left"></i> 이전
+        html += `<button class="pagination-btn" data-page="${currentPage - 1}">
+            <i class="fa-solid fa-chevron-left"></i> ??
         </button>`;
     } else {
         html += `<button class="pagination-btn" disabled>
-            <i class="fa-solid fa-chevron-left"></i> 이전
+            <i class="fa-solid fa-chevron-left"></i> ??
         </button>`;
     }
 
-    // 페이지 번호 버튼
+    // ??? ?? ??
     const maxButtons = 5;
     let startPage = Math.max(1, currentPage - Math.floor(maxButtons / 2));
     let endPage = Math.min(totalPages, startPage + maxButtons - 1);
@@ -213,29 +213,26 @@ function renderPagination(total, currentPage) {
 
     for (let i = startPage; i <= endPage; i++) {
         if (i === currentPage) {
-            html += `<button class="pagination-btn active">${i}</button>`;
+            html += `<button class="pagination-btn active" data-page="${i}" aria-current="page">${i}</button>`;
         } else {
-            html += `<button class="pagination-btn" onclick="loginLogsManager.goToPage(${i})">${i}</button>`;
+            html += `<button class="pagination-btn" data-page="${i}">${i}</button>`;
         }
     }
 
-    // 다음 버튼
+    // ?? ??
     if (currentPage < totalPages) {
-        html += `<button class="pagination-btn" onclick="loginLogsManager.goToPage(${currentPage + 1})">
-            다음 <i class="fa-solid fa-chevron-right"></i>
+        html += `<button class="pagination-btn" data-page="${currentPage + 1}">
+            ?? <i class="fa-solid fa-chevron-right"></i>
         </button>`;
     } else {
         html += `<button class="pagination-btn" disabled>
-            다음 <i class="fa-solid fa-chevron-right"></i>
+            ?? <i class="fa-solid fa-chevron-right"></i>
         </button>`;
     }
 
     container.innerHTML = html;
 }
 
-/**
- * 특정 페이지로 이동
- */
 function goToPage(page) {
     loadLoginLogs(page);
 }
@@ -293,6 +290,20 @@ export function bindLoginLogsModal() {
 	    if (overlay)
 	        overlay.addEventListener('click', closeLoginLogsModal);
     }
+    const pagination = document.getElementById('login-logs-pagination');
+
+    if (pagination) {
+        pagination.addEventListener('click', (event) => {
+            const button = event.target.closest('button.pagination-btn');
+            if (!button || button.disabled) return;
+
+            const page = Number(button.dataset.page);
+            if (!Number.isFinite(page) || page === currentPage) return;
+
+            goToPage(page);
+        });
+    }
+
 }
 
 // 전역 객체로 export (페이지네이션 버튼에서 접근하기 위해)
