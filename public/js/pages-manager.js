@@ -6,6 +6,7 @@ import { secureFetch, escapeHtml, showErrorInEditor, syncPageUpdatedAtPadding } 
 import { startPageSync, stopPageSync, startCollectionSync, stopCollectionSync, flushPendingUpdates, syncEditorFromMetadata, onLocalEditModeChanged, updateAwarenessMode } from './sync-manager.js';
 import { showCover, hideCover, updateCoverButtonsVisibility } from './cover-manager.js';
 import { checkPublishStatus, updatePublishButton } from './publish-manager.js';
+import { loadAndRenderSubpages, onEditModeChange } from './subpages-manager.js';
 
 // 전역 상태 (app.js에서 전달받음)
 let state = {
@@ -328,6 +329,15 @@ export function renderPageList() {
 
                     titleWrap.appendChild(titleSpan);
 
+                    // + 버튼 (하위 페이지 추가)
+                    const addSubpageBtn = document.createElement("button");
+                    addSubpageBtn.type = "button";
+                    addSubpageBtn.className = "page-add-subpage-btn";
+                    addSubpageBtn.dataset.pageId = node.id;
+                    addSubpageBtn.dataset.collectionId = collection.id;
+                    addSubpageBtn.title = "하위 페이지 추가";
+                    addSubpageBtn.innerHTML = `<i class="fa-solid fa-plus"></i>`;
+
                     const pageMenuBtn = document.createElement("button");
                     pageMenuBtn.type = "button";
                     pageMenuBtn.className = "page-menu-btn";
@@ -338,6 +348,10 @@ export function renderPageList() {
 
                     const right = document.createElement("div");
                     right.className = "page-menu-wrapper";
+                    right.style.display = "flex";
+                    right.style.alignItems = "center";
+                    right.style.gap = "4px";
+                    right.appendChild(addSubpageBtn);
                     right.appendChild(pageMenuBtn);
 
                     row.appendChild(titleWrap);
@@ -750,6 +764,9 @@ export async function loadPage(id) {
         // 발행 상태 확인
         await checkPublishStatus(page.id);
 
+        // 하위 페이지 로드 및 렌더링
+        await loadAndRenderSubpages(page.id);
+
         // 모바일에서 페이지 로드 후 사이드바 닫기
         if (window.innerWidth <= 768) {
             window.closeSidebar();
@@ -990,6 +1007,9 @@ export async function toggleEditMode() {
         // 읽기모드 진입 시 커버 버튼 숨김
         updateCoverButtonsVisibility();
         updatePublishButton();
+
+        // 하위 페이지 섹션 업데이트
+        onEditModeChange(false);
     } else {
         // 암호화된 페이지는 쓰기 모드 진입 차단
         if (state.currentPageIsEncrypted) {
@@ -1023,6 +1043,9 @@ export async function toggleEditMode() {
         // 쓰기모드 진입 시 커버 버튼 표시
         updateCoverButtonsVisibility();
         updatePublishButton();
+
+        // 하위 페이지 섹션 업데이트
+        onEditModeChange(true);
     }
 }
 

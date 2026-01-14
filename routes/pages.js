@@ -445,6 +445,11 @@ module.exports = (dependencies) => {
             }
 
             if (parentId) {
+                // 자기 참조 차단
+                if (parentId === id) {
+                    return res.status(400).json({ error: "자기 자신을 부모로 설정할 수 없습니다." });
+                }
+
                 const [parentRows] = await pool.execute(
                     `SELECT p.id, p.collection_id
                      FROM pages p
@@ -460,6 +465,28 @@ module.exports = (dependencies) => {
 
                 if (parentRows[0].collection_id !== collectionId) {
                     return res.status(400).json({ error: "부모 페이지와 동일한 컬렉션이어야 합니다." });
+                }
+
+                // 순환 참조 검증 (최대 깊이 10)
+                let currentId = parentId;
+                let depth = 0;
+                while (currentId && depth < 10) {
+                    const [ancestorRows] = await pool.execute(
+                        `SELECT parent_id FROM pages WHERE id = ?`,
+                        [currentId]
+                    );
+                    if (!ancestorRows.length) break;
+
+                    if (ancestorRows[0].parent_id === id) {
+                        return res.status(400).json({ error: "순환 참조가 발생합니다." });
+                    }
+
+                    currentId = ancestorRows[0].parent_id;
+                    depth++;
+                }
+
+                if (depth >= 10) {
+                    return res.status(400).json({ error: "페이지 계층 구조가 너무 깊습니다. (최대 10단계)" });
                 }
             }
 

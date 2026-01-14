@@ -628,10 +628,20 @@ function handleMetadataChange(data) {
             }
 
             syncPageUpdatedAtPadding();
+
+            // 하위 페이지 섹션 여백도 동기화
+            if (window.syncSubpagesPadding) {
+                window.syncSubpagesPadding(data.value);
+            }
         }
 
         // 사이드바 업데이트
         updatePageInSidebar(data.pageId, data.field, data.value);
+
+        // 하위 페이지 메타데이터 변경 시 업데이트
+        if (window.handleSubpageMetadataChange) {
+            window.handleSubpageMetadataChange(data);
+        }
     } catch (error) {
         console.error('[WS] metadata-change 처리 오류:', error);
     }

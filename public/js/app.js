@@ -83,6 +83,13 @@ import {
 import {
     exportPageToPDF
 } from './pdf-export.js';
+import {
+    initSubpagesManager,
+    loadAndRenderSubpages,
+    handleSubpageMetadataChange,
+    onEditModeChange,
+    syncSubpagesPadding
+} from './subpages-manager.js';
 
 // ==================== Global State ====================
 const appState = {
@@ -229,6 +236,62 @@ async function handlePageListClick(event, state) {
             } finally {
                 closeContextMenu();
             }
+        }
+        return;
+    }
+
+    // 페이지에 하위 페이지 추가
+    const addSubpageBtn = event.target.closest(".page-add-subpage-btn");
+    if (addSubpageBtn) {
+        event.stopPropagation();
+        const parentPageId = addSubpageBtn.dataset.pageId;
+        const colId = addSubpageBtn.dataset.collectionId;
+        if (!parentPageId || !colId) return;
+
+        let title = prompt("새 하위 페이지 제목을 입력하세요.", "새 페이지");
+        if (title === null) return;
+
+        const plainTitle = title.trim() || "새 페이지";
+        const plainContent = "<p></p>";
+
+        try {
+            const res = await secureFetch("/api/pages", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    title: plainTitle,
+                    content: plainContent,
+                    parentId: parentPageId,
+                    collectionId: colId
+                })
+            });
+
+            if (!res.ok) {
+                const errorData = await res.json();
+                throw new Error(errorData.error || "HTTP " + res.status);
+            }
+
+            const page = await res.json();
+            state.pages.unshift({
+                id: page.id,
+                title: plainTitle,
+                updatedAt: page.updatedAt,
+                parentId: parentPageId,
+                collectionId: colId,
+                sortOrder: page.sortOrder || 0
+            });
+
+            renderPageList();
+
+            // 현재 페이지가 부모 페이지라면 하위 페이지 섹션 업데이트
+            if (state.currentPageId === parentPageId) {
+                await loadAndRenderSubpages(parentPageId);
+            }
+
+            alert("하위 페이지가 생성되었습니다.");
+        } catch (error) {
+            console.error("하위 페이지 생성 오류:", error);
+            alert("하위 페이지를 생성하지 못했습니다: " + error.message);
         }
         return;
     }
@@ -942,6 +1005,9 @@ async function init() {
     // 페이지 발행 관리자 초기화
     initPublishManager(appState);
 
+    // 하위 페이지 관리자 초기화
+    initSubpagesManager(appState);
+
     // 검색 기능 초기화
     initSearch();
 
@@ -1654,6 +1720,9 @@ window.showEncryptPermissionModal = showEncryptPermissionModal;
 window.closeSidebar = closeSidebar;
 window.handlePageListClick = handlePageListClick;
 window.decryptAndLoadPage = decryptAndLoadPage;
+window.loadAndRenderSubpages = loadAndRenderSubpages;
+window.handleSubpageMetadataChange = handleSubpageMetadataChange;
+window.syncSubpagesPadding = syncSubpagesPadding;
 
 // ==================== Start Application ====================
 document.addEventListener("DOMContentLoaded", () => {
