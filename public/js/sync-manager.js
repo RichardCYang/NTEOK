@@ -255,6 +255,7 @@ function handleWebSocketMessage(message) {
  * 페이지 동기화 시작
  */
 export async function startPageSync(pageId, isEncrypted) {
+    stopPageSync();
     // 암호화 페이지는 동기화 비활성화
     if (isEncrypted) {
         showInfo('암호화된 페이지는 실시간 협업이 지원되지 않습니다.');
@@ -262,8 +263,6 @@ export async function startPageSync(pageId, isEncrypted) {
     }
 
     // 기존 연결 정리
-    stopPageSync();
-
     currentPageId = pageId;
     state.currentPageId = pageId;
 
@@ -313,6 +312,9 @@ function subscribePage(pageId) {
  * 페이지 동기화 중지
  */
 export function stopPageSync() {
+    const pageIdToUnsubscribe = currentPageId;
+    currentPageId = null;
+    state.currentPageId = null;
 	detachYjsProsemirrorBinding();
 	// setupEditorBindingWithXmlFragment에서 붙인 스냅샷 핸들러 정리
 	if (state.editor && state.editor._snapshotHandler) {
@@ -328,10 +330,10 @@ export function stopPageSync() {
 		updateTimeout = null;
 	}
 
-    if (currentPageId && ws && ws.readyState === WebSocket.OPEN) {
+    if (pageIdToUnsubscribe && ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({
             type: 'unsubscribe-page',
-            payload: { pageId: currentPageId }
+            payload: { pageId: pageIdToUnsubscribe }
         }));
     }
 
@@ -361,8 +363,6 @@ export function stopPageSync() {
         yMetadata = null;
     }
 
-    currentPageId = null;
-    state.currentPageId = null;
     lastLocalUpdateTime = 0;
 }
 
@@ -1071,7 +1071,7 @@ function handleAwarenessChange({ added, updated, removed }, origin) {
  * Awareness 업데이트 서버 전송
  */
 function sendAwarenessUpdate(update) {
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (!currentPageId || !ws || ws.readyState !== WebSocket.OPEN) return;
 
 	const base64Update = uint8ToBase64(update);
 

@@ -606,6 +606,8 @@ export async function loadPage(id) {
         updateCoverButtonsVisibility();
     }
 
+    stopPageSync();
+
     try {
         console.log("단일 페이지 요청: GET /api/pages/" + id);
         const res = await fetch("/api/pages/" + encodeURIComponent(id));
