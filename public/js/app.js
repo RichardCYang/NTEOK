@@ -8,6 +8,8 @@ import { secureFetch, escapeHtml, showErrorInEditor, closeAllDropdowns, openDrop
 import { initEditor, bindToolbar, bindSlashKeyHandlers, updateToolbarState } from './editor.js';
 import {
     initPagesManager,
+    applyCollectionsData,
+    applyPagesData,
     fetchCollections,
     fetchPageList,
     renderPageList,
@@ -40,7 +42,8 @@ import {
     saveSettings,
     loadSettings,
     bindSettingsModal,
-    fetchAndDisplayCurrentUser
+    fetchAndDisplayCurrentUser,
+    applyCurrentUser
 } from './settings-manager.js';
 import {
     updateTotpStatus,
@@ -964,6 +967,35 @@ async function init() {
     bindPasskeyModals();
     bindAccountManagementButtons();
     bindLoginLogsModal();
+
+    try {
+        const bootstrapRes = await fetch("/api/bootstrap");
+        if (!bootstrapRes.ok) {
+            throw new Error("HTTP " + bootstrapRes.status);
+        }
+
+        const bootstrap = await bootstrapRes.json();
+
+        if (bootstrap.user) {
+            applyCurrentUser(bootstrap.user);
+        }
+
+        if (Array.isArray(bootstrap.collections)) {
+            applyCollectionsData(bootstrap.collections);
+        }
+
+        if (Array.isArray(bootstrap.pages)) {
+            applyPagesData(bootstrap.pages);
+        }
+
+        if (Array.isArray(bootstrap.collections) || Array.isArray(bootstrap.pages)) {
+            renderPageList();
+        }
+
+        return;
+    } catch (error) {
+        console.warn("Bootstrap load failed, falling back to legacy flow:", error);
+    }
 
     // 데이터 로드 - 완전 병렬 처리로 최적화 (성능 개선)
     try {

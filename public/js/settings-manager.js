@@ -255,6 +255,25 @@ export function bindSettingsModal() {
 /**
  * 현재 사용자 정보 가져오기 및 표시
  */
+export function applyCurrentUser(user) {
+    if (!user) {
+        return;
+    }
+
+    state.currentUser = user;
+
+    const userNameEl = document.querySelector("#user-name");
+    const userAvatarEl = document.querySelector("#user-avatar");
+
+    if (userNameEl) {
+        userNameEl.textContent = user.username || "Unknown";
+    }
+
+    if (userAvatarEl) {
+        userAvatarEl.textContent = user.username ? user.username[0].toUpperCase() : "?";
+    }
+}
+
 export async function fetchAndDisplayCurrentUser() {
     try {
         const res = await fetch("/api/auth/me");
@@ -263,6 +282,8 @@ export async function fetchAndDisplayCurrentUser() {
         }
 
         const user = await res.json();
+        applyCurrentUser(user);
+        return;
         state.currentUser = user;
 
         const userNameEl = document.querySelector("#user-name");

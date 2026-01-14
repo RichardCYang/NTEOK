@@ -38,12 +38,7 @@ export async function fetchCollections() {
         }
 
         const data = await res.json();
-        state.collections.length = 0;
-        state.collections.push(...(Array.isArray(data) ? data : []));
-
-        if (!state.currentCollectionId && state.collections.length) {
-            state.currentCollectionId = state.collections[0].id;
-        }
+        applyCollectionsData(data);
 
         // renderPageList()는 호출하는 쪽에서 처리 (중복 호출 방지)
     } catch (error) {
@@ -67,10 +62,8 @@ export async function fetchPageList() {
         console.log("페이지 목록 응답:", data);
 
         // 제목은 평문으로 저장되므로 복호화 불필요
-        const pages = Array.isArray(data) ? data : [];
+        applyPagesData(data);
 
-        state.pages.length = 0;
-        state.pages.push(...pages);
 
         // renderPageList()는 호출하는 쪽에서 처리 (중복 호출 방지)
 
@@ -88,6 +81,22 @@ export async function fetchPageList() {
 /**
  * 평면 페이지 목록을 트리 구조로 변환
  */
+export function applyCollectionsData(data) {
+    state.collections.length = 0;
+    state.collections.push(...(Array.isArray(data) ? data : []));
+
+    if (!state.currentCollectionId && state.collections.length) {
+        state.currentCollectionId = state.collections[0].id;
+    }
+}
+
+export function applyPagesData(data) {
+    const pages = Array.isArray(data) ? data : [];
+
+    state.pages.length = 0;
+    state.pages.push(...pages);
+}
+
 export function buildPageTree(flatPages) {
     const map = new Map();
 

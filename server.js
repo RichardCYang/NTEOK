@@ -1599,6 +1599,7 @@ function getSessionFromId(sessionId) {
         const authRoutes = require('./routes/auth')(routeDependencies);
         const collectionsRoutes = require('./routes/collections')(routeDependencies);
         const pagesRoutes = require('./routes/pages')(routeDependencies);
+        const bootstrapRoutes = require('./routes/bootstrap')(routeDependencies);
         const sharesRoutes = require('./routes/shares')(routeDependencies);
         const totpRoutes = require('./routes/totp')(routeDependencies);
         const passkeyRoutes = require('./routes/passkey')(routeDependencies);
@@ -1609,6 +1610,7 @@ function getSessionFromId(sessionId) {
         app.use('/api/auth', authRoutes);
         app.use('/api/collections', collectionsRoutes);
         app.use('/api/pages', pagesRoutes);
+        app.use('/api/bootstrap', bootstrapRoutes);
         app.use('/api', sharesRoutes);
         app.use('/api/totp', totpRoutes);
         app.use('/api/passkey', passkeyRoutes);
