@@ -2,8 +2,7 @@
  * 페이지 및 컬렉션 관리 모듈
  */
 
-import { secureFetch } from './ui-utils.js';
-import { escapeHtml, showErrorInEditor } from './ui-utils.js';
+import { secureFetch, escapeHtml, showErrorInEditor, syncPageUpdatedAtPadding } from './ui-utils.js';
 import { startPageSync, stopPageSync, startCollectionSync, stopCollectionSync, flushPendingUpdates, syncEditorFromMetadata, onLocalEditModeChanged, updateAwarenessMode } from './sync-manager.js';
 import { showCover, hideCover, updateCoverButtonsVisibility } from './cover-manager.js';
 import { checkPublishStatus, updatePublishButton } from './publish-manager.js';
@@ -726,6 +725,8 @@ export async function loadPage(id) {
                 editorEl.style.paddingRight = '';
             }
         }
+
+        syncPageUpdatedAtPadding();
 
         // 실시간 동기화 시작 (암호화 페이지는 제외)
         startPageSync(page.id, page.isEncrypted || false);

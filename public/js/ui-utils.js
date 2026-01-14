@@ -133,3 +133,22 @@ export function closeContextMenu() {
         contextMenu.classList.add("hidden");
     }
 }
+
+export function syncPageUpdatedAtPadding() {
+    const container = document.querySelector("#page-updated-at-container");
+    const editorEl = document.querySelector(".editor");
+
+    if (!container || !editorEl) return;
+
+    const editorStyle = window.getComputedStyle(editorEl);
+    const proseEl = editorEl.querySelector(".ProseMirror");
+    const proseStyle = proseEl ? window.getComputedStyle(proseEl) : null;
+
+    const editorLeft = parseFloat(editorStyle.paddingLeft) || 0;
+    const editorRight = parseFloat(editorStyle.paddingRight) || 0;
+    const proseLeft = proseStyle ? parseFloat(proseStyle.paddingLeft) || 0 : 0;
+    const proseRight = proseStyle ? parseFloat(proseStyle.paddingRight) || 0 : 0;
+
+    container.style.paddingLeft = `${editorLeft + proseLeft}px`;
+    container.style.paddingRight = `${editorRight + proseRight}px`;
+}

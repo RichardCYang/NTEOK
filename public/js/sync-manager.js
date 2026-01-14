@@ -8,7 +8,7 @@ import { Awareness, encodeAwarenessUpdate, applyAwarenessUpdate, removeAwareness
 import { ySyncPlugin, yCursorPlugin, yUndoPlugin, undo, redo, prosemirrorToYXmlFragment } from 'y-prosemirror';
 import { keymap } from 'prosemirror-keymap';
 import { DOMParser } from 'prosemirror-model';
-import { escapeHtml, showErrorInEditor } from './ui-utils.js';
+import { escapeHtml, showErrorInEditor, syncPageUpdatedAtPadding } from './ui-utils.js';
 import { showCover, hideCover } from './cover-manager.js';
 import { renderPageList } from './pages-manager.js';
 
@@ -626,6 +626,8 @@ function handleMetadataChange(data) {
                     editorEl.style.paddingRight = `${data.value}px`;
                 }
             }
+
+            syncPageUpdatedAtPadding();
         }
 
         // 사이드바 업데이트

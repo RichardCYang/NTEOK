@@ -4,7 +4,7 @@
  */
 
 // UI Utils import
-import { secureFetch } from './ui-utils.js';
+import { secureFetch, syncPageUpdatedAtPadding } from './ui-utils.js';
 
 // 문단 정렬(TextAlign) 익스텐션 ESM import
 import { TextAlign } from "https://esm.sh/@tiptap/extension-text-align@2.0.0-beta.209";
@@ -1601,6 +1601,10 @@ window.addEventListener("resize", () => {
     }
 });
 
+window.addEventListener("resize", () => {
+    syncPageUpdatedAtPadding();
+});
+
 /**
  * 테이블 크기 초기화
  */
@@ -2034,6 +2038,8 @@ async function handlePaddingChange(paddingValue) {
             editorEl.style.paddingRight = `${padding}px`;
         }
     }
+
+    syncPageUpdatedAtPadding();
 
     // 서버에 저장
     try {
