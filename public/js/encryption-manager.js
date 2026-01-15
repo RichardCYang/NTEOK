@@ -259,31 +259,34 @@ export async function handleDecryption(event) {
 
         // 2. 비밀번호로 키 생성 (기존 salt 사용)
         await cryptoManager.initializeKey(password, pageData.encryptionSalt);
+        state.decryptionKeyIsInMemory = true; // 키가 메모리에 있음을 표시
 
         // 3. 콘텐츠 복호화 (메모리에서만)
         const decryptedContent = await cryptoManager.decrypt(pageData.encryptedContent);
 
         closeDecryptionModal();
 
-        // 4. 에디터에 복호화된 콘텐츠 표시 (DB는 수정 안 함)
+        // 4. 에디터에 복호화된 콘텐츠를 표시하고 읽기 모드로 유지
         state.currentPageId = page.id;
-        state.currentPageIsEncrypted = true; // 여전히 암호화된 상태로 마킹 (수정 방지)
+        state.currentPageIsEncrypted = true; // 저장 시 재암호화를 위해 상태 유지
 
         const titleInput = document.querySelector("#page-title-input");
+        const modeToggleBtn = document.querySelector("#mode-toggle-btn");
+        const toolbar = document.querySelector(".editor-toolbar");
+
         if (titleInput) {
             titleInput.value = pageData.title;
-            titleInput.setAttribute("readonly", ""); // 암호화된 페이지는 수정 불가
+            titleInput.setAttribute("readonly", ""); // 읽기 모드이므로 제목도 읽기 전용
         }
 
         if (state.editor) {
             state.editor.commands.setContent(decryptedContent, { emitUpdate: false });
-            state.editor.setEditable(false); // 암호화된 페이지는 편집 불가
+            // 복호화 직후에는 읽기 모드를 유지해야 하므로 편집 불가능 상태로 설정
+            state.editor.setEditable(false); 
         }
 
-        // 읽기 모드로 전환
+        // UI는 읽기 모드로 유지
         state.isWriteMode = false;
-        const modeToggleBtn = document.querySelector("#mode-toggle-btn");
-        const toolbar = document.querySelector(".editor-toolbar");
         if (toolbar) {
             toolbar.classList.remove("visible");
         }
@@ -298,75 +301,12 @@ export async function handleDecryption(event) {
         // 페이지 목록 갱신 (선택 표시)
         renderPageList();
 
-        cryptoManager.clearKey();
+        // cryptoManager.clearKey(); // 저장 시 재암호화를 위해 키를 유지
     } catch (error) {
         console.error("임시 복호화 오류:", error);
         errorEl.textContent = "비밀번호가 올바르지 않거나 복호화에 실패했습니다.";
-        cryptoManager.clearKey();
-    }
-}
-
-/**
- * 페이지 영구 복호화 처리 (DB를 평문으로 변경)
- */
-export async function handlePermanentDecryption(pageId) {
-    const password = prompt('복호화 비밀번호를 입력하세요:');
-    if (!password) {
-        return;
-    }
-
-    try {
-        // 1. 페이지 데이터 가져오기
-        const res = await fetch(`/api/pages/${encodeURIComponent(pageId)}`);
-        if (!res.ok) {
-            throw new Error("페이지를 불러올 수 없습니다.");
-        }
-
-        const pageData = await res.json();
-
-        if (!pageData.encryptionSalt || !pageData.encryptedContent) {
-            throw new Error("암호화 데이터가 없습니다.");
-        }
-
-        // 2. 비밀번호로 키 생성
-        await cryptoManager.initializeKey(password, pageData.encryptionSalt);
-
-        // 3. 콘텐츠 복호화
-        const decryptedContent = await cryptoManager.decrypt(pageData.encryptedContent);
-
-        // 4. 평문으로 DB 업데이트 (영구 복호화)
-        const updateRes = await secureFetch(`/api/pages/${encodeURIComponent(pageId)}`, {
-            method: "PUT",
-            headers: {
-                "Content-Type": "application/json"
-            },
-            body: JSON.stringify({
-                title: pageData.title,
-                content: decryptedContent,
-                isEncrypted: false,
-                encryptionSalt: null,
-                encryptedContent: null
-            })
-        });
-
-        if (!updateRes.ok) {
-            throw new Error("영구 복호화 실패.");
-        }
-
-        alert("페이지가 영구적으로 복호화되었습니다!");
-
-        // 5. 페이지 목록 갱신 및 로드
-        await fetchPageList();
-        renderPageList();
-
-        // 6. 복호화된 페이지 로드
-        await loadPage(pageId);
-
-        cryptoManager.clearKey();
-    } catch (error) {
-        console.error("영구 복호화 오류:", error);
-        alert("비밀번호가 올바르지 않거나 복호화에 실패했습니다: " + error.message);
-        cryptoManager.clearKey();
+        cryptoManager.clearKey(); // 오류 발생 시 키 삭제
+        state.decryptionKeyIsInMemory = false; // 오류 발생 시 플래그 초기화
     }
 }
 

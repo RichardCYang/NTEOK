@@ -856,46 +856,34 @@ export async function saveCurrentPage() {
             return false;
         }
 
-        // 컬렉션 정보 조회
-        const collection = state.collections.find(c => c.id === currentPage.collectionId);
-        const isSharedCollection = collection && (collection.isShared || !collection.isOwner);
-
         let requestBody = {};
 
-        // 암호화된 페이지인 경우 수정 불가 (먼저 복호화 필요)
-        if (currentPage.isEncrypted) {
-            alert('암호화된 페이지는 수정할 수 없습니다. 먼저 복호화하세요.');
-            return false;
-        }
-
-        // 공유 컬렉션 vs 개인 컬렉션 구분
-        if (isSharedCollection) {
-            if (collection.isEncrypted) {
-                // 암호화된 공유 컬렉션: 컬렉션 키 사용
-                const collectionKey = await getCollectionKey(collection.id);
-                requestBody = {
-                    title: title,  // 제목은 평문으로
-                    content: '',  // 내용은 빈 문자열 (암호화됨)
-                    encryptedContent: await cryptoManager.encryptWithKey(content, collectionKey),
-                    isEncrypted: true,
-                    icon: currentPage.icon || null  // 아이콘 유지
-                };
-            } else {
-                // 평문 공유 컬렉션
-                requestBody = {
-                    title,
-                    content,
-                    isEncrypted: false,
-                    icon: currentPage.icon || null  // 아이콘 유지
-                };
+        // 페이지가 암호화된 상태(임시 복호화 후 수정)인 경우
+        if (state.currentPageIsEncrypted) {
+            // state.decryptionKeyIsInMemory 플래그로 키 존재 여부 확인
+            if (!state.decryptionKeyIsInMemory) {
+                throw new Error("암호화 키가 없어 저장할 수 없습니다. 페이지를 새로고침하고 다시 시도하세요.");
             }
+            
+            const encryptedContent = await cryptoManager.encrypt(content);
+            
+            requestBody = {
+                title: title,
+                content: '', // 원본 content는 비움
+                encryptedContent: encryptedContent,
+                isEncrypted: true, // 암호화 상태 유지
+                // salt는 서버에서 기존 값을 유지하므로 보내지 않음
+            };
+            
+            console.log("임시 복호화된 페이지를 다시 암호화하여 저장합니다.");
+
         } else {
-            // 개인 컬렉션: 기본적으로 평문 저장 (선택적 암호화)
+            // 일반 평문 페이지 저장
             requestBody = {
                 title,
                 content,
                 isEncrypted: false,
-                icon: currentPage.icon || null  // 아이콘 유지
+                icon: currentPage.icon || null
             };
         }
 
@@ -911,6 +899,13 @@ export async function saveCurrentPage() {
             throw new Error("HTTP " + res.status + " " + res.statusText);
         }
 
+        // 저장이 성공하면 임시 암호화 키 제거 및 플래그 초기화
+        if (state.currentPageIsEncrypted && state.decryptionKeyIsInMemory) {
+            cryptoManager.clearKey();
+            state.decryptionKeyIsInMemory = false;
+            console.log("재암호화 저장 후 임시 키를 제거하고 플래그를 초기화했습니다.");
+        }
+
         const page = await res.json();
         const decryptedTitle = titleInput ? titleInput.value || "제목 없음" : "제목 없음";
 
@@ -922,7 +917,7 @@ export async function saveCurrentPage() {
                     updatedAt: page.updatedAt,
                     parentId: page.parentId ?? p.parentId ?? null,
                     sortOrder: typeof page.sortOrder === "number" ? page.sortOrder : (typeof p.sortOrder === "number" ? p.sortOrder : 0),
-                    icon: page.icon ?? p.icon ?? null  // 아이콘 업데이트
+                    icon: page.icon ?? p.icon ?? null
                 };
             }
             return p;
@@ -968,23 +963,17 @@ export async function toggleEditMode() {
     if (!state.editor || !modeToggleBtn) return;
 
     if (state.isWriteMode) {
-        // 대기 중인 업데이트를 즉시 실행 (yMetadata에 저장)
-        flushPendingUpdates();
+        // 읽기 모드로 전환 시 저장
+        await saveCurrentPage();
 
-        // yMetadata → 에디터 명시적 동기화 (읽기 모드 전환 전)
-        syncEditorFromMetadata();
-
-        // 제목만 저장 (content는 Yjs 동기화에 의존)
-        await savePageTitle();
-
+        // 저장이 성공하면 읽기 모드로 전환
         state.isWriteMode = false;
 		state.editor.setEditable(false);
-
-		// 읽기 모드로 전환 시 에디터 포커스를 명시적으로 해제해야
+        
+        // 읽기 모드로 전환 시 에디터 포커스를 명시적으로 해제해야
     	// 원격 사용자에게 내 커서가 남아있는 현상을 방지할 수 있음.
         state.editor.commands?.blur?.();
         state.editor.view?.dom?.blur?.();
-
 		updateAwarenessMode(state.isWriteMode);
 
         if (titleInput) {
@@ -1003,21 +992,16 @@ export async function toggleEditMode() {
         }
 
         onLocalEditModeChanged(state.isWriteMode);
-
-        // 읽기모드 진입 시 커버 버튼 숨김
         updateCoverButtonsVisibility();
         updatePublishButton();
-
-        // 하위 페이지 섹션 업데이트
         onEditModeChange(false);
     } else {
-        // 암호화된 페이지는 쓰기 모드 진입 차단
-        if (state.currentPageIsEncrypted) {
-            alert("암호화된 페이지는 편집할 수 없습니다.\n편집하려면 먼저 복호화하세요.");
+        // 쓰기 모드로 전환
+        // 암호화된 페이지의 경우, 복호화 키가 메모리에 있어야만 쓰기 모드 진입 가능
+        if (state.currentPageIsEncrypted && !state.decryptionKeyIsInMemory) {
+            alert("암호화된 페이지는 편집할 수 없습니다.\n페이지 목록에서 다시 클릭하여 비밀번호를 입력해주세요.");
             return;
         }
-
-        // DB 로드 제거: 실시간 동기화로 이미 최신 상태
 
         state.isWriteMode = true;
         state.editor.setEditable(true);
@@ -1039,12 +1023,8 @@ export async function toggleEditMode() {
         }
 
 		onLocalEditModeChanged(state.isWriteMode);
-
-        // 쓰기모드 진입 시 커버 버튼 표시
         updateCoverButtonsVisibility();
         updatePublishButton();
-
-        // 하위 페이지 섹션 업데이트
         onEditModeChange(true);
     }
 }

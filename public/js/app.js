@@ -26,8 +26,7 @@ import {
     showDecryptionModal,
     closeDecryptionModal,
     bindEncryptionModal,
-    bindDecryptionModal,
-    handlePermanentDecryption
+    bindDecryptionModal
 } from './encryption-manager.js';
 import {
     openShareModal,
@@ -392,10 +391,6 @@ async function handlePageListClick(event, state) {
                         <i class="fa-solid fa-file-pdf"></i>
                         PDF로 내보내기
                     </button>
-                    <button data-action="permanent-decrypt" data-page-id="${escapeHtml(pageId)}">
-                        <i class="fa-solid fa-unlock"></i>
-                        암호화 해제
-                    </button>
                     <button data-action="toggle-share" data-page-id="${escapeHtml(pageId)}" data-share-allowed="${shareAllowed ? 'true' : 'false'}">
                         <i class="fa-solid fa-${shareAllowed ? 'eye-slash' : 'eye'}"></i>
                         ${shareAllowed ? '공유 비허용' : '공유 허용'}
@@ -414,10 +409,6 @@ async function handlePageListClick(event, state) {
                     <button data-action="export-pdf" data-page-id="${escapeHtml(pageId)}">
                         <i class="fa-solid fa-file-pdf"></i>
                         PDF로 내보내기
-                    </button>
-                    <button data-action="permanent-decrypt" data-page-id="${escapeHtml(pageId)}">
-                        <i class="fa-solid fa-unlock"></i>
-                        암호화 해제
                     </button>
                     <button data-action="delete-page" data-page-id="${escapeHtml(pageId)}">
                         <i class="fa-regular fa-trash-can"></i>
@@ -451,7 +442,7 @@ async function handlePageListClick(event, state) {
     }
 
     // 페이지 메뉴 액션
-    const pageMenuAction = event.target.closest("#context-menu button[data-action^='set-icon'], #context-menu button[data-action^='export-pdf'], #context-menu button[data-action^='encrypt-page'], #context-menu button[data-action^='permanent-decrypt'], #context-menu button[data-action^='delete-page'], #context-menu button[data-action^='toggle-share']");
+    const pageMenuAction = event.target.closest("#context-menu button[data-action^='set-icon'], #context-menu button[data-action^='export-pdf'], #context-menu button[data-action^='encrypt-page'], #context-menu button[data-action^='delete-page'], #context-menu button[data-action^='toggle-share']");
     if (pageMenuAction) {
         const action = pageMenuAction.dataset.action;
         const pageId = pageMenuAction.dataset.pageId;
@@ -478,13 +469,6 @@ async function handlePageListClick(event, state) {
             closeContextMenu();
             return;
         }
-
-        if (action === "permanent-decrypt" && pageId) {
-            closeContextMenu();
-            await handlePermanentDecryption(pageId);
-            return;
-        }
-
 
         if (action === "toggle-share" && pageId) {
             const currentShareAllowed = pageMenuAction.dataset.shareAllowed === 'true';
@@ -625,6 +609,7 @@ function bindLogoutButton() {
             if (typeof window.cryptoManager !== 'undefined') {
                 window.cryptoManager.clearKey();
                 window.cryptoManager.clearMasterKey();
+                appState.decryptionKeyIsInMemory = false;
             }
 
             window.location.href = "/login";
