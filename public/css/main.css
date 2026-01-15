@@ -1883,14 +1883,14 @@ body {
 
 
 
+
 .loading-overlay {
     position: fixed;
     top: 0;
     left: 0;
     width: 100%;
     height: 100%;
-    background-color: transparent; /* Make sure this is transparent for the gradient to show */
-    background-image: linear-gradient(to bottom right, var(--primary-color), var(--secondary-color));
+    background: linear-gradient(135deg, #ffffff 0%, #f0f0f0 100%); /* Opaque light gradient */
     display: flex;
     justify-content: center;
     align-items: center;
