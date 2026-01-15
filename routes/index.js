@@ -14,7 +14,7 @@ const router = express.Router();
 module.exports = (dependencies) => {
 	const { getSessionFromRequest, fs, pool, logError, getClientIpFromRequest } = dependencies;
 
-    function sendHtmlWithNonce(res, filename) {
+    function sendHtmlWithNonce(res, filename, theme = 'default') {
         const filePath = path.join(__dirname, "..", "public", filename);
         fs.readFile(filePath, "utf8", (err, html) => {
             if (err) {
@@ -23,7 +23,28 @@ module.exports = (dependencies) => {
             }
 
             const nonce = res.locals?.cspNonce || "";
-            const out = html.replace(/__CSP_NONCE__/g, nonce);
+            
+            // 테마별 로딩 오버레이 스타일 정의
+            let loadingStyle = '';
+            if (theme === 'dark') {
+                loadingStyle = `
+                    <style nonce="${nonce}">
+                        .loading-overlay { background: #121212 !important; }
+                        .loading-spinner { border-color: rgba(255,255,255,0.1) !important; border-left-color: #5d9cec !important; }
+                    </style>
+                `;
+            } else {
+                loadingStyle = `
+                    <style nonce="${nonce}">
+                        .loading-overlay { background: #f5f2ed !important; }
+                        .loading-spinner { border-color: rgba(0,0,0,0.1) !important; border-left-color: #2d5f5d !important; }
+                    </style>
+                `;
+            }
+
+            let out = html.replace(/__CSP_NONCE__/g, nonce);
+            // </head> 바로 앞에 테마 스타일 주입
+            out = out.replace('</head>', `${loadingStyle}</head>`);
 
             // HTML은 캐시 비권장 (nonce/보안/업데이트)
             res.setHeader("Content-Type", "text/html; charset=utf-8");
@@ -37,14 +58,22 @@ module.exports = (dependencies) => {
      * 메인 화면
      * GET /
      */
-    router.get("/", (req, res) => {
+    router.get("/", async (req, res) => {
         const session = getSessionFromRequest(req);
 
         if (!session) {
             return res.redirect("/login");
         }
 
-        return sendHtmlWithNonce(res, "index.html");
+        try {
+            // 사용자의 테마 설정을 DB에서 조회
+            const [rows] = await pool.execute('SELECT theme FROM users WHERE id = ?', [session.userId]);
+            const theme = rows[0]?.theme || 'default';
+            return sendHtmlWithNonce(res, "index.html", theme);
+        } catch (error) {
+            console.error("Error fetching user theme:", error);
+            return sendHtmlWithNonce(res, "index.html");
+        }
     });
 
     /**

@@ -113,16 +113,33 @@ export function closeSettingsModal() {
 export async function saveSettings() {
     const defaultModeSelect = document.querySelector("#settings-default-mode");
     const themeSelect = document.querySelector("#settings-theme-select");
+    const { secureFetch } = await import('./ui-utils.js');
+
+    const newSettings = { ...state.userSettings };
 
     // 로컬 설정 저장
     if (defaultModeSelect) {
-        state.userSettings.defaultMode = defaultModeSelect.value;
+        newSettings.defaultMode = defaultModeSelect.value;
     }
     if (themeSelect) {
-        state.userSettings.theme = themeSelect.value;
-        applyTheme(themeSelect.value);
+        const themeName = themeSelect.value;
+        newSettings.theme = themeName;
+        
+        // 서버에 테마 저장 시도
+        try {
+            await secureFetch('/api/themes/set', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ theme: themeName })
+            });
+        } catch (error) {
+            console.error('서버 테마 저장 실패:', error);
+        }
+        
+        applyTheme(themeName);
     }
     
+    state.userSettings = newSettings;
     localStorage.setItem("userSettings", JSON.stringify(state.userSettings));
     console.log("설정 저장됨:", state.userSettings);
 
@@ -346,6 +363,11 @@ export function applyCurrentUser(user) {
 
     if (userAvatarEl) {
         userAvatarEl.textContent = user.username ? user.username[0].toUpperCase() : "?";
+    }
+
+    // 서버에서 받은 테마 적용
+    if (user.theme) {
+        applyTheme(user.theme);
     }
 }
 

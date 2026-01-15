@@ -643,6 +643,19 @@ async function initDb() {
     try {
         await pool.execute(`
             ALTER TABLE users
+            ADD COLUMN theme VARCHAR(64) NOT NULL DEFAULT 'default'
+        `);
+        console.log('✓ theme 컬럼 추가됨');
+    } catch (error) {
+        // 컬럼이 이미 존재하면 무시
+        if (error.code !== 'ER_DUP_FIELDNAME') {
+            console.error('theme 컬럼 추가 오류:', error.message);
+        }
+    }
+
+    try {
+        await pool.execute(`
+            ALTER TABLE users
             ADD COLUMN allowed_login_countries TEXT NULL
         `);
         console.log('✓ allowed_login_countries 컬럼 추가됨');

@@ -102,7 +102,8 @@ const appState = {
     currentPageIsEncrypted: false,  // 현재 페이지의 암호화 상태
     currentUser: null,
     userSettings: {
-        defaultMode: 'read'
+        defaultMode: 'read',
+        theme: 'default'
     },
     currentEncryptingPageId: null,
     currentDecryptingPage: null,

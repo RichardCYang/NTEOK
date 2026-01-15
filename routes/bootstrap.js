@@ -20,7 +20,7 @@ module.exports = (dependencies) => {
 
             const [userRows, collectionRows, pageRows] = await Promise.all([
                 pool.execute(
-                    `SELECT id, username FROM users WHERE id = ?`,
+                    `SELECT id, username, theme FROM users WHERE id = ?`,
                     [userId]
                 ),
                 pool.execute(
@@ -70,7 +70,11 @@ module.exports = (dependencies) => {
             ]);
 
             const user = userRows[0]?.[0]
-                ? { id: userRows[0][0].id, username: userRows[0][0].username }
+                ? {
+                    id: userRows[0][0].id,
+                    username: userRows[0][0].username,
+                    theme: userRows[0][0].theme || 'default'
+                }
                 : null;
 
             const collectionsRaw = collectionRows[0] || [];
