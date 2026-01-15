@@ -109,7 +109,13 @@
 #current-selection-summary {
     background-color: var(--tertiary-color) !important;
     border-color: var(--border-color) !important;
+    color: var(--sub-font-color) !important;
 }
+
+#country-list-container label {
+    color: var(--font-color);
+}
+
 
 #delete-account-modal p,
 #delete-account-modal ul li,
@@ -190,10 +196,6 @@
     border-color: var(--border-color) !important;
 }
 
-#country-list-container .country-item {
-    color: var(--font-color);
-}
-
-#country-list-container .country-item:hover {
-    background-color: var(--item-hover-bg-color);
+#country-list-container label:hover {
+    background-color: var(--item-hover-bg-color) !important;
 }
