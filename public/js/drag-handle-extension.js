@@ -152,10 +152,11 @@ export const DragHandle = Extension.create({
                                 return;
                             }
 
-                            handle.style.top = (rect.top - parentRect.top) + 'px';
+                            // 스크롤 오프셋을 고려하여 절대 위치 계산 (scrollTop 추가)
+                            handle.style.top = (rect.top - parentRect.top + view.dom.parentNode.scrollTop) + 'px';
                             // main.css에 의하면 .editor padding-left가 120px임.
                             // 핸들을 에디터 콘텐츠 시작점(rect.left)보다 왼쪽에 배치.
-                            handle.style.left = (rect.left - parentRect.left - 24) + 'px'; // 얇아졌으므로 위치 살짝 조정
+                            handle.style.left = (rect.left - parentRect.left - 24 + view.dom.parentNode.scrollLeft) + 'px'; // 얇아졌으므로 위치 살짝 조정
                             
                             handle.style.opacity = '1';
                             
@@ -235,15 +236,19 @@ export const DragHandle = Extension.create({
                             const middleY = rect.top + rect.height / 2;
 
                             // 위쪽 절반이면 블록 위로, 아래쪽 절반이면 블록 아래로
+                            // 스크롤 오프셋 반영
+                            const scrollTop = editorView.dom.parentNode.scrollTop;
+                            const scrollLeft = editorView.dom.parentNode.scrollLeft;
+                            
                             if (y < middleY) {
                                 dropTargetPos = targetBlockPos; // 위로 이동 (현재 블록 자리)
-                                dropIndicator.style.top = (rect.top - parentRect.top - 2) + 'px';
+                                dropIndicator.style.top = (rect.top - parentRect.top - 2 + scrollTop) + 'px';
                             } else {
                                 dropTargetPos = targetBlockPos + targetNode.nodeSize; // 아래로 이동 (다음 블록 자리)
-                                dropIndicator.style.top = (rect.bottom - parentRect.top - 2) + 'px';
+                                dropIndicator.style.top = (rect.bottom - parentRect.top - 2 + scrollTop) + 'px';
                             }
                             
-                            dropIndicator.style.left = (rect.left - parentRect.left) + 'px';
+                            dropIndicator.style.left = (rect.left - parentRect.left + scrollLeft) + 'px';
                             dropIndicator.style.width = rect.width + 'px';
                             dropIndicator.style.display = 'block';
                         }
@@ -493,6 +498,14 @@ export const DragHandle = Extension.create({
                          onMouseMove({ clientX: e.clientX, clientY: e.clientY });
                     });
 
+                    // 스크롤 시 핸들 숨김 처리 (위치 불일치 방지)
+                    const onScroll = () => {
+                        if (handle.style.opacity !== '0') {
+                            handle.style.opacity = '0';
+                        }
+                    };
+                    window.addEventListener('scroll', onScroll, true);
+
                     return {
                         destroy() {
                             handle.remove();
@@ -500,6 +513,7 @@ export const DragHandle = Extension.create({
                             if (editorView.dom.parentNode) {
                                 editorView.dom.parentNode.removeEventListener('mousemove', onMouseMove);
                             }
+                            window.removeEventListener('scroll', onScroll, true);
                         }
                     };
                 }
