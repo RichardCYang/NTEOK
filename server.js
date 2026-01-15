@@ -1262,6 +1262,7 @@ app.use((req, res, next) => {
 		"base-uri 'self'; " +
         "object-src 'none'; " +
         "frame-ancestors 'none'; " +
+        "frame-src 'self' https://www.youtube.com https://youtube.com; " +
         "form-action 'self'; " +
         `script-src 'self' 'nonce-${nonce}' https://cdn.jsdelivr.net https://esm.sh; ` +
         "style-src 'self' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://fonts.googleapis.com 'unsafe-inline'; " +

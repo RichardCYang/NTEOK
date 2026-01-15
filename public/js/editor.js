@@ -38,6 +38,9 @@ import { BookmarkBlock, BookmarkContainerBlock } from './bookmark-node.js';
 // CalloutBlock 노드 import
 import { CalloutBlock } from './callout-node.js';
 
+// YoutubeBlock 노드 import
+import { YoutubeBlock } from './youtube-node.js';
+
 // DragHandle extension import
 import { DragHandle } from './drag-handle-extension.js';
 
@@ -284,6 +287,27 @@ export const SLASH_ITEMS = [
         icon: "ℹ️",
         command(editor) {
             editor.chain().focus().setCallout('info', '', '').run();
+        }
+    },
+    {
+        id: "youtube",
+        label: "YouTube",
+        description: "YouTube 동영상 임베드",
+        icon: "▶",
+        command(editor) {
+            const url = window.prompt("YouTube 동영상 URL을 입력하세요:");
+            if (!url) return;
+
+            // YouTube ID 추출 정규식
+            const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/;
+            const match = url.match(regExp);
+
+            if (match && match[2].length === 11) {
+                const embedUrl = `https://www.youtube.com/embed/${match[2]}`;
+                editor.chain().focus().setYoutubeBlock({ src: embedUrl }).run();
+            } else {
+                alert("올바른 YouTube URL이 아닙니다.");
+            }
         }
     }
 ];
@@ -1095,6 +1119,7 @@ export function initEditor() {
             BookmarkContainerBlock,
             BookmarkBlock,
             CalloutBlock,
+            YoutubeBlock,
             DragHandle,
         ],
         content: "<p>불러오는 중...</p>",

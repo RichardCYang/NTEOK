@@ -97,18 +97,61 @@ export const DragHandle = Extension.create({
                             depth = $pos.depth;
                             node = $pos.node(depth);
                         }
-                        
-                        // depth 1 노드가 아니면 무시 (혹은 depth 0은 doc이므로 depth 1이 최상위 블록)
-                        if (depth !== 1) return;
 
-                        const blockPos = $pos.before(1);
-                        const domNode = view.nodeDOM(blockPos);
+                        let targetPos = null;
+                        let targetNode = null;
+                        
+                        // depth 1: 일반 블록
+                        if (depth === 1) {
+                            targetPos = $pos.before(1);
+                            targetNode = node;
+                        } 
+                        // depth 0: 루트 레벨 Atom 노드 (YouTube, Image 등) 처리
+                        else if (depth === 0) {
+                            const nodeAfter = $pos.nodeAfter;
+                            const nodeBefore = $pos.nodeBefore;
+                            
+                            // nodeAfter 확인
+                            if (nodeAfter && nodeAfter.isBlock) {
+                                const dom = view.nodeDOM($pos.pos);
+                                if (dom && dom.nodeType === 1) {
+                                    const rect = dom.getBoundingClientRect();
+                                    // 마우스 Y 좌표가 해당 블록 범위 내에 있는지 확인
+                                    if (e.clientY >= rect.top && e.clientY <= rect.bottom) {
+                                        targetPos = $pos.pos;
+                                        targetNode = nodeAfter;
+                                    }
+                                }
+                            }
+                            
+                            // nodeAfter가 아니면 nodeBefore 확인
+                            if (!targetNode && nodeBefore && nodeBefore.isBlock) {
+                                const p = $pos.pos - nodeBefore.nodeSize;
+                                const dom = view.nodeDOM(p);
+                                if (dom && dom.nodeType === 1) {
+                                    const rect = dom.getBoundingClientRect();
+                                    if (e.clientY >= rect.top && e.clientY <= rect.bottom) {
+                                        targetPos = p;
+                                        targetNode = nodeBefore;
+                                    }
+                                }
+                            }
+                        }
+
+                        if (!targetNode || targetPos === null) return;
+
+                        const domNode = view.nodeDOM(targetPos);
 
                         if (domNode && domNode.nodeType === 1) {
                             // 블록 위치 가져오기
                             const rect = domNode.getBoundingClientRect();
                             const parentRect = view.dom.parentNode.getBoundingClientRect();
                             
+                            // 마우스가 블록 범위(또는 근처)에 있는지 이중 확인
+                            if (e.clientY < rect.top - 20 || e.clientY > rect.bottom + 20) {
+                                return;
+                            }
+
                             handle.style.top = (rect.top - parentRect.top) + 'px';
                             // main.css에 의하면 .editor padding-left가 120px임.
                             // 핸들을 에디터 콘텐츠 시작점(rect.left)보다 왼쪽에 배치.
@@ -116,8 +159,8 @@ export const DragHandle = Extension.create({
                             
                             handle.style.opacity = '1';
                             
-                            currentBlockPos = blockPos;
-                            currentBlockNode = node;
+                            currentBlockPos = targetPos;
+                            currentBlockNode = targetNode;
                         }
                     };
 
