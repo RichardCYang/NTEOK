@@ -3768,3 +3768,62 @@ body {
 .loading-overlay.hidden {
     display: none;
 }
+
+/* Drag Handle Styles */
+.block-handle {
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    color: #9ca3af;
+    cursor: grab;
+    font-size: 14px;
+    transition: background-color 0.2s, color 0.2s, opacity 0.2s;
+}
+
+.block-handle:hover {
+    background-color: rgba(0, 0, 0, 0.05);
+    color: #4b5563;
+}
+
+.block-handle:active {
+    cursor: grabbing;
+}
+
+/* Drag Ghost Styles */
+.drag-ghost {
+    background: white;
+    border: 1px solid #e5e7eb;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+    padding: 8px 12px;
+    border-radius: 6px;
+    opacity: 0.9;
+    pointer-events: none;
+    z-index: 9999;
+    font-size: 14px;
+    color: #374151;
+    max-width: 300px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Drop Indicator Styles */
+.drop-indicator {
+    position: absolute;
+    height: 2px;
+    background-color: #3b82f6;
+    pointer-events: none;
+    z-index: 50;
+    transition: top 0.1s ease;
+}
+
+/* Context Menu Danger Button */
+.context-menu button.danger {
+    color: #dc2626;
+}
+.context-menu button.danger:hover {
+    background-color: #fef2f2;
+}

@@ -38,6 +38,9 @@ import { BookmarkBlock, BookmarkContainerBlock } from './bookmark-node.js';
 // CalloutBlock 노드 import
 import { CalloutBlock } from './callout-node.js';
 
+// DragHandle extension import
+import { DragHandle } from './drag-handle-extension.js';
+
 // 전역 Tiptap 번들에서 Editor / StarterKit 가져오기
 const Editor = Tiptap.Core.Editor;
 const StarterKit = Tiptap.StarterKit;
@@ -1092,6 +1095,7 @@ export function initEditor() {
             BookmarkContainerBlock,
             BookmarkBlock,
             CalloutBlock,
+            DragHandle,
         ],
         content: "<p>불러오는 중...</p>",
         onSelectionUpdate() {
