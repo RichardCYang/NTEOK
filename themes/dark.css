@@ -30,3 +30,170 @@
     --scrollbar-thumb-color: #444444;
     --scrollbar-thumb-hover-color: #5d9cec;
 }
+
+/* =================================================================
+계정, 보안, 로그 모달 다크 테마 스타일
+================================================================= */
+
+/* --- 공용 입력 필드 --- */
+.settings-select,
+#delete-account-password,
+#delete-account-confirm-text,
+#encryption-password,
+#encryption-password-confirm,
+#decryption-password,
+#share-username,
+#collection-name-input,
+#totp-verify-code,
+#totp-disable-password,
+#passkey-device-name,
+#totp-login-code,
+#country-search-input {
+    background-color: var(--input-bg-color);
+    border-color: var(--input-border-color);
+    color: var(--font-color);
+}
+
+.settings-select:focus,
+#delete-account-password:focus,
+#delete-account-confirm-text:focus {
+    border-color: var(--point-color);
+    box-shadow: 0 0 0 1px var(--point-color);
+}
+
+/* --- 설정, 보안, 계정 삭제 모달 --- */
+#settings-modal .settings-section h3,
+#security-settings-modal .settings-section h3 {
+    color: var(--font-color);
+    border-bottom-color: var(--border-color);
+}
+
+#settings-modal .settings-item label,
+#security-settings-modal .settings-item label {
+    color: var(--font-color);
+}
+
+#settings-modal .settings-description,
+#security-settings-modal .settings-description {
+    color: var(--sub-font-color);
+}
+
+#settings-modal .settings-value,
+#security-settings-modal .settings-value {
+    color: var(--sub-font-color);
+}
+
+#settings-modal .settings-danger-zone .settings-warning,
+#delete-account-modal .modal-body p {
+    color: var(--sub-font-color);
+}
+
+#delete-account-modal .modal-body label,
+#page-encryption-modal label,
+#page-decryption-modal label,
+#share-collection-modal label,
+#collection-settings-modal label,
+#totp-setup-modal label,
+#passkey-manage-modal h3,
+#passkey-register-modal label,
+#totp-verify-modal label {
+    color: var(--font-color);
+}
+
+/* 경고 및 안내 메시지 박스 */
+#delete-account-modal div[style*="background: #fef2f2"],
+#page-encryption-modal div[style*="background: #f3f4f6"],
+#totp-setup-step2 div[style*="background: #f3f4f6"],
+#totp-disable-confirm div[style*="background-color: #fef2f2"],
+#country-whitelist-modal div[style*="background-color: #fff9e6"],
+#current-selection-summary {
+    background-color: var(--tertiary-color) !important;
+    border-color: var(--border-color) !important;
+}
+
+#delete-account-modal p,
+#delete-account-modal ul li,
+#page-encryption-modal p,
+#totp-setup-step2 p,
+#totp-disable-confirm p,
+#country-whitelist-modal p {
+    color: var(--sub-font-color) !important;
+}
+
+#totp-secret-display {
+    background-color: var(--input-bg-color) !important;
+    border-color: var(--border-color) !important;
+    color: var(--font-color) !important;
+}
+
+
+/* --- 로그인 로그 모달 --- */
+#login-logs-modal .modal-content {
+    background-color: var(--primary-color);
+    color: var(--font-color);
+}
+
+/* 통계 섹션 */
+#login-logs-stats > div {
+    background-color: var(--tertiary-color) !important;
+    border-color: var(--border-color) !important;
+}
+
+#login-logs-stats > div > div:first-child {
+    color: var(--sub-font-color) !important;
+}
+
+#login-logs-success-count { color: #22c55e !important; }
+#login-logs-failure-count { color: #ef4444 !important; }
+#login-logs-unique-ips { color: #3b82f6 !important; }
+#login-logs-last-login { color: #a855f7 !important; }
+
+/* 로그 테이블 */
+#login-logs-modal div[style*="overflow-x: auto"] {
+    border-color: var(--border-color);
+}
+
+#login-logs-modal table {
+    color: var(--font-color);
+}
+
+#login-logs-modal thead {
+    background: var(--tertiary-color) !important;
+    border-bottom-color: var(--border-color) !important;
+}
+
+#login-logs-modal th {
+    color: var(--font-color) !important;
+}
+
+#login-logs-table-body tr {
+    border-bottom-color: var(--border-color);
+}
+
+#login-logs-table-body tr:hover {
+    background-color: var(--item-hover-bg-color);
+}
+
+#login-logs-table-body td {
+    border-color: var(--border-color);
+    color: var(--sub-font-color);
+}
+
+/* 하단 설명 */
+#login-logs-modal div[style*="background: #f3f4f6"] {
+    background-color: var(--tertiary-color) !important;
+    color: var(--sub-font-color) !important;
+}
+
+/* --- 국가 선택 모달 --- */
+#country-list-container {
+    border-color: var(--border-color) !important;
+}
+
+#country-list-container .country-item {
+    color: var(--font-color);
+}
+
+#country-list-container .country-item:hover {
+    background-color: var(--item-hover-bg-color);
+}
