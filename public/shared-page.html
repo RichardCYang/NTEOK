@@ -174,33 +174,54 @@
                 text-decoration: none;
             }
 
-            /* ============ 테이블 스타일 ============ */
+            /* ============ 테이블 스타일 (노션 스타일 모던 디자인) ============ */
             .shared-page-editor table {
-                border-collapse: collapse;
+                border-collapse: separate;
+                border-spacing: 0;
                 table-layout: fixed;
                 width: 100%;
-                margin: 16px 0;
+                margin: 24px 0;
                 overflow: hidden;
+                border: 1px solid var(--border-color);
+                border-radius: 8px;
+                box-shadow: 0 1px 3px var(--box-shadow-color);
             }
 
             .shared-page-editor td,
             .shared-page-editor th {
-                border: 1px solid var(--border-color);
-                padding: 8px 12px;
+                border-right: 1px solid var(--border-color);
+                border-bottom: 1px solid var(--border-color);
+                padding: 10px 14px;
                 vertical-align: top;
                 box-sizing: border-box;
                 position: relative;
-                background-color: var(--input-bg-color);
+                background-color: var(--primary-color);
                 overflow: hidden;
                 word-wrap: break-word;
                 min-width: 50px;
+                transition: background-color 0.2s ease;
+            }
+
+            /* 마지막 열/행 테두리 제거 */
+            .shared-page-editor td:last-child,
+            .shared-page-editor th:last-child {
+                border-right: none;
+            }
+
+            .shared-page-editor tr:last-child td {
+                border-bottom: none;
             }
 
             .shared-page-editor th {
                 font-weight: 600;
                 text-align: left;
-                background-color: var(--secondary-color);
+                background-color: var(--tertiary-color);
                 color: var(--font-color);
+                font-size: 0.95em;
+            }
+
+            .shared-page-editor tr:hover td {
+                background-color: var(--secondary-color);
             }
 
             /* ============ 북마크 컨테이너 스타일 ============ */

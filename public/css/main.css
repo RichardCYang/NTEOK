@@ -2761,33 +2761,55 @@ body {
    Table Styles
    ============================================================================ */
 
-/* TipTap 테이블 스타일 */
+/* TipTap 테이블 스타일 (노션 스타일 모던 디자인) */
 .ProseMirror table {
-    border-collapse: collapse;
+    border-collapse: separate;
+    border-spacing: 0;
     table-layout: fixed;
     width: 100%;
-    margin: 16px 0;
+    margin: 24px 0;
     overflow: hidden;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    box-shadow: 0 1px 3px var(--box-shadow-color);
 }
 
 .ProseMirror td,
 .ProseMirror th {
-    border: 1px solid var(--border-color);
-    padding: 8px 12px;
+    border-right: 1px solid var(--border-color);
+    border-bottom: 1px solid var(--border-color);
+    padding: 10px 14px;
     vertical-align: top;
     box-sizing: border-box;
     position: relative;
-    background-color: var(--input-bg-color);
+    background-color: var(--primary-color);
     overflow: hidden;
     word-wrap: break-word;
     min-width: 50px;
+    transition: background-color 0.2s ease;
+}
+
+/* 마지막 열/행의 테두리 제거 (컨테이너 테두리와 중복 방지) */
+.ProseMirror td:last-child,
+.ProseMirror th:last-child {
+    border-right: none;
+}
+
+.ProseMirror tr:last-child td {
+    border-bottom: none;
 }
 
 .ProseMirror th {
     font-weight: 600;
     text-align: left;
-    background-color: var(--secondary-color);
+    background-color: var(--tertiary-color);
     color: var(--font-color);
+    font-size: 0.95em;
+}
+
+/* 선택된 셀 디자인 개선 */
+.ProseMirror .selectedCell {
+    background-color: var(--item-hover-bg-color) !important;
 }
 
 .ProseMirror .selectedCell:after {
@@ -2798,7 +2820,7 @@ body {
     right: 0;
     top: 0;
     bottom: 0;
-    background: var(--box-shadow-color);
+    border: 2px solid var(--point-color);
     pointer-events: none;
 }
 
@@ -2814,25 +2836,35 @@ body {
     position: absolute;
     pointer-events: auto;
     background-color: transparent;
+    transition: background-color 0.2s;
+}
+
+.custom-resize-handle:hover {
+    background-color: var(--point-color);
+    opacity: 0.5;
 }
 
 /* 열 크기 조절 핸들 (세로선) */
 .custom-resize-handle-col {
-    width: 6px;
+    width: 4px;
     cursor: col-resize;
 }
 
 /* 행 크기 조절 핸들 (가로선) */
 .custom-resize-handle-row {
-    height: 6px;
+    height: 4px;
     cursor: row-resize;
 }
 
 /* ========== 테이블 컨텍스트 메뉴 ========== */
 
-/* 테이블 셀 호버 피드백 */
-.ProseMirror table td:hover,
-.ProseMirror table th:hover {
+/* 행(Row) 호버 피드백 */
+.ProseMirror tr:hover td {
+    background-color: var(--secondary-color);
+}
+
+/* 테이블 셀 호버 피드백 (개별 셀 강조) */
+.ProseMirror table td:hover {
     background-color: var(--item-hover-bg-color);
 }
 
