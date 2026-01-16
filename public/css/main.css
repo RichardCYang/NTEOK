@@ -2115,10 +2115,29 @@ body {
     word-break: break-word;
 }
 
+.board-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 4px;
+}
+
+.board-card-icon-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    border-radius: 3px;
+    transition: background-color 0.2s;
+    color: var(--font-color);
+}
+
+.board-card-icon-btn:hover {
+    background-color: var(--item-hover-bg-color);
+}
+
 .board-card-delete-btn {
-    position: absolute;
-    top: 4px;
-    right: 4px;
     background: transparent;
     border: none;
     cursor: pointer;
@@ -2127,6 +2146,7 @@ body {
     opacity: 0;
     transition: opacity 0.1s;
     padding: 0 4px;
+    line-height: 1;
 }
 
 .board-card:hover .board-card-delete-btn {

@@ -3,7 +3,24 @@
  * 칸반 보드 블록
  */
 
+import { addIcon } from './ui-utils.js';
+
 const Node = Tiptap.Core.Node;
+
+// 아이콘 선택용 기본 아이콘 목록
+const BOARD_THEME_ICONS = [
+    'fa-solid fa-star', 'fa-solid fa-heart', 'fa-solid fa-flag', 'fa-solid fa-bookmark',
+    'fa-solid fa-circle-check', 'fa-solid fa-circle-info', 'fa-solid fa-circle-exclamation', 'fa-solid fa-circle-xmark',
+    'fa-solid fa-lightbulb', 'fa-solid fa-fire', 'fa-solid fa-bolt', 'fa-solid fa-bell',
+    'fa-solid fa-user', 'fa-solid fa-users', 'fa-solid fa-calendar', 'fa-solid fa-clock',
+    'fa-solid fa-tag', 'fa-solid fa-tags', 'fa-solid fa-trophy', 'fa-solid fa-gift'
+];
+
+const BOARD_EMOJI_ICONS = [
+    '⭐', '❤️', '🚩', '🔖', '✅', 'ℹ️', '⚠️', '❌',
+    '💡', '🔥', '⚡', '🔔', '👤', '👥', '📅', '⏰',
+    '🏷️', '🎯', '🏆', '🎁'
+];
 
 export const BoardBlock = Node.create({
     name: 'boardBlock',
@@ -81,6 +98,105 @@ export const BoardBlock = Node.create({
                 }
             };
 
+            // 아이콘 선택 팝업 생성 함수
+            const showIconPickerPopup = (targetEl, onSelect) => {
+                if (!editor.isEditable) return;
+
+                // 기존 팝업 제거
+                const existingPopup = document.querySelector('.board-icon-picker-popup');
+                if (existingPopup) existingPopup.remove();
+
+                const popup = document.createElement('div');
+                popup.className = 'board-icon-picker-popup';
+                popup.style.cssText = `
+                    position: absolute;
+                    background: var(--primary-color, white);
+                    border: 1px solid var(--border-color, #ccc);
+                    border-radius: 8px;
+                    padding: 8px;
+                    z-index: 10000;
+                    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+                    max-width: 250px;
+                `;
+
+                // 탭 버튼
+                const tabContainer = document.createElement('div');
+                tabContainer.style.cssText = 'display: flex; gap: 4px; margin-bottom: 8px; border-bottom: 1px solid var(--border-color); padding-bottom: 8px;';
+
+                const themeTab = document.createElement('button');
+                themeTab.textContent = '테마';
+                themeTab.style.cssText = 'flex: 1; padding: 4px; border: none; background: var(--secondary-color); cursor: pointer; border-radius: 4px; font-size: 11px; color: var(--font-color);';
+
+                const emojiTab = document.createElement('button');
+                emojiTab.textContent = '이모지';
+                emojiTab.style.cssText = 'flex: 1; padding: 4px; border: none; background: transparent; cursor: pointer; border-radius: 4px; font-size: 11px; color: var(--font-color);';
+
+                tabContainer.appendChild(themeTab);
+                tabContainer.appendChild(emojiTab);
+                popup.appendChild(tabContainer);
+
+                const grid = document.createElement('div');
+                grid.style.cssText = 'display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; max-height: 150px; overflow-y: auto;';
+
+                const renderGrid = (tab) => {
+                    grid.innerHTML = '';
+                    const icons = tab === 'theme' ? BOARD_THEME_ICONS : BOARD_EMOJI_ICONS;
+                    
+                    themeTab.style.background = tab === 'theme' ? 'var(--secondary-color)' : 'transparent';
+                    emojiTab.style.background = tab === 'emoji' ? 'var(--secondary-color)' : 'transparent';
+
+                    icons.forEach(iconValue => {
+                        const btn = document.createElement('button');
+                        btn.style.cssText = 'padding: 6px; border: 1px solid var(--border-color); background: var(--primary-color); cursor: pointer; border-radius: 4px; font-size: 14px; display: flex; align-items: center; justify-content: center; color: var(--font-color);';
+                        
+                        if (tab === 'theme') {
+                            addIcon(btn, iconValue);
+                        } else {
+                            btn.textContent = iconValue;
+                        }
+
+                        btn.onclick = (e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            onSelect(iconValue);
+                            popup.remove();
+                        };
+                        grid.appendChild(btn);
+                    });
+                };
+
+                renderGrid('theme');
+                themeTab.onclick = (e) => { e.stopPropagation(); renderGrid('theme'); };
+                emojiTab.onclick = (e) => { e.stopPropagation(); renderGrid('emoji'); };
+
+                // 삭제 버튼 추가
+                const removeBtn = document.createElement('button');
+                removeBtn.textContent = '아이콘 삭제';
+                removeBtn.style.cssText = 'width: 100%; margin-top: 8px; padding: 4px; border: none; background: var(--secondary-color); color: var(--danger-color, #ef4444); cursor: pointer; border-radius: 4px; font-size: 11px;';
+                removeBtn.onclick = (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    onSelect(null);
+                    popup.remove();
+                };
+                popup.appendChild(grid);
+                popup.appendChild(removeBtn);
+
+                document.body.appendChild(popup);
+                const rect = targetEl.getBoundingClientRect();
+                popup.style.left = `${rect.left}px`;
+                popup.style.top = `${rect.bottom + 5}px`;
+
+                // 외부 클릭 시 닫기
+                const closePopup = (e) => {
+                    if (!popup.contains(e.target) && !targetEl.contains(e.target)) {
+                        popup.remove();
+                        document.removeEventListener('mousedown', closePopup);
+                    }
+                };
+                document.addEventListener('mousedown', closePopup);
+            };
+
             // 렌더링 함수
             const render = () => {
                 lastIsEditable = editor.isEditable; // 현재 상태 저장
@@ -155,10 +271,6 @@ export const BoardBlock = Node.create({
 
                             const toColId = column.id;
                             
-                            // 같은 컬럼 내 이동 혹은 다른 컬럼으로 이동 처리
-                            // 여기서는 간단하게 맨 뒤로 이동만 구현하거나, insertBefore 등을 구현해야 함
-                            // 편의상 데이터 조작 후 재렌더링 방식 사용
-
                             // 원본 찾기 및 제거
                             const fromCol = columns.find(c => c.id === draggedFromColId);
                             const cardIndex = fromCol.cards.findIndex(c => c.id === draggedCardId);
@@ -166,8 +278,6 @@ export const BoardBlock = Node.create({
                             const [card] = fromCol.cards.splice(cardIndex, 1);
 
                             // 대상 컬럼에 추가
-                            // 드롭 위치 계산 로직이 복잡하므로 일단 맨 뒤에 추가
-                            // (고도화 시 elementFromPoint 등을 사용하여 위치 계산 가능)
                             const toCol = columns.find(c => c.id === toColId);
                             toCol.cards.push(card);
 
@@ -186,6 +296,10 @@ export const BoardBlock = Node.create({
 
                         if (editor.isEditable) {
                             cardEl.ondragstart = (e) => {
+                                // 팝업이 열려있으면 닫기
+                                const existingPopup = document.querySelector('.board-icon-picker-popup');
+                                if (existingPopup) existingPopup.remove();
+
                                 draggedCardId = card.id;
                                 draggedFromColId = column.id;
                                 e.dataTransfer.effectAllowed = 'move';
@@ -197,6 +311,73 @@ export const BoardBlock = Node.create({
                                 draggedFromColId = null;
                             };
                         }
+
+                        // 카드 상단 영역 (아이콘 + 삭제 버튼)
+                        const cardHeader = document.createElement('div');
+                        cardHeader.className = 'board-card-header';
+                        cardHeader.style.display = 'flex';
+                        cardHeader.style.justifyContent = 'space-between';
+                        cardHeader.style.alignItems = 'flex-start';
+                        cardHeader.style.marginBottom = '4px';
+
+                        // 아이콘 영역
+                        const iconBtn = document.createElement('div');
+                        iconBtn.className = 'board-card-icon-btn';
+                        iconBtn.style.cursor = editor.isEditable ? 'pointer' : 'default';
+                        iconBtn.style.fontSize = '16px';
+                        iconBtn.style.minWidth = '20px';
+                        iconBtn.style.minHeight = '20px';
+                        iconBtn.style.display = 'flex';
+                        iconBtn.style.alignItems = 'center';
+
+                        const renderIcon = () => {
+                            iconBtn.innerHTML = '';
+                            if (card.icon) {
+                                if (card.icon.startsWith('fa-')) {
+                                    const i = document.createElement('i');
+                                    i.className = card.icon;
+                                    iconBtn.appendChild(i);
+                                } else {
+                                    iconBtn.textContent = card.icon;
+                                }
+                            } else if (editor.isEditable) {
+                                // 아이콘이 없지만 편집 모드일 때 투명한 아이콘 또는 플러스 표시 가능
+                                iconBtn.innerHTML = '<i class="fa-regular fa-face-smile" style="opacity: 0.3;"></i>';
+                            }
+                        };
+                        renderIcon();
+
+                        if (editor.isEditable) {
+                            iconBtn.onclick = (e) => {
+                                e.stopPropagation();
+                                showIconPickerPopup(iconBtn, (newIcon) => {
+                                    card.icon = newIcon;
+                                    renderIcon();
+                                    saveData();
+                                });
+                            };
+                        }
+
+                        // 카드 삭제 버튼
+                        const deleteCardBtn = document.createElement('button');
+                        deleteCardBtn.className = 'board-card-delete-btn';
+                        deleteCardBtn.innerHTML = '×';
+                        if (editor.isEditable) {
+                            deleteCardBtn.onclick = (e) => {
+                                e.stopPropagation(); // 카드 드래그 방지
+                                if (confirm('이 카드를 삭제하시겠습니까?')) {
+                                    column.cards = column.cards.filter(c => c.id !== card.id);
+                                    saveData();
+                                    render();
+                                }
+                            };
+                        } else {
+                            deleteCardBtn.style.display = 'none';
+                        }
+
+                        cardHeader.appendChild(iconBtn);
+                        cardHeader.appendChild(deleteCardBtn);
+                        cardEl.appendChild(cardHeader);
 
                         const cardContent = document.createElement('div');
                         cardContent.className = 'board-card-content';
@@ -218,25 +399,7 @@ export const BoardBlock = Node.create({
                             };
                         }
 
-                        // 카드 삭제 버튼
-                        const deleteCardBtn = document.createElement('button');
-                        deleteCardBtn.className = 'board-card-delete-btn';
-                        deleteCardBtn.innerHTML = '×';
-                        if (editor.isEditable) {
-                            deleteCardBtn.onclick = (e) => {
-                                e.stopPropagation(); // 카드 드래그 방지
-                                if (confirm('이 카드를 삭제하시겠습니까?')) {
-                                    column.cards = column.cards.filter(c => c.id !== card.id);
-                                    saveData();
-                                    render();
-                                }
-                            };
-                        } else {
-                            deleteCardBtn.style.display = 'none';
-                        }
-
                         cardEl.appendChild(cardContent);
-                        cardEl.appendChild(deleteCardBtn);
                         cardList.appendChild(cardEl);
                     });
 
@@ -250,7 +413,8 @@ export const BoardBlock = Node.create({
                         addCardBtn.onclick = () => {
                             const newCard = {
                                 id: 'card-' + Date.now() + Math.random().toString(36).substr(2, 9),
-                                content: '새 카드'
+                                content: '새 카드',
+                                icon: null
                             };
                             column.cards.push(newCard);
                             saveData();
@@ -329,7 +493,7 @@ export const BoardBlock = Node.create({
                     // contentEditable 영역 내의 이벤트는 허용해야 함
                     const target = event.target;
                     // 카드 내용 입력 중이거나 input 태그 등에서는 이벤트 전파 막기
-                    if (target.classList.contains('board-card-content') || target.tagName === 'INPUT' || target.tagName === 'BUTTON') {
+                    if (target.classList.contains('board-card-content') || target.tagName === 'INPUT' || target.tagName === 'BUTTON' || target.closest('.board-icon-picker-popup')) {
                         return true;
                     }
                     return false;
