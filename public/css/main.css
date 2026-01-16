@@ -2761,7 +2761,7 @@ body {
    Table Styles
    ============================================================================ */
 
-/* TipTap ?뚯씠釉??ㅽ???*/
+/* TipTap 테이블 스타일 */
 .ProseMirror table {
     border-collapse: collapse;
     table-layout: fixed;
@@ -2772,12 +2772,12 @@ body {
 
 .ProseMirror td,
 .ProseMirror th {
-    border: 1px solid #d4cfc4;
+    border: 1px solid var(--border-color);
     padding: 8px 12px;
     vertical-align: top;
     box-sizing: border-box;
     position: relative;
-    background-color: #ffffff;
+    background-color: var(--input-bg-color);
     overflow: hidden;
     word-wrap: break-word;
     min-width: 50px;
@@ -2786,8 +2786,8 @@ body {
 .ProseMirror th {
     font-weight: 600;
     text-align: left;
-    background-color: #f5f2ed;
-    color: #2d2d2d;
+    background-color: var(--secondary-color);
+    color: var(--font-color);
 }
 
 .ProseMirror .selectedCell:after {
@@ -2798,51 +2798,51 @@ body {
     right: 0;
     top: 0;
     bottom: 0;
-    background: rgba(45, 95, 93, 0.1);
+    background: var(--box-shadow-color);
     pointer-events: none;
 }
 
-/* ?뚯씠釉??ш린 議곗젅 ?ㅻ쾭?덉씠 */
+/* 테이블 크기 조절 오버레이 */
 .table-resize-overlay {
     position: absolute;
     pointer-events: none;
     z-index: 999;
 }
 
-/* 而ㅼ뒪? ?뚯씠釉??ш린 議곗젅 ?몃뱾 */
+/* 커스텀 테이블 크기 조절 핸들 */
 .custom-resize-handle {
     position: absolute;
     pointer-events: auto;
     background-color: transparent;
 }
 
-/* ???ш린 議곗젅 ?몃뱾 (?몃줈?? */
+/* 열 크기 조절 핸들 (세로선) */
 .custom-resize-handle-col {
     width: 6px;
     cursor: col-resize;
 }
 
-/* ???ш린 議곗젅 ?몃뱾 (媛濡쒖꽑) */
+/* 행 크기 조절 핸들 (가로선) */
 .custom-resize-handle-row {
     height: 6px;
     cursor: row-resize;
 }
 
-/* ========== ?뚯씠釉?而⑦뀓?ㅽ듃 硫붾돱 ========== */
+/* ========== 테이블 컨텍스트 메뉴 ========== */
 
-/* ?뚯씠釉?? ?몃쾭 ?쇰뱶諛?*/
+/* 테이블 셀 호버 피드백 */
 .ProseMirror table td:hover,
 .ProseMirror table th:hover {
-    background-color: rgba(45, 95, 93, 0.05);
+    background-color: var(--item-hover-bg-color);
 }
 
-/* 而⑦뀓?ㅽ듃 硫붾돱 */
+/* 컨텍스트 메뉴 */
 .context-menu {
     position: fixed;
-    background: white;
-    border: 1px solid #d4cfc4;
+    background: var(--menu-bg-color);
+    border: 1px solid var(--menu-border-color);
     border-radius: 8px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 4px 12px var(--box-shadow-color);
     z-index: 10000;
     min-width: 200px;
     padding: 4px;
@@ -2852,7 +2852,7 @@ body {
     display: none;
 }
 
-/* 而⑦뀓?ㅽ듃 硫붾돱 ?꾩씠??*/
+/* 컨텍스트 메뉴 아이템 */
 .context-menu-item {
     display: flex;
     align-items: center;
@@ -2863,14 +2863,14 @@ body {
     background: none;
     text-align: left;
     font-size: 13px;
-    color: #2d2d2d;
+    color: var(--menu-item-text-color);
     cursor: pointer;
     border-radius: 4px;
     transition: background-color 0.1s ease;
 }
 
 .context-menu-item:hover:not(:disabled) {
-    background-color: #ebe8e1;
+    background-color: var(--menu-hover-bg-color);
 }
 
 .context-menu-item:disabled {
@@ -2878,26 +2878,27 @@ body {
     cursor: not-allowed;
 }
 
-/* ?꾪뿕???≪뀡 (??젣) */
+/* 위험한 액션 (삭제) */
 .context-menu-item.danger {
-    color: #dc2626;
+    color: var(--danger-color);
 }
 
 .context-menu-item.danger:hover:not(:disabled) {
-    background-color: #fee2e2;
+    background-color: var(--danger-hover-color);
+    color: var(--button-text-color);
 }
 
-/* 而⑦뀓?ㅽ듃 硫붾돱 ?꾩씠肄?*/
+/* 컨텍스트 메뉴 아이콘 */
 .context-menu-icon {
     width: 20px;
     text-align: center;
     font-size: 14px;
 }
 
-/* 而⑦뀓?ㅽ듃 硫붾돱 援щ텇??*/
+/* 컨텍스트 메뉴 구분선 */
 .context-menu-separator {
     height: 1px;
-    background: #d4cfc4;
+    background: var(--menu-border-color);
     margin: 4px 0;
 }
 
