@@ -79,6 +79,11 @@ export const DragHandle = Extension.create({
                             return;
                         }
 
+                        // 핸들 자체 위에 있을 때는 위치 업데이트 하지 않음 (스냅/깜빡임 방지)
+                        if (e.target === handle || handle.contains(e.target)) {
+                            return;
+                        }
+
                         if (isMouseDown) return; // 드래그/클릭 동작 중에는 핸들 위치 고정
 
                         const view = editorView;
@@ -86,54 +91,62 @@ export const DragHandle = Extension.create({
                         const pos = view.posAtCoords({ left: e.clientX, top: e.clientY });
                         if (!pos) return;
 
-                        // 해당 pos의 가장 깊은 block 노드 찾기
                         let $pos = view.state.doc.resolve(pos.pos);
-                        let depth = $pos.depth;
-                        let node = $pos.node(depth);
                         
-                        // depth 1까지 올라가서 최상위 블록 찾기
-                        while (depth > 1) {
-                            $pos = view.state.doc.resolve($pos.before(depth));
-                            depth = $pos.depth;
-                            node = $pos.node(depth);
-                        }
-
                         let targetPos = null;
                         let targetNode = null;
-                        
-                        // depth 1: 일반 블록
-                        if (depth === 1) {
-                            targetPos = $pos.before(1);
-                            targetNode = node;
-                        } 
-                        // depth 0: 루트 레벨 Atom 노드 (YouTube, Image 등) 처리
-                        else if (depth === 0) {
-                            const nodeAfter = $pos.nodeAfter;
+
+                        // Helper: 마우스가 특정 노드의 DOM 영역 안에 있는지 확인
+                        const isMouseOverNode = (nodePos, node) => {
+                             if (!node || !node.isBlock) return false;
+                             const dom = view.nodeDOM(nodePos);
+                             if (dom && dom.nodeType === 1) {
+                                 const rect = dom.getBoundingClientRect();
+                                 return e.clientY >= rect.top && e.clientY <= rect.bottom;
+                             }
+                             return false;
+                        };
+
+                        // 1. Leaf / Atom Block Check (Callout, Board 등)
+                        // $pos가 블록 바로 앞/뒤에 있는 경우 (Atom 노드 등)
+                        const nodeAfter = $pos.nodeAfter;
+                        if (isMouseOverNode($pos.pos, nodeAfter)) {
+                            targetPos = $pos.pos;
+                            targetNode = nodeAfter;
+                        } else {
                             const nodeBefore = $pos.nodeBefore;
-                            
-                            // nodeAfter 확인
-                            if (nodeAfter && nodeAfter.isBlock) {
-                                const dom = view.nodeDOM($pos.pos);
-                                if (dom && dom.nodeType === 1) {
-                                    const rect = dom.getBoundingClientRect();
-                                    // 마우스 Y 좌표가 해당 블록 범위 내에 있는지 확인
-                                    if (e.clientY >= rect.top && e.clientY <= rect.bottom) {
-                                        targetPos = $pos.pos;
-                                        targetNode = nodeAfter;
-                                    }
-                                }
+                            if (nodeBefore && isMouseOverNode($pos.pos - nodeBefore.nodeSize, nodeBefore)) {
+                                targetPos = $pos.pos - nodeBefore.nodeSize;
+                                targetNode = nodeBefore;
                             }
-                            
-                            // nodeAfter가 아니면 nodeBefore 확인
-                            if (!targetNode && nodeBefore && nodeBefore.isBlock) {
-                                const p = $pos.pos - nodeBefore.nodeSize;
-                                const dom = view.nodeDOM(p);
-                                if (dom && dom.nodeType === 1) {
-                                    const rect = dom.getBoundingClientRect();
-                                    if (e.clientY >= rect.top && e.clientY <= rect.bottom) {
-                                        targetPos = p;
-                                        targetNode = nodeBefore;
-                                    }
+                        }
+                        
+                        // 2. Container Hierarchy Check (Table, ToggleList 등 중첩 구조)
+                        if (!targetNode) {
+                            // 깊은 곳에서부터 위로 올라가며 "컨테이너의 직계 자식"인 블록을 찾음
+                            for (let d = $pos.depth; d >= 0; d--) {
+                                const node = $pos.node(d);
+                                
+                                // d=0은 doc의 자식 (루트 레벨)
+                                if (d === 0) {
+                                    // 이미 Leaf Check에서 걸리지 않았다면 여기서 처리될 수도 있음
+                                    // 하지만 $pos가 깊이 들어가있지 않은 경우(depth=0)를 위해 필요
+                                    // (Leaf Check는 nodeAfter/Before만 보므로)
+                                    // 그러나 depth loop에서는 $pos가 가리키는 노드의 조상만 본다.
+                                    // 루트 레벨 블록 선택은 보통 Leaf Check나 이 루프의 d=1(doc의 자식)에서 걸림?
+                                    // 아니, $pos.node(0)은 doc이다. doc 자체를 선택하진 않음.
+                                    // $pos.node(d)가 'node'이고, $pos.node(d-1)이 'parent'
+                                    // d=0이면 parent가 없다.
+                                    break; 
+                                }
+
+                                const parent = $pos.node(d - 1);
+                                
+                                // 컨테이너(doc, toggleBlock, blockquote 등)의 직계 자식이면 선택
+                                if (parent.type.name === 'doc' || parent.type.name === 'toggleBlock' || parent.type.name === 'blockquote') {
+                                    targetPos = $pos.before(d);
+                                    targetNode = node;
+                                    break;
                                 }
                             }
                         }
@@ -152,11 +165,11 @@ export const DragHandle = Extension.create({
                                 return;
                             }
 
-                            // 스크롤 오프셋을 고려하여 절대 위치 계산 (scrollTop 추가)
+                            // 스크롤 오프셋을 고려하여 절대 위치 계산
                             handle.style.top = (rect.top - parentRect.top + view.dom.parentNode.scrollTop) + 'px';
                             // main.css에 의하면 .editor padding-left가 120px임.
                             // 핸들을 에디터 콘텐츠 시작점(rect.left)보다 왼쪽에 배치.
-                            handle.style.left = (rect.left - parentRect.left - 24 + view.dom.parentNode.scrollLeft) + 'px'; // 얇아졌으므로 위치 살짝 조정
+                            handle.style.left = (rect.left - parentRect.left - 24 + view.dom.parentNode.scrollLeft) + 'px';
                             
                             handle.style.opacity = '1';
                             
@@ -167,7 +180,6 @@ export const DragHandle = Extension.create({
 
                     // 드래그/클릭 시작 처리
                     const startInteraction = (e) => {
-                        // 읽기 모드이면 불가
                         if (!editorView.editable) return;
                         if (!currentBlockNode) return;
                         
@@ -175,7 +187,6 @@ export const DragHandle = Extension.create({
                         isDragging = false;
                         dragStartCoords = { x: e.clientX, y: e.clientY };
                         
-                        // 전역 이벤트 리스너 등록
                         document.addEventListener('mousemove', onGlobalMouseMove);
                         document.addEventListener('mouseup', onGlobalMouseUp);
                         document.addEventListener('touchmove', onGlobalTouchMove, { passive: false });
@@ -183,18 +194,16 @@ export const DragHandle = Extension.create({
                     };
 
                     const initDragVisuals = () => {
-                        if (ghostEl) return; // 이미 생성됨
+                        if (ghostEl) return; 
 
-                        // 고스트 이미지 생성
                         ghostEl = createGhostImage(currentBlockNode.textContent || '블록');
                         document.body.appendChild(ghostEl);
 
-                        // 드롭 인디케이터 생성
                         dropIndicator = document.createElement('div');
                         dropIndicator.className = 'drop-indicator';
                         dropIndicator.style.position = 'absolute';
                         dropIndicator.style.height = '4px';
-                        dropIndicator.style.background = '#0ea5e9'; // sky-500
+                        dropIndicator.style.background = '#0ea5e9';
                         dropIndicator.style.borderRadius = '2px';
                         dropIndicator.style.pointerEvents = 'none';
                         dropIndicator.style.zIndex = '40';
@@ -217,17 +226,39 @@ export const DragHandle = Extension.create({
                         const pos = editorView.posAtCoords({ left: x, top: y });
                         if (!pos) return;
 
-                        // 타겟 블록 찾기
                         let $pos = editorView.state.doc.resolve(pos.pos);
-                        let depth = $pos.depth;
-                        while (depth > 1) {
-                            $pos = editorView.state.doc.resolve($pos.before(depth));
-                            depth = $pos.depth;
+                        
+                        let targetBlockPos = null;
+                        let targetNode = null;
+                        
+                        // 드롭 타겟 찾기 (onMouseMove와 유사 로직)
+                        // 1. Leaf check
+                        const nodeAfter = $pos.nodeAfter;
+                        // 마우스 위치 체크는 생략 (드롭은 근처면 됨)
+                        if (nodeAfter && nodeAfter.isBlock) targetBlockPos = $pos.pos;
+                        else {
+                            const nodeBefore = $pos.nodeBefore;
+                            if (nodeBefore && nodeBefore.isBlock) targetBlockPos = $pos.pos - nodeBefore.nodeSize;
                         }
-                        if (depth !== 1) return;
 
-                        const targetBlockPos = $pos.before(1);
-                        const targetNode = editorView.state.doc.nodeAt(targetBlockPos);
+                        // 2. Loop check
+                        if (targetBlockPos === null) {
+                            for (let d = $pos.depth; d >= 0; d--) {
+                                if (d === 0) break;
+                                const node = $pos.node(d);
+                                const parent = $pos.node(d - 1);
+                                if (parent.type.name === 'doc' || parent.type.name === 'toggleBlock' || parent.type.name === 'blockquote') {
+                                    targetBlockPos = $pos.before(d);
+                                    targetNode = node;
+                                    break;
+                                }
+                            }
+                        } else {
+                            targetNode = editorView.state.doc.nodeAt(targetBlockPos);
+                        }
+
+                        if (targetBlockPos === null || !targetNode) return;
+
                         const domNode = editorView.nodeDOM(targetBlockPos);
 
                         if (domNode && domNode.nodeType === 1) {
@@ -235,16 +266,14 @@ export const DragHandle = Extension.create({
                             const parentRect = editorView.dom.parentNode.getBoundingClientRect();
                             const middleY = rect.top + rect.height / 2;
 
-                            // 위쪽 절반이면 블록 위로, 아래쪽 절반이면 블록 아래로
-                            // 스크롤 오프셋 반영
                             const scrollTop = editorView.dom.parentNode.scrollTop;
                             const scrollLeft = editorView.dom.parentNode.scrollLeft;
                             
                             if (y < middleY) {
-                                dropTargetPos = targetBlockPos; // 위로 이동 (현재 블록 자리)
+                                dropTargetPos = targetBlockPos;
                                 dropIndicator.style.top = (rect.top - parentRect.top - 2 + scrollTop) + 'px';
                             } else {
-                                dropTargetPos = targetBlockPos + targetNode.nodeSize; // 아래로 이동 (다음 블록 자리)
+                                dropTargetPos = targetBlockPos + targetNode.nodeSize;
                                 dropIndicator.style.top = (rect.bottom - parentRect.top - 2 + scrollTop) + 'px';
                             }
                             
@@ -257,7 +286,6 @@ export const DragHandle = Extension.create({
                     const onGlobalMouseMove = (e) => {
                         if (!isMouseDown) return;
 
-                        // 드래그 여부 판단 (5px 이상 이동 시)
                         if (!isDragging) {
                             const dx = e.clientX - dragStartCoords.x;
                             const dy = e.clientY - dragStartCoords.y;
@@ -276,10 +304,8 @@ export const DragHandle = Extension.create({
 
                     const onGlobalTouchMove = (e) => {
                         if (!isMouseDown) return;
-                        
                         const touch = e.touches[0];
 
-                        // 드래그 여부 판단
                         if (!isDragging) {
                             const dx = touch.clientX - dragStartCoords.x;
                             const dy = touch.clientY - dragStartCoords.y;
@@ -290,7 +316,7 @@ export const DragHandle = Extension.create({
                         }
 
                         if (isDragging) {
-                            e.preventDefault(); // 스크롤 방지
+                            e.preventDefault();
                             moveGhost(touch.clientX, touch.clientY);
                             updateDropIndicator(touch.clientX, touch.clientY);
                         }
@@ -308,41 +334,31 @@ export const DragHandle = Extension.create({
                         document.removeEventListener('touchend', onGlobalMouseUp);
 
                         if (isDragging) {
-                            // 드래그 종료 -> 이동 실행
-                            
-                            // 정리
                             if (ghostEl) ghostEl.remove();
                             if (dropIndicator) dropIndicator.remove();
                             ghostEl = null;
                             dropIndicator = null;
 
-                            // 이동 실행
                             if (dropTargetPos !== null && currentBlockPos !== null) {
                                 const from = currentBlockPos;
                                 const to = dropTargetPos;
                                 const node = currentBlockNode;
                                 
-                                // 같은 위치면 무시
-                                if (from === to || from + node.nodeSize === to) {}
-                                else {
+                                if (from !== to && from + node.nodeSize !== to) {
                                     const tr = editorView.state.tr;
                                     const nodeToMove = editorView.state.doc.nodeAt(from);
                                     if (nodeToMove) {
-                                        // 새 위치 보정
                                         let insertPos = to;
                                         if (to > from) {
                                             insertPos -= nodeToMove.nodeSize;
                                         }
-                                        
                                         tr.delete(from, from + nodeToMove.nodeSize);
                                         tr.insert(insertPos, nodeToMove);
-                                        
                                         editorView.dispatch(tr);
                                     }
                                 }
                             }
                             
-                            // 드래그 후 클릭 이벤트 발생 방지 (캡처링 단계에서 차단)
                             const preventClick = (clickEvent) => {
                                 clickEvent.preventDefault();
                                 clickEvent.stopPropagation();
@@ -350,37 +366,23 @@ export const DragHandle = Extension.create({
                             };
                             window.addEventListener('click', preventClick, true);
                             
-                            // 안전장치: 짧은 시간 후 리스너 제거 (이벤트가 안 올 경우 대비)
                             setTimeout(() => {
                                 window.removeEventListener('click', preventClick, true);
                             }, 100);
                             
                             isDragging = false;
                         } 
-                        // isDragging이 false인 경우:
-                        // 아무 것도 하지 않음. 브라우저가 handle에 대해 'click' 이벤트를 발생시킬 것임.
-                        // 아래 'click' 리스너에서 메뉴를 염.
                     };
 
-                    // 핸들 이벤트 바인딩
                     handle.addEventListener('mousedown', (e) => {
                         if (!editorView.editable) return;
-                        if (e.button !== 0) return; // 좌클릭만
-                        // e.preventDefault(); // 제거: 네이티브 클릭 이벤트 허용
+                        if (e.button !== 0) return;
                         startInteraction(e);
                     });
                     
                     handle.addEventListener('touchstart', (e) => {
                         if (!editorView.editable) return;
-                        e.preventDefault(); // 터치는 스크롤 방지를 위해 preventDefault 필요할 수 있음
-                        // 터치 후 탭은 'click' 이벤트를 발생시키지 않을 수 있으므로,
-                        // 터치는 별도 로직이 필요할 수 있지만, 
-                        // startInteraction에서 touchmove/touchend를 처리하므로
-                        // mouseup 로직과 유사하게 동작함.
-                        // 단, 모바일에서 'click' 이벤트가 지연 발생하거나 preventDefault로 인해 안 생길 수 있음.
-                        // 모바일은 click 리스너에 의존하기보다, touchend에서 처리하는게 나을 수 있음.
-                        // 하지만 일단 PC 클릭 복구가 우선.
-                        
+                        e.preventDefault(); 
                         const touch = e.touches[0];
                         startInteraction({ 
                             clientX: touch.clientX, 
@@ -388,19 +390,12 @@ export const DragHandle = Extension.create({
                         });
                     }, { passive: false });
 
-                    // 클릭 (메뉴) 이벤트 바인딩
                     handle.addEventListener('click', (e) => {
                         if (!editorView.editable) return;
-                        
-                        // 드래그 후에는 상단의 capture listener에 의해 이 이벤트가 도달하지 않아야 함.
-                        // 도달했다는 것은 드래그가 아닌 순수 클릭이라는 뜻.
-                        
                         e.stopPropagation();
-                        // e.preventDefault(); 
                         showHandleMenu(handle);
                     });
 
-                    // 핸들 메뉴 표시 함수
                     const showHandleMenu = (trigger) => {
                         if (!editorView.editable) return;
                         if (!currentBlockNode || currentBlockPos === null) return;
@@ -441,16 +436,15 @@ export const DragHandle = Extension.create({
                         contextMenu.onclick = handleMenuClick;
                     };
 
-                    // 블록 이동 유틸리티
                     const moveBlockUp = () => {
                         if (currentBlockPos === null) return;
                         const $pos = editorView.state.doc.resolve(currentBlockPos);
-                        
-                        const index = $pos.index(0); 
-                        if (index === 0) return; 
+                        const index = $pos.index(); 
+                        if (index === 0) return;
 
-                        const prevNode = editorView.state.doc.child(index - 1);
-                        const node = editorView.state.doc.child(index);
+                        const parent = $pos.parent;
+                        const prevNode = parent.child(index - 1);
+                        const node = parent.child(index);
                         
                         const tr = editorView.state.tr;
                         const from = currentBlockPos;
@@ -464,13 +458,12 @@ export const DragHandle = Extension.create({
                     const moveBlockDown = () => {
                         if (currentBlockPos === null) return;
                         const $pos = editorView.state.doc.resolve(currentBlockPos);
-                        const index = $pos.index(0);
-                        const docSize = editorView.state.doc.content.childCount;
-                        
-                        if (index >= docSize - 1) return; 
+                        const index = $pos.index();
+                        const parent = $pos.parent;
+                        if (index >= parent.childCount - 1) return;
 
-                        const nextNode = editorView.state.doc.child(index + 1);
-                        const node = editorView.state.doc.child(index);
+                        const nextNode = parent.child(index + 1);
+                        const node = parent.child(index);
                         
                         const tr = editorView.state.tr;
                         const from = currentBlockPos;
@@ -489,7 +482,6 @@ export const DragHandle = Extension.create({
                         handle.style.opacity = '0';
                     };
 
-                    // 에디터 마우스 이동 리스너 등록
                     if (editorView.dom.parentNode) {
                         editorView.dom.parentNode.addEventListener('mousemove', onMouseMove);
                     }
@@ -498,7 +490,6 @@ export const DragHandle = Extension.create({
                          onMouseMove({ clientX: e.clientX, clientY: e.clientY });
                     });
 
-                    // 스크롤 시 핸들 숨김 처리 (위치 불일치 방지)
                     const onScroll = () => {
                         if (handle.style.opacity !== '0') {
                             handle.style.opacity = '0';

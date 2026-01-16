@@ -4126,3 +4126,84 @@ body {
     margin-right: 0;
 }
 
+
+/* ==================== Toggle Block Styles ==================== */
+.toggle-block-wrapper {
+    margin: 4px 0;
+    padding: 0;
+}
+
+.toggle-header {
+    display: flex;
+    align-items: flex-start;
+    padding: 2px 0;
+    cursor: pointer;
+    border-radius: 3px;
+    transition: background-color 0.1s ease;
+}
+
+.toggle-header:hover {
+    background-color: var(--item-hover-bg-color);
+}
+
+.toggle-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 10px; /* 화살표 크기 조정 */
+    width: 24px;
+    height: 24px; /* 줄 높이와 비슷하게 */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--sub-font-color);
+    transition: color 0.1s ease;
+    margin-right: 2px;
+    padding: 0;
+    margin-top: 2px; /* 텍스트와 줄맞춤 */
+}
+
+.toggle-btn:hover {
+    color: var(--font-color);
+}
+
+.toggle-title {
+    flex: 1;
+    font-size: 14px;
+    line-height: 1.7;
+    padding: 0 4px;
+    color: var(--font-color);
+    outline: none;
+    min-height: 24px;
+}
+
+.toggle-title.focused {
+    background-color: rgba(0, 0, 0, 0.05); /* light theme fallback */
+}
+/* 다크 모드 대응 등을 위해 변수 사용 권장하지만 여기선 간단히 */
+
+.toggle-content {
+    margin-left: 26px;
+    padding: 2px 4px 4px 4px;
+}
+
+.toggle-content-textarea {
+    width: 100%;
+    border: none;
+    background: transparent;
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--font-color);
+    padding: 0;
+    resize: none;
+    outline: none;
+    font-family: inherit;
+    min-height: 24px;
+    overflow: hidden;
+    display: block;
+}
+
+.toggle-content-textarea::placeholder {
+    color: var(--placeholder-color);
+}
+

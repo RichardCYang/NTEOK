@@ -38,6 +38,9 @@ import { BookmarkBlock, BookmarkContainerBlock } from './bookmark-node.js';
 // CalloutBlock 노드 import
 import { CalloutBlock } from './callout-node.js';
 
+// ToggleBlock 노드 import
+import { ToggleBlock } from './toggle-node.js';
+
 // BoardBlock 노드 import
 import { BoardBlock } from './board-node.js';
 
@@ -160,6 +163,15 @@ export const SLASH_ITEMS = [
         icon: "☑",
         command(editor) {
             editor.chain().focus().toggleTaskList().run();
+        }
+    },
+    {
+        id: "toggleList",
+        label: "토글 목록",
+        description: "내용을 접고 펼칠 수 있는 목록",
+        icon: "▶",
+        command(editor) {
+            editor.chain().focus().setToggleBlock().run();
         }
     },
     {
@@ -1139,6 +1151,7 @@ export function initEditor() {
             BookmarkContainerBlock,
             BookmarkBlock,
             CalloutBlock,
+            ToggleBlock,
             BoardBlock,
             YoutubeBlock,
             DragHandle,
