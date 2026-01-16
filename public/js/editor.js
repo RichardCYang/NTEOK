@@ -38,6 +38,9 @@ import { BookmarkBlock, BookmarkContainerBlock } from './bookmark-node.js';
 // CalloutBlock 노드 import
 import { CalloutBlock } from './callout-node.js';
 
+// BoardBlock 노드 import
+import { BoardBlock } from './board-node.js';
+
 // YoutubeBlock 노드 import
 import { YoutubeBlock } from './youtube-node.js';
 
@@ -287,6 +290,15 @@ export const SLASH_ITEMS = [
         icon: "ℹ️",
         command(editor) {
             editor.chain().focus().setCallout('info', '', '').run();
+        }
+    },
+    {
+        id: "board",
+        label: "보드 뷰",
+        description: "칸반 보드 (할 일 관리)",
+        icon: "📋",
+        command(editor) {
+            editor.chain().focus().setBoardBlock().run();
         }
     },
     {
@@ -1119,6 +1131,7 @@ export function initEditor() {
             BookmarkContainerBlock,
             BookmarkBlock,
             CalloutBlock,
+            BoardBlock,
             YoutubeBlock,
             DragHandle,
         ],
