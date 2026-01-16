@@ -16,6 +16,7 @@ let state = {
     currentPageId: null,
     currentCollectionId: null,
     expandedCollections: new Set(),
+    expandedPages: new Set(),
     isWriteMode: false,
     currentPageIsEncrypted: false  // 현재 페이지의 암호화 상태
 };
@@ -273,7 +274,12 @@ export function renderPageList() {
                     li.className = "page-list-item";
                     li.dataset.pageId = node.id;
 
-                    li.style.paddingLeft = 32 + depth * 16 + "px";
+                    // 하위 페이지 여부 확인
+                    const hasChildren = node.children && node.children.length > 0;
+                    const isExpanded = state.expandedPages.has(node.id);
+
+                    // 패딩 계산 (토글 아이콘 너비 고려)
+                    li.style.paddingLeft = (12 + depth * 16) + "px";
 
                     const row = document.createElement("div");
                     row.style.display = "flex";
@@ -283,11 +289,31 @@ export function renderPageList() {
 
                     const titleWrap = document.createElement("div");
                     titleWrap.style.display = "flex";
-                    titleWrap.style.flexDirection = "column";
-                    titleWrap.style.gap = "2px";
+                    titleWrap.style.alignItems = "center";
+                    titleWrap.style.gap = "4px";
+                    titleWrap.style.flex = "1";
+                    titleWrap.style.minWidth = "0";
+
+                    // 접기/펼치기 토글 아이콘
+                    const toggleSpan = document.createElement("span");
+                    toggleSpan.className = "page-toggle collection-toggle";
+                    if (isExpanded) toggleSpan.classList.add("expanded");
+                    
+                    if (hasChildren) {
+                        toggleSpan.innerHTML = '<i class="fa-solid fa-caret-right"></i>';
+                        toggleSpan.style.cursor = "pointer";
+                        toggleSpan.dataset.pageId = node.id;
+                    } else {
+                        toggleSpan.style.visibility = "hidden";
+                        toggleSpan.innerHTML = '<i class="fa-solid fa-caret-right"></i>';
+                    }
+                    titleWrap.appendChild(toggleSpan);
 
                     const titleSpan = document.createElement("span");
                     titleSpan.className = "page-list-item-title";
+                    titleSpan.style.overflow = "hidden";
+                    titleSpan.style.textOverflow = "ellipsis";
+                    titleSpan.style.whiteSpace = "nowrap";
 
                     // 아이콘 표시 로직 (innerHTML 사용 금지: DOM 기반으로 안전하게 렌더링)
                     const iconEl = (() => {
@@ -319,7 +345,12 @@ export function renderPageList() {
                             return i;
                         }
 
-                        return null;
+                        // 기본 페이지 아이콘 (하위 페이지가 있는 경우와 없는 경우 구분 가능)
+                        const i = document.createElement('i');
+                        i.className = hasChildren ? "fa-regular fa-file-lines" : "fa-regular fa-file";
+                        i.style.marginRight = "6px";
+                        i.style.color = "#6b7280";
+                        return i;
                     })();
 
                     // 제목 (textContent 사용)
@@ -365,7 +396,8 @@ export function renderPageList() {
 
                     pageList.appendChild(li);
 
-                    if (node.children && node.children.length) {
+                    // 펼쳐진 상태이고 자식이 있는 경우에만 자식 렌더링
+                    if (hasChildren && isExpanded) {
                         node.children.forEach((child) => renderNode(child, depth + 1));
                     }
                 }
@@ -646,6 +678,14 @@ export async function loadPage(id) {
         if (page.collectionId) {
             state.currentCollectionId = page.collectionId;
             state.expandedCollections.add(page.collectionId);
+        }
+
+        // 부모 페이지들 확장 (사이드바 트리 표시용)
+        let currentParentId = page.parentId;
+        while (currentParentId) {
+            state.expandedPages.add(currentParentId);
+            const parent = state.pages.find(p => p.id === currentParentId);
+            currentParentId = parent ? parent.parentId : null;
         }
 
         let title = "";

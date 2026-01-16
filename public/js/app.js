@@ -98,6 +98,7 @@ const appState = {
     currentPageId: null,
     currentCollectionId: null,
     expandedCollections: new Set(),
+    expandedPages: new Set(),
     isWriteMode: false,
     currentPageIsEncrypted: false,  // 현재 페이지의 암호화 상태
     currentUser: null,
@@ -308,6 +309,9 @@ async function handlePageListClick(event, state) {
                 collectionId: colId,
                 sortOrder: page.sortOrder || 0
             });
+
+            // 하위 페이지 추가 시 부모 페이지 확장
+            state.expandedPages.add(parentPageId);
 
             renderPageList();
 
@@ -592,6 +596,22 @@ async function handlePageListClick(event, state) {
             renderPageList();
         }
         closeContextMenu();
+        return;
+    }
+
+    // 페이지 접기/펼치기 토글 선택
+    const pageToggle = event.target.closest(".page-toggle");
+    if (pageToggle) {
+        event.stopPropagation();
+        const pageId = pageToggle.dataset.pageId;
+        if (pageId) {
+            if (state.expandedPages.has(pageId)) {
+                state.expandedPages.delete(pageId);
+            } else {
+                state.expandedPages.add(pageId);
+            }
+            renderPageList();
+        }
         return;
     }
 
