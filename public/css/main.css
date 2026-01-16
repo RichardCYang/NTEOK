@@ -89,7 +89,7 @@ body {
     min-height: 0;
 }
 
-/* ?ъ씠?쒕컮 */
+/* 사이드바 */
 .sidebar {
     width: 260px;
     border-right: 1px solid var(--border-color);
@@ -211,7 +211,7 @@ body {
     padding: 0;
 }
 
-/* 而щ젆??移대뱶 ?ㅽ??? ?쒓뎅??誘몃땲硫 */
+/* 컬렉션 카드 스타일: 한국적 미니멀 */
 .collection-item {
     margin: 3px 0;
     border-radius: 3px;
@@ -313,7 +313,7 @@ body {
     background-color: var(--menu-hover-bg-color);
 }
 
-/* Context Menu (body??吏곸젒 異붽??섎뒗 怨듭슜 硫붾돱) */
+/* Context Menu (body에 직접 추가되는 공용 메뉴) */
 .context-menu {
     position: fixed;
     background-color: var(--menu-bg-color);
@@ -380,7 +380,7 @@ body {
     border-top: 1px solid transparent;
 }
 
-/* ?섏씠吏 ??ぉ: ?쒓뎅??誘몃땲硫 */
+/* 페이지 제목: 한국적 미니멀 */
 .page-list-item {
     padding: 7px 10px 7px 32px;
     cursor: pointer;
@@ -428,7 +428,7 @@ body {
     color: #1a1a1a;
 }
 
-/* ?먮뵒???곸뿭 */
+/* 에디터 영역 */
 .editor-area {
     flex: 1;
     display: flex;
@@ -448,7 +448,7 @@ body {
     color: var(--font-color);
 }
 
-/* ?섏씠吏 ?낅뜲?댄듃 ?쒓컙 ?쒖떆 (臾몄꽌 硫붿씤 ?곸뿭 ?곷떒) */
+/* 페이지 업데이트 시간 표시 (문서 메인 영역 상단) */
 .page-updated-at-container {
     padding: 12px 16px 8px;
     border-bottom: 1px solid #e5e7eb;
@@ -521,7 +521,7 @@ body {
     color: #4a545e;
 }
 
-/* ?대컮 ?ㅽ겕濡ㅻ컮 ?ㅽ???*/
+/* 에디터 스크롤바 스타일 */
 .editor-toolbar::-webkit-scrollbar {
     height: 4px;
 }
@@ -539,7 +539,7 @@ body {
     background: var(--scrollbar-thumb-hover-color);
 }
 
-/* ?됱긽 ?쒕∼?ㅼ슫 ?꾩껜 ?섑띁 */
+/* 색상 드롭다운 전체 래퍼 */
 .toolbar-color-dropdown {
     position: relative;
     display: inline-block;
@@ -559,7 +559,7 @@ body {
     transform: rotate(180deg);
 }
 
-/* ?됱긽 ?좏깮 硫붾돱 */
+/* 색상 선택 메뉴 */
 .toolbar-color-menu {
     position: fixed;
     padding: 4px;
@@ -607,7 +607,7 @@ body {
     font-size: 14px;
 }
 
-/* ?고듃 ?좏깮 硫붾돱 */
+/* 폰트 선택 메뉴 */
 .toolbar-font-menu {
     position: fixed;
     padding: 4px;
@@ -643,7 +643,7 @@ body {
     flex-shrink: 0;
 }
 
-/* ?щ갚 議곗젅 ?쒕∼?ㅼ슫 */
+/* 여백 조절 드롭다운 */
 .toolbar-padding-dropdown {
     position: relative;
     display: inline-block;
@@ -657,7 +657,7 @@ body {
     transform: rotate(180deg);
 }
 
-/* ?щ갚 ?좏깮 硫붾돱 */
+/* 여백 선택 메뉴 */
 .toolbar-padding-menu {
     position: fixed;
     padding: 8px;
@@ -701,7 +701,7 @@ body {
     margin: 6px 0;
 }
 
-/* 而ㅼ뒪? ?낅젰 */
+/* 커스텀 입력 */
 .padding-custom {
     padding: 8px 12px;
 }
@@ -746,7 +746,7 @@ body {
     background-color: var(--point-hover-color);
 }
 
-/* 紐⑤컮?쇱뿉?쒕뒗 ?щ갚 議곗젅 踰꾪듉 ?④? 諛??ㅻ뜑 ?덉씠?꾩썐 議곗젙 */
+/* 모바일에서는 여백 조절 버튼 숨김 및 헤더 레이아웃 조정 */
 @media (max-width: 900px) {
     .toolbar-padding-dropdown {
         display: none;
@@ -765,7 +765,7 @@ body {
     padding: 32px 120px 32px 120px;
 }
 
-/* ?먮뵒???щ갚 諛섏쓳??*/
+/* 에디터 여백 반응형 */
 @media (max-width: 1200px) {
     .editor {
         padding: 28px 80px 28px 80px;
@@ -778,7 +778,7 @@ body {
     }
 }
 
-/* ?먮뵒??釉붾줉: ?쒖? ?먮굦 */
+/* 에디터 블록: 한지 느낌 */
 .editor .ProseMirror {
     outline: none;
     padding: 16px 18px;
@@ -802,7 +802,7 @@ body {
     background-color: var(--code-bg-color);
 }
 
-/* ?몄슜臾??ㅽ???*/
+/* 인용구 스타일 */
 .editor .ProseMirror blockquote {
     border-left: 4px solid var(--blockquote-border-color);
     padding-left: 16px;
@@ -816,7 +816,7 @@ body {
     padding: 4px 0;
 }
 
-/* 踰꾪듉 ?ㅽ??? ?쒓뎅???덉젣???붿옄??*/
+/* 버튼 스타일: 한국적 절제된 디자인 */
 .primary-button {
 	border: none;
     border-radius: 3px;
@@ -875,7 +875,7 @@ body {
     background-color: var(--danger-hover-color);
 }
 
-/* ?щ옒??紐낅졊 硫붾돱: ?쒓뎅??誘몃땲硫 */
+/* 슬래시 명령 메뉴: 한국적 미니멀 */
 #slash-menu {
     position: fixed;
     z-index: 50;
@@ -943,7 +943,7 @@ body {
     color: #6b7280;
 }
 
-/* 泥댄겕由ъ뒪???ㅽ???*/
+/* 체크리스트 스타일 */
 .editor .ProseMirror ul[data-type="taskList"] {
     list-style: none;
     padding: 0;
@@ -998,7 +998,7 @@ body {
     color: #6b7280;
 }
 
-/* ?ъ씠?쒕컮 ?섎떒 踰꾪듉: ?쒓뎅???덉젣???ㅽ???*/
+/* 사이드바 하단 버튼: 한국적 절제된 스타일 */
 .sidebar-footer {
     padding: 12px 14px 14px;
     border-top: 1px solid var(--border-color);
@@ -1042,7 +1042,7 @@ body {
     display: none;
 }
 
-/* 紐⑤떖 */
+/* 모달 */
 .modal {
     opacity: 1;
     visibility: visible;
@@ -1218,7 +1218,7 @@ body {
     border-color: var(--point-color);
 }
 
-/* 諛섏쓳??*/
+/* 반응형 */
 @media (max-width: 768px) {
     .mobile-menu-btn {
         display: flex;
@@ -1250,7 +1250,7 @@ body {
         padding: 20px 24px 20px 24px;
     }
 
-    /* ?대컮 紐⑤컮??理쒖쟻??*/
+    /* 에디터 모바일 최적화 */
     .editor-toolbar {
         padding: 6px 8px;
         gap: 3px;
@@ -1265,7 +1265,7 @@ body {
         height: 16px;
     }
 
-    /* ?됱긽/?고듃 ?쒕∼?ㅼ슫 踰꾪듉 理쒖쟻??*/
+    /* 색상/폰트 드롭다운 버튼 최적화 */
     .toolbar-color-dropdown > .toolbar-button,
     .toolbar-font-dropdown > .toolbar-button {
         padding: 4px 6px;
@@ -1297,7 +1297,7 @@ body {
         padding: 16px 16px 16px 16px;
     }
 
-    /* ?대컮 紐⑤컮??(?뚰삎) 理쒖쟻??*/
+    /* 에디터 모바일 (가로형) 최적화 */
     .editor-toolbar {
         padding: 4px 6px;
         gap: 2px;
@@ -1312,7 +1312,7 @@ body {
         height: 14px;
     }
 
-    /* ?쒕∼?ㅼ슫 硫붾돱 紐⑤컮??議곗젙 */
+    /* 드롭다운 메뉴 모바일 조정 */
     .toolbar-color-menu,
     .toolbar-font-menu {
         min-width: 130px;
@@ -1326,7 +1326,7 @@ body {
     }
 }
 
-/* 珥덉냼???붾㈃ (iPhone SE 1?몃? ?? */
+/* 초소형 화면 (iPhone SE 1세대 등) */
 @media (max-width: 375px) {
     .editor-header {
         padding: 8px 10px;
@@ -1350,7 +1350,7 @@ body {
     }
 }
 
-/* 怨듭쑀 紐⑤떖 ?ㅽ???*/
+/* 공유 모달 스타일 */
 .share-item {
     display: flex;
     align-items: center;
@@ -1427,7 +1427,7 @@ body {
     background: rgba(90, 97, 105, 0.03);
 }
 
-/* KaTeX display mode ?щ갚 議곗젙 */
+/* KaTeX display mode 여백 조정 */
 .math-rendered .katex-display {
     margin: 0;
 }
@@ -1496,7 +1496,7 @@ body {
     background: #dcd9d2;
 }
 
-/* ?몃씪???섏떇 - ?쎄린 ?꾩슜 */
+/* 인라인 수식 - 읽기 전용 */
 .math-inline-view {
     display: inline;
     padding: 2px 4px;
@@ -1617,7 +1617,7 @@ body {
     transform: scale(1.2);
 }
 
-/* ?뺣젹 硫붾돱 */
+/* 정렬 메뉴 */
 .image-align-menu {
     position: absolute;
     top: 8px;
@@ -1671,7 +1671,7 @@ body {
     transform: scale(0.95);
 }
 
-/* ?뺣젹 ?ㅽ???*/
+/* 정렬 스타일 */
 .image-with-caption-wrapper[data-align="left"] {
     margin-left: 0;
     margin-right: auto;
@@ -1689,7 +1689,7 @@ body {
 
 /* ==================== Bookmark Container & Block Styles ==================== */
 
-/* 遺곷쭏??而⑦뀒?대꼫 */
+/* 북마크 컨테이너 */
 .bookmark-container-wrapper {
     border: 1px solid var(--border-color);
     border-radius: 6px;
@@ -1763,7 +1763,7 @@ body {
     margin-bottom: 0;
 }
 
-/* 遺곷쭏??移대뱶媛 ?덉쓣 ?뚮쭔 ?꾨옒 留덉쭊 異붽? */
+/* 북마크 카드가 있을 때만 아래 마진 추가 */
 .bookmark-container-content:has(> .bookmark-block-wrapper) {
     margin-bottom: 8px;
 }
@@ -1786,7 +1786,7 @@ body {
     border-color: #c9c3b8;
 }
 
-/* 遺곷쭏??釉붾줉 */
+/* 북마크 블록 */
 .bookmark-block-wrapper {
     margin: 0;
     padding: 0;
@@ -1868,7 +1868,7 @@ body {
     object-fit: cover;
 }
 
-/* ?몃꽕???먮윭 ?곹깭 */
+/* 썸네일 에러 상태 */
 .bookmark-thumbnail.error {
     background: #dcd9d2;
 }
@@ -1916,7 +1916,7 @@ body {
 }
 
 
-/* ?몄쭛 踰꾪듉 */
+/* 편집 버튼 */
 .bookmark-edit-button {
     position: absolute;
     top: 6px;
@@ -1942,7 +1942,7 @@ body {
     border-color: #c9c3b8;
 }
 
-/* ?몄쭛 ??*/
+/* 편집 중 */
 .bookmark-edit-form {
     display: flex;
     flex-direction: column;
@@ -2173,7 +2173,7 @@ body {
     background: #dcd9d2;
 }
 
-/* 濡쒕뵫 ?곹깭 */
+/* 로딩 상태 */
 .bookmark-loading {
     padding: 16px 14px;
     text-align: center;
@@ -2184,7 +2184,7 @@ body {
     background: var(--primary-color);
 }
 
-/* 諛섏쓳???붿옄??*/
+/* 반응형 디자인 */
 @media (max-width: 600px) {
     .bookmark-container-content {
         grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
@@ -2201,20 +2201,20 @@ body {
 
 /* ==================== Settings Modal - Responsive Design ==================== */
 
-/* ?ㅼ젙 紐⑤떖 而⑦뀗痢?*/
+/* 설정 모달 콘텐츠 */
 .settings-modal-content {
     width: 90vw;
     max-width: 600px;
     max-height: 85vh;
 }
 
-/* ?ㅼ젙 紐⑤떖 諛붾뵒 */
+/* 설정 모달 바디 */
 .settings-modal-body {
     overflow-y: auto;
     max-height: calc(85vh - 140px);
 }
 
-/* ?ㅼ젙 ?뱀뀡 */
+/* 설정 섹션 */
 .settings-section {
     margin-bottom: 24px;
     padding-bottom: 24px;
@@ -2233,7 +2233,7 @@ body {
     margin-bottom: 16px;
 }
 
-/* ?ㅼ젙 ?꾩씠??*/
+/* 설정 아이템 */
 .settings-item {
     display: flex;
     justify-content: space-between;
@@ -2262,14 +2262,14 @@ body {
     color: #9ca3af !important;
 }
 
-/* ?ㅼ젙 而⑦듃濡?*/
+/* 설정 컨트롤 */
 .settings-controls {
     display: flex;
     align-items: center;
     gap: 12px;
 }
 
-/* 諛깆뾽/蹂듦뎄 踰꾪듉???덈뒗 而⑦듃濡ㅼ? ?섏쭅 ?뺣젹 */
+/* 백업/복구 버튼이 있는 컨트롤은 수직 정렬 */
 .settings-controls:has(> button.settings-button) {
     flex-direction: column;
     align-items: flex-end;
@@ -2287,7 +2287,7 @@ body {
     cursor: not-allowed;
 }
 
-/* ?ㅼ젙 ??됲듃 */
+/* 설정 텍스트 */
 .settings-select {
     padding: 8px 12px;
     border: 1px solid #d4cfc4;
@@ -2304,7 +2304,7 @@ body {
     border-color: #2d5f5d;
 }
 
-/* 怨꾩젙 愿由??꾪뿕 援ъ뿭 */
+/* 계정 관리 위험 구역 */
 .settings-danger-zone {
     padding: 12px 0;
 }
@@ -2321,7 +2321,7 @@ body {
     line-height: 1.5;
 }
 
-/* ?ㅽ겕濡ㅻ컮 ?ㅽ???*/
+/* 스크롤바 스타일 */
 .settings-modal-body::-webkit-scrollbar {
     width: 8px;
 }
@@ -2342,7 +2342,7 @@ body {
 
 /* ==================== Settings Modal - Responsive ==================== */
 
-/* ?쒕툝由??댄븯 */
+/* 태블릿 이하 */
 @media (max-width: 768px) {
     .settings-modal-content {
         width: 95vw;
@@ -2370,7 +2370,7 @@ body {
     }
 }
 
-/* 紐⑤컮??*/
+/* 모바일 */
 @media (max-width: 480px) {
     .settings-modal-content {
         width: 100vw;
@@ -2439,14 +2439,14 @@ body {
 
 /* ==================== Icon Picker Modal - Responsive Design ==================== */
 
-/* 紐⑤떖 而⑦뀗痢?*/
+/* 모달 콘텐츠 */
 .icon-picker-modal-content {
     width: 90vw;
     max-width: 800px;
     max-height: 85vh;
 }
 
-/* 紐⑤떖 諛붾뵒 */
+/* 모달 바디 */
 .icon-picker-modal-body {
     overflow: hidden;
     display: flex;
@@ -2454,7 +2454,7 @@ body {
     max-height: calc(85vh - 80px);
 }
 
-/* ?ㅻ챸 ?띿뒪??*/
+/* 설명 텍스트 */
 .icon-picker-description {
     margin-bottom: 16px;
     color: #6b7280;
@@ -2462,7 +2462,7 @@ body {
     flex-shrink: 0;
 }
 
-/* ?ㅻ뜑 (??+ ?댁젣 踰꾪듉) */
+/* 헤더 (탭 + 해제 버튼) */
 .icon-picker-header {
     display: flex;
     justify-content: space-between;
@@ -2473,7 +2473,7 @@ body {
     gap: 12px;
 }
 
-/* ??而⑦뀒?대꼫 */
+/* 탭 컨테이너 */
 .icon-picker-tabs {
     display: flex;
     gap: 8px;
@@ -2481,7 +2481,7 @@ body {
     min-width: 0;
 }
 
-/* ??踰꾪듉 */
+/* 탭 버튼 */
 .icon-tab-btn {
     flex: 1;
     min-width: 0;
