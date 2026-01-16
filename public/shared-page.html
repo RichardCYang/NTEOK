@@ -458,13 +458,15 @@
 
             .shared-page-editor ul[data-type="taskList"] li {
                 display: flex;
-                align-items: center;
+                align-items: flex-start; /* 상단 정렬로 변경하여 텍스트가 여러 줄일 때도 체크박스가 첫 줄에 고정되도록 함 */
                 margin: 4px 0;
             }
 
             .shared-page-editor ul[data-type="taskList"] li > label {
                 display: flex;
                 align-items: center;
+                justify-content: center;
+                height: 36px; /* p 태그의 line-height와 일치시켜 수직 중앙 정렬 유지 */
                 margin-right: 8px;
                 user-select: none;
                 cursor: pointer;
@@ -493,7 +495,7 @@
             }
 
             .shared-page-editor ul[data-type="taskList"] li > div p {
-                height: 36px;
+                min-height: 36px; /* 고정 높이 대신 최소 높이 사용 (텍스트 줄바꿈 대응) */
                 margin: 0;
                 line-height: 36px;
                 padding: 0;

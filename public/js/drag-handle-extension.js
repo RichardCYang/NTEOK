@@ -110,40 +110,39 @@ export const DragHandle = Extension.create({
                         // 1. Leaf / Atom Block Check (Callout, Board 등)
                         // $pos가 블록 바로 앞/뒤에 있는 경우 (Atom 노드 등)
                         const nodeAfter = $pos.nodeAfter;
-                        if (isMouseOverNode($pos.pos, nodeAfter)) {
-                            targetPos = $pos.pos;
-                            targetNode = nodeAfter;
+                        // Atom 노드이거나 텍스트가 없는 특수 블록인 경우 우선 선택
+                        if (nodeAfter && nodeAfter.isBlock && (nodeAfter.isAtom || nodeAfter.type.name === 'horizontalRule')) {
+                            if (isMouseOverNode($pos.pos, nodeAfter)) {
+                                targetPos = $pos.pos;
+                                targetNode = nodeAfter;
+                            }
                         } else {
                             const nodeBefore = $pos.nodeBefore;
-                            if (nodeBefore && isMouseOverNode($pos.pos - nodeBefore.nodeSize, nodeBefore)) {
-                                targetPos = $pos.pos - nodeBefore.nodeSize;
-                                targetNode = nodeBefore;
+                            if (nodeBefore && nodeBefore.isBlock && (nodeBefore.isAtom || nodeBefore.type.name === 'horizontalRule')) {
+                                if (isMouseOverNode($pos.pos - nodeBefore.nodeSize, nodeBefore)) {
+                                    targetPos = $pos.pos - nodeBefore.nodeSize;
+                                    targetNode = nodeBefore;
+                                }
                             }
                         }
                         
-                        // 2. Container Hierarchy Check (Table, ToggleList 등 중첩 구조)
+                        // 2. Container Hierarchy Check (Table, ToggleList, TaskList 등 중첩 구조)
                         if (!targetNode) {
+                            // 이동 가능한 블록의 부모가 될 수 있는 컨테이너 타입 정의
+                            const containerTypes = ['doc', 'toggleBlock', 'blockquote', 'taskList', 'bulletList', 'orderedList'];
+                            // 개별적으로 핸들이 붙어야 하는 리스트 아이템 타입
+                            const listItemTypes = ['taskItem', 'listItem'];
+                            
                             // 깊은 곳에서부터 위로 올라가며 "컨테이너의 직계 자식"인 블록을 찾음
                             for (let d = $pos.depth; d >= 0; d--) {
                                 const node = $pos.node(d);
-                                
-                                // d=0은 doc의 자식 (루트 레벨)
-                                if (d === 0) {
-                                    // 이미 Leaf Check에서 걸리지 않았다면 여기서 처리될 수도 있음
-                                    // 하지만 $pos가 깊이 들어가있지 않은 경우(depth=0)를 위해 필요
-                                    // (Leaf Check는 nodeAfter/Before만 보므로)
-                                    // 그러나 depth loop에서는 $pos가 가리키는 노드의 조상만 본다.
-                                    // 루트 레벨 블록 선택은 보통 Leaf Check나 이 루프의 d=1(doc의 자식)에서 걸림?
-                                    // 아니, $pos.node(0)은 doc이다. doc 자체를 선택하진 않음.
-                                    // $pos.node(d)가 'node'이고, $pos.node(d-1)이 'parent'
-                                    // d=0이면 parent가 없다.
-                                    break; 
-                                }
+                                if (d === 0) break; 
 
                                 const parent = $pos.node(d - 1);
                                 
-                                // 컨테이너(doc, toggleBlock, blockquote 등)의 직계 자식이면 선택
-                                if (parent.type.name === 'doc' || parent.type.name === 'toggleBlock' || parent.type.name === 'blockquote') {
+                                // [수정] 현재 노드가 리스트 아이템이거나, 부모가 컨테이너인 경우 타겟으로 설정
+                                // 이를 통해 리스트 전체가 아닌 개별 항목에 핸들이 표시됨
+                                if (listItemTypes.includes(node.type.name) || containerTypes.includes(parent.type.name)) {
                                     targetPos = $pos.before(d);
                                     targetNode = node;
                                     break;
@@ -165,11 +164,20 @@ export const DragHandle = Extension.create({
                                 return;
                             }
 
+                            // 기본 왼쪽 오프셋 (핸들 너비 및 간격)
+                            let xOffset = 24;
+
+                            // [수정] TaskList 아이템인 경우 체크박스 레이블 너비만큼 핸들을 더 왼쪽으로 이동
+                            // li 요소 내부에 label(체크박스 영역)이 있는지 확인하여 오프셋 계산
+                            if (domNode.nodeName === 'LI' && domNode.querySelector('label')) {
+                                const label = domNode.querySelector('label');
+                                xOffset += label.offsetWidth;
+                            }
+
                             // 스크롤 오프셋을 고려하여 절대 위치 계산
                             handle.style.top = (rect.top - parentRect.top + view.dom.parentNode.scrollTop) + 'px';
-                            // main.css에 의하면 .editor padding-left가 120px임.
-                            // 핸들을 에디터 콘텐츠 시작점(rect.left)보다 왼쪽에 배치.
-                            handle.style.left = (rect.left - parentRect.left - 24 + view.dom.parentNode.scrollLeft) + 'px';
+                            // 계산된 xOffset을 적용하여 핸들을 항상 블록의 가장 왼쪽(체크박스 포함)에 배치
+                            handle.style.left = (rect.left - parentRect.left - xOffset + view.dom.parentNode.scrollLeft) + 'px';
                             
                             handle.style.opacity = '1';
                             
@@ -232,22 +240,29 @@ export const DragHandle = Extension.create({
                         let targetNode = null;
                         
                         // 드롭 타겟 찾기 (onMouseMove와 유사 로직)
-                        // 1. Leaf check
+                        // 1. Leaf check (Atom 노드 우선)
                         const nodeAfter = $pos.nodeAfter;
-                        // 마우스 위치 체크는 생략 (드롭은 근처면 됨)
-                        if (nodeAfter && nodeAfter.isBlock) targetBlockPos = $pos.pos;
-                        else {
+                        if (nodeAfter && nodeAfter.isBlock && nodeAfter.isAtom) {
+                            targetBlockPos = $pos.pos;
+                        } else {
                             const nodeBefore = $pos.nodeBefore;
-                            if (nodeBefore && nodeBefore.isBlock) targetBlockPos = $pos.pos - nodeBefore.nodeSize;
+                            if (nodeBefore && nodeBefore.isBlock && nodeBefore.isAtom) {
+                                targetBlockPos = $pos.pos - nodeBefore.nodeSize;
+                            }
                         }
 
-                        // 2. Loop check
+                        // 2. Loop check (컨테이너 계층 탐색)
                         if (targetBlockPos === null) {
+                            const containerTypes = ['doc', 'toggleBlock', 'blockquote', 'taskList', 'bulletList', 'orderedList'];
+                            const listItemTypes = ['taskItem', 'listItem'];
+
                             for (let d = $pos.depth; d >= 0; d--) {
                                 if (d === 0) break;
                                 const node = $pos.node(d);
                                 const parent = $pos.node(d - 1);
-                                if (parent.type.name === 'doc' || parent.type.name === 'toggleBlock' || parent.type.name === 'blockquote') {
+                                
+                                // 리스트 아이템이거나 컨테이너의 직계 자식인 경우 드롭 타겟으로 설정
+                                if (listItemTypes.includes(node.type.name) || containerTypes.includes(parent.type.name)) {
                                     targetBlockPos = $pos.before(d);
                                     targetNode = node;
                                     break;
