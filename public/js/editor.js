@@ -869,6 +869,14 @@ function runSlashCommand(id) {
                 to: selection.from
             })
             .run();
+
+        // [버그 수정] deleteRange 실행 후 빈 문단이 제거되어 바로 아래의 블록(표, 콜아웃 등)이 
+        // NodeSelection 상태로 선택되는 현상 방지.
+        // 이 상태에서 명령을 실행하면 아래 블록이 교체되어 사라지므로, 
+        // 강제로 빈 문단을 삽입하여 새 블록이 해당 위치에 추가되도록 함.
+        if (editor.state.selection.node) {
+            editor.chain().insertContentAt(editor.state.selection.from, "<p></p>").focus(editor.state.selection.from).run();
+        }
     }
 
     item.command(editor);
