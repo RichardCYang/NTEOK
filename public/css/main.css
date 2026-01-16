@@ -1408,66 +1408,86 @@ body {
     font-weight: 600;
 }
 
-/* Math Block Styles */
+/* 수식 블록 스타일 */
 .math-block-wrapper {
-    margin: 1em 0;
+    margin: 4px 0;
     padding: 0;
-    border: 1px solid var(--border-color);
-    border-radius: 6px;
-    background: var(--primary-color);
-    transition: all 0.15s ease;
+    border-radius: 4px;
+    background: transparent;
+    transition: background 20ms ease-in;
     position: relative;
-    overflow: hidden;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 48px;
+    cursor: pointer;
 }
 
 .math-block-wrapper:hover {
-    border-color: #c9c3b8;
-    box-shadow: 0 2px 8px var(--box-shadow-color);
+    background: rgba(55, 53, 47, 0.08);
 }
 
 .math-rendered {
-    cursor: pointer;
-    padding: 1em 1.2em;
-    text-align: center;
+    padding: 12px 16px;
+    width: 100%;
     overflow-x: auto;
-    color: var(--font-color);
-    min-height: 60px;
-    transition: background 0.15s ease;
+    overflow-y: hidden;
     display: flex;
-    align-items: center;
     justify-content: center;
+    align-items: center;
+    /* Computer Modern Family 서체 계열 설정 */
+    font-size: 1.25em;
+    line-height: 1.1;
+}
+
+/* KaTeX 내부 서체를 Computer Modern Family로 고정 */
+.math-rendered .katex {
+    font-family: KaTeX_Main, "Computer Modern Serf", "Computer Modern", "Times New Roman", serif !important;
+    text-rendering: auto;
+    font-variant-numeric: lining-nums;
+    font-feature-settings: "lnum";
+}
+
+/* 수식 내 모든 텍스트 및 기호 서체 강제 */
+.math-rendered .katex * {
+    font-family: inherit !important;
 }
 
 .math-rendered:hover {
-    background: rgba(90, 97, 105, 0.03);
+    background: transparent;
 }
 
-/* KaTeX display mode 여백 조정 */
+/* KaTeX 디스플레이 모드 최적화 */
 .math-rendered .katex-display {
-    margin: 0;
+    margin: 0.5em 0;
+    padding: 0;
+    width: auto;
 }
 
 .math-editor-container {
     display: flex;
     flex-direction: column;
-    gap: 10px;
-    padding: 14px;
-    border-top: 1px solid #e5dfd7;
+    gap: 12px;
+    padding: 16px;
+    background: var(--secondary-color);
+    border-top: 1px solid var(--border-color);
+    width: 100%;
 }
 
 .math-input {
     width: 100%;
-    min-height: 100px;
-    padding: 8px 11px;
-    font-family: 'Courier New', monospace;
-    font-size: 13px;
+    min-height: 120px;
+    padding: 12px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    font-size: 14px;
+    line-height: 1.5;
     border: 1px solid var(--border-color);
     border-radius: 4px;
     background: var(--input-bg-color);
     resize: vertical;
     box-sizing: border-box;
     outline: none;
-    transition: border-color 0.15s;
+    transition: border-color 0.2s;
 }
 
 .math-input:focus {
@@ -1518,18 +1538,20 @@ body {
     margin: 0 1px;
     background: transparent;
     border-radius: 3px;
-    font-family: inherit;
-    font-size: inherit;
+    /* 수식 전용 폰트 설정 */
+    font-family: KaTeX_Main, "Times New Roman", serif;
+    font-size: 1.05em;
     vertical-align: baseline;
 }
 
-/* KaTeX rendering improvements */
+/* KaTeX 렌더링 최적화 */
 .katex-display {
     margin: 0;
 }
 
 .katex {
-    font-size: 1.1em;
+    font-size: 1.05em;
+    font-family: KaTeX_Main, "Times New Roman", serif;
 }
 
 /* ==================== Image with Caption Styles ==================== */
