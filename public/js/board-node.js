@@ -1,6 +1,6 @@
 /**
  * Tiptap Board View Extension
- * 노션의 보드 뷰와 유사한 칸반 보드 블록
+ * 칸반 보드 블록
  */
 
 const Node = Tiptap.Core.Node;

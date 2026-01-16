@@ -2761,8 +2761,8 @@ body {
    Table Styles
    ============================================================================ */
 
-/* TipTap 테이블 스타일 (노션 스타일 모던 디자인) */
-.ProseMirror table {
+/* TipTap 테이블 스타일 (모던 디자인) */
+.editor .ProseMirror table {
     border-collapse: separate;
     border-spacing: 0;
     table-layout: fixed;
@@ -3830,7 +3830,7 @@ body {
 }
 
 /* ============================================
-   하위 페이지 섹션 (Notion-style Subpages)
+   하위 페이지 섹션 (Subpages)
    ============================================ */
 
 .page-content-wrapper {
@@ -3873,7 +3873,7 @@ body {
     margin: 0;
 }
 
-/* 하위 페이지 리스트 (Notion 스타일) */
+/* 하위 페이지 리스트 */
 .subpages-grid {
     display: flex;
     flex-direction: column;

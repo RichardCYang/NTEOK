@@ -1,6 +1,6 @@
 /**
  * 하위 페이지 관리 모듈
- * Notion 스타일 하위 페이지 카드 그리드 렌더링
+ * 하위 페이지 카드 그리드 렌더링
  */
 
 import { secureFetch, escapeHtml } from './ui-utils.js';
@@ -90,7 +90,7 @@ function renderSubpages(subpages, parentId) {
 }
 
 /**
- * 하위 페이지 리스트 아이템 생성 (Notion 스타일)
+ * 하위 페이지 리스트 아이템 생성
  */
 function createSubpageCard(subpage) {
     const item = document.createElement('div');
@@ -106,7 +106,7 @@ function createSubpageCard(subpage) {
     // 콘텐츠 미리보기 생성
     const preview = generatePreview(subpage.content, subpage.isEncrypted);
 
-    // 리스트 아이템 HTML 구성 (Notion 스타일)
+    // 리스트 아이템 HTML 구성
     item.innerHTML = `
         <div class="subpage-card-icon">${iconHtml}</div>
         <div class="subpage-card-content">

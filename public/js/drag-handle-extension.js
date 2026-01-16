@@ -7,7 +7,7 @@ function createHandleElement() {
     const handle = document.createElement('div');
     handle.className = 'block-handle';
     handle.contentEditable = 'false';
-    // 6-dot grid icon (Notion style), thinner and stylish
+    // 6-dot grid icon, thinner and stylish
     handle.innerHTML = `
         <svg viewBox="0 0 10 16" width="10" height="16" fill="currentColor" style="display: block;">
             <circle cx="2" cy="2" r="1.5" />
