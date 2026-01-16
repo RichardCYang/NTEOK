@@ -29,6 +29,18 @@
     --scrollbar-track-color: #121212;
     --scrollbar-thumb-color: #444444;
     --scrollbar-thumb-hover-color: #5d9cec;
+
+    /* 콜아웃 블록 테마 변수 (다크 모드 전용) */
+    --callout-info-bg: #1e293b;
+    --callout-info-border: #334155;
+    --callout-warning-bg: #451a03;
+    --callout-warning-border: #78350f;
+    --callout-error-bg: #450a0a;
+    --callout-error-border: #7f1d1d;
+    --callout-success-bg: #064e3b;
+    --callout-success-border: #065f46;
+    --callout-text-color: #f1f5f9;
+    --callout-sub-text-color: #94a3b8;
 }
 
 /* =================================================================

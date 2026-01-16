@@ -301,7 +301,7 @@ export const SLASH_ITEMS = [
         description: "정보, 경고, 에러, 성공 메시지 블록",
         icon: "ℹ️",
         command(editor) {
-            editor.chain().focus().setCallout('info', '', '').run();
+            editor.chain().focus().setCallout('info', '').run();
         }
     },
     {

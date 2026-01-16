@@ -29,4 +29,16 @@
     --scrollbar-track-color: #f5f2ed;
     --scrollbar-thumb-color: #d4cfc4;
     --scrollbar-thumb-hover-color: #2d5f5d;
+
+    /* 콜아웃 블록 테마 변수 */
+    --callout-info-bg: #f1f5f9;
+    --callout-info-border: #e2e8f0;
+    --callout-warning-bg: #fffbeb;
+    --callout-warning-border: #fef3c7;
+    --callout-error-bg: #fef2f2;
+    --callout-error-border: #fee2e2;
+    --callout-success-bg: #f0fdf4;
+    --callout-success-border: #dcfce7;
+    --callout-text-color: #2d3748;
+    --callout-sub-text-color: #718096;
 }

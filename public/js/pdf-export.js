@@ -638,26 +638,32 @@ function renderCalloutBlocks(container) {
         const content = el.getAttribute('data-content') || '';
 
         const colors = {
-            info: { bg: '#e0f2fe', border: '#0ea5e9', icon: 'ℹ️' },
-            warning: { bg: '#fef3c7', border: '#f59e0b', icon: '⚠️' },
-            error: { bg: '#fee2e2', border: '#ef4444', icon: '❌' },
-            success: { bg: '#dcfce7', border: '#22c55e', icon: '✅' }
+            info: { bg: '#f1f5f9', border: '#e2e8f0', icon: 'ℹ️' },
+            warning: { bg: '#fffbeb', border: '#fef3c7', icon: '⚠️' },
+            error: { bg: '#fef2f2', border: '#fee2e2', icon: '❌' },
+            success: { bg: '#f0fdf4', border: '#dcfce7', icon: '✅' }
         };
         const style = colors[type] || colors.info;
 
         el.innerHTML = `
             <div style="
                 background: ${style.bg};
-                border-left: 4px solid ${style.border};
-                border-radius: 6px;
-                padding: 12px 16px;
-                margin: 8px 0;
+                border: 1px solid ${style.border};
+                border-radius: 4px;
+                padding: 16px;
+                margin: 12px 0;
+                display: flex;
+                align-items: flex-start;
+                gap: 12px;
             ">
+                <div style="font-size: 20px; flex-shrink: 0; line-height: 1;">${style.icon}</div>
                 <div style="
-                    font-weight: 600;
-                    margin-bottom: ${title ? '6px' : '0'};
-                ">${style.icon} ${escapeHtml(title)}</div>
-                <div style="white-space: pre-wrap;">${escapeHtml(content)}</div>
+                    white-space: pre-wrap;
+                    color: #2d3748;
+                    font-size: 15px;
+                    line-height: 1.6;
+                    flex: 1;
+                ">${escapeHtml(content)}</div>
             </div>
         `;
     });

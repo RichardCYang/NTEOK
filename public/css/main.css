@@ -3603,112 +3603,96 @@ body {
     background-color: #545b62;
 }
 
-/* =================================================================
-   肄쒖븘??釉붾줉 ?ㅽ???
-   ================================================================= */
-
-/* 肄쒖븘??釉붾줉 湲곕낯 ?ㅽ???*/
 .callout-block-wrapper {
-    margin: 1em 0;
-    border-radius: 8px;
-    border-left: 4px solid;
-    padding: 12px;
-    transition: all 0.15s ease;
+    margin: 1.25em 0;
+    border-radius: 4px; /* 곡률을 더 세밀하게 조정 */
+    padding: 16px 16px;
+    transition: all 0.2s ease;
     position: relative;
+    border: 1px solid transparent;
 }
 
-/* ??낅퀎 ?됱긽 - Info (?뺣낫) */
+/* 타입별 색상 구성 - 정보 */
 .callout-block-wrapper[data-callout-type="info"] {
-    background: #e0f2fe;
-    border-color: #0ea5e9;
+    background-color: var(--callout-info-bg);
+    border-color: var(--callout-info-border);
 }
 
-/* ??낅퀎 ?됱긽 - Warning (寃쎄퀬) */
+/* 타입별 색상 구성 - 경고 */
 .callout-block-wrapper[data-callout-type="warning"] {
-    background: #fef3c7;
-    border-color: #f59e0b;
+    background-color: var(--callout-warning-bg);
+    border-color: var(--callout-warning-border);
 }
 
-/* ??낅퀎 ?됱긽 - Error (?먮윭) */
+/* 타입별 색상 구성 - 에러 */
 .callout-block-wrapper[data-callout-type="error"] {
-    background: #fee2e2;
-    border-color: #ef4444;
+    background-color: var(--callout-error-bg);
+    border-color: var(--callout-error-border);
 }
 
-/* ??낅퀎 ?됱긽 - Success (?깃났) */
+/* 타입별 색상 구성 - 성공 */
 .callout-block-wrapper[data-callout-type="success"] {
-    background: #dcfce7;
-    border-color: #22c55e;
+    background-color: var(--callout-success-bg);
+    border-color: var(--callout-success-border);
 }
 
-/* ?ㅻ뜑 */
+/* 전체 레이아웃 (아이콘과 본문 정렬 최적화) */
 .callout-header {
     display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 6px;
+    align-items: flex-start;
+    gap: 10px;
+    line-height: 1.6; /* 본문 텍스트의 줄 높이와 일치 */
 }
 
-/* ?꾩씠肄?*/
+/* 아이콘 스타일 (텍스트 첫 줄 중앙에 맞춤) */
 .callout-icon {
     font-size: 20px;
+    width: 24px;
+    height: 24px; /* 본문 15px * 1.6 = 24px 에 맞춰 정렬 */
+    display: flex;
+    align-items: center;
+    justify-content: center;
     flex-shrink: 0;
-    line-height: 1;
+    user-select: none;
+    margin-top: 0; /* 강제 여백 제거 */
 }
 
-/* ?쒕ぉ */
-.callout-title {
-    flex: 1;
-    font-weight: 600;
-    font-size: 14px;
-    min-height: 20px;
-    line-height: 1.4;
-    outline: none;
-}
-
-.callout-title:focus {
-    background-color: rgba(255, 255, 255, 0.5);
-    border-radius: 4px;
-    padding: 2px 4px;
-    margin: -2px -4px;
-}
-
-.callout-title:empty::before {
-    content: '?쒕ぉ';
-    color: #999;
-}
-
-/* ????좏깮 踰꾪듉 */
+/* 타입 변경 버튼 (오른쪽 상단에 배치) */
 .callout-type-selector {
-    padding: 4px 8px;
-    border: 1px solid rgba(0, 0, 0, 0.2);
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    padding: 2px 6px;
+    border: 1px solid rgba(0, 0, 0, 0.05);
     border-radius: 4px;
-    background: rgba(255, 255, 255, 0.7);
+    background: var(--menu-bg-color);
+    color: var(--callout-sub-text-color);
     cursor: pointer;
-    font-size: 12px;
+    font-size: 10px;
     font-weight: 500;
-    transition: all 0.15s;
+    opacity: 0; /* 평소에는 숨김 */
+    transition: all 0.2s;
     flex-shrink: 0;
+}
+
+.callout-block-wrapper:hover .callout-type-selector {
+    opacity: 1; /* 마우스 호버 시 표시 */
 }
 
 .callout-type-selector:hover {
-    background: rgba(255, 255, 255, 0.9);
-    border-color: rgba(0, 0, 0, 0.3);
+    background: var(--menu-hover-bg-color);
+    border-color: var(--menu-border-color);
 }
 
-.callout-type-selector:active {
-    transform: scale(0.95);
-}
-
-/* ????앹뾽 */
+/* 타입 선택 팝업 */
 .callout-type-popup {
     position: fixed;
-    background: white;
-    border: 1px solid #ddd;
-    border-radius: 6px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-    padding: 8px;
-    z-index: 1000;
+    background: var(--menu-bg-color);
+    border: 1px solid var(--menu-border-color);
+    border-radius: 8px;
+    box-shadow: 0 4px 12px var(--box-shadow-color);
+    padding: 4px;
+    z-index: 1100;
     min-width: 120px;
 }
 
@@ -3718,53 +3702,56 @@ body {
     gap: 8px;
     padding: 8px 12px;
     cursor: pointer;
-    border-radius: 4px;
-    transition: background-color 0.15s;
-    font-size: 14px;
+    border-radius: 6px;
+    transition: all 0.15s;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--menu-item-text-color);
 }
 
 .callout-type-option:hover {
-    background: #f5f5f5;
+    background: var(--menu-hover-bg-color);
 }
 
-.callout-type-option:active {
-    background: #e5e5e5;
-}
-
-/* ?댁슜 而⑦뀒?대꼫 */
+/* 내용 영역 */
 .callout-content {
+    flex: 1;
     position: relative;
 }
 
-/* ?댁슜 textarea */
+/* 내용 텍스트 영역 */
 .callout-content-textarea {
     width: 100%;
     border: none;
     background: transparent;
     resize: none;
     font-family: inherit;
-    font-size: 14px;
+    font-size: 15px;
     line-height: 1.6;
-    padding: 2px 4px;
+    color: var(--callout-text-color);
+    padding: 0;
     outline: none;
     min-height: 24px;
     overflow-y: hidden;
-}
-
-.callout-content-textarea:focus {
-    background: rgba(255, 255, 255, 0.3);
-    border-radius: 4px;
+    display: block;
 }
 
 .callout-content-textarea::placeholder {
-    color: #999;
+    color: var(--placeholder-color);
 }
 
-/* ?쎄린 紐⑤뱶 ?ㅽ???*/
-.callout-block-wrapper.read-only .callout-title {
+/* 읽기 전용 상태 스타일 */
+.callout-block-wrapper.read-only .callout-content-textarea {
     cursor: default;
 }
 
+/* 읽기 전용 상태 스타일 */
+.callout-block-wrapper.read-only .callout-content-textarea {
+    cursor: default;
+}
+
+/* 읽기 전용 상태 스타일 */
+.callout-block-wrapper.read-only .callout-title,
 .callout-block-wrapper.read-only .callout-content-textarea {
     cursor: default;
 }
