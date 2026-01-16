@@ -2289,10 +2289,17 @@ body {
     gap: 8px;
 }
 
+/* 설정 버튼 */
 .settings-button {
-    padding: 6px 8px !important;
+    padding: 0 8px !important;
     font-size: 13px !important;
     min-width: 100px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    box-sizing: border-box;
 }
 
 .settings-button:disabled {
@@ -2300,16 +2307,24 @@ body {
     cursor: not-allowed;
 }
 
-/* 설정 텍스트 */
+/* 설정 선택창 (콤보박스) */
 .settings-select {
-    padding: 8px 12px;
+    padding: 0 12px;
     border: 1px solid #d4cfc4;
     border-radius: 3px;
     background: white;
     color: #374151;
-    font-size: 14px;
+    font-size: 13px;
     cursor: pointer;
     transition: all 0.2s ease;
+    height: 32px;
+    box-sizing: border-box;
+}
+
+/* 설정 모달 내의 버튼과 셀렉트 박스 너비 통일 */
+.settings-modal-content .settings-button,
+.settings-modal-content .settings-select {
+    width: 140px;
 }
 
 .settings-select:focus {
@@ -2423,6 +2438,12 @@ body {
     .settings-controls {
         width: 100%;
         justify-content: space-between;
+    }
+
+    .settings-modal-content .settings-button,
+    .settings-modal-content .settings-select {
+        width: 100%;
+        max-width: none;
     }
 
     .settings-button {
