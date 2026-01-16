@@ -250,7 +250,7 @@ body {
     padding: 4px 6px;
     border-radius: 3px;
     cursor: pointer;
-    color: #4a545e;
+    color: #a0a0a0; /* 채도를 낮추고 더 연하게 변경 */
 }
 
 .collection-menu-btn:hover,
@@ -265,7 +265,7 @@ body {
     padding: 4px 6px;
     border-radius: 3px;
     cursor: pointer;
-    color: #4a545e;
+    color: #a0a0a0; /* 채도를 낮추고 더 연하게 변경 */
 }
 
 .collection-add-page-btn:hover {
@@ -414,13 +414,26 @@ body {
     padding: 4px 6px;
     border-radius: 3px;
     cursor: pointer;
-    color: #4a545e;
-    opacity: 0;
+    color: #a0a0a0; /* 채도를 낮추고 더 연하게 변경 */
     transition: opacity 0.15s ease;
 }
 
-.page-list-item:hover .page-add-subpage-btn {
-    opacity: 1;
+/* 데스크탑에서는 컬렉션/페이지 메뉴 버튼을 호버 시에만 표시 */
+@media (min-width: 769px) {
+    .collection-menu-btn,
+    .collection-add-page-btn,
+    .page-menu-btn,
+    .page-add-subpage-btn {
+        opacity: 0;
+        transition: opacity 0.15s ease;
+    }
+
+    .collection-header:hover .collection-menu-btn,
+    .collection-header:hover .collection-add-page-btn,
+    .page-list-item:hover .page-menu-btn,
+    .page-list-item:hover .page-add-subpage-btn {
+        opacity: 1;
+    }
 }
 
 .page-add-subpage-btn:hover {

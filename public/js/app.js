@@ -141,9 +141,22 @@ async function handlePageListClick(event, state) {
     const colMenuBtn = event.target.closest(".collection-menu-btn");
     if (colMenuBtn) {
         event.stopPropagation();
+
+        const contextMenu = document.querySelector("#context-menu");
+        const isAlreadyOpen = contextMenu && !contextMenu.classList.contains("hidden") && 
+                             contextMenu.dataset.triggerId === colMenuBtn.dataset.collectionId;
+
         closeAllDropdowns();
+        closeContextMenu();
+
+        // 이미 같은 버튼에 의해 메뉴가 열려있었다면 닫고 종료 (토글 기능)
+        if (isAlreadyOpen) {
+            return;
+        }
 
         const collectionId = colMenuBtn.dataset.collectionId;
+        // 메뉴가 어떤 버튼에 의해 열렸는지 식별하기 위해 ID 저장
+        if (contextMenu) contextMenu.dataset.triggerId = collectionId;
         const isOwner = colMenuBtn.dataset.isOwner === 'true';
         const permission = colMenuBtn.dataset.permission;
         const collection = appState.collections.find(c => c.id === collectionId);
@@ -367,9 +380,22 @@ async function handlePageListClick(event, state) {
     const pageMenuBtn = event.target.closest(".page-menu-btn");
     if (pageMenuBtn) {
         event.stopPropagation();
+
+        const contextMenu = document.querySelector("#context-menu");
+        const isAlreadyOpen = contextMenu && !contextMenu.classList.contains("hidden") && 
+                             contextMenu.dataset.triggerId === pageMenuBtn.dataset.pageId;
+
         closeAllDropdowns();
+        closeContextMenu();
+
+        // 이미 같은 버튼에 의해 메뉴가 열려있었다면 닫고 종료 (토글 기능)
+        if (isAlreadyOpen) {
+            return;
+        }
 
         const pageId = pageMenuBtn.dataset.pageId;
+        // 메뉴가 어떤 버튼에 의해 열렸는지 식별하기 위해 ID 저장
+        if (contextMenu) contextMenu.dataset.triggerId = pageId;
         const isEncrypted = pageMenuBtn.dataset.isEncrypted === 'true';
 
         // 페이지 정보 찾기

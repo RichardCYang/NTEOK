@@ -131,6 +131,8 @@ export function closeContextMenu() {
     const contextMenu = document.querySelector("#context-menu");
     if (contextMenu) {
         contextMenu.classList.add("hidden");
+        // 메뉴가 닫힐 때 트리거 ID 초기화 (다시 열 때 토글 로직을 위해)
+        delete contextMenu.dataset.triggerId;
     }
 }
 
