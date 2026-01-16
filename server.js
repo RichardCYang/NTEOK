@@ -1338,6 +1338,9 @@ app.use(express.static(path.join(__dirname, "public"), {
 // Serve themes statically
 app.use('/themes', express.static(path.join(__dirname, 'themes')));
 
+// 언어 파일 정적 서빙
+app.use('/languages', express.static(path.join(__dirname, 'languages')));
+
 // 보안 개선: 정적 파일 접근 제어 (인증된 사용자만 접근 가능)
 // 기본 커버 이미지는 인증 없이 접근 가능
 app.use('/covers/default', express.static(path.join(__dirname, 'covers', 'default')));

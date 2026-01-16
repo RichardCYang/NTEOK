@@ -162,7 +162,7 @@ export function renderPageList() {
     if (!state.collections.length) {
         const empty = document.createElement("li");
         empty.className = "collection-empty";
-        empty.textContent = "컬렉션이 없습니다. 아래에서 새 컬렉션을 추가하세요.";
+        empty.textContent = (state.translations && state.translations['collection_empty']) || "컬렉션이 없습니다. 아래에서 새 컬렉션을 추가하세요.";
         listEl.appendChild(empty);
         return;
     }
@@ -213,7 +213,7 @@ export function renderPageList() {
                     <i class="fa-solid fa-caret-right"></i>
                 </span>
                 <i class="${folderIcon}"></i>
-                <span>${escapeHtml(collection.name || "제목 없음")}${indicator}</span>
+                <span>${escapeHtml(collection.name || ((state.translations && state.translations['untitled']) || "제목 없음"))}${indicator}</span>
             `;
         } else {
             title.innerHTML = `
@@ -221,7 +221,7 @@ export function renderPageList() {
                     <i class="fa-solid fa-caret-right"></i>
                 </span>
                 <i class="${folderIcon}"></i>
-                <span>${escapeHtml(collection.name || "제목 없음")}${indicator}</span>
+                <span>${escapeHtml(collection.name || ((state.translations && state.translations['untitled']) || "제목 없음"))}${indicator}</span>
             `;
         }
 
@@ -264,7 +264,7 @@ export function renderPageList() {
             if (!colPages.length) {
                 const empty = document.createElement("div");
                 empty.className = "collection-empty";
-                empty.textContent = "페이지가 없습니다. 새 페이지를 추가하세요.";
+                empty.textContent = (state.translations && state.translations['page_empty']) || "페이지가 없습니다. 새 페이지를 추가하세요.";
                 item.appendChild(empty);
             } else {
                 const tree = buildPageTree(colPages);
@@ -356,7 +356,7 @@ export function renderPageList() {
                     // 제목 (textContent 사용)
                     titleSpan.textContent = "";
                     if (iconEl) titleSpan.appendChild(iconEl);
-                    titleSpan.appendChild(document.createTextNode(node.title || "제목 없음"));
+                    titleSpan.appendChild(document.createTextNode(node.title || ((state.translations && state.translations['untitled']) || "제목 없음")));
 
                     titleWrap.appendChild(titleSpan);
 
@@ -654,7 +654,8 @@ export async function loadPage(id) {
             iconEl.className = "fa-solid fa-pencil";
         }
         if (textEl) {
-            textEl.textContent = "쓰기모드";
+            textEl.textContent = (state.translations && state.translations['mode_write']) || "쓰기모드";
+            textEl.setAttribute('data-i18n', 'mode_write');
         }
 
         // 읽기모드로 전환 시 커버 버튼 숨김
@@ -846,7 +847,7 @@ async function savePageTitle() {
         return true;
     }
 
-    const title = titleInput.value || "제목 없음";
+    const title = titleInput.value || ((state.translations && state.translations['untitled']) || "제목 없음");
 
     try {
         await secureFetch("/api/pages/" + encodeURIComponent(state.currentPageId), {
@@ -885,7 +886,8 @@ export async function saveCurrentPage() {
         return true;
     }
 
-    let title = titleInput ? titleInput.value || "제목 없음" : "제목 없음";
+    const defaultTitle = (state.translations && state.translations['untitled']) || "제목 없음";
+    let title = titleInput ? titleInput.value || defaultTitle : defaultTitle;
     let content = state.editor.getHTML();
 
     try {
@@ -947,7 +949,7 @@ export async function saveCurrentPage() {
         }
 
         const page = await res.json();
-        const decryptedTitle = titleInput ? titleInput.value || "제목 없음" : "제목 없음";
+        const decryptedTitle = titleInput ? titleInput.value || defaultTitle : defaultTitle;
 
         state.pages = state.pages.map((p) => {
             if (p.id === page.id) {
@@ -1028,7 +1030,8 @@ export async function toggleEditMode() {
             iconEl.className = "fa-solid fa-pencil";
         }
         if (textEl) {
-            textEl.textContent = "쓰기모드";
+            textEl.textContent = (state.translations && state.translations['mode_write']) || "쓰기모드";
+            textEl.setAttribute('data-i18n', 'mode_write');
         }
 
         onLocalEditModeChanged(state.isWriteMode);
@@ -1059,7 +1062,8 @@ export async function toggleEditMode() {
             iconEl.className = "fa-solid fa-book-open";
         }
         if (textEl) {
-            textEl.textContent = "읽기모드";
+            textEl.textContent = (state.translations && state.translations['mode_read']) || "읽기모드";
+            textEl.setAttribute('data-i18n', 'mode_read');
         }
 
 		onLocalEditModeChanged(state.isWriteMode);
@@ -1089,10 +1093,12 @@ export function bindNewCollectionButton() {
     if (!btn) return;
 
     btn.addEventListener("click", async () => {
-        let name = prompt("새 컬렉션 이름을 입력하세요.", "새 컬렉션");
+        const defaultName = (state.translations && state.translations['new_collection_default']) || "새 컬렉션";
+        const promptMsg = (state.translations && state.translations['new_collection_prompt']) || "새 컬렉션 이름을 입력하세요.";
+        let name = prompt(promptMsg, defaultName);
         if (name === null) return;
 
-        const plainName = name.trim() || "새 컬렉션";
+        const plainName = name.trim() || defaultName;
 
         try {
             const res = await secureFetch("/api/collections", {

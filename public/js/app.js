@@ -104,7 +104,8 @@ const appState = {
     currentUser: null,
     userSettings: {
         defaultMode: 'read',
-        theme: 'default'
+        theme: 'default',
+        language: 'ko-KR'
     },
     currentEncryptingPageId: null,
     currentDecryptingPage: null,
@@ -277,10 +278,12 @@ async function handlePageListClick(event, state) {
         const colId = addSubpageBtn.dataset.collectionId;
         if (!parentPageId || !colId) return;
 
-        let title = prompt("새 하위 페이지 제목을 입력하세요.", "새 페이지");
+        const defaultTitle = (appState.translations && appState.translations['new_page']) || "새 페이지";
+        const promptMsg = (appState.translations && appState.translations['new_subpage_prompt']) || "새 하위 페이지 제목을 입력하세요.";
+        let title = prompt(promptMsg, defaultTitle);
         if (title === null) return;
 
-        const plainTitle = title.trim() || "새 페이지";
+        const plainTitle = title.trim() || defaultTitle;
         const plainContent = "<p></p>";
 
         try {
@@ -335,10 +338,12 @@ async function handlePageListClick(event, state) {
         if (!colId) return;
         state.expandedCollections.add(colId);
 
-        let title = prompt("새 페이지 제목을 입력하세요.", "새 페이지");
+        const defaultTitle = (appState.translations && appState.translations['new_page']) || "새 페이지";
+        const promptMsg = (appState.translations && appState.translations['new_page_prompt']) || "새 페이지 제목을 입력하세요.";
+        let title = prompt(promptMsg, defaultTitle);
         if (title === null) return;
 
-        const plainTitle = title.trim() || "새 페이지";
+        const plainTitle = title.trim() || defaultTitle;
         const plainContent = "<p></p>";
 
         try {
@@ -797,7 +802,8 @@ async function closeReadonlyWarningModal() {
         }
 
         if (textEl) {
-            textEl.textContent = "쓰기모드";
+            textEl.textContent = (appState.translations && appState.translations['mode_write']) || "쓰기모드";
+            textEl.setAttribute('data-i18n', 'mode_write');
         }
 
         // 읽기모드로 전환 시 커버 버튼 숨김

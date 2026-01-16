@@ -13,8 +13,10 @@ let state = {
     currentUser: null,
     userSettings: {
         defaultMode: 'read',
-        theme: 'default'
+        theme: 'default',
+        language: 'ko-KR' // 기본 언어: 한국어
     },
+    translations: {}, // 로드된 번역 데이터
     availableCountries: [],
     allowedLoginCountries: []
 };
@@ -38,14 +40,101 @@ function applyTheme(themeName) {
     localStorage.setItem("userSettings", JSON.stringify(state.userSettings));
 }
 
+/**
+ * 언어 로드 및 적용
+ * @param {string} lang - 언어 코드 (e.g., 'ko-KR', 'en', 'ja-JP')
+ */
+export async function loadLanguage(lang) {
+    try {
+        const response = await fetch(`/languages/${lang}.json`);
+        if (!response.ok) {
+            throw new Error(`Failed to load language: ${lang}`);
+        }
+        const translations = await response.json();
+        state.translations = translations;
+        state.userSettings.language = lang;
+        
+        // 설정 저장 (언어 변경 즉시 저장)
+        localStorage.setItem("userSettings", JSON.stringify(state.userSettings));
+        
+        applyTranslations();
+        console.log(`Language loaded: ${lang}`);
+    } catch (error) {
+        console.error("Language load error:", error);
+        // 실패 시 기본 언어로 폴백하거나 에러 처리
+        if (lang !== 'ko-KR') {
+            console.log("Falling back to ko-KR");
+            loadLanguage('ko-KR');
+        }
+    }
+}
+
+/**
+ * 번역 적용
+ */
+function applyTranslations() {
+    const translations = state.translations;
+    if (!translations) return;
+
+    // 텍스트 콘텐츠 번역 (data-i18n)
+    const elements = document.querySelectorAll('[data-i18n]');
+    elements.forEach(el => {
+        const key = el.getAttribute('data-i18n');
+        if (translations[key]) {
+            el.textContent = translations[key];
+        }
+    });
+
+    // 플레이스홀더 번역 (data-i18n-placeholder)
+    const placeholders = document.querySelectorAll('[data-i18n-placeholder]');
+    placeholders.forEach(el => {
+        const key = el.getAttribute('data-i18n-placeholder');
+        if (translations[key]) {
+            el.placeholder = translations[key];
+        }
+    });
+    
+    // 모드 토글 버튼 텍스트 업데이트 (동적 상태라 별도 처리 필요할 수 있음)
+    updateModeToggleText();
+}
+
+/**
+ * 모드 토글 버튼 텍스트 업데이트 헬퍼
+ */
+function updateModeToggleText() {
+    const modeBtn = document.querySelector('#mode-toggle-btn');
+    if (modeBtn) {
+        const isReadMode = modeBtn.querySelector('span').textContent.includes(state.translations['mode_read'] || '읽기모드') || 
+                           modeBtn.querySelector('span').textContent.includes('읽기모드'); // 현재 텍스트 확인이 좀 애매하므로 상태 기반이 좋음.
+        
+        // 하지만 app.js에서 상태를 관리하므로 여기서는 단순 번역 적용이 어려울 수 있음.
+        // data-i18n을 동적으로 바꾸거나, app.js에서 모드 변경 시 data-i18n을 다시 적용해야 함.
+        // 여기서는 일단 넘어감. app.js에서 모드 변경 로직을 수정하는 것이 좋음.
+    }
+}
+
 
 /**
  * 상태 초기화
  */
 export function initSettingsManager(appState) {
     state = appState;
+    
+    // appState에 없는 경우 초기값 설정 (기존 코드 호환성)
+    if (!state.userSettings) {
+        state.userSettings = {
+            defaultMode: 'read',
+            theme: 'default',
+            language: 'ko-KR'
+        };
+    }
+
     loadSettings();
     applyTheme(state.userSettings.theme);
+    
+    // 언어 로드
+    const lang = state.userSettings.language || 'ko-KR';
+    loadLanguage(lang);
 }
 
 /**
@@ -56,6 +145,7 @@ export async function openSettingsModal() {
     const usernameEl = document.querySelector("#settings-username");
     const defaultModeSelect = document.querySelector("#settings-default-mode");
     const themeSelect = document.querySelector("#settings-theme-select");
+    const languageSelect = document.querySelector("#settings-language-select");
 
     if (!modal) return;
 
@@ -72,6 +162,15 @@ export async function openSettingsModal() {
     // 현재 설정 값 표시
     if (defaultModeSelect) {
         defaultModeSelect.value = state.userSettings.defaultMode;
+    }
+    
+    if (languageSelect) {
+        languageSelect.value = state.userSettings.language || 'ko-KR';
+        // 이벤트 리스너 중복 방지 (간단하게 처리)
+        languageSelect.onchange = (e) => {
+             const newLang = e.target.value;
+             loadLanguage(newLang);
+        };
     }
 
     if (themeSelect) {
@@ -113,6 +212,7 @@ export function closeSettingsModal() {
 export async function saveSettings() {
     const defaultModeSelect = document.querySelector("#settings-default-mode");
     const themeSelect = document.querySelector("#settings-theme-select");
+    const languageSelect = document.querySelector("#settings-language-select");
     const { secureFetch } = await import('./ui-utils.js');
 
     const newSettings = { ...state.userSettings };
@@ -121,6 +221,12 @@ export async function saveSettings() {
     if (defaultModeSelect) {
         newSettings.defaultMode = defaultModeSelect.value;
     }
+    
+    if (languageSelect) {
+        newSettings.language = languageSelect.value;
+        // 이미 onchange에서 저장했지만, 여기서도 명시적으로 업데이트
+    }
+
     if (themeSelect) {
         const themeName = themeSelect.value;
         newSettings.theme = themeName;
