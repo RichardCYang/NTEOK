@@ -1,6 +1,15 @@
+import { escapeHtml } from './ui-utils.js';
+import { loadAndRenderComments, initCommentsManager } from './comments-manager.js';
+
+import { escapeHtml } from './ui-utils.js';
+import { loadAndRenderComments, initCommentsManager } from './comments-manager.js';
+
 /**
  * 공개 페이지 스크립트
  */
+
+// 전역 상태
+const state = {
 
 /**
  * 북마크 블록 렌더링 함수
@@ -311,6 +320,11 @@ function renderCheckboxes(container) {
 
         // 북마크 이미지 프록시 처리
         processBookmarkImages(editorEl);
+
+        // 댓글 시스템 초기화 (게스트 모드)
+        initCommentsManager({ currentUser: null });
+        // 댓글 로드
+        loadAndRenderComments(data.id);
 
     } catch (error) {
         console.error('페이지 로드 오류:', error);

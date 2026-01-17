@@ -951,6 +951,35 @@ async function initDb() {
         ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
     `);
 
+    // 댓글 테이블 생성
+    await pool.execute(`
+        CREATE TABLE IF NOT EXISTS comments (
+            id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            page_id VARCHAR(64) NOT NULL,
+            user_id INT NULL,
+            guest_name VARCHAR(64) NULL,
+            content TEXT NOT NULL,
+            created_at DATETIME NOT NULL,
+            updated_at DATETIME NOT NULL,
+            CONSTRAINT fk_comments_page FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE,
+            CONSTRAINT fk_comments_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
+            INDEX idx_comments_page (page_id, created_at)
+        ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
+    `);
+
+    // page_publish_links 테이블에 allow_comments 컬럼 추가
+    try {
+        await pool.execute(`
+            ALTER TABLE page_publish_links
+            ADD COLUMN allow_comments TINYINT(1) NOT NULL DEFAULT 0
+        `);
+        console.log('✓ allow_comments 컬럼 추가됨');
+    } catch (error) {
+        if (error.code !== 'ER_DUP_FIELDNAME') {
+            console.error('allow_comments 컬럼 추가 오류:', error.message);
+        }
+    }
+
     // ============================================================
     // E2EE 시스템 재설계: 선택적 암호화 (마스터 키 시스템 제거)
     // ============================================================
@@ -1655,6 +1684,7 @@ function getSessionFromId(sessionId) {
         const passkeyRoutes = require('./routes/passkey')(routeDependencies);
         const backupRoutes = require('./routes/backup')(routeDependencies);
         const themesRoutes = require('./routes/themes')(routeDependencies);
+        const commentsRoutes = require('./routes/comments')(routeDependencies);
 
         // 라우트 등록
         app.use('/', indexRoutes);
@@ -1667,6 +1697,7 @@ function getSessionFromId(sessionId) {
         app.use('/api/passkey', passkeyRoutes);
         app.use('/api/backup', backupRoutes);
         app.use('/api/themes', themesRoutes);
+        app.use('/api/comments', commentsRoutes);
 
         // DuckDNS 설정 확인
         const DUCKDNS_DOMAIN = process.env.DUCKDNS_DOMAIN;

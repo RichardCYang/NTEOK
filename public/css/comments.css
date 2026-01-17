@@ -1,0 +1,359 @@
+@charset "UTF-8";
+
+/* Comments Section */
+#page-comments-section {
+    width: 100%;
+    margin: 0;
+    padding: 0 120px; 
+    font-family: var(--font-family);
+    color: var(--font-color);
+    box-sizing: border-box;
+}
+
+/* Match .editor breakpoints */
+@media (max-width: 1200px) {
+    #page-comments-section {
+        padding: 0 80px;
+    }
+}
+
+@media (max-width: 900px) {
+    #page-comments-section {
+        padding: 0 60px;
+    }
+}
+
+@media (max-width: 480px) {
+    #page-comments-section {
+        padding: 0 16px;
+    }
+}
+
+.comments-wrapper {
+    /* transition: all 0.2s ease; */
+}
+
+/* 토글 버튼 스타일 */
+.comment-toggle-btn {
+    background: transparent;
+    border: none;
+    color: var(--sub-font-color);
+    font-size: 14px;
+    cursor: pointer;
+    padding: 6px 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: color 0.2s;
+}
+
+.comment-toggle-btn:hover {
+    color: var(--font-color);
+}
+
+/* 펼쳐진 영역 스타일 */
+.comments-body {
+    border-top: 1px solid var(--border-color);
+    padding-top: 16px;
+    margin-top: 8px;
+    animation: fadeIn 0.2s ease-out;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-5px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.comments-header-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+}
+
+.comments-title-expanded {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--font-color);
+}
+
+.close-comments-btn {
+    background: transparent;
+    border: none;
+    color: var(--sub-font-color);
+    cursor: pointer;
+    font-size: 14px;
+    padding: 4px;
+}
+
+.close-comments-btn:hover {
+    color: var(--font-color);
+}
+
+.no-comments-msg {
+    font-size: 13px;
+    color: var(--sub-font-color);
+    padding: 10px 0;
+    font-style: italic;
+}
+
+/* 기존 스타일 유지 및 조정 */
+.comments-loading, .comments-error {
+    padding: 10px 0;
+    text-align: left;
+    color: var(--sub-font-color);
+    font-size: 13px;
+}
+
+.comments-list {
+    margin-bottom: 16px;
+}
+
+.comment-item {
+    display: flex;
+    gap: 10px;
+    padding: 8px 0;
+}
+
+.comment-avatar {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background-color: var(--border-color);
+    color: var(--font-color);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: 600;
+    flex-shrink: 0;
+}
+
+.comment-content-wrapper {
+    flex: 1;
+}
+
+.comment-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    margin-bottom: 2px;
+}
+
+.comment-author {
+    font-weight: 600;
+    color: var(--font-color);
+}
+
+.comment-date {
+    color: var(--sub-font-color);
+}
+
+/* Edit Mode Styles */
+.edit-comment-wrapper {
+    margin-top: 4px;
+}
+
+.edit-comment-textarea {
+    width: 100%;
+    border: 1px solid var(--border-color);
+    background-color: var(--bg-color);
+    color: var(--font-color);
+    padding: 8px;
+    border-radius: 4px;
+    font-family: inherit;
+    font-size: 14px;
+    resize: none;
+    outline: none;
+    line-height: 1.5;
+    box-sizing: border-box;
+}
+
+.edit-comment-textarea:focus {
+    border-color: var(--point-color);
+}
+
+.edit-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 6px;
+    margin-top: 6px;
+}
+
+.save-edit-btn, .cancel-edit-btn {
+    padding: 4px 10px;
+    font-size: 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    border: 1px solid var(--border-color);
+    background: var(--bg-color);
+    color: var(--font-color);
+}
+
+.save-edit-btn {
+    background-color: var(--point-color);
+    color: var(--button-text-color);
+    border: none;
+}
+
+/* Comment Item Actions */
+.comment-actions-group {
+    display: flex;
+    gap: 4px;
+    margin-left: auto;
+    opacity: 0;
+    transition: opacity 0.2s;
+}
+
+.comment-item:hover .comment-actions-group {
+    opacity: 1;
+}
+
+.edit-comment-btn, .delete-comment-btn {
+    background: none;
+    border: none;
+    color: var(--sub-font-color);
+    cursor: pointer;
+    font-size: 13px;
+    padding: 0;
+    width: 24px;
+    height: 24px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+}
+
+.edit-comment-btn:hover {
+    background-color: var(--item-hover-bg-color);
+    color: var(--font-color);
+}
+
+.delete-comment-btn:hover {
+    background-color: rgba(235, 87, 87, 0.1);
+    color: var(--danger-color);
+}
+
+/* New Comment Block Input Styles */
+.new-comment-item {
+    opacity: 0.8;
+    transition: opacity 0.2s;
+}
+
+.new-comment-item:focus-within {
+    opacity: 1;
+}
+
+.new-comment-block-wrapper {
+    width: 100%;
+}
+
+.comment-guest-name-block {
+    width: 100%;
+    border: none;
+    border-bottom: 1px solid var(--border-color);
+    background: transparent;
+    padding: 4px 0;
+    font-size: 12px;
+    color: var(--font-color);
+    outline: none;
+    margin-bottom: 4px;
+}
+
+.comment-input-row-block {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    position: relative;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    transition: background 0.2s, border-color 0.2s;
+}
+
+#new-comment-input {
+    flex: 1;
+    border: none;
+    background: transparent;
+    padding: 6px 0;
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--font-color);
+    resize: none;
+    outline: none;
+    min-height: 24px;
+    font-family: inherit;
+}
+
+#new-comment-input::placeholder {
+    color: var(--sub-font-color);
+}
+
+.comment-send-btn-block {
+    width: 28px;
+    height: 28px;
+    border-radius: 4px;
+    border: none;
+    background: transparent;
+    color: var(--sub-font-color);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+    margin-top: 2px;
+    opacity: 0;
+}
+
+/* Show button on hover or focus or when active */
+.new-comment-item:hover .comment-send-btn-block,
+.new-comment-item:focus-within .comment-send-btn-block,
+.comment-send-btn-block.active {
+    opacity: 1;
+}
+
+.comment-send-btn-block:hover {
+    background-color: var(--item-hover-bg-color);
+    color: var(--font-color);
+}
+
+/* Active state (when not disabled) */
+.comment-send-btn-block:not(:disabled) {
+    color: var(--point-color);
+    background-color: transparent;
+    cursor: pointer;
+    opacity: 1;
+}
+
+.comment-send-btn-block:not(:disabled) i {
+    color: var(--point-color) !important;
+}
+
+.comment-send-btn-block:not(:disabled):hover {
+    background-color: var(--item-hover-bg-color);
+}
+
+.comment-send-btn-block:disabled {
+    cursor: default;
+    color: var(--border-color);
+    background-color: transparent;
+}
+
+/* Clean up old styles */
+.comment-input-area, .comment-input-row {
+    display: none;
+}
+
+
+
+/* Shared Page Specifics */
+body.shared-page #page-comments-section {
+    padding: 0;
+    max-width: 100%;
+}
+
+.hidden {
+    display: none !important;
+}

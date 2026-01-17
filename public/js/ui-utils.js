@@ -137,10 +137,8 @@ export function closeContextMenu() {
 }
 
 export function syncPageUpdatedAtPadding() {
-    const container = document.querySelector("#page-updated-at-container");
     const editorEl = document.querySelector(".editor");
-
-    if (!container || !editorEl) return;
+    if (!editorEl) return;
 
     const editorStyle = window.getComputedStyle(editorEl);
     const proseEl = editorEl.querySelector(".ProseMirror");
@@ -151,6 +149,20 @@ export function syncPageUpdatedAtPadding() {
     const proseLeft = proseStyle ? parseFloat(proseStyle.paddingLeft) || 0 : 0;
     const proseRight = proseStyle ? parseFloat(proseStyle.paddingRight) || 0 : 0;
 
-    container.style.paddingLeft = `${editorLeft + proseLeft}px`;
-    container.style.paddingRight = `${editorRight + proseRight}px`;
+    const totalLeft = editorLeft + proseLeft;
+    const totalRight = editorRight + proseRight;
+
+    // Update Updated At Container
+    const updatedAtContainer = document.querySelector("#page-updated-at-container");
+    if (updatedAtContainer) {
+        updatedAtContainer.style.paddingLeft = `${totalLeft}px`;
+        updatedAtContainer.style.paddingRight = `${totalRight}px`;
+    }
+
+    // Update Comments Section
+    const commentsContainer = document.querySelector("#page-comments-section");
+    if (commentsContainer) {
+        commentsContainer.style.paddingLeft = `${totalLeft}px`;
+        commentsContainer.style.paddingRight = `${totalRight}px`;
+    }
 }

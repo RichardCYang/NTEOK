@@ -3,6 +3,7 @@
  */
 
 import { secureFetch, escapeHtml, showErrorInEditor, syncPageUpdatedAtPadding } from './ui-utils.js';
+import { loadAndRenderComments } from './comments-manager.js';
 import { startPageSync, stopPageSync, startCollectionSync, stopCollectionSync, flushPendingUpdates, syncEditorFromMetadata, onLocalEditModeChanged, updateAwarenessMode } from './sync-manager.js';
 import { showCover, hideCover, updateCoverButtonsVisibility } from './cover-manager.js';
 import { checkPublishStatus, updatePublishButton } from './publish-manager.js';
@@ -807,6 +808,13 @@ export async function loadPage(id) {
 
         // 하위 페이지 로드 및 렌더링
         await loadAndRenderSubpages(page.id);
+
+        // 댓글 로드
+        if (window.loadAndRenderComments || loadAndRenderComments) {
+            // app.js에서 window에 등록했거나 import한 함수 사용
+            const loader = window.loadAndRenderComments || loadAndRenderComments;
+            await loader(page.id);
+        }
 
         // 모바일에서 페이지 로드 후 사이드바 닫기
         if (window.innerWidth <= 768) {

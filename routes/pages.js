@@ -1581,7 +1581,7 @@ module.exports = (dependencies) => {
 			const isAdmin = permission === "ADMIN";
 
             const [publishRows] = await pool.execute(
-                `SELECT token, created_at FROM page_publish_links
+                `SELECT token, created_at, allow_comments FROM page_publish_links
                  WHERE page_id = ? AND is_active = 1`,
                 [pageId]
             );
@@ -1599,7 +1599,8 @@ module.exports = (dependencies) => {
                 published: true,
                 token: publish.token,
                 url: `${process.env.BASE_URL || "https://localhost:3000"}/shared/page/${publish.token}`,
-                createdAt: toIsoString(publish.created_at)
+                createdAt: toIsoString(publish.created_at),
+                allowComments: publish.allow_comments === 1
             });
 
         } catch (error) {
@@ -1615,6 +1616,8 @@ module.exports = (dependencies) => {
     router.post("/:id/publish", authMiddleware, async (req, res) => {
         const pageId = req.params.id;
         const userId = req.user.id;
+        // 발행 시 댓글 허용 여부 설정 (기본값 false)
+        const allowComments = req.body.allowComments === true;
 
         try {
             const [pageRows] = await pool.execute(
@@ -1638,7 +1641,7 @@ module.exports = (dependencies) => {
                 });
             }
 
-            // 이미 발행된 경우 기존 토큰 반환
+            // 이미 발행된 경우 확인
             const [existingRows] = await pool.execute(
                 `SELECT token FROM page_publish_links
                  WHERE page_id = ? AND is_active = 1`,
@@ -1646,9 +1649,17 @@ module.exports = (dependencies) => {
             );
 
             if (existingRows.length > 0) {
+                // 이미 발행됨 -> 설정 업데이트
                 const token = existingRows[0].token;
+                await pool.execute(
+                    `UPDATE page_publish_links
+                     SET allow_comments = ?, updated_at = NOW()
+                     WHERE page_id = ? AND is_active = 1`,
+                    [allowComments ? 1 : 0, pageId]
+                );
+                
                 const url = `${process.env.BASE_URL || "https://localhost:3000"}/shared/page/${token}`;
-                return res.json({ ok: true, token, url });
+                return res.json({ ok: true, token, url, allowComments });
             }
 
             // 새 토큰 생성
@@ -1658,16 +1669,16 @@ module.exports = (dependencies) => {
 
             await pool.execute(
                 `INSERT INTO page_publish_links
-                 (token, page_id, owner_user_id, is_active, created_at, updated_at)
-                 VALUES (?, ?, ?, 1, ?, ?)`,
-                [token, pageId, userId, nowStr, nowStr]
+                 (token, page_id, owner_user_id, is_active, created_at, updated_at, allow_comments)
+                 VALUES (?, ?, ?, 1, ?, ?, ?)`,
+                [token, pageId, userId, nowStr, nowStr, allowComments ? 1 : 0]
             );
 
             const url = `${process.env.BASE_URL || "https://localhost:3000"}/shared/page/${token}`;
             // 보안: 토큰 일부만 표시
             console.log(`POST /api/pages/:id/publish 발행 완료: ${pageId}, 토큰: ${token.substring(0, 8)}...`);
 
-            res.json({ ok: true, token, url });
+            res.json({ ok: true, token, url, allowComments });
 
         } catch (error) {
             logError("POST /api/pages/:id/publish", error);

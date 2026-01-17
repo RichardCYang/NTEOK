@@ -11,7 +11,10 @@
         />
         <!-- KaTeX for Math Rendering -->
         <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
-        <link rel="stylesheet" href="/css/main.css" />
+    <link rel="stylesheet" href="/css/main.css">
+    <link rel="stylesheet" href="/css/comments.css">
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
         <style>
             body {
                 background-color: #f9fafb;
@@ -573,6 +576,8 @@
                     <span id="page-title-text">로드 중...</span>
                 </h1>
 
+                <div id="page-comments-section" class="hidden"></div>
+
                 <div id="page-editor" class="shared-page-editor shared-page-loading">
                     <p>페이지를 불러오는 중입니다...</p>
                 </div>
@@ -586,7 +591,10 @@
         <!-- KaTeX for Math Rendering -->
         <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
 
+        <!-- 유틸리티 스크립트 -->
+        <script src="/js/csrf-utils.js"></script>
+
         <!-- 공개 페이지 스크립트 -->
-        <script src="/js/shared-page.js"></script>
+        <script type="module" src="/js/shared-page.js"></script>
     </body>
 </html>

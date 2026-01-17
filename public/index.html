@@ -9,7 +9,11 @@
             rel="stylesheet"
             href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css"
         />
-        <link rel="stylesheet" href="/css/main.css" />
+    <link rel="stylesheet" href="/css/main.css">
+    <link rel="stylesheet" href="/css/login.css">
+    <link rel="stylesheet" href="/css/comments.css">
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
         <!-- KaTeX for Math Rendering -->
         <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
         <script type="importmap" nonce="__CSP_NONCE__">
@@ -570,6 +574,8 @@
                     <div id="page-updated-at-container" class="page-updated-at-container" style="display: none;">
                         <span id="page-updated-at" class="page-updated-at"></span>
                     </div>
+
+                    <div id="page-comments-section" class="hidden"></div>
 
                     <div id="page-content-wrapper" class="page-content-wrapper">
                         <div id="editor" class="editor"></div>
@@ -1417,6 +1423,14 @@
                                 <i class="fa-solid fa-info-circle"></i> 발행된 페이지는 읽기 전용으로 표시됩니다.
                             </p>
                         </div>
+
+                        <div style="margin: 15px 0; display: flex; align-items: center; gap: 8px;">
+                            <input type="checkbox" id="publish-allow-comments-before">
+                            <label for="publish-allow-comments-before" style="font-size: 14px; color: var(--text-color); cursor: pointer;">
+                                댓글 허용 (로그인한 사용자만 작성 가능)
+                            </label>
+                        </div>
+
                         <div style="display: flex; gap: 8px; justify-content: flex-end;">
                             <button id="cancel-publish-btn" style="padding: 10px 20px; background: #6b7280; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px;">
                                 취소
@@ -1447,6 +1461,14 @@
                                 </button>
                             </div>
                         </div>
+
+                        <div style="margin: 15px 0; display: flex; align-items: center; gap: 8px;">
+                            <input type="checkbox" id="publish-allow-comments">
+                            <label for="publish-allow-comments" style="font-size: 14px; color: var(--text-color); cursor: pointer;">
+                                댓글 허용 (로그인한 사용자만 작성 가능)
+                            </label>
+                        </div>
+
                         <div style="display: flex; gap: 8px; justify-content: flex-end;">
                             <button id="unpublish-btn" class="danger-button" style="padding: 10px 20px; font-size: 14px;">
                                 발행 취소

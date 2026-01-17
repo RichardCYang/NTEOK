@@ -10,7 +10,8 @@ const publishState = {
     pageId: null,
     token: null,
     url: null,
-    published: false
+    published: false,
+    allowComments: false
 };
 
 /**
@@ -32,6 +33,7 @@ export async function checkPublishStatus(pageId) {
             console.log("발행 상태 확인 실패:", res.status);
             publishState.published = false;
             publishState.pageId = pageId;
+            publishState.allowComments = false;
             return;
         }
 
@@ -40,6 +42,7 @@ export async function checkPublishStatus(pageId) {
         publishState.published = data.published || false;
         publishState.token = data.token || null;
         publishState.url = data.url || null;
+        publishState.allowComments = data.allowComments || false;
 
         updatePublishButton();
     } catch (error) {
@@ -105,10 +108,21 @@ export function openPublishModal() {
         if (linkInput) {
             linkInput.value = publishState.url || '';
         }
+        
+        const allowCommentsCheckbox = document.getElementById('publish-allow-comments');
+        if (allowCommentsCheckbox) {
+            allowCommentsCheckbox.checked = publishState.allowComments;
+        }
     } else {
         // 발행되지 않음: 발행 전 화면 표시
         beforeContent.style.display = 'block';
         afterContent.style.display = 'none';
+        
+        // 기본값 초기화 (원하면 여기서 false로)
+        const allowCommentsCheckbox = document.getElementById('publish-allow-comments-before');
+        if (allowCommentsCheckbox) {
+            allowCommentsCheckbox.checked = false;
+        }
     }
 
     modal.classList.remove('hidden');
@@ -125,7 +139,7 @@ export function closePublishModal() {
 }
 
 /**
- * 페이지 발행
+ * 페이지 발행 (또는 설정 업데이트)
  */
 export async function publishPage() {
     if (!publishState.pageId) {
@@ -136,13 +150,21 @@ export async function publishPage() {
     const beforeContent = document.getElementById('publish-before-content');
     const afterContent = document.getElementById('publish-after-content');
     const confirmBtn = document.getElementById('confirm-publish-btn');
+    
+    // 발행 전 화면에서 체크박스 값 가져오기
+    let allowComments = false;
+    const allowCommentsCheckboxBefore = document.getElementById('publish-allow-comments-before');
+    if (allowCommentsCheckboxBefore) {
+        allowComments = allowCommentsCheckboxBefore.checked;
+    }
 
     if (confirmBtn) confirmBtn.disabled = true;
 
     try {
         const res = await secureFetch(`/api/pages/${encodeURIComponent(publishState.pageId)}/publish`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' }
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ allowComments })
         });
 
         if (!res.ok) {
@@ -154,6 +176,7 @@ export async function publishPage() {
         publishState.token = data.token;
         publishState.url = data.url;
         publishState.published = true;
+        publishState.allowComments = data.allowComments;
 
         // UI 업데이트
         beforeContent.style.display = 'none';
@@ -162,6 +185,11 @@ export async function publishPage() {
         const linkInput = document.getElementById('publish-link-input');
         if (linkInput) {
             linkInput.value = data.url;
+        }
+        
+        const allowCommentsCheckbox = document.getElementById('publish-allow-comments');
+        if (allowCommentsCheckbox) {
+            allowCommentsCheckbox.checked = publishState.allowComments;
         }
 
         // 버튼 상태 업데이트
@@ -173,6 +201,40 @@ export async function publishPage() {
         showPublishError(error.message || '발행에 실패했습니다.');
     } finally {
         if (confirmBtn) confirmBtn.disabled = false;
+    }
+}
+
+/**
+ * 발행 설정 업데이트 (이미 발행된 상태에서 체크박스 변경 시)
+ */
+async function updatePublishSettings() {
+    if (!publishState.published || !publishState.pageId) return;
+    
+    const allowCommentsCheckbox = document.getElementById('publish-allow-comments');
+    const allowComments = allowCommentsCheckbox ? allowCommentsCheckbox.checked : false;
+
+    try {
+         const res = await secureFetch(`/api/pages/${encodeURIComponent(publishState.pageId)}/publish`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ allowComments })
+        });
+        
+        if (!res.ok) {
+            throw new Error('설정 업데이트 실패');
+        }
+        
+        const data = await res.json();
+        publishState.allowComments = data.allowComments;
+        console.log('발행 설정 업데이트 완료:', allowComments);
+        
+    } catch (error) {
+        console.error('설정 업데이트 오류:', error);
+        alert('설정을 업데이트하지 못했습니다.');
+        // 실패 시 체크박스 원복?
+        if (allowCommentsCheckbox) {
+            allowCommentsCheckbox.checked = !allowComments;
+        }
     }
 }
 
@@ -320,5 +382,11 @@ export function bindPublishEvents() {
     const closeSuccessBtn = document.getElementById('close-publish-success-btn');
     if (closeSuccessBtn) {
         closeSuccessBtn.addEventListener('click', closePublishModal);
+    }
+    
+    // 발행 후: 댓글 허용 체크박스 변경
+    const allowCommentsCheckbox = document.getElementById('publish-allow-comments');
+    if (allowCommentsCheckbox) {
+        allowCommentsCheckbox.addEventListener('change', updatePublishSettings);
     }
 }

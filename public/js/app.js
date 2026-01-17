@@ -89,6 +89,10 @@ import {
     onEditModeChange,
     syncSubpagesPadding
 } from './subpages-manager.js';
+import {
+    initCommentsManager,
+    loadAndRenderComments
+} from './comments-manager.js';
 
 // ==================== Global State ====================
 const appState = {
@@ -1062,6 +1066,9 @@ async function init() {
 
         // 하위 페이지 관리자 초기화
         initSubpagesManager(appState);
+
+        // 댓글 관리자 초기화
+        initCommentsManager(appState);
 
         // 검색 기능 초기화
         initSearch();
