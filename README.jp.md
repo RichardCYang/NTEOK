@@ -16,13 +16,15 @@
 
 ### 主な機能
 
-- **マークダウンエディタ**: チェックリストとイメージブロック対応のTiptapベースのブロックエディタ
+- **マークダウンエディタ**: 様々なブロックタイプに対応したTiptapベースのブロックエディタ
+- **多様なブロックタイプ**: 段落、見出し、リスト、チェックリスト、画像、コード、数式、ボード、ブックマーク、コールアウト、トグル、YouTube埋め込みなど
 - **エンドツーエンド暗号化**: AES-256-GCMクライアント側暗号化
 - **コレクション共有**: ユーザー間のコラボレーションとリンク共有
 - **階層構造**: 親子ページの関係をサポート
-- **複数認証**: TOTP 2段階認証とPasskey (WebAuthn)対応
+- **複数認証**: TOTP 2段階認証とPasskey (WebAuthn/FIDO2)対応
 - **バックアップ/復元**: 完全なデータバックアップと復元 (ZIP形式)
-- **リアルタイム同期**: WebSocketによるページ内容のリアルタイム同期
+- **リアルタイム同期**: WebSocket + Yjsによるページ内容のリアルタイム同期
+- **ページコメント**: ページ別のコメント機能で協業コミュニケーションを強化
 - **カバー画像**: ページのカバー画像設定とソート
 - **HTTPS自動証明書**: Let's Encrypt + DuckDNS連携
 - **レスポンシブデザイン**: モバイル、タブレット、デスクトップに最適化
@@ -40,10 +42,17 @@
 - アカウント削除機能
 
 ### ノート編集
-- **ブロックタイプ**: 段落、見出し(H1-H6)、リスト(箇条書き/番号)、画像、引用、コードブロック、水平線、LaTeX数式
+- **ブロックタイプ**: 段落、見出し(H1-H6)、リスト(箇条書き/番号)、画像、引用、コードブロック、水平線、LaTeX数式、ボード、ブックマーク、コールアウト、トグル、YouTube埋め込みなど
 - **インライン形式**: 太字、斜体、打消し線、テキスト色
 - **配置オプション**: 左、中央、右、両端揃え
-- **画像機能**: 画像ブロックの配置とキャプション対応
+- **画像機能**: 画像ブロックの配置とキャプション対応 (キャプション付き画像ブロック)
+- **特殊なブロック**:
+  - **ボードビュー**: カード形式でページを表示
+  - **ブックマーク**: 外部リンクとプレビューを保存
+  - **コールアウト**: メッセージと通知を強調表示
+  - **トグル**: 展開・折りたたみ可能なコンテンツ
+  - **YouTube**: YouTubeビデオを直接埋め込み
+  - **数式**: LaTeX形式の数学公式 (KaTeXでレンダリング)
 - **スラッシュコマンド**: `/`入力でブロックタイプを切り替え
 - **キーボードショートカット**: `Ctrl+S` / `Cmd+S`で保存
 
@@ -67,6 +76,8 @@
 - **バックアップ/復元**: コレクションとページの全データバックアップと復元 (ZIP形式)
 - **データエクスポート**: ページ内容をHTML形式に変換
 - **データインポート**: 前回のバックアップデータを復元
+- **PDFエクスポート**: ページ内容をPDF形式に変換
+- **ページ発行**: 公開リンクを通じたページ共有 (読み取り専用)
 
 ### リアルタイム同期
 - **WebSocket同期**: ページの変更内容をリアルタイム同期
@@ -78,6 +89,8 @@
 - **リンク共有**: リンク経由でコレクションにアクセス
 - **権限管理**: READ、EDIT、OWNER権限レベル
 - **暗号化ページ共有**: 共有許可設定
+- **ページコメント**: ページにコメントを投稿して協業コミュニケーション
+- **ログイン履歴**: アカウントセキュリティのためのログイン記録追跡
 
 ---
 
@@ -296,6 +309,19 @@ HTTPS証明書発行に失敗した場合は自動的にHTTPモードにフォ�
 - `POST /api/backup/export` - データエクスポート (ZIP)
 - `POST /api/backup/import` - データインポート (ZIP)
 
+### ページコメント
+- `GET /api/comments` - コメント一覧
+- `POST /api/comments` - コメント投稿
+- `DELETE /api/comments/:id` - コメント削除
+
+### テーマ設定
+- `GET /api/themes` - ユーザーテーマ取得
+- `PUT /api/themes` - テーマ設定変更
+
+### 発行されたページ
+- `GET /api/pages/:id/publish-link` - 発行リンク取得
+- `POST /api/pages/:id/publish-link` - 発行リンク作成
+
 ---
 
 ## セキュリティ上の考慮事項
@@ -350,41 +376,81 @@ HTTPS証明書発行に失敗した場合は自動的にHTTPモードにフォ�
 ```
 NTEOK/
 ├── server.js              # Expressサーバーエントリポイント
-├── cert-manager.js        # HTTPS証明書自動発行モジュール
+├── websocket-server.js    # WebSocketサーバー (リアルタイム同期)
+├── cert-manager.js        # HTTPS証明書自動発行モジュール (Let's Encrypt)
+├── network-utils.js       # ネットワークユーティリティ (IP、ロケーション情報)
+├── security-utils.js      # セキュリティユーティリティ
 ├── package.json           # プロジェクト依存関係
 ├── .env.example           # 環境変数例
+├── icon.png               # アプリケーションアイコン
+├── example.png            # READMEスクリーンショット
+├── LICENSE                # ISCライセンス
 ├── certs/                 # SSL/TLS証明書保存 (自動生成)
+├── data/                  # データリポジトリ
 ├── covers/                # カバー画像リポジトリ
 │   ├── default/           # デフォルトカバー画像
 │   └── [userId]/          # ユーザーカバー画像
+├── themes/                # CSSテーマ
+│   ├── default.css        # デフォルトライトテーマ
+│   └── dark.css           # ダークテーマ
+├── languages/             # i18n多言語ファイル
+│   ├── ko-KR.json         # 韓国語
+│   ├── en.json            # 英語
+│   └── ja-JP.json         # 日本語
 ├── public/                # クライアントファイル
-│   ├── index.html         # メインアプリケーション
+│   ├── index.html         # メインアプリケーション (ログイン後)
 │   ├── login.html         # ログインページ
 │   ├── register.html      # 登録ページ
+│   ├── shared-page.html   # 公開ページビュー
 │   ├── css/
-│   │   ├── main.css       # メインスタイル
-│   │   └── login.css      # ログインスタイル
-│   └── js/
-│       ├── app.js         # メインロジック
-│       ├── editor.js      # エディター初期化
-│       ├── pages-manager.js    # ページ管理
-│       ├── encryption-manager.js  # 暗号化管理
-│       ├── share-manager.js       # 共有管理
-│       ├── settings-manager.js    # 設定管理
-│       ├── backup-manager.js      # バックアップ/復元管理
-│       ├── sync-manager.js        # リアルタイム同期
-│       ├── passkey-manager.js     # Passkey認証管理
-│       ├── crypto.js      # E2EE暗号化
-│       └── ui-utils.js    # UIユーティリティ
+│   │   ├── main.css       # メインスタイル (約90KB)
+│   │   ├── login.css      # ログインスタイル
+│   │   └── comments.css   # コメント機能スタイル
+│   └── js/                # フロントエンドJavaScriptモジュール (約600KB)
+│       ├── app.js         # メインアプリケーションロジック
+│       ├── editor.js      # Tiptapエディター初期化
+│       ├── pages-manager.js         # ページ管理
+│       ├── encryption-manager.js    # E2EE暗号化管理
+│       ├── share-manager.js         # コレクション共有管理
+│       ├── settings-manager.js      # ユーザー設定管理
+│       ├── backup-manager.js        # バックアップ/復元管理
+│       ├── sync-manager.js          # WebSocketリアルタイム同期
+│       ├── passkey-manager.js       # Passkey/WebAuthn管理
+│       ├── totp-manager.js          # TOTP 2FA管理
+│       ├── login.js                 # ログインページロジック
+│       ├── register.js              # 登録ページロジック
+│       ├── crypto.js                # Web Crypto APIラッパー
+│       ├── pdf-export.js            # PDFエクスポート
+│       ├── comments-manager.js      # ページコメント機能
+│       ├── account-manager.js       # アカウント管理
+│       ├── cover-manager.js         # カバー画像管理
+│       ├── drag-handle-extension.js # ドラッグハンドル拡張
+│       ├── publish-manager.js       # ページ発行管理
+│       ├── subpages-manager.js      # ページ階層管理
+│       ├── shared-page.js           # 公開ページビューロジック
+│       ├── login-logs-manager.js    # ログイン履歴管理
+│       ├── board-node.js            # ボードビューブロック
+│       ├── bookmark-node.js         # ブックマークブロック
+│       ├── callout-node.js          # コールアウトブロック
+│       ├── image-with-caption-node.js  # キャプション付き画像ブロック
+│       ├── math-node.js             # LaTeX数式ブロック
+│       ├── toggle-node.js           # トグルブロック
+│       ├── youtube-node.js          # YouTube埋め込みブロック
+│       ├── modal-parent-manager.js  # モーダル管理
+│       ├── ui-utils.js              # UIユーティリティ
+│       └── csrf-utils.js            # CSRFトークンユーティリティ
 ├── routes/                # APIルート
-│   ├── auth.js            # 認証ルート
-│   ├── pages.js           # ページルート
-│   ├── collections.js     # コレクションルート
-│   ├── shares.js          # 共有ルート
-│   ├── totp.js            # TOTPルート
-│   ├── passkey.js         # Passakeyルート
-│   ├── backup.js          # バックアップ/復元ルート
-│   └── index.js           # ルートエントリポイント
+│   ├── index.js           # 静的ページと公開ページ
+│   ├── auth.js            # 認証API
+│   ├── pages.js           # ページCRUD同期API
+│   ├── collections.js     # コレクション管理API
+│   ├── shares.js          # コレクション共有API
+│   ├── totp.js            # TOTP 2FA設定/検証API
+│   ├── passkey.js         # Passkey/WebAuthn API
+│   ├── backup.js          # バックアップ/復元API
+│   ├── comments.js        # ページコメントAPI
+│   ├── themes.js          # テーマ設定API
+│   └── bootstrap.js       # 初期データベース設定
 └── README.md
 ```
 

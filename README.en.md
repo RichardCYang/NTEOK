@@ -16,13 +16,15 @@ Self-Hostable Web-Based Note-Taking Application
 
 ### Key Features
 
-- **Markdown Editor**: Tiptap-based block editor with checklist and image block support
+- **Markdown Editor**: Tiptap-based block editor with various block type support
+- **Diverse Block Types**: Paragraph, heading, lists, checklist, image, code, math, board, bookmark, callout, toggle, YouTube embed, and more
 - **End-to-End Encryption**: AES-256-GCM client-side encryption
 - **Collection Sharing**: User collaboration and link sharing
 - **Hierarchical Structure**: Parent-child page relationships
-- **Multiple Authentication**: TOTP 2FA and Passkey (WebAuthn) support
+- **Multiple Authentication**: TOTP 2FA and Passkey (WebAuthn/FIDO2) support
 - **Backup/Restore**: Complete data backup and recovery in ZIP format
-- **Real-time Synchronization**: Real-time page content sync via WebSocket
+- **Real-time Synchronization**: Real-time page content sync via WebSocket + Yjs
+- **Page Comments**: Page-level comments for collaborative communication
 - **Cover Images**: Page cover image settings and sorting
 - **HTTPS Auto Certificate**: Let's Encrypt + DuckDNS integration
 - **Responsive Design**: Optimized for mobile, tablet, and desktop
@@ -40,10 +42,17 @@ Self-Hostable Web-Based Note-Taking Application
 - Account deletion
 
 ### Note Editing
-- **Block Types**: Paragraph, Heading (H1-H6), Lists (bullet/ordered), Image, Blockquote, Code block, Horizontal rule, LaTeX math
+- **Block Types**: Paragraph, Heading (H1-H6), Lists (bullet/ordered), Image, Blockquote, Code block, Horizontal rule, LaTeX math, board, bookmark, callout, toggle, YouTube embed, and more
 - **Inline Formatting**: Bold, italic, strikethrough, text color
 - **Alignment Options**: Left, center, right, justify
-- **Image Features**: Image block alignment and caption support
+- **Image Features**: Image block alignment and caption support (captioned image block)
+- **Special Blocks**:
+  - **Board View**: Display pages in card format
+  - **Bookmark**: Save external links and previews
+  - **Callout**: Highlight messages and notifications
+  - **Toggle**: Collapsible content sections
+  - **YouTube**: Embed YouTube videos directly
+  - **Math**: LaTeX math formulas rendered with KaTeX
 - **Slash Commands**: Type `/` to switch block types
 - **Keyboard Shortcuts**: `Ctrl+S` / `Cmd+S` to save
 
@@ -67,6 +76,8 @@ Self-Hostable Web-Based Note-Taking Application
 - **Backup/Restore**: Full backup and recovery of collections and pages in ZIP format
 - **Data Export**: Convert page content to HTML format
 - **Data Import**: Recover and restore previous backup data
+- **PDF Export**: Convert page content to PDF format
+- **Page Publishing**: Share pages via public links (read-only)
 
 ### Real-time Synchronization
 - **WebSocket-based Sync**: Real-time page change synchronization
@@ -78,6 +89,8 @@ Self-Hostable Web-Based Note-Taking Application
 - **Link Sharing**: Access collections via link
 - **Permission Management**: READ, EDIT, OWNER permission levels
 - **Encrypted Page Sharing**: Share permission settings for encrypted pages
+- **Page Comments**: Comment on pages for collaborative communication
+- **Login Logs**: Track login history for account security
 
 ---
 
@@ -199,6 +212,19 @@ Login with default admin account and change password:
 - `POST /api/backup/export` - Export data (ZIP)
 - `POST /api/backup/import` - Import data (ZIP)
 
+### Page Comments
+- `GET /api/comments` - List comments
+- `POST /api/comments` - Create comment
+- `DELETE /api/comments/:id` - Delete comment
+
+### Theme Settings
+- `GET /api/themes` - Get user theme
+- `PUT /api/themes` - Change theme setting
+
+### Published Pages
+- `GET /api/pages/:id/publish-link` - Get publish link
+- `POST /api/pages/:id/publish-link` - Create publish link
+
 ---
 
 ## Security Considerations
@@ -253,41 +279,81 @@ Modern reinterpretation of traditional Korean hanji (paper) minimalist aesthetic
 ```
 NTEOK/
 ├── server.js              # Express server entry point
-├── cert-manager.js        # HTTPS certificate auto-issue module
+├── websocket-server.js    # WebSocket server (real-time sync)
+├── cert-manager.js        # HTTPS certificate auto-issue module (Let's Encrypt)
+├── network-utils.js       # Network utilities (IP, location info)
+├── security-utils.js      # Security utilities
 ├── package.json           # Project dependencies
 ├── .env.example           # Environment variables example
+├── icon.png               # Application icon
+├── example.png            # README screenshot
+├── LICENSE                # ISC License
 ├── certs/                 # SSL/TLS certificate storage (auto-created)
+├── data/                  # Data repository
 ├── covers/                # Cover image repository
 │   ├── default/           # Default cover images
 │   └── [userId]/          # User cover images
+├── themes/                # CSS themes
+│   ├── default.css        # Default light theme
+│   └── dark.css           # Dark theme
+├── languages/             # i18n multi-language files
+│   ├── ko-KR.json         # Korean
+│   ├── en.json            # English
+│   └── ja-JP.json         # Japanese
 ├── public/                # Client files
-│   ├── index.html         # Main application
+│   ├── index.html         # Main application (after login)
 │   ├── login.html         # Login page
 │   ├── register.html      # Registration page
+│   ├── shared-page.html   # Public page view
 │   ├── css/
-│   │   ├── main.css       # Main styles
-│   │   └── login.css      # Login styles
-│   └── js/
-│       ├── app.js         # Main logic
-│       ├── editor.js      # Editor initialization
-│       ├── pages-manager.js    # Page management
-│       ├── encryption-manager.js  # Encryption management
-│       ├── share-manager.js       # Sharing management
-│       ├── settings-manager.js    # Settings management
-│       ├── backup-manager.js      # Backup/restore management
-│       ├── sync-manager.js        # Real-time synchronization
-│       ├── passkey-manager.js     # Passkey authentication management
-│       ├── crypto.js      # E2EE encryption
-│       └── ui-utils.js    # UI utilities
+│   │   ├── main.css       # Main styles (about 90KB)
+│   │   ├── login.css      # Login styles
+│   │   └── comments.css   # Comments feature styles
+│   └── js/                # Frontend JavaScript modules (about 600KB)
+│       ├── app.js         # Main application logic
+│       ├── editor.js      # Tiptap editor initialization
+│       ├── pages-manager.js         # Page management
+│       ├── encryption-manager.js    # E2EE encryption management
+│       ├── share-manager.js         # Collection sharing management
+│       ├── settings-manager.js      # User settings management
+│       ├── backup-manager.js        # Backup/restore management
+│       ├── sync-manager.js          # WebSocket real-time sync
+│       ├── passkey-manager.js       # Passkey/WebAuthn management
+│       ├── totp-manager.js          # TOTP 2FA management
+│       ├── login.js                 # Login page logic
+│       ├── register.js              # Registration page logic
+│       ├── crypto.js                # Web Crypto API wrapper
+│       ├── pdf-export.js            # PDF export
+│       ├── comments-manager.js      # Page comments feature
+│       ├── account-manager.js       # Account management
+│       ├── cover-manager.js         # Cover image management
+│       ├── drag-handle-extension.js # Drag handle extension
+│       ├── publish-manager.js       # Page publishing management
+│       ├── subpages-manager.js      # Page hierarchy management
+│       ├── shared-page.js           # Public page view logic
+│       ├── login-logs-manager.js    # Login logs management
+│       ├── board-node.js            # Board view block
+│       ├── bookmark-node.js         # Bookmark block
+│       ├── callout-node.js          # Callout block
+│       ├── image-with-caption-node.js  # Image with caption block
+│       ├── math-node.js             # LaTeX math block
+│       ├── toggle-node.js           # Toggle block
+│       ├── youtube-node.js          # YouTube embed block
+│       ├── modal-parent-manager.js  # Modal management
+│       ├── ui-utils.js              # UI utilities
+│       └── csrf-utils.js            # CSRF token utilities
 ├── routes/                # API routes
-│   ├── auth.js            # Authentication routes
-│   ├── pages.js           # Pages routes
-│   ├── collections.js     # Collections routes
-│   ├── shares.js          # Sharing routes
-│   ├── totp.js            # TOTP routes
-│   ├── passkey.js         # Passkey routes
-│   ├── backup.js          # Backup/restore routes
-│   └── index.js           # Route entry point
+│   ├── index.js           # Static pages and public pages
+│   ├── auth.js            # Authentication API
+│   ├── pages.js           # Pages CRUD and sync API
+│   ├── collections.js     # Collections management API
+│   ├── shares.js          # Collection sharing API
+│   ├── totp.js            # TOTP 2FA setup/verify API
+│   ├── passkey.js         # Passkey/WebAuthn API
+│   ├── backup.js          # Backup/restore API
+│   ├── comments.js        # Page comments API
+│   ├── themes.js          # Theme settings API
+│   └── bootstrap.js       # Initial database setup
 └── README.md
 ```
 

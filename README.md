@@ -16,13 +16,15 @@
 
 ### 주요 특징
 
-- **마크다운 편집기**: Tiptap 기반 블록 에디터 (체크리스트, 이미지 블록 지원)
+- **마크다운 편집기**: Tiptap 기반 블록 에디터 (다양한 블록 타입 지원)
+- **다양한 블록 타입**: 문단, 제목, 리스트, 체크리스트, 이미지, 코드, 수식, 보드, 북마크, 콜아웃, 토글, YouTube 임베드 등
 - **End-to-End 암호화**: AES-256-GCM 방식의 클라이언트 측 암호화
 - **컬렉션 공유**: 사용자 간 협업 및 링크 공유
 - **계층적 구조**: 페이지 부모-자식 관계 지원
-- **다양한 인증**: TOTP 2단계 인증 및 Passkey (WebAuthn) 지원
+- **다양한 인증**: TOTP 2단계 인증 및 Passkey (WebAuthn/FIDO2) 지원
 - **백업/복구**: 데이터 전체 백업 및 복구 기능 (ZIP 포맷)
-- **페이지 동기화**: 실시간 페이지 내용 동기화 (WebSocket)
+- **페이지 동기화**: 실시간 페이지 내용 동기화 (WebSocket + Yjs)
+- **페이지 댓글**: 페이지별 댓글 기능으로 협업 의사소통 강화
 - **커버 이미지**: 페이지별 커버 이미지 설정 및 정렬
 - **HTTPS 자동 인증서**: Let's Encrypt + DuckDNS 연동
 - **반응형 디자인**: 모바일, 태블릿, 데스크탑 최적화
@@ -40,10 +42,17 @@
 - 계정 삭제 기능
 
 ### 노트 편집
-- **블록 타입**: 문단, 제목(H1-H6), 목록(글머리/번호), 체크리스트, 이미지, 인용구, 코드 블록, 구분선, LaTeX 수식
+- **블록 타입**: 문단, 제목(H1-H6), 목록(글머리/번호), 체크리스트, 이미지, 인용구, 코드 블록, 구분선, LaTeX 수식, 보드, 북마크, 콜아웃, 토글, YouTube 임베드 등
 - **인라인 서식**: 굵게, 기울임, 취소선, 텍스트 색상
 - **정렬 옵션**: 왼쪽, 가운데, 오른쪽, 양쪽
-- **이미지 기능**: 이미지 블록 정렬 및 캡션 지원
+- **이미지 기능**: 이미지 블록 정렬 및 캡션 지원 (캡션 포함 이미지 블록)
+- **특수 블록**:
+  - **보드 뷰**: 카드 형식의 페이지 그룹 표시
+  - **북마크**: 외부 링크 및 미리보기 저장
+  - **콜아웃**: 강조 메시지 및 알림 표시
+  - **토글**: 펼치고 접을 수 있는 콘텐츠
+  - **YouTube**: 유튜브 비디오 직접 임베드
+  - **수식**: LaTeX 형식의 수학 수식 렌더링 (KaTeX)
 - **슬래시 명령**: `/` 입력으로 블록 타입 전환
 - **단축키**: `Ctrl+S` / `Cmd+S` 저장
 
@@ -64,9 +73,11 @@
 - **세션 관리**: 안전한 쿠키 기반 인증
 
 ### 데이터 관리
-- **백업/복구**: 전체 컬렉션 및 페이지 데이터 ZIP 포맷 백업
+- **백업/복구**: 전체 컬렉션 및 페이지 데이터 ZIP 포맷 백업 및 복구
 - **데이터 내보내기**: HTML 형식으로 페이지 내용 변환
 - **데이터 불러오기**: 이전 백업 데이터 복구 및 복원
+- **PDF 내보내기**: 페이지 콘텐츠를 PDF 형식으로 변환
+- **페이지 발행**: 공개 링크를 통한 페이지 공유 (읽기 전용)
 
 ### 실시간 동기화
 - **WebSocket 기반 동기화**: 페이지 변경사항 실시간 동기화
@@ -78,6 +89,8 @@
 - **링크 공유**: 링크를 통한 컬렉션 접근
 - **권한 관리**: READ, EDIT, OWNER 권한 레벨
 - **암호화 페이지 공유**: 공유 허용 설정 옵션
+- **페이지 댓글**: 페이지에 댓글을 달아 협업 의사소통
+- **로그인 로그**: 계정 보안을 위한 로그인 기록 추적
 
 ---
 
@@ -296,6 +309,19 @@ HTTPS 인증서 발급에 실패하면 자동으로 HTTP 모드로 폴백됩니�
 - `POST /api/backup/export` - 데이터 내보내기 (ZIP)
 - `POST /api/backup/import` - 데이터 불러오기 (ZIP)
 
+### 페이지 댓글
+- `GET /api/comments` - 댓글 목록 조회
+- `POST /api/comments` - 댓글 작성
+- `DELETE /api/comments/:id` - 댓글 삭제
+
+### 테마 설정
+- `GET /api/themes` - 사용자 테마 조회
+- `PUT /api/themes` - 테마 설정 변경
+
+### 발행된 페이지
+- `GET /api/pages/:id/publish-link` - 발행 링크 조회
+- `POST /api/pages/:id/publish-link` - 발행 링크 생성
+
 ---
 
 ## 보안 고려사항
@@ -350,41 +376,81 @@ HTTPS 인증서 발급에 실패하면 자동으로 HTTP 모드로 폴백됩니�
 ```
 NTEOK/
 ├── server.js              # Express 서버 엔트리포인트
-├── cert-manager.js        # HTTPS 인증서 자동 발급 모듈
+├── websocket-server.js    # WebSocket 서버 (실시간 동기화)
+├── cert-manager.js        # HTTPS 인증서 자동 발급 모듈 (Let's Encrypt)
+├── network-utils.js       # 네트워크 유틸리티 (IP, 지역 정보)
+├── security-utils.js      # 보안 유틸리티
 ├── package.json           # 프로젝트 의존성
 ├── .env.example           # 환경 변수 예시
+├── icon.png               # 애플리케이션 아이콘
+├── example.png            # README 예제 스크린샷
+├── LICENSE                # ISC 라이선스
 ├── certs/                 # SSL/TLS 인증서 저장 (자동 생성)
+├── data/                  # 데이터 저장소
 ├── covers/                # 커버 이미지 저장소
 │   ├── default/           # 기본 커버 이미지
 │   └── [userId]/          # 사용자 커버 이미지
+├── themes/                # CSS 테마
+│   ├── default.css        # 기본 밝은 테마
+│   └── dark.css           # 다크 테마
+├── languages/             # i18n 다국어 파일
+│   ├── ko-KR.json         # 한국어
+│   ├── en.json            # 영어
+│   └── ja-JP.json         # 일본어
 ├── public/                # 클라이언트 파일
-│   ├── index.html         # 메인 애플리케이션
+│   ├── index.html         # 메인 애플리케이션 (로그인 후)
 │   ├── login.html         # 로그인 페이지
 │   ├── register.html      # 회원가입 페이지
+│   ├── shared-page.html   # 공개 페이지 뷰
 │   ├── css/
-│   │   ├── main.css       # 메인 스타일
-│   │   └── login.css      # 로그인 스타일
-│   └── js/
-│       ├── app.js         # 메인 로직
-│       ├── editor.js      # 에디터 초기화
-│       ├── pages-manager.js    # 페이지 관리
-│       ├── encryption-manager.js  # 암호화 관리
-│       ├── share-manager.js       # 공유 관리
-│       ├── settings-manager.js    # 설정 관리
-│       ├── backup-manager.js      # 백업/복구 관리
-│       ├── sync-manager.js        # 실시간 동기화
-│       ├── passkey-manager.js     # Passkey 인증 관리
-│       ├── crypto.js      # E2EE 암호화
-│       └── ui-utils.js    # UI 유틸리티
+│   │   ├── main.css       # 메인 스타일 (약 90KB)
+│   │   ├── login.css      # 로그인 스타일
+│   │   └── comments.css   # 댓글 기능 스타일
+│   └── js/                # 프론트엔드 JavaScript 모듈 (약 600KB)
+│       ├── app.js         # 메인 애플리케이션 로직
+│       ├── editor.js      # Tiptap 에디터 초기화
+│       ├── pages-manager.js         # 페이지 관리
+│       ├── encryption-manager.js    # E2EE 암호화 관리
+│       ├── share-manager.js         # 컬렉션 공유 관리
+│       ├── settings-manager.js      # 사용자 설정 관리
+│       ├── backup-manager.js        # 백업/복구 관리
+│       ├── sync-manager.js          # WebSocket 실시간 동기화
+│       ├── passkey-manager.js       # Passkey/WebAuthn 관리
+│       ├── totp-manager.js          # TOTP 2FA 관리
+│       ├── login.js                 # 로그인 페이지 로직
+│       ├── register.js              # 회원가입 페이지 로직
+│       ├── crypto.js                # Web Crypto API 래퍼
+│       ├── pdf-export.js            # PDF 내보내기
+│       ├── comments-manager.js      # 페이지 댓글 기능
+│       ├── account-manager.js       # 계정 관리
+│       ├── cover-manager.js         # 커버 이미지 관리
+│       ├── drag-handle-extension.js # 드래그 확장 기능
+│       ├── publish-manager.js       # 페이지 발행 관리
+│       ├── subpages-manager.js      # 페이지 계층 관리
+│       ├── shared-page.js           # 공개 페이지 뷰 로직
+│       ├── login-logs-manager.js    # 로그인 로그 관리
+│       ├── board-node.js            # 보드 뷰 블록
+│       ├── bookmark-node.js         # 북마크 블록
+│       ├── callout-node.js          # 콜아웃 블록
+│       ├── image-with-caption-node.js  # 캡션 포함 이미지 블록
+│       ├── math-node.js             # LaTeX 수식 블록
+│       ├── toggle-node.js           # 토글 블록
+│       ├── youtube-node.js          # YouTube 임베드 블록
+│       ├── modal-parent-manager.js  # 모달 관리
+│       ├── ui-utils.js              # UI 유틸리티
+│       └── csrf-utils.js            # CSRF 토큰 유틸리티
 ├── routes/                # API 라우트
-│   ├── auth.js            # 인증 라우트
-│   ├── pages.js           # 페이지 라우트
-│   ├── collections.js     # 컬렉션 라우트
-│   ├── shares.js          # 공유 라우트
-│   ├── totp.js            # TOTP 라우트
-│   ├── passkey.js         # Passkey 라우트
-│   ├── backup.js          # 백업/복구 라우트
-│   └── index.js           # 라우트 진입점
+│   ├── index.js           # 정적 페이지 및 공개 페이지
+│   ├── auth.js            # 인증 API (회원가입, 로그인, 계정 삭제)
+│   ├── pages.js           # 페이지 CRUD 및 동기화 API
+│   ├── collections.js     # 컬렉션 관리 API
+│   ├── shares.js          # 컬렉션 공유 API
+│   ├── totp.js            # TOTP 2FA 설정/인증 API
+│   ├── passkey.js         # Passkey/WebAuthn API
+│   ├── backup.js          # 백업/복구 API
+│   ├── comments.js        # 페이지 댓글 API
+│   ├── themes.js          # 테마 설정 API
+│   └── bootstrap.js       # 초기 데이터베이스 설정
 └── README.md
 ```
 
