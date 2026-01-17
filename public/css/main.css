@@ -2110,67 +2110,111 @@ body {
     background-color: rgba(0, 0, 0, 0.05);
 }
 
+:root {
+    /* 포스트잇 기본 테마 색상 (라이트) */
+    --board-card-yellow: #fff9c4;
+    --board-card-blue: #e3f2fd;
+    --board-card-green: #e8f5e9;
+    --board-card-pink: #fce4ec;
+    --board-card-purple: #f3e5f5;
+    --board-card-orange: #fff3e0;
+    --board-card-text: #333; /* 라이트 모드 글씨색 */
+}
+
 .board-card {
     background-color: var(--primary-color);
     border: 1px solid var(--border-color);
     border-radius: 4px;
-    padding: 8px;
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+    padding: 10px 12px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
     cursor: grab;
     position: relative;
-    transition: transform 0.1s, box-shadow 0.1s;
+    transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s, background-color 0.2s;
+    min-height: 60px;
+    display: flex;
+    flex-direction: column;
+}
+
+/* 테마별 카드 배경색 클래스 */
+.board-card.color-yellow { background-color: var(--board-card-yellow); border-color: rgba(0,0,0,0.05); }
+.board-card.color-blue { background-color: var(--board-card-blue); border-color: rgba(0,0,0,0.05); }
+.board-card.color-green { background-color: var(--board-card-green); border-color: rgba(0,0,0,0.05); }
+.board-card.color-pink { background-color: var(--board-card-pink); border-color: rgba(0,0,0,0.05); }
+.board-card.color-purple { background-color: var(--board-card-purple); border-color: rgba(0,0,0,0.05); }
+.board-card.color-orange { background-color: var(--board-card-orange); border-color: rgba(0,0,0,0.05); }
+
+/* 접힘 효과 제거 */
+.board-card::before,
+.board-card::after {
+    display: none !important;
 }
 
 .board-card:hover {
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.12);
+    transform: translateY(-2px);
+    z-index: 10;
+}
+
+.board-card:hover {
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    transform: translateY(-2px);
+    z-index: 10;
 }
 
 .board-card.dragging {
     opacity: 0.5;
-    transform: rotate(2deg);
+    transform: scale(1.05) !important;
 }
 
 .board-card-content {
-    font-size: 13px;
-    line-height: 1.5;
-    color: var(--font-color);
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--board-card-text); /* 테마 변수 적용 */
     outline: none;
     white-space: pre-wrap;
     word-break: break-word;
+    flex: 1;
+    font-family: 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif;
 }
 
 .board-card-header {
     display: flex;
     justify-content: space-between;
     align-items: flex-start;
-    margin-bottom: 4px;
+    margin-bottom: 8px;
 }
 
-.board-card-icon-btn {
+.board-card-icon-btn, .board-card-color-btn {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 20px;
-    height: 20px;
-    border-radius: 3px;
+    width: 24px;
+    height: 24px;
+    border-radius: 4px;
     transition: background-color 0.2s;
-    color: var(--font-color);
+    color: #666;
 }
 
-.board-card-icon-btn:hover {
-    background-color: var(--item-hover-bg-color);
+.board-card-icon-btn:hover, .board-card-color-btn:hover {
+    background-color: rgba(0, 0, 0, 0.05);
 }
 
 .board-card-delete-btn {
     background: transparent;
     border: none;
     cursor: pointer;
-    font-size: 14px;
-    color: #9ca3af;
+    font-size: 18px;
+    color: #999;
     opacity: 0;
-    transition: opacity 0.1s;
+    transition: opacity 0.2s, color 0.2s;
     padding: 0 4px;
     line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 4px;
 }
 
 .board-card:hover .board-card-delete-btn {
@@ -2179,6 +2223,7 @@ body {
 
 .board-card-delete-btn:hover {
     color: var(--danger-color);
+    background-color: rgba(239, 68, 68, 0.1);
 }
 
 .board-add-card-btn {

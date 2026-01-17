@@ -22,6 +22,17 @@ const BOARD_EMOJI_ICONS = [
     '🏷️', '🎯', '🏆', '🎁'
 ];
 
+// 포스트잇 배경색 목록
+const BOARD_CARD_COLORS = [
+    { name: '기본', value: 'default', bg: 'var(--primary-color)' },
+    { name: '노랑', value: 'yellow', bg: 'var(--board-card-yellow)' },
+    { name: '파랑', value: 'blue', bg: 'var(--board-card-blue)' },
+    { name: '초록', value: 'green', bg: 'var(--board-card-green)' },
+    { name: '분홍', value: 'pink', bg: 'var(--board-card-pink)' },
+    { name: '보라', value: 'purple', bg: 'var(--board-card-purple)' },
+    { name: '주황', value: 'orange', bg: 'var(--board-card-orange)' }
+];
+
 export const BoardBlock = Node.create({
     name: 'boardBlock',
 
@@ -197,6 +208,72 @@ export const BoardBlock = Node.create({
                 document.addEventListener('mousedown', closePopup);
             };
 
+            // 색상 선택 팝업 생성 함수
+            const showColorPickerPopup = (targetEl, onSelect) => {
+                if (!editor.isEditable) return;
+
+                // 기존 팝업 제거
+                const existingPopup = document.querySelector('.board-color-picker-popup');
+                if (existingPopup) existingPopup.remove();
+
+                const popup = document.createElement('div');
+                popup.className = 'board-color-picker-popup';
+                popup.style.cssText = `
+                    position: absolute;
+                    background: var(--primary-color, white);
+                    border: 1px solid var(--border-color, #ccc);
+                    border-radius: 8px;
+                    padding: 8px;
+                    z-index: 10000;
+                    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+                    display: grid;
+                    grid-template-columns: repeat(4, 1fr);
+                    gap: 8px;
+                `;
+
+                BOARD_CARD_COLORS.forEach(color => {
+                    const btn = document.createElement('button');
+                    btn.title = color.name;
+                    btn.style.cssText = `
+                        width: 24px;
+                        height: 24px;
+                        border-radius: 50%;
+                        border: 1px solid var(--border-color);
+                        background-color: ${color.bg === 'var(--primary-color)' ? 'white' : color.bg};
+                        cursor: pointer;
+                        padding: 0;
+                    `;
+                    
+                    if (color.value === 'default') {
+                        btn.innerHTML = '<i class="fa-solid fa-ban" style="font-size: 10px; color: #999;"></i>';
+                        btn.style.display = 'flex';
+                        btn.style.alignItems = 'center';
+                        btn.style.justifyContent = 'center';
+                    }
+
+                    btn.onclick = (e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        onSelect(color.value);
+                        popup.remove();
+                    };
+                    popup.appendChild(btn);
+                });
+
+                document.body.appendChild(popup);
+                const rect = targetEl.getBoundingClientRect();
+                popup.style.left = `${rect.left}px`;
+                popup.style.top = `${rect.bottom + 5}px`;
+
+                const closePopup = (e) => {
+                    if (!popup.contains(e.target) && !targetEl.contains(e.target)) {
+                        popup.remove();
+                        document.removeEventListener('mousedown', closePopup);
+                    }
+                };
+                document.addEventListener('mousedown', closePopup);
+            };
+
             // 렌더링 함수
             const render = () => {
                 lastIsEditable = editor.isEditable; // 현재 상태 저장
@@ -290,14 +367,14 @@ export const BoardBlock = Node.create({
 
                     column.cards.forEach(card => {
                         const cardEl = document.createElement('div');
-                        cardEl.className = 'board-card';
+                        cardEl.className = `board-card ${card.color ? 'color-' + card.color : ''}`;
                         cardEl.draggable = editor.isEditable;
                         cardEl.dataset.cardId = card.id;
 
                         if (editor.isEditable) {
                             cardEl.ondragstart = (e) => {
                                 // 팝업이 열려있으면 닫기
-                                const existingPopup = document.querySelector('.board-icon-picker-popup');
+                                const existingPopup = document.querySelector('.board-icon-picker-popup') || document.querySelector('.board-color-picker-popup');
                                 if (existingPopup) existingPopup.remove();
 
                                 draggedCardId = card.id;
@@ -312,13 +389,19 @@ export const BoardBlock = Node.create({
                             };
                         }
 
-                        // 카드 상단 영역 (아이콘 + 삭제 버튼)
+                        // 카드 상단 영역 (아이콘 + 도구 + 삭제 버튼)
                         const cardHeader = document.createElement('div');
                         cardHeader.className = 'board-card-header';
                         cardHeader.style.display = 'flex';
                         cardHeader.style.justifyContent = 'space-between';
                         cardHeader.style.alignItems = 'flex-start';
                         cardHeader.style.marginBottom = '4px';
+
+                        // 카드 상단 왼쪽 영역 (아이콘 + 색상 선택)
+                        const cardHeaderLeft = document.createElement('div');
+                        cardHeaderLeft.style.display = 'flex';
+                        cardHeaderLeft.style.gap = '4px';
+                        cardHeaderLeft.style.alignItems = 'center';
 
                         // 아이콘 영역
                         const iconBtn = document.createElement('div');
@@ -358,6 +441,33 @@ export const BoardBlock = Node.create({
                             };
                         }
 
+                        // 색상 선택 버튼
+                        const colorBtn = document.createElement('div');
+                        colorBtn.className = 'board-card-color-btn';
+                        colorBtn.innerHTML = '<i class="fa-solid fa-palette" style="font-size: 12px; opacity: 0.5;"></i>';
+                        colorBtn.style.cursor = editor.isEditable ? 'pointer' : 'default';
+                        colorBtn.style.display = editor.isEditable ? 'flex' : 'none';
+                        colorBtn.style.alignItems = 'center';
+                        colorBtn.style.justifyContent = 'center';
+                        colorBtn.style.width = '20px';
+                        colorBtn.style.height = '20px';
+                        colorBtn.style.borderRadius = '3px';
+
+                        if (editor.isEditable) {
+                            colorBtn.onclick = (e) => {
+                                e.stopPropagation();
+                                showColorPickerPopup(colorBtn, (newColor) => {
+                                    card.color = newColor;
+                                    saveData();
+                                    render(); // 배경색 적용을 위해 전체 다시 렌더링
+                                });
+                            };
+                        }
+
+                        cardHeaderLeft.appendChild(iconBtn);
+                        cardHeaderLeft.appendChild(colorBtn);
+                        cardHeader.appendChild(cardHeaderLeft);
+
                         // 카드 삭제 버튼
                         const deleteCardBtn = document.createElement('button');
                         deleteCardBtn.className = 'board-card-delete-btn';
@@ -375,7 +485,6 @@ export const BoardBlock = Node.create({
                             deleteCardBtn.style.display = 'none';
                         }
 
-                        cardHeader.appendChild(iconBtn);
                         cardHeader.appendChild(deleteCardBtn);
                         cardEl.appendChild(cardHeader);
 
@@ -414,7 +523,8 @@ export const BoardBlock = Node.create({
                             const newCard = {
                                 id: 'card-' + Date.now() + Math.random().toString(36).substr(2, 9),
                                 content: '새 카드',
-                                icon: null
+                                icon: null,
+                                color: 'default'
                             };
                             column.cards.push(newCard);
                             saveData();

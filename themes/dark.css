@@ -30,6 +30,15 @@
     --scrollbar-thumb-color: #444444;
     --scrollbar-thumb-hover-color: #5d9cec;
 
+    /* 포스트잇 다크 테마 색상 (채도를 낮춘 톤) */
+    --board-card-yellow: #45401b;
+    --board-card-blue: #1b2e45;
+    --board-card-green: #1b4522;
+    --board-card-pink: #451b2e;
+    --board-card-purple: #2e1b45;
+    --board-card-orange: #452b1b;
+    --board-card-text: #e0e0e0; /* 다크 모드 글씨색 */
+
     /* 콜아웃 블록 테마 변수 (다크 모드 전용) */
     --callout-info-bg: #1e293b;
     --callout-info-border: #334155;
