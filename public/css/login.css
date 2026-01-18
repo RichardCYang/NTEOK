@@ -269,6 +269,10 @@
     }
 
     .login-card {
+        /* 모바일: 테두리와 음영을 제거하고 배경색을 body와 통일 */
+        border: none;
+        box-shadow: none;
+        background-color: #f5f2ed;
         padding: 24px 20px 18px;
     }
 
