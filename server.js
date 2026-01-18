@@ -89,13 +89,6 @@ const CSRF_COOKIE_NAME = "nteok_csrf";
 const IS_PRODUCTION = process.env.NODE_ENV === "production";
 const BASE_URL = process.env.BASE_URL || (IS_PRODUCTION ? "https://localhost:3000" : "http://localhost:3000");
 
-function getClientIp(req) {
-    // trust proxy가 설정되면 req.ips가 채워짐(최초가 원 클라이언트)
-    const ips = Array.isArray(req.ips) ? req.ips : [];
-    const candidate = ips.length > 0 ? ips[0] : req.socket?.remoteAddress;
-    return normalizeIp(candidate);
-}
-
 // 보안 개선: 기본 관리자 계정 비밀번호를 강제로 변경하도록 경고
 // 운영(PROD)에서는 ADMIN_PASSWORD 미설정 상태로 부팅하지 않도록 fail-closed 처리
 const DEFAULT_ADMIN_USERNAME = process.env.ADMIN_USERNAME || "admin";
@@ -1278,7 +1271,6 @@ app.disable("x-powered-by");
 
 // CSP nonce 생성 (요청마다 새로 발급)
 app.use((req, res, next) => {
-	req.clientIp = getClientIp(req);
 	res.locals.cspNonce = crypto.randomBytes(16).toString("base64");
 	next();
 });
