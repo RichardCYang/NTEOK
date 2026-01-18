@@ -304,6 +304,51 @@ function sanitizeInput(input) {
 }
 
 /**
+ * 업로드 파일명 안전화 유틸
+ * - 제어문자 제거(헤더 인젝션 방지)
+ * - 경로 구분자 제거(path traversal/혼동 방지)
+ * - 따옴표/꺾쇠 등 HTML/헤더 컨텍스트 위험 문자 제거
+ */
+function sanitizeFilenameComponent(name, maxLen = 120) {
+    const s = String(name ?? '').normalize('NFKC');
+    const cleaned = s
+        .replace(/[\u0000-\u001F\u007F]/g, '')	// 제어 문자
+        .replace(/[\\/]/g, '_')                 // 경로 분할 문자
+        .replace(/["'<>`]/g, '')                // HTML/attrs/headers에서 위험한 문자 태그
+        .trim();
+    return (cleaned.length ? cleaned : 'file').slice(0, maxLen);
+}
+
+function sanitizeExtension(ext) {
+    if (!ext) return '';
+    const lower = String(ext).toLowerCase();
+    // .abc123 형태만 허용 (임의 문자열/따옴표 섦입 차단)
+    return /^\.[a-z0-9]{1,10}$/.test(lower) ? lower : '';
+}
+
+function deriveDownloadNameFromStoredFilename(stored) {
+    const safeStored = sanitizeFilenameComponent(stored, 200);
+    // 저장 규칙: <random>__<displayName><ext>
+    const idx = safeStored.indexOf('__');
+    if (idx >= 0) {
+        const tail = safeStored.slice(idx + 2);
+        return tail.length ? tail : 'download';
+    }
+    return safeStored;
+}
+
+function sendSafeDownload(res, filePath, downloadName) {
+    // 무조건 다운로드로 취급되게 바이너리 처리
+    res.setHeader('Content-Type', 'application/octet-stream');
+    // MIME sniffing 방지 (스크립트/스타일 로딩 악용 차단에 중요)
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    // 혹시 문서로 렌더링되는 상황에서도 강한 제한
+    res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+    res.setHeader('Cache-Control', 'no-store');
+    return res.download(filePath, downloadName);
+}
+
+/**
  * 보안 개선: HTML 콘텐츠 정화 (DOMPurify)
  * 에디터 콘텐츠 등 HTML이 필요한 필드에 사용
  */
@@ -1512,8 +1557,8 @@ app.get('/paperclip/:userId/:filename', authMiddleware, async (req, res) => {
 
         // 권한 확인: 본인 파일이거나, 공유받은 페이지의 파일인 경우
         if (requestedUserId === currentUserId) {
-             // 다운로드 되도록 설정 (Content-Disposition)
-             return res.download(filePath, sanitizedFilename);
+			const downloadName = deriveDownloadNameFromStoredFilename(sanitizedFilename);
+			return sendSafeDownload(res, filePath, downloadName);
         }
 
         // 다른 사용자의 파일 - 공유받은 페이지의 파일인지 확인
@@ -1538,7 +1583,8 @@ app.get('/paperclip/:userId/:filename', authMiddleware, async (req, res) => {
 
         if (rows.length > 0) {
             // 공유받은 페이지의 파일 - 접근 허용 (다운로드)
-            return res.download(filePath, sanitizedFilename);
+			const downloadName = deriveDownloadNameFromStoredFilename(sanitizedFilename);
+			return sendSafeDownload(res, filePath, downloadName);
         }
 
         // 권한 없음
@@ -1649,14 +1695,15 @@ const paperclipStorage = multer.diskStorage({
         cb(null, userFileDir);
     },
     filename: (req, file, cb) => {
-        // 원본 파일명 유지 (한글 등 특수문자 처리 필요할 수 있음 -> safeName 사용 권장하지만, 일단 보존)
-        // 보안을 위해 랜덤 prefix 추가
-        const uniquePrefix = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}`;
-        // 확장자 포함
-        const ext = path.extname(file.originalname);
-        const name = path.basename(file.originalname, ext);
-        // 파일명 안전하게 변환 (선택사항)
-        cb(null, `${uniquePrefix}-${name}${ext}`);
+	    // 저장용 이름은 랜덤 + 표시용 이름을 분리
+	    const uniquePrefix = `${Date.now()}-${crypto.randomBytes(16).toString('hex')}`;
+	    const rawExt = path.extname(file.originalname);
+	    const ext = sanitizeExtension(rawExt);
+	    const base = sanitizeFilenameComponent(path.basename(file.originalname, rawExt), 120)
+	        .replace(/__+/g, '_'); // 구분자 충돌 방지
+
+	    // <random>__<displayName><ext>
+	    cb(null, `${uniquePrefix}__${base}${ext}`);
     }
 });
 
