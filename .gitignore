@@ -84,6 +84,10 @@ covers/*
 imgs/*
 !imgs/.gitkeep
 
+# 사용자 업로드 파일 블록
+paperclip/*
+!paperclip/.gitkeep
+
 # 백업 업로드 임시 폴더
 temp/
 

@@ -100,6 +100,9 @@ import { BoardBlock } from './board-node.js';
 // YoutubeBlock 노드 import
 import { YoutubeBlock } from './youtube-node.js';
 
+// FileBlock 노드 import
+import { FileBlock } from './file-node.js';
+
 // DragHandle extension import
 import { DragHandle } from './drag-handle-extension.js';
 
@@ -337,6 +340,16 @@ export const SLASH_ITEMS = [
             };
 
             input.click();
+        }
+    },
+    {
+        id: "file",
+        label: "파일",
+        description: "파일 첨부 (50MB 제한)",
+        icon: "📎",
+        command(editor) {
+            // 빈 파일 블록 삽입 (Placeholder 상태로 렌더링됨)
+            editor.chain().focus().setFileBlock().run();
         }
     },
     {
@@ -1207,6 +1220,7 @@ export function initEditor() {
             ToggleBlock,
             BoardBlock,
             YoutubeBlock,
+            FileBlock,
             DragHandle,
         ],
         content: EXAMPLE_CONTENT,

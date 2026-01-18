@@ -1490,6 +1490,67 @@ app.get('/imgs/:userId/:filename', authMiddleware, async (req, res) => {
     }
 });
 
+// 파일 블록 파일 - 인증 필요
+app.get('/paperclip/:userId/:filename', authMiddleware, async (req, res) => {
+    const requestedUserId = parseInt(req.params.userId, 10);
+
+    if (!Number.isFinite(requestedUserId))
+        return res.status(400).json({ error: '잘못된 요청입니다.' });
+
+    const filename = req.params.filename;
+    const currentUserId = req.user.id;
+
+    try {
+        // 파일명 새니타이제이션
+        const sanitizedFilename = path.basename(filename);
+        const filePath = path.join(__dirname, 'paperclip', String(requestedUserId), sanitizedFilename);
+
+        // 파일 존재 확인
+        if (!fs.existsSync(filePath)) {
+            return res.status(404).json({ error: '파일을 찾을 수 없습니다.' });
+        }
+
+        // 권한 확인: 본인 파일이거나, 공유받은 페이지의 파일인 경우
+        if (requestedUserId === currentUserId) {
+             // 다운로드 되도록 설정 (Content-Disposition)
+             return res.download(filePath, sanitizedFilename);
+        }
+
+        // 다른 사용자의 파일 - 공유받은 페이지의 파일인지 확인
+        const fileUrlPart = `/paperclip/${requestedUserId}/${sanitizedFilename}`;
+
+        // LIKE 와일드카드 이스케이프
+        const escapeLike = (s) => String(s).replace(/[\\%_]/g, (m) => `\\${m}`);
+        const likePattern = `%${escapeLike(fileUrlPart)}%`;
+
+        // 파일이 포함된 페이지가 공유되었는지 확인
+        const [rows] = await pool.execute(
+            `SELECT p.id
+                FROM pages p
+                JOIN collections c ON p.collection_id = c.id
+                LEFT JOIN collection_shares cs_cur ON c.id = cs_cur.collection_id AND cs_cur.shared_with_user_id = ?
+                WHERE p.content LIKE ? ESCAPE '\\\\'
+                AND (c.user_id = ? OR cs_cur.shared_with_user_id IS NOT NULL)
+                AND (p.user_id = ? OR c.user_id = ?)
+                LIMIT 1`,
+            [currentUserId, likePattern, currentUserId, requestedUserId, requestedUserId]
+        );
+
+        if (rows.length > 0) {
+            // 공유받은 페이지의 파일 - 접근 허용 (다운로드)
+            return res.download(filePath, sanitizedFilename);
+        }
+
+        // 권한 없음
+        console.warn(`[보안] 사용자 ${currentUserId}이(가) 권한 없이 파일 접근 시도: ${fileUrlPart}`);
+        return res.status(403).json({ error: '접근 권한이 없습니다.' });
+
+    } catch (error) {
+        logError('GET /paperclip/:userId/:filename', error);
+        res.status(500).json({ error: '파일 로드 실패' });
+    }
+});
+
 /**
  * multer 설정 (커버 이미지 업로드)
  */
@@ -1579,6 +1640,32 @@ const themeUpload = multer({
     }
 });
 
+// 파일 블록 업로드를 위한 multer 설정
+const paperclipStorage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        const userId = req.user.id;
+        const userFileDir = path.join(__dirname, 'paperclip', String(userId));
+        fs.mkdirSync(userFileDir, { recursive: true });
+        cb(null, userFileDir);
+    },
+    filename: (req, file, cb) => {
+        // 원본 파일명 유지 (한글 등 특수문자 처리 필요할 수 있음 -> safeName 사용 권장하지만, 일단 보존)
+        // 보안을 위해 랜덤 prefix 추가
+        const uniquePrefix = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}`;
+        // 확장자 포함
+        const ext = path.extname(file.originalname);
+        const name = path.basename(file.originalname, ext);
+        // 파일명 안전하게 변환 (선택사항)
+        cb(null, `${uniquePrefix}-${name}${ext}`);
+    }
+});
+
+const fileUpload = multer({
+    storage: paperclipStorage,
+    limits: { fileSize: 50 * 1024 * 1024 }, // 50MB
+    // 모든 파일 허용 (실행 파일 등은 서버에서 실행되지 않도록 주의 필요)
+});
+
 /**
  * WebSocket용 세션 검증 헬퍼
  * - getSessionFromRequest()와 동일한 만료/idle 갱신 로직을 재사용
@@ -1597,6 +1684,16 @@ function getSessionFromId(sessionId) {
 (async () => {
     try {
         await initDb();
+
+        // 필수 업로드 폴더 생성
+        const uploadDirs = ['covers', 'imgs', 'paperclip', 'themes'];
+        uploadDirs.forEach(dir => {
+            const dirPath = path.join(__dirname, dir);
+            if (!fs.existsSync(dirPath)) {
+                fs.mkdirSync(dirPath, { recursive: true });
+                console.log(`📁 폴더 생성됨: ${dir}`);
+            }
+        });
 
         // 로그인 로그 정리 작업 시작 (pool 초기화 후)
         setInterval(cleanupOldLoginLogs, 24 * 60 * 60 * 1000);
@@ -1658,6 +1755,7 @@ function getSessionFromId(sessionId) {
             coverUpload,
             editorImageUpload,
             themeUpload,
+            fileUpload,
             path,
             fs,
             // 네트워크 관련 (network-utils.js 모듈에서 import)

@@ -1,0 +1,163 @@
+
+/* File Block Styles (Notion-like) */
+
+.file-block-wrapper {
+    display: block !important;
+    width: 100% !important;
+    margin: 8px 0 !important;
+}
+
+/* 쓰기모드에서만 보이는 요소 제어 */
+/* 에디터가 읽기모드일 때 .edit-only 클래스를 가진 요소를 숨김 */
+.ProseMirror[contenteditable="false"] .edit-only {
+    display: none !important;
+}
+
+/* 1. Placeholder State (Embed Form Style) */
+.ProseMirror div.file-placeholder[class*="file-placeholder"] {
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    padding: 12px 16px !important;
+    background-color: var(--tertiary-color) !important; 
+    border-radius: 5px !important;
+    cursor: pointer !important;
+    color: var(--font-color) !important;
+    min-height: 48px !important;
+    border: none !important;
+    box-sizing: border-box !important;
+    transition: background-color 0.2s ease !important;
+}
+
+.ProseMirror div.file-placeholder:hover {
+    background-color: var(--item-hover-bg-color) !important;
+}
+
+.file-placeholder-left {
+    display: flex !important;
+    align-items: center !important;
+    gap: 12px !important;
+    flex: 1 !important;
+}
+
+.file-placeholder-icon {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    color: var(--sub-font-color) !important;
+}
+
+.file-placeholder-text {
+    font-size: 14px !important;
+    color: var(--sub-font-color) !important;
+    font-weight: 500 !important;
+}
+
+.file-placeholder-right {
+    display: flex !important;
+    align-items: center !important;
+    flex-shrink: 0 !important;
+}
+
+/* 공통 버튼 스타일 (추가/삭제) */
+.file-upload-btn, .file-delete-btn {
+    width: 28px !important;
+    height: 28px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    background-color: transparent !important;
+    border: none !important;
+    border-radius: 4px !important;
+    cursor: pointer !important;
+    color: var(--sub-font-color) !important;
+    transition: all 0.2s ease !important;
+    padding: 0 !important;
+    line-height: 1 !important;
+}
+
+.file-upload-btn {
+    font-size: 22px !important;
+    font-weight: 300 !important;
+}
+
+.file-delete-btn {
+    font-size: 20px !important;
+    font-weight: 400 !important;
+}
+
+.file-upload-btn:hover, .file-delete-btn:hover {
+    background-color: var(--box-shadow-color) !important;
+    color: var(--font-color) !important;
+}
+
+.file-delete-btn:hover {
+    color: var(--danger-color) !important; /* 삭제 버튼 호버 시 테마의 위험색 적용 */
+}
+
+
+/* 2. Filled State (File Card Style) */
+.ProseMirror div.file-block {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    padding: 10px 14px !important;
+    background-color: transparent !important;
+    border: 1px solid var(--border-color) !important;
+    border-radius: 5px !important;
+    cursor: pointer !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+    min-height: 52px !important;
+    transition: background-color 0.15s ease !important;
+}
+
+.ProseMirror div.file-block:hover {
+    background-color: var(--item-hover-bg-color) !important;
+}
+
+.file-block-content {
+    display: flex !important;
+    align-items: center !important;
+    flex: 1 !important;
+    min-width: 0 !important;
+}
+
+.file-icon {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    color: var(--sub-font-color) !important;
+    margin-right: 12px !important;
+    flex-shrink: 0 !important;
+}
+
+.file-info {
+    display: flex !important;
+    flex-direction: column !important;
+    flex: 1 !important;
+    min-width: 0 !important;
+}
+
+.file-name {
+    font-size: 14px !important;
+    font-weight: 500 !important;
+    color: var(--font-color) !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+}
+
+.file-size {
+    font-size: 12px !important;
+    color: var(--sub-font-color) !important;
+    margin-top: 2px !important;
+}
+
+.file-block-right {
+    display: flex !important;
+    align-items: center !important;
+    flex-shrink: 0 !important;
+    margin-left: 12px !important;
+}

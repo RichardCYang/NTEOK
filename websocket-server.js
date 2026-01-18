@@ -95,6 +95,53 @@ function cleanupInactiveConnections(pool, sanitizeHtmlContent) {
 }
 
 /**
+ * 페이지에서 파일 URL 추출 (헬퍼)
+ */
+function extractFilesFromContent(content) {
+    const files = [];
+    if (content) {
+        const fileRegex = /<div[^>]+data-type="file-block"[^>]+data-src=["']\/paperclip\/([^"']+)["']/g;
+        let match;
+        while ((match = fileRegex.exec(content)) !== null) {
+            files.push(match[1]); // "userId/filename.ext"
+        }
+    }
+    return files;
+}
+
+/**
+ * 고립된 파일 삭제 (헬퍼)
+ */
+async function cleanupOrphanedFiles(pool, filePaths, excludePageId) {
+    if (!filePaths || filePaths.length === 0) return;
+    const fs = require('fs');
+    const path = require('path');
+
+    for (const filePath of filePaths) {
+        try {
+            const parts = filePath.split('/');
+            if (parts.length !== 2) continue;
+
+            // 다른 페이지에서 사용 중인지 확인 (현재 페이지 제외)
+            const [rows] = await pool.execute(
+                `SELECT COUNT(*) as count FROM pages WHERE content LIKE ? AND id != ?`,
+                [`%/paperclip/${filePath}%`, excludePageId]
+            );
+
+            if (rows[0].count === 0) {
+                const fullPath = path.join(__dirname, 'paperclip', filePath);
+                if (fs.existsSync(fullPath)) {
+                    fs.unlinkSync(fullPath);
+                    console.log(`[WS 보안] 참조 없는 파일 삭제됨: ${fullPath}`);
+                }
+            }
+        } catch (err) {
+            console.error(`[WS] 파일 정리 오류 (${filePath}):`, err);
+        }
+    }
+}
+
+/**
  * Yjs 문서를 데이터베이스에 저장
  */
 async function saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc) {
@@ -111,21 +158,29 @@ async function saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc) {
         const rawContent = extractHtmlFromYDoc(ydoc);
         const content = sanitizeHtmlContent(rawContent);
 
-        // E2EE: 암호화된 페이지는 content를 빈 문자열로 저장
-        const [rows] = await pool.execute(
-            'SELECT is_encrypted FROM pages WHERE id = ?',
+        // [보안] 기존 데이터와 비교를 위해 이전 정보 조회
+        const [existingRows] = await pool.execute(
+            'SELECT content, is_encrypted, user_id FROM pages WHERE id = ?',
             [pageId]
         );
 
         let finalContent = content;
-        if (rows.length > 0 && rows[0].is_encrypted === 1) {
-            finalContent = '';  // 암호화된 페이지는 content 비움
-		}
+        let oldFiles = [];
+        let userId = null;
 
-        // Yjs 상태(바이너리)를 DB에 같이 저장 (진짜 동시편집 상태 복원용)
-		// - 암호화 페이지는 평문이 유출될 수 있으므로 yjs_state를 저장하지 않음
+        if (existingRows.length > 0) {
+            const existing = existingRows[0];
+            userId = existing.user_id;
+            if (existing.is_encrypted === 1) {
+                finalContent = '';  // 암호화된 페이지는 content 비움
+            } else {
+                oldFiles = extractFilesFromContent(existing.content);
+            }
+        }
+
+        // Yjs 상태(바이너리) 저장 로직
 		let yjsStateToSave = null;
-		if (!(rows.length > 0 && rows[0].is_encrypted === 1)) {
+		if (!(existingRows.length > 0 && existingRows[0].is_encrypted === 1)) {
 		    yjsStateToSave = Buffer.from(Y.encodeStateAsUpdate(ydoc));
 		}
 
@@ -135,6 +190,15 @@ async function saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc) {
              WHERE id = ?`,
             [title, finalContent, icon, sortOrder, parentId, yjsStateToSave, pageId]
         );
+
+        // [보안] 저장 후 파일 정리 수행
+        if (existingRows.length > 0 && existingRows[0].is_encrypted === 0) {
+            const newFiles = extractFilesFromContent(content);
+            const deletedFiles = oldFiles.filter(f => !newFiles.includes(f));
+            if (deletedFiles.length > 0) {
+                cleanupOrphanedFiles(pool, deletedFiles, pageId).catch(e => console.error(e));
+            }
+        }
     } catch (error) {
         console.error(`[SSE] 페이지 저장 실패 (${pageId}):`, error);
         throw error;

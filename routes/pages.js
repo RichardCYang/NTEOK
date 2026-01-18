@@ -35,6 +35,8 @@ module.exports = (dependencies) => {
         generatePublishToken,
         coverUpload,
         editorImageUpload,
+        themeUpload,
+        fileUpload,
         outboundFetchLimiter,
         path,
         fs
@@ -609,7 +611,8 @@ module.exports = (dependencies) => {
             const now = new Date();
             const nowStr = formatDateForDb(now);
 
-            const isBecomingEncrypted = existing.is_encrypted === 0 && newIsEncrypted === 1;
+            // [보안] 콘텐츠 변경 전, 기존에 포함되어 있던 파일 목록 추출 (자동 정리를 위해)
+            const oldFiles = existing.is_encrypted ? [] : extractFilesFromPage(existing);
 
             if (isBecomingEncrypted) {
                 await pool.execute(
@@ -629,6 +632,17 @@ module.exports = (dependencies) => {
                     [newTitle, newContent, newEncryptionSalt, newEncryptedContent,
                      newIsEncrypted, newIcon, newHorizontalPadding, nowStr, id]
                 );
+            }
+
+            // [보안] 콘텐츠 저장 후 자동 파일 정리 수행
+            if (!newIsEncrypted && contentFromBody !== null) {
+                const newFiles = extractFilesFromPage({ content: contentFromBody });
+                // 이전에는 있었지만 새 콘텐츠에는 없는 파일들 찾기
+                const deletedFiles = oldFiles.filter(f => !newFiles.includes(f));
+                if (deletedFiles.length > 0) {
+                    // 현재 페이지를 제외한 다른 페이지의 참조만 확인하여 삭제
+                    cleanupOrphanedFiles(deletedFiles, userId, id).catch(e => console.error(e));
+                }
             }
 
             const page = {
@@ -961,6 +975,98 @@ module.exports = (dependencies) => {
     }
 
     /**
+     * 페이지에서 파일 URL 추출
+     */
+    function extractFilesFromPage(page) {
+        const files = [];
+        if (page.content) {
+            const fileRegex = /<div[^>]+data-type="file-block"[^>]+data-src=["']\/paperclip\/([^"']+)["']/g;
+            let match;
+            while ((match = fileRegex.exec(page.content)) !== null) {
+                files.push(match[1]); // "userId/filename.ext"
+            }
+        }
+        return files;
+    }
+
+    /**
+     * 고립된 파일 삭제 (다른 페이지에서 참조하지 않는 파일만)
+     */
+    async function cleanupOrphanedFiles(filePaths, userId, excludePageId = null) {
+        if (!filePaths || filePaths.length === 0) return;
+
+        for (const filePath of filePaths) {
+            try {
+                const parts = filePath.split('/');
+                if (parts.length !== 2) continue;
+
+                const [fileUserId, filename] = parts;
+                const fileUserIdNum = parseInt(fileUserId, 10);
+                if (!Number.isFinite(fileUserIdNum) || fileUserIdNum !== userId) continue;
+
+                // 본인 페이지를 제외하고 다른 페이지에서 사용 중인지 확인
+                let query = `SELECT COUNT(*) as count FROM pages WHERE content LIKE ?`;
+                let params = [`%/paperclip/${filePath}%` || ''];
+                
+                if (excludePageId) {
+                    query += ` AND id != ?`;
+                    params.push(excludePageId);
+                }
+
+                const [rows] = await pool.execute(query, params);
+
+                if (rows[0].count === 0) {
+                    const fullPath = path.join(__dirname, '..', 'paperclip', fileUserId, filename);
+                    if (fs.existsSync(fullPath)) {
+                        fs.unlinkSync(fullPath);
+                        console.log(`[보안] 참조 없는 파일 삭제 성공: ${fullPath}`);
+                    }
+                } else {
+                    console.log(`[보안] 파일 삭제 건너뜀 (다른 페이지에서 사용 중): ${filePath}`);
+                }
+            } catch (err) {
+                console.error(`파일 정리 중 오류 (${filePath}):`, err);
+            }
+        }
+    }
+
+    /**
+     * 파일 블록 파일 삭제 요청
+     * DELETE /api/pages/:id/file-cleanup
+     */
+    router.delete("/:id/file-cleanup", authMiddleware, async (req, res) => {
+        const pageId = req.params.id;
+        const userId = req.user.id;
+        const { fileUrl } = req.body;
+
+        if (!fileUrl) return res.status(400).json({ error: "파일 URL이 필요합니다." });
+
+        try {
+            // 권한 확인
+            const [rows] = await pool.execute(
+                `SELECT collection_id FROM pages WHERE id = ?`,
+                [pageId]
+            );
+            if (!rows.length) return res.status(404).json({ error: "페이지 없음" });
+
+            const { permission } = await getCollectionPermission(rows[0].collection_id, userId);
+            if (!permission || permission === 'READ') return res.status(403).json({ error: "권한 없음" });
+
+            // URL에서 경로 추출 (/paperclip/1/abc.txt -> 1/abc.txt)
+            const filePathMatch = fileUrl.match(/\/paperclip\/(.+)$/);
+            if (filePathMatch) {
+                // 현재 페이지(pageId)를 제외하고 검색하여 삭제 수행
+                await cleanupOrphanedFiles([filePathMatch[1]], userId, pageId);
+            }
+
+            res.json({ success: true });
+        } catch (error) {
+            logError("DELETE /api/pages/:id/file-cleanup", error);
+            res.status(500).json({ error: "파일 삭제 처리 실패" });
+        }
+    });
+
+    /**
      * 페이지 삭제 (EDIT 이상 권한 필요)
      * DELETE /api/pages/:id
      */
@@ -969,7 +1075,7 @@ module.exports = (dependencies) => {
         const userId = req.user.id;
 
         try {
-            // 페이지 정보 조회 (이미지 정리를 위해 content와 cover_image도 가져옴)
+            // 페이지 정보 조회 (이미지 및 파일 정리를 위해)
             const [rows] = await pool.execute(
                 `SELECT id, collection_id, content, cover_image FROM pages WHERE id = ?`,
                 [id]
@@ -987,8 +1093,9 @@ module.exports = (dependencies) => {
                 return res.status(403).json({ error: "페이지를 삭제할 권한이 없습니다." });
             }
 
-            // 페이지에서 사용된 이미지 추출
+            // 페이지에서 사용된 이미지 및 파일 추출
             const imageUrls = extractImagesFromPage(page);
+            const filePaths = extractFilesFromPage(page);
 
             // 페이지 삭제
             await pool.execute(
@@ -998,11 +1105,12 @@ module.exports = (dependencies) => {
 
             console.log("DELETE /api/pages/:id 삭제:", id);
 
-            // 고립된 이미지 정리 (비동기로 실행하여 응답 지연 방지)
+            // 고립된 리소스 정리 (비동기)
             if (imageUrls.length > 0) {
-                cleanupOrphanedImages(imageUrls, userId).catch(err => {
-                    console.error("이미지 정리 중 오류:", err);
-                });
+                cleanupOrphanedImages(imageUrls, userId).catch(e => console.error(e));
+            }
+            if (filePaths.length > 0) {
+                cleanupOrphanedFiles(filePaths, userId).catch(e => console.error(e));
             }
 
             res.json({ ok: true, removedId: id });
@@ -1359,6 +1467,88 @@ module.exports = (dependencies) => {
         } catch (error) {
             logError("POST /api/pages/:id/editor-image", error);
             res.status(500).json({ error: "이미지 업로드 실패" });
+        }
+    });
+
+    /**
+     * 파일 블록 파일 업로드
+     * POST /api/pages/:id/file
+     */
+    router.post("/:id/file", authMiddleware, fileUpload.single('file'), async (req, res) => {
+        const id = req.params.id;
+        const userId = req.user.id;
+
+        try {
+            // 권한 확인
+            const [rows] = await pool.execute(
+                `SELECT p.collection_id FROM pages p WHERE p.id = ?`,
+                [id]
+            );
+            if (!rows.length) {
+                // 파일이 이미 업로드되었으므로 삭제 (고아 파일 방지)
+                if (req.file) fs.unlinkSync(req.file.path);
+                return res.status(404).json({ error: "페이지를 찾을 수 없습니다." });
+            }
+
+            const { permission } = await getCollectionPermission(rows[0].collection_id, userId);
+            if (!permission || permission === 'READ') {
+                // 파일이 이미 업로드되었으므로 삭제
+                if (req.file) fs.unlinkSync(req.file.path);
+                return res.status(403).json({ error: "권한이 없습니다." });
+            }
+
+            if (!req.file) {
+                 return res.status(400).json({ error: "파일이 업로드되지 않았습니다." });
+            }
+
+            // 업로드된 파일 정보
+            const uploadedFilePath = req.file.path;
+            const uploadedFileName = req.file.filename;
+            const userFileDir = path.dirname(uploadedFilePath);
+
+            // 파일 해시 계산
+            const fileHash = await calculateFileHash(uploadedFilePath);
+
+            // 중복 파일 확인 (findDuplicateImage 함수 재사용 가능하지만 이름이...)
+            // findDuplicateImage는 해당 디렉토리의 모든 파일을 뒤지므로 파일도 체크 가능
+            const duplicateFileName = await findDuplicateImage(userFileDir, fileHash, uploadedFilePath);
+
+            let finalFileName;
+
+            if (duplicateFileName) {
+                // 중복 파일이 있으면 새 파일 삭제
+                fs.unlinkSync(uploadedFilePath);
+                finalFileName = duplicateFileName;
+                console.log("POST /api/pages/:id/file 중복 파일 발견, 기존 파일 사용:", finalFileName);
+            } else {
+                // 중복이 없으면 새 파일 사용
+                finalFileName = uploadedFileName;
+                console.log("POST /api/pages/:id/file 새 파일 업로드 완료:", finalFileName);
+            }
+
+            // 파일 URL 반환
+            // /paperclip/:userId/:filename
+            const fileUrl = `/paperclip/${userId}/${finalFileName}`;
+            
+            // 원본 파일명 (사용자에게 보여줄 이름) - 중복 시에는 기존 파일명(랜덤생성됨)을 쓰게 되는데...
+            // 블록에는 "사용자가 올린 원본 이름"을 보여주고 싶지만, 중복 처리 로직 때문에
+            // 물리적 파일명은 랜덤해시가 붙어있음.
+            // 하지만 클라이언트에서는 req.file.originalname을 알고 있으므로 그걸 쓰면 됨.
+            // 단, 중복 파일인 경우 req.file.originalname이 맞는지? 맞음. 방금 올린거니까.
+
+            res.json({ 
+                url: fileUrl, 
+                filename: req.file.originalname, 
+                size: req.file.size 
+            });
+
+        } catch (error) {
+            logError("POST /api/pages/:id/file", error);
+            // 에러 발생 시 파일 삭제 시도
+            if (req.file && fs.existsSync(req.file.path)) {
+                try { fs.unlinkSync(req.file.path); } catch (e) {}
+            }
+            res.status(500).json({ error: "파일 업로드 실패" });
         }
     });
 
