@@ -1041,6 +1041,10 @@ async function init() {
 
         // 에디터 초기화 (Yjs 동기화 준비 전)
         appState.editor = await initEditor(null);
+        const titleInput = document.querySelector("#page-title-input");
+        if (titleInput) {
+            titleInput.value = "시작하기 👋";
+        }
         initToolbarElements();
         bindToolbar(appState.editor);
         bindSlashKeyHandlers(appState.editor);
@@ -1152,6 +1156,17 @@ async function init() {
             // 모든 데이터 로드 완료 후 UI 한 번만 렌더링 (중복 호출 방지)
             if (collectionsResult.status === 'fulfilled' || pagesResult.status === 'fulfilled') {
                 renderPageList();
+
+                // 첫 번째 페이지 자동 로드 (암호화되지 않은 경우만)
+                if (appState.pages && appState.pages.length > 0) {
+                    // 첫 번째 루트 페이지 찾기
+                    const rootPages = appState.pages.filter(p => !p.parentId);
+                    const firstPage = rootPages.length > 0 ? rootPages[0] : appState.pages[0];
+                    
+                    if (!firstPage.isEncrypted) {
+                        loadPage(firstPage.id);
+                    }
+                }
             }
         } catch (error) {
             console.error('초기화 중 오류:', error);

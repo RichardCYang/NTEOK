@@ -1,3 +1,56 @@
+// 예제 콘텐츠
+export const EXAMPLE_CONTENT = `
+    <h1>NTEOK에 오신 것을 환영합니다! 👋</h1>
+    <p>NTEOK은 지능형 블록 기반 협업 에디터입니다. 아래 예제를 통해 다양한 블록의 사용법을 익혀보세요.</p>
+
+    <div data-type="callout-block" data-callout-type="info" data-content="슬래시(/) 키를 눌러 다양한 블록을 빠르게 추가할 수 있습니다!"></div>
+
+    <h2>1. 기본 텍스트 및 서식</h2>
+    <p>텍스트를 드래그하여 <strong>굵게</strong>, <em>기울임</em>, <s>취소선</s>, <code>코드</code> 등 다양한 서식을 적용할 수 있습니다. 폰트와 <span style="color: #ef4444">색상</span>도 자유롭게 변경해 보세요.</p>
+
+    <h2>2. 목록과 작업</h2>
+    <ul data-type="taskList">
+        <li data-checked="true"><p>에디터 사용법 익히기</p></li>
+        <li data-checked="false"><p>첫 페이지 생성하기</p></li>
+        <li data-checked="false"><p>친구 초대하기</p></li>
+    </ul>
+
+    <div data-type="toggle-block" data-title="더 자세한 내용 보기 (토글)" data-is-open="true">
+        <div class="toggle-content">
+            <p>토글 블록을 사용하여 복잡한 내용을 숨기고 필요할 때만 펼쳐볼 수 있습니다.</p>
+        </div>
+    </div>
+
+    <h2>3. 표와 수식</h2>
+    <table>
+        <tbody>
+            <tr>
+                <th style="background-color: #f3f4f6"><p>기능</p></th>
+                <th style="background-color: #f3f4f6"><p>설명</p></th>
+            </tr>
+            <tr>
+                <td><p>실시간 동기화</p></td>
+                <td><p>다른 사용자와 동시에 편집 가능</p></td>
+            </tr>
+            <tr>
+                <td><p>E2EE</p></td>
+                <td><p>강력한 종단간 암호화 지원</p></td>
+            </tr>
+        </tbody>
+    </table>
+
+    <p>수학 수식도 지원합니다: <span data-type="math-inline" data-latex="E = mc^2"></span></p>
+
+    <div data-type="math-block" data-latex="\\int_{a}^{b} x^2 dx = \\frac{b^3 - a^3}{3}"></div>
+
+    <h2>4. 멀티미디어 및 링크</h2>
+    <div data-type="bookmark-container" data-title="유용한 링크" data-icon="🔖">
+        <div data-type="bookmark-block" data-url="https://github.com/nteok" data-title="NTEOK GitHub" data-description="프로젝트 소스 코드를 확인하세요." data-thumbnail=""></div>
+    </div>
+
+    <p>이 외에도 <strong>보드 뷰</strong>, <strong>이미지</strong>, <strong>YouTube</strong> 등 다양한 블록을 활용해 보세요!</p>
+`;
+
 /**
  * Tiptap 에디터 모듈
  * 에디터 초기화, 툴바, 슬래시 명령 등을 관리
@@ -1156,7 +1209,7 @@ export function initEditor() {
             YoutubeBlock,
             DragHandle,
         ],
-        content: "<p>불러오는 중...</p>",
+        content: EXAMPLE_CONTENT,
         onSelectionUpdate() {
             updateToolbarState(editor);
             // 문서 변경 없이 커서만 이동해도(←/→ 클릭 이동) 메뉴 컨텍스트가 깨지면 닫혀야 함

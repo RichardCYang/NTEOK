@@ -124,7 +124,7 @@ module.exports = (dependencies) => {
         const sanitizedContent = sanitizeInput(content.trim());
         // guestName은 비로그인 시 필수일 수도, 아닐 수도 있지만
         // 여기서는 비로그인 시 guestName이 없으면 '익명' 처리하거나 클라이언트에서 받음.
-        // Notion 스타일은 보통 로그인 유도하지만, 요구사항에 따라 유연하게.
+        // 블록 기반 에디터 스타일은 보통 로그인 유도하지만, 요구사항에 따라 유연하게.
         const sanitizedGuestName = guestName ? sanitizeInput(guestName.trim()) : 'Guest';
 
         try {
@@ -148,7 +148,7 @@ module.exports = (dependencies) => {
                     canComment = true;
                 } else {
                     const { permission } = await getCollectionPermission(page.collection_id, userId);
-                    // READ 권한만 있어도 댓글 작성 허용 (Notion 스타일)
+                    // READ 권한만 있어도 댓글 작성 허용
                     if (permission) {
                         canComment = true;
                     }

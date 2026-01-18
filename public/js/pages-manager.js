@@ -8,6 +8,7 @@ import { startPageSync, stopPageSync, startCollectionSync, stopCollectionSync, f
 import { showCover, hideCover, updateCoverButtonsVisibility } from './cover-manager.js';
 import { checkPublishStatus, updatePublishButton } from './publish-manager.js';
 import { loadAndRenderSubpages, onEditModeChange } from './subpages-manager.js';
+import { EXAMPLE_CONTENT } from './editor.js';
 
 // 전역 상태 (app.js에서 전달받음)
 let state = {
@@ -72,7 +73,11 @@ export async function fetchPageList() {
 
         if (!state.pages.length) {
             if (state.editor) {
-                state.editor.commands.setContent("<p>새 페이지를 만들어보자.</p>", { emitUpdate: false });
+                state.editor.commands.setContent(EXAMPLE_CONTENT, { emitUpdate: false });
+                const titleInput = document.querySelector("#page-title-input");
+                if (titleInput) {
+                    titleInput.value = "시작하기 👋";
+                }
             }
         }
     } catch (error) {
