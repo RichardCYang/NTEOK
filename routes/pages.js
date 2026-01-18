@@ -39,7 +39,8 @@ module.exports = (dependencies) => {
         fileUpload,
         outboundFetchLimiter,
         path,
-        fs
+        fs,
+        yjsDocuments
     } = dependencies;
 
     const ALLOWED_PROTOCOLS = new Set(["http:", "https:"]);
@@ -614,25 +615,25 @@ module.exports = (dependencies) => {
             // [보안] 콘텐츠 변경 전, 기존에 포함되어 있던 파일 목록 추출 (자동 정리를 위해)
             const oldFiles = existing.is_encrypted ? [] : extractFilesFromPage(existing);
 
-            if (isBecomingEncrypted) {
-                await pool.execute(
-                    `UPDATE pages
-                     SET title = ?, content = ?, encryption_salt = ?, encrypted_content = ?,
-                         is_encrypted = ?, icon = ?, horizontal_padding = ?, updated_at = ?
-                     WHERE id = ?`,
-                    [newTitle, newContent, newEncryptionSalt, newEncryptedContent,
-                     newIsEncrypted, newIcon, newHorizontalPadding, nowStr, id]
-                );
-            } else {
-                await pool.execute(
-                    `UPDATE pages
-                     SET title = ?, content = ?, encryption_salt = ?, encrypted_content = ?,
-                         is_encrypted = ?, icon = ?, horizontal_padding = ?, updated_at = ?
-                     WHERE id = ?`,
-                    [newTitle, newContent, newEncryptionSalt, newEncryptedContent,
-                     newIsEncrypted, newIcon, newHorizontalPadding, nowStr, id]
-                );
+            let updateSql = `UPDATE pages
+                 SET title = ?, content = ?, encryption_salt = ?, encrypted_content = ?,
+                     is_encrypted = ?, icon = ?, horizontal_padding = ?, updated_at = ?`;
+            const updateParams = [newTitle, newContent, newEncryptionSalt, newEncryptedContent,
+                 newIsEncrypted, newIcon, newHorizontalPadding, nowStr];
+
+            // 콘텐츠가 변경된 경우 yjs_state 초기화 (재동기화 유도)
+            if (contentFromBody !== null) {
+                updateSql += `, yjs_state = NULL`;
+                // 서버 메모리 캐시도 제거하여 다음 연결 시 DB에서 다시 로드하도록 유도
+                if (yjsDocuments && yjsDocuments.has(id)) {
+                    yjsDocuments.delete(id);
+                }
             }
+
+            updateSql += ` WHERE id = ?`;
+            updateParams.push(id);
+
+            await pool.execute(updateSql, updateParams);
 
             // [보안] 콘텐츠 저장 후 자동 파일 정리 수행
             if (!newIsEncrypted && contentFromBody !== null) {
