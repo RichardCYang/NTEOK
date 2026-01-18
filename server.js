@@ -18,7 +18,11 @@ const certManager = require("./cert-manager");
 const multer = require("multer");
 const fs = require("fs");
 const compression = require("compression");
+const { installDomPurifySecurityHooks } = require("./security-utils");
 const ipKeyGenerator = expressRateLimit.ipKeyGenerator || (expressRateLimit.default && expressRateLimit.default.ipKeyGenerator);
+
+// DOMPurify 보안 훅 설치 (target=_blank에 rel=noopener/noreferrer 강제 등)
+installDomPurifySecurityHooks(DOMPurify);
 
 if (typeof ipKeyGenerator !== "function")
 	throw new Error("express-rate-limit의 ipKeyGenerator를 찾지 못했습니다. 라이브러리 버전을 확인해 주세요.");

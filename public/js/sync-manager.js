@@ -3,7 +3,8 @@
  * 실시간 협업 편집을 위한 클라이언트 측 동기화 로직
  */
 
-import * as Y from 'yjs'
+import * as Y from 'yjs';
+import DOMPurify from 'dompurify';
 import { Awareness, encodeAwarenessUpdate, applyAwarenessUpdate, removeAwarenessStates } from 'y-protocols/awareness';
 import { ySyncPlugin, yCursorPlugin, yUndoPlugin, undo, redo, prosemirrorToYXmlFragment } from 'y-prosemirror';
 import { keymap } from 'prosemirror-keymap';
@@ -11,6 +12,34 @@ import { DOMParser } from 'prosemirror-model';
 import { escapeHtml, showErrorInEditor, syncPageUpdatedAtPadding } from './ui-utils.js';
 import { showCover, hideCover } from './cover-manager.js';
 import { renderPageList } from './pages-manager.js';
+
+// 보안: 협업/메타데이터 HTML 스냅샷은 절대 신뢰하지 않기
+// - WebSocket/Yjs 업데이트는 클라이언트를 우회해 임의 HTML을 주입할 수 있음
+// - setContent()는 HTML을 파싱해 DOM을 만들므로, 반드시 DOMPurify로 정화 후 적용
+const PURIFY_CONFIG = {
+	ALLOWED_TAGS: [
+		'p','br','strong','em','u','s','code','pre',
+		'h1','h2','h3','h4','h5','h6',
+		'ul','ol','li','blockquote',
+		'a','span','div','hr',
+		'table','thead','tbody','tr','th','td',
+		'img','figure',
+		'label','input'
+	],
+	ALLOWED_ATTR: [
+		'style','class','href','target','rel','data-type','data-latex','colspan','rowspan','colwidth',
+		'src','alt','data-src','data-alt','data-caption','data-width','data-align','data-url','data-title',
+		'data-description','data-thumbnail','data-id','data-icon','data-checked','type','checked',
+		'data-callout-type','data-content','data-columns'
+	],
+	ALLOW_DATA_ATTR: false,
+	ALLOWED_URI_REGEXP: /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|cid|xmpp):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i
+};
+
+function sanitizeEditorHtml(html) {
+	if (!html || typeof html !== 'string') return html;
+	return DOMPurify.sanitize(html, PURIFY_CONFIG);
+}
 
 // 전역 상태
 let ws = null;
@@ -401,7 +430,7 @@ export function syncEditorFromMetadata() {
 				state.editor._syncIsUpdating = true;
 				try
 				{
-					state.editor.commands.setContent(content, { emitUpdate: false });
+					state.editor.commands.setContent(sanitizeEditorHtml(content), { emitUpdate: false });
 				}
 				finally
 				{
@@ -936,7 +965,7 @@ function setupEditorBindingWithXmlFragment() {
 	const htmlSnapshot = yMetadata.get('content');
 	const fragEmpty = (yXmlFragment.toJSON?.() ?? []).length === 0;
 	if (fragEmpty && typeof htmlSnapshot === 'string' && htmlSnapshot.trim())
-		editor.commands.setContent(htmlSnapshot, { emitUpdate: true });
+		editor.commands.setContent(sanitizeEditorHtml(htmlSnapshot), { emitUpdate: true });
 
 	// 저장용 스냅샷(HTML)만 yMetadata에 유지 (서버 저장 로직 호환)
 	editor.off?.('update', editor._snapshotHandler);
