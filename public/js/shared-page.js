@@ -1,7 +1,4 @@
-import { escapeHtml } from './ui-utils.js';
-import { loadAndRenderComments, initCommentsManager } from './comments-manager.js';
-
-import { escapeHtml } from './ui-utils.js';
+import { escapeHtml, addIcon } from './ui-utils.js';
 import { loadAndRenderComments, initCommentsManager } from './comments-manager.js';
 
 /**
@@ -56,7 +53,11 @@ function renderBookmarkContainer(element) {
 
     const iconEl = document.createElement('div');
     iconEl.className = 'bookmark-container-icon';
-    iconEl.textContent = icon;
+    if (icon && icon.includes('fa-')) {
+        addIcon(iconEl, icon);
+    } else {
+        iconEl.textContent = icon;
+    }
 
     const titleEl = document.createElement('div');
     titleEl.className = 'bookmark-container-title';
@@ -246,7 +247,11 @@ function renderCheckboxes(container) {
         // 아이콘 표시
         if (data.icon) {
             const iconEl = document.getElementById('page-icon');
-            iconEl.textContent = data.icon;
+            if (data.icon.includes('fa-')) {
+                addIcon(iconEl, data.icon);
+            } else {
+                iconEl.textContent = data.icon;
+            }
             iconEl.style.display = 'inline';
         }
 

@@ -492,7 +492,11 @@ export const BookmarkContainerBlock = Node.create({
 
             const icon = document.createElement('span');
             icon.className = 'bookmark-container-icon';
-            icon.textContent = node.attrs.icon;
+            if (node.attrs.icon && node.attrs.icon.includes('fa-')) {
+                addIcon(icon, node.attrs.icon);
+            } else {
+                icon.textContent = node.attrs.icon;
+            }
             icon.contentEditable = 'false';  // 아이콘은 항상 편집 불가
             icon.style.marginRight = '6px';
 
@@ -651,7 +655,7 @@ export const BookmarkContainerBlock = Node.create({
 
                 // 외부 클릭 시 팝업 닫기
                 const closePopup = (e) => {
-                    if (!popup.contains(e.target) && e.target !== icon) {
+                    if (!popup.contains(e.target) && !icon.contains(e.target)) {
                         popup.remove();
                         document.removeEventListener('click', closePopup);
                     }
@@ -873,7 +877,11 @@ export const BookmarkContainerBlock = Node.create({
                     // 편집 중이 아닐 때만 제목과 아이콘 업데이트
                     if (!isEditingTitle) {
                         title.textContent = updatedNode.attrs.title || '북마크 컬렉션';
-                        icon.textContent = updatedNode.attrs.icon;
+                        if (updatedNode.attrs.icon && updatedNode.attrs.icon.includes('fa-')) {
+                            addIcon(icon, updatedNode.attrs.icon);
+                        } else {
+                            icon.textContent = updatedNode.attrs.icon;
+                        }
                     }
 
                     updateUI();
