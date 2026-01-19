@@ -959,6 +959,12 @@ module.exports = (dependencies) => {
 
 				const [imgUserId, filename] = parts;
 
+                // 보안: 파일명에 경로 탐색(..)이나 백슬래시(\)가 포함된 경우 차단 (Windows 경로 순회 방지)
+                if (filename.includes('..') || filename.includes('\\')) {
+                    console.warn(`[보안] 유효하지 않은 이미지 파일명 감지: ${filename}`);
+                    continue;
+                }
+
 				// 소유자(업로드 사용자) 외에는 파일 삭제 금지
                 const imgUserIdNum = parseInt(imgUserId, 10);
                 if (!Number.isFinite(imgUserIdNum) || imgUserIdNum !== userId)
@@ -1027,6 +1033,13 @@ module.exports = (dependencies) => {
                 if (parts.length !== 2) continue;
 
                 const [fileUserId, filename] = parts;
+
+                // 보안: 파일명에 경로 탐색(..)이나 백슬래시(\)가 포함된 경우 차단 (Windows 경로 순회 방지)
+                if (filename.includes('..') || filename.includes('\\')) {
+                    console.warn(`[보안] 유효하지 않은 파일명 감지: ${filename}`);
+                    continue;
+                }
+
                 const fileUserIdNum = parseInt(fileUserId, 10);
                 if (!Number.isFinite(fileUserIdNum) || fileUserIdNum !== userId) continue;
 
