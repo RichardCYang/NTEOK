@@ -167,6 +167,93 @@ Login with default admin account and change password:
 
 ---
 
+## HTTPS Auto Certificate Setup
+
+NTEOK automatically issues and manages HTTPS certificates by integrating DuckDNS with Let's Encrypt.
+
+### Features
+
+- ✅ **Auto Certificate Issuance**: Let's Encrypt DNS-01 Challenge
+- ✅ **Auto Renewal**: Automatic renewal 30 days before expiration (24-hour interval check)
+- ✅ **DuckDNS Integration**: TXT record-based domain validation
+- ✅ **HTTP/HTTPS Auto Switching**: Automatically select protocol based on configuration
+- ✅ **Pure npm Libraries**: No external daemons like Certbot required
+
+### Setup Instructions
+
+#### 1. Create DuckDNS Account
+
+1. Visit [DuckDNS](https://www.duckdns.org) and create an account
+2. Register your desired domain (e.g., `mynteok.duckdns.org`)
+3. Connect your server's public IP address to the domain
+4. Copy your API token
+
+#### 2. Environment Variables Setup
+
+Add the following to `.env` file:
+
+```bash
+# DuckDNS domain (must end with .duckdns.org)
+DUCKDNS_DOMAIN=mynteok.duckdns.org
+
+# DuckDNS API token
+DUCKDNS_TOKEN=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+
+# Let's Encrypt certificate email (optional)
+CERT_EMAIL=admin@example.com
+
+# HTTPS port (default: 3000, recommended: 443)
+PORT=443
+
+# HTTP → HTTPS auto redirect (optional)
+ENABLE_HTTP_REDIRECT=true
+```
+
+#### 3. Run Server
+
+```bash
+npm start
+```
+
+Server startup automatically performs:
+
+1. **Check existing certificate**: Reuse if valid certificate exists
+2. **Issue certificate**: Request new certificate from Let's Encrypt if missing or expired
+3. **DNS Challenge**: Set TXT record via DuckDNS API
+4. **Start HTTPS server**: Run HTTPS server with issued certificate
+
+#### 4. Certificate Storage Location
+
+Issued certificates are stored in `certs/` directory:
+
+```
+certs/
+├── account-key.pem       # ACME account private key
+├── domain-key.pem        # Domain private key
+├── certificate.pem       # Certificate
+├── fullchain.pem         # Full chain (certificate + intermediate)
+└── chain.pem             # Intermediate certificate chain
+```
+
+### Important Notes
+
+- **Public IP Required**: Let's Encrypt DNS Challenge only works with public IPs
+- **Domain Format**: DuckDNS domain must end with `.duckdns.org`
+- **Port Permissions**: Admin rights may be required when using ports 80/443
+- **DNS Propagation Time**: First certificate issuance takes approximately 2-3 minutes
+- **Auto Renewal**: Certificate automatically renews 30 days before expiration if server is running
+
+### Fallback Mode
+
+If HTTPS certificate issuance fails, it automatically falls back to HTTP mode:
+
+```
+❌ HTTPS certificate issuance failed. Falling back to HTTP mode.
+⚠️  NTEOK app running on HTTP: http://localhost:3000
+```
+
+---
+
 ## API Endpoints
 
 ### Authentication
@@ -362,6 +449,23 @@ NTEOK/
 ## Keywords
 
 note-taking app, markdown editor, web notes, E2EE, end-to-end encryption, encrypted notes, self-hosted, open-source notes, Node.js note app, MySQL note app, collaborative notes, shared notes, Tiptap editor, two-factor authentication, TOTP, Passkey, WebAuthn, real-time synchronization, backup/restore, responsive note app, web-based notes, personal note server, privacy-focused notes, secure notes, cover images, Yjs
+
+---
+
+---
+
+## Recent Security Patches and Updates
+
+### 2026-01-19 Security Patches
+
+- **Arbitrary File Deletion Vulnerability Fixed** - Enhanced file system access control
+- **SVG Script Execution Vulnerability Prevention** - SVG format forbidden during image upload
+- **CDN/ESM Module Integrity Verification** - Added SRI (Subresource Integrity) to defend against supply chain attacks
+- **Theme File Upload Validation Enhanced** - Implemented duplicate validation logic
+
+### 2026-01-18 Bug Fixes
+
+- Restored bookmark information saving functionality
 
 ---
 
