@@ -172,6 +172,31 @@ module.exports = (dependencies) => {
     }
 
     /**
+     * 보안: 허용 목록 + 프록시 이미지의 시그니처 확인
+     * NOTE: 다양한 환경에서 SVG(image/svg+xml)는 실행이 가능할 수 있는 위험이 있음 (예: 문서를 열람할 때 등)
+     * 동일 origin 프록시 엔드포인트에서는 이러한 점이 XSS 공격 벡터가 될 수 있음 -> 이러한 상황을 방지하기 위해
+     * 오직 레스터 이미지와 파일 시그니처가 확인된 이미지만 허용하도록 함 (매직 바이트)
+     */
+    function detectSafeRasterImageMime(buf) {
+        if (!buf) return null;
+        const b = Buffer.isBuffer(buf) ? buf : Buffer.from(buf);
+
+        // JPEG: FF D8 FF
+        if (b.length >= 3 && b[0] === 0xFF && b[1] === 0xD8 && b[2] === 0xFF) return 'image/jpeg';
+
+        // PNG: 89 50 4E 47 0D 0A 1A 0A
+        if (b.length >= 8 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4E && b[3] === 0x47 && b[4] === 0x0D && b[5] === 0x0A && b[6] === 0x1A && b[7] === 0x0A) return 'image/png';
+
+        // GIF: GIF87a or GIF89a
+        if (b.length >= 6 && b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x38 && (b[4] === 0x37 || b[4] === 0x39) && b[5] === 0x61) return 'image/gif';
+
+        // WebP: RIFF....WEBP
+        if (b.length >= 12 && b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46 && b[8] === 0x57 && b[9] === 0x45 && b[10] === 0x42 && b[11] === 0x50) return 'image/webp';
+
+        return null;
+    }
+
+    /**
      * 사용자 업로드 커버 이미지 목록 조회
      * GET /api/pages/covers/user
      */
@@ -1008,7 +1033,7 @@ module.exports = (dependencies) => {
                 // 본인 페이지를 제외하고 다른 페이지에서 사용 중인지 확인
                 let query = `SELECT COUNT(*) as count FROM pages WHERE content LIKE ?`;
                 let params = [`%/paperclip/${filePath}%` || ''];
-                
+
                 if (excludePageId) {
                     query += ` AND id != ?`;
                     params.push(excludePageId);
@@ -1530,17 +1555,17 @@ module.exports = (dependencies) => {
             // 파일 URL 반환
             // /paperclip/:userId/:filename
             const fileUrl = `/paperclip/${userId}/${finalFileName}`;
-            
+
             // 원본 파일명 (사용자에게 보여줄 이름) - 중복 시에는 기존 파일명(랜덤생성됨)을 쓰게 되는데...
             // 블록에는 "사용자가 올린 원본 이름"을 보여주고 싶지만, 중복 처리 로직 때문에
             // 물리적 파일명은 랜덤해시가 붙어있음.
             // 하지만 클라이언트에서는 req.file.originalname을 알고 있으므로 그걸 쓰면 됨.
             // 단, 중복 파일인 경우 req.file.originalname이 맞는지? 맞음. 방금 올린거니까.
 
-            res.json({ 
-                url: fileUrl, 
-                filename: req.file.originalname, 
-                size: req.file.size 
+            res.json({
+                url: fileUrl,
+                filename: req.file.originalname,
+                size: req.file.size
             });
 
         } catch (error) {
@@ -1691,50 +1716,24 @@ module.exports = (dependencies) => {
 				},
 			}, { maxRedirects: 0 });
 
-            // 이미지 타입 검증
-            let contentType = response.headers['content-type'] || 'image/jpeg';
+			// 보안: 프록시 이미지의 엄격한 허용 목록 (SVG 금지)
+            const dataBuf = Buffer.isBuffer(response.data) ? response.data : Buffer.from(response.data);
+            const detectedMime = detectSafeRasterImageMime(dataBuf);
 
-            // Content-Type이 이미지 타입인지 확인 (jpeg_s2, jpeg_s1 등 특수 확장자도 포함)
-            if (!contentType.startsWith('image/')) {
-                // 이미지 타입이 아니면, 버퍼의 매직 넘버로 확인
-                const buffer = response.data;
-                let detectedType = null;
-
-                // JPEG 매직 넘버: FF D8 FF
-                if (buffer[0] === 0xFF && buffer[1] === 0xD8 && buffer[2] === 0xFF) {
-                    detectedType = 'image/jpeg';
-                }
-                // PNG 매직 넘버: 89 50 4E 47
-                else if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4E && buffer[3] === 0x47) {
-                    detectedType = 'image/png';
-                }
-                // GIF 매직 넘버: 47 49 46
-                else if (buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46) {
-                    detectedType = 'image/gif';
-                }
-                // WebP 매직 넘버: 52 49 46 46 ... 57 45 42 50
-                else if (buffer[0] === 0x52 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x46 &&
-                         buffer[8] === 0x57 && buffer[9] === 0x45 && buffer[10] === 0x42 && buffer[11] === 0x50) {
-                    detectedType = 'image/webp';
-                }
-
-                if (detectedType) {
-                    contentType = detectedType;
-                    console.log(`[ProxyImage] Content-Type 자동 감지: ${contentType}`);
-                } else {
-                    return res.status(400).json({ error: "지원하지 않는 이미지 형식입니다." });
-                }
-            } else {
-                // Content-Type이 image/로 시작하면 그대로 사용
-                console.log(`[ProxyImage] Content-Type: ${contentType}`);
+            if (!detectedMime) {
+                // 레스터 이미지가 아닌 다른 모든 종류의 파일 금지
+                // (예: image/svg+xml 형식은 문서 열람 시, 스크립트를 실행시킬 수 있는 위험이 있음)
+                return res.status(400).json({ error: "지원하지 않는 이미지 형식입니다. (jpeg/png/gif/webp만 허용)" });
             }
 
             // 캐시 헤더 설정 (1시간)
             res.set('Cache-Control', 'public, max-age=3600');
-            res.set('Content-Type', contentType);
+            res.set('Content-Type', detectedMime);
+            res.set('X-Content-Type-Options', 'nosniff');
+            res.set('Content-Security-Policy', "default-src 'none'; sandbox");
+            res.set('Cross-Origin-Resource-Policy', 'same-origin');
 
-            res.send(response.data);
-
+            res.send(dataBuf);
         } catch (error) {
             logError("GET /api/pages/proxy/image", error);
             res.status(500).json({ error: "이미지 프록시 실패" });
@@ -1848,7 +1847,7 @@ module.exports = (dependencies) => {
                      WHERE page_id = ? AND is_active = 1`,
                     [allowComments ? 1 : 0, pageId]
                 );
-                
+
                 const url = `${process.env.BASE_URL || "https://localhost:3000"}/shared/page/${token}`;
                 return res.json({ ok: true, token, url, allowComments });
             }
