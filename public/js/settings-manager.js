@@ -53,10 +53,10 @@ export async function loadLanguage(lang) {
         const translations = await response.json();
         state.translations = translations;
         state.userSettings.language = lang;
-        
+
         // 설정 저장 (언어 변경 즉시 저장)
         localStorage.setItem("userSettings", JSON.stringify(state.userSettings));
-        
+
         applyTranslations();
         console.log(`Language loaded: ${lang}`);
     } catch (error) {
@@ -93,7 +93,7 @@ function applyTranslations() {
             el.placeholder = translations[key];
         }
     });
-    
+
     // 모드 토글 버튼 텍스트 업데이트 (동적 상태라 별도 처리 필요할 수 있음)
     updateModeToggleText();
 }
@@ -104,9 +104,9 @@ function applyTranslations() {
 function updateModeToggleText() {
     const modeBtn = document.querySelector('#mode-toggle-btn');
     if (modeBtn) {
-        const isReadMode = modeBtn.querySelector('span').textContent.includes(state.translations['mode_read'] || '읽기모드') || 
+        const isReadMode = modeBtn.querySelector('span').textContent.includes(state.translations['mode_read'] || '읽기모드') ||
                            modeBtn.querySelector('span').textContent.includes('읽기모드'); // 현재 텍스트 확인이 좀 애매하므로 상태 기반이 좋음.
-        
+
         // 하지만 app.js에서 상태를 관리하므로 여기서는 단순 번역 적용이 어려울 수 있음.
         // data-i18n을 동적으로 바꾸거나, app.js에서 모드 변경 시 data-i18n을 다시 적용해야 함.
         // 여기서는 일단 넘어감. app.js에서 모드 변경 로직을 수정하는 것이 좋음.
@@ -119,7 +119,7 @@ function updateModeToggleText() {
  */
 export function initSettingsManager(appState) {
     state = appState;
-    
+
     // appState에 없는 경우 초기값 설정 (기존 코드 호환성)
     if (!state.userSettings) {
         state.userSettings = {
@@ -131,7 +131,7 @@ export function initSettingsManager(appState) {
 
     loadSettings();
     applyTheme(state.userSettings.theme);
-    
+
     // 언어 로드
     const lang = state.userSettings.language || 'ko-KR';
     loadLanguage(lang);
@@ -163,7 +163,7 @@ export async function openSettingsModal() {
     if (defaultModeSelect) {
         defaultModeSelect.value = state.userSettings.defaultMode;
     }
-    
+
     if (languageSelect) {
         languageSelect.value = state.userSettings.language || 'ko-KR';
         // 이벤트 리스너 중복 방지 (간단하게 처리)
@@ -178,16 +178,20 @@ export async function openSettingsModal() {
             const { secureFetch } = await import('./ui-utils.js');
             const response = await secureFetch('/api/themes');
             const themes = await response.json();
-            
+
             themeSelect.innerHTML = '';
             themes.forEach(theme => {
                 const option = document.createElement('option');
-                option.value = theme.name;
-                option.textContent = theme.name;
+                // value에는 실제 파일을 가리키는 id를 사용
+                option.value = theme.id ?? theme.name;
+                option.textContent = theme.name ?? theme.id;
                 themeSelect.appendChild(option);
             });
 
-            themeSelect.value = state.userSettings.theme;
+            // 저장된 값이 목록에 없으면 안전하게 default로 폴백
+            const desired = state.userSettings.theme || 'default';
+            const has = Array.from(themeSelect.options).some(o => o.value === desired);
+            themeSelect.value = has ? desired : 'default';
         } catch (error) {
             console.error('테마 목록 로드 실패:', error);
         }
@@ -221,7 +225,7 @@ export async function saveSettings() {
     if (defaultModeSelect) {
         newSettings.defaultMode = defaultModeSelect.value;
     }
-    
+
     if (languageSelect) {
         newSettings.language = languageSelect.value;
         // 이미 onchange에서 저장했지만, 여기서도 명시적으로 업데이트
@@ -230,7 +234,7 @@ export async function saveSettings() {
     if (themeSelect) {
         const themeName = themeSelect.value;
         newSettings.theme = themeName;
-        
+
         // 서버에 테마 저장 시도
         try {
             await secureFetch('/api/themes/set', {
@@ -241,10 +245,10 @@ export async function saveSettings() {
         } catch (error) {
             console.error('서버 테마 저장 실패:', error);
         }
-        
+
         applyTheme(themeName);
     }
-    
+
     state.userSettings = newSettings;
     localStorage.setItem("userSettings", JSON.stringify(state.userSettings));
     console.log("설정 저장됨:", state.userSettings);
@@ -642,9 +646,8 @@ async function uploadTheme(file) {
 
         // 다시 테마 목록을 불러와서 UI에 반영
         await openSettingsModal();
-        
-        alert(`테마 '${result.theme.name}'이(가) 성공적으로 업로드되었습니다.`);
 
+        alert(`테마 '${(result.theme && result.theme.name) ? result.theme.name : '업로드한 테마'}'이(가) 성공적으로 업로드되었습니다.`);
     } catch (error) {
         console.error('테마 업로드 실패:', error);
         alert(`테마 업로드에 실패했습니다: ${error.message}`);

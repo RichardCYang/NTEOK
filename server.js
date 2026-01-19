@@ -1665,9 +1665,15 @@ const themeStorage = multer.diskStorage({
         cb(null, themesDir);
     },
     filename: (req, file, cb) => {
-        // Sanitize filename
-        const sanitizedFilename = path.basename(file.originalname, '.css').replace(/[^a-zA-Z0-9-]/g, '') + '.css';
-        cb(null, sanitizedFilename);
+		/**
+	 	 * 보안: 업로드 파일명 충돌로 기존 테마(예: default.css)를 덮어쓰는 취약점 방지
+	     * - 원본 파일명은 표시용으로만 쓰고, 실제 저장 파일명은 랜덤 suffix를 붙여 유일하게 만든다
+	     * - OWASP/PortSwigger 권고: 업로드 파일 rename하여 충돌/overwrite 방지
+	     */
+	    const rawBase = path.basename(file.originalname, path.extname(file.originalname));
+	    const safeBase = (rawBase || 'theme').replace(/[^a-zA-Z0-9-]/g, '').toLowerCase() || 'theme';
+	    const suffix = crypto.randomBytes(8).toString('hex'); // 16진수 문자
+	    cb(null, `${safeBase}-${suffix}.css`);
     }
 });
 
