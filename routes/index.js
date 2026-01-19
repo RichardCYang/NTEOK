@@ -1,6 +1,7 @@
 const express = require('express');
 const path = require('path');
 const router = express.Router();
+const fsNative = require('fs');
 
 /**
  * Static & Debug Routes
@@ -23,7 +24,7 @@ module.exports = (dependencies) => {
             }
 
             const nonce = res.locals?.cspNonce || "";
-            
+
             // 테마별 로딩 오버레이 스타일 정의
             let loadingStyle = '';
             if (theme === 'dark') {
@@ -43,6 +44,20 @@ module.exports = (dependencies) => {
             }
 
             let out = html.replace(/__CSP_NONCE__/g, nonce);
+
+            // Importmap integrity 주입: HTML 내 __IMPORTMAP_INTEGRITY__ 플레이스홀더를
+            // public/importmap-integrity.json 내용으로 치환 (없으면 빈 객체)
+            if (out.includes("__IMPORTMAP_INTEGRITY__")) {
+                try {
+                    const integrityPath = path.join(__dirname, "..", "public", "importmap-integrity.json");
+                    const raw = fsNative.readFileSync(integrityPath, "utf8");
+                    const integrityJson = (raw && raw.trim()) ? raw.trim() : "{}";
+                    out = out.replace(/__IMPORTMAP_INTEGRITY__/g, integrityJson);
+                } catch (e) {
+                    out = out.replace(/__IMPORTMAP_INTEGRITY__/g, "{}");
+                }
+            }
+
             // </head> 바로 앞에 테마 스타일 주입
             out = out.replace('</head>', `${loadingStyle}</head>`);
 
