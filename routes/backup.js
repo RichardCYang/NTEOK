@@ -71,6 +71,65 @@ module.exports = (dependencies) => {
         'default/img6.png'
 	];
 
+   	/**
+     * 보안: 백업 내보내기 하드닝 (경로 순회 / 임의 파일 포함 방지)
+     * 백업 내보내기(export)는 pages.content에서 /imgs/... 패턴을 수집해 서버 파일을 ZIP에 포함시키는 구조
+     * 이때 ../ 등 경로 조작이 허용되면 임의 서버 파일을 백업 ZIP으로 유출할 수 있음
+     * 따라서 내보내기 시 포함 가능한 파일을 아래로 강하게 제한:
+     * - 현재 사용자(userId) 디렉토리 아래에 있는 파일만
+     * - 허용된 이미지 확장자만
+     * - 심볼릭 링크 차단
+     */
+    const EXPORT_ALLOWED_IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
+
+    function normalizeUserImageRefForExport(raw, userId) {
+        if (typeof raw !== "string") return null;
+
+        // Windows 구분자 등 정규화
+        const s = raw.replace(/\\/g, "/").trim();
+        if (!s) return null;
+
+        // 경로 조작/이상치 차단
+        if (s.includes(String.fromCharCode(0)) || s.includes("..")) return null;
+        if (s.startsWith("/") || s.startsWith("~")) return null;
+
+        // "<userId>/<filename.ext>" 1-세그먼트만 허용
+        const m = s.match(/^(\d+)\/([A-Za-z0-9._-]{1,200}\.(?:png|jpe?g|gif|webp))$/i);
+        if (!m) return null;
+
+        const ownerId = Number(m[1]);
+        if (!Number.isFinite(ownerId) || ownerId !== userId) return null;
+
+        const filename = m[2];
+        if (path.basename(filename) !== filename) return null;
+
+        const ext = path.extname(filename).toLowerCase();
+        if (!EXPORT_ALLOWED_IMAGE_EXTENSIONS.has(ext)) return null;
+
+        return `${ownerId}/${filename}`;
+    }
+
+    function resolveSafeUserFilePath(rootDir, userId, filename) {
+        const baseDir = path.join(rootDir, String(userId));
+        const candidate = path.join(baseDir, filename);
+
+        const resolvedBase = path.resolve(baseDir) + path.sep;
+        const resolved = path.resolve(candidate);
+
+        // 경로 순회 방지 (루트 디렉토리 이탈 금지)
+        if (!resolved.startsWith(resolvedBase)) return null;
+
+        try {
+            const st = fs.lstatSync(resolved);
+            // 심볼릭 링크/디렉토리 등은 포함 금지
+            if (!st.isFile() || st.isSymbolicLink()) return null;
+        } catch (e) {
+            return null;
+        }
+
+        return resolved;
+    }
+
 	/**
 	* 백업 Import 보안 하드닝
 	* - ZIP Bomb / 리소스 고갈 방지 (엔트리 수/총 해제 용량/개별 해제 용량 제한)
@@ -423,22 +482,34 @@ ${JSON.stringify(pageMetadata, null, 2)}
 
             // 커버 이미지 수집
             for (const page of pages) {
-                if (page.cover_image) {
-                    // 기본 커버가 아닌 경우에만 추가
-                    if (!DEFAULT_COVERS.includes(page.cover_image)) {
-                        imagesToInclude.add(page.cover_image);
-                        console.log(`[커버 이미지 수집] ${page.title} -> ${page.cover_image}`);
-                    }
-                }
+				if (!page.cover_image) continue;
+
+				// 기본 커버는 포함하지 않음
+				if (DEFAULT_COVERS.includes(page.cover_image)) continue;
+
+				const normalized = normalizeUserImageRefForExport(page.cover_image, userId);
+				if (!normalized) {
+				    // 커버 이미지 경로가 유효하지 않으면 제외
+				    continue;
+				}
+
+				imagesToInclude.add(normalized);
+				console.log(`[커버 이미지 수집] ${page.title} -> ${normalized}`);
             }
 
             // 페이지 내용에서 이미지 수집
+            // - 정상 포맷: /imgs/<userId>/<filename.ext>
+            // - 쿼리스트링은 무시 (?:\?...) 허용
+            const imgRegex = /\/imgs\/(\d+)\/([A-Za-z0-9._-]{1,200}\.(?:png|jpe?g|gif|webp))(?:\?[^"'\s]*)?/gi;
+
             for (const page of pages) {
                 const content = page.content || '';
-                const imgRegex = /\/imgs\/([^"'\s]+)/g;
                 let match;
                 while ((match = imgRegex.exec(content)) !== null) {
-                    imagesToInclude.add(match[1]);
+                    const normalized = normalizeUserImageRefForExport(`${match[1]}/${match[2]}`, userId);
+                    // 유효한 이미지 참조만 포함
+                    if (normalized)
+                        imagesToInclude.add(normalized);
                 }
             }
 
@@ -516,17 +587,32 @@ ${JSON.stringify(pageMetadata, null, 2)}
             }
 
             // 6. 이미지 추가
-            for (const imagePath of imagesToInclude) {
-                const fullPath = path.join(__dirname, '..', 'covers', imagePath);
-                if (fs.existsSync(fullPath)) {
-                    archive.file(fullPath, { name: `images/${imagePath}` });
-                } else {
-                    // imgs 폴더에서도 확인
-                    const imgsPath = path.join(__dirname, '..', 'imgs', imagePath);
-                    if (fs.existsSync(imgsPath)) {
-                        archive.file(imgsPath, { name: `images/${imagePath}` });
-                    }
-                }
+            for (const imageRef of imagesToInclude) {
+                const normalized = normalizeUserImageRefForExport(imageRef, userId);
+
+                // 유효하지 않은 경로 제외
+                if (!normalized)
+                    continue;
+
+                const parts = normalized.split('/');
+                const ownerId = Number(parts[0]);
+                const filename = parts[1];
+
+                // covers 또는 imgs 아래의 해당 사용자 폴더만 허용
+                const coversRoot = path.join(__dirname, '..', 'covers');
+                const imgsRoot = path.join(__dirname, '..', 'imgs');
+
+                const coverPath = resolveSafeUserFilePath(coversRoot, ownerId, filename);
+                const imgPath = resolveSafeUserFilePath(imgsRoot, ownerId, filename);
+
+                const finalPath = coverPath || imgPath;
+
+                // 파일이 없으면 조용히 스킵
+                if (!finalPath)
+                    continue;
+
+                // ZIP 내부 경로도 안전한 값(정규화된 normalized)만 사용 (Zip Slip 방지)
+                archive.file(finalPath, { name: `images/${normalized}` });
             }
 
             // 7. 백업 정보 파일 추가
