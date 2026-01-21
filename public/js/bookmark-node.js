@@ -4,6 +4,7 @@
  */
 
 import { secureFetch, addIcon } from './ui-utils.js';
+import { sanitizeHttpHref } from './url-utils.js';
 
 const Node = Tiptap.Core.Node;
 
@@ -69,16 +70,19 @@ export const BookmarkBlock = Node.create({
     },
 
     renderHTML({ node, HTMLAttributes }) {
+        // Tiptap의 HTMLAttributes와 커스텀 속성을 병합하여 반환
         return [
             'div',
             {
                 ...HTMLAttributes,
                 'data-type': 'bookmark-block',
                 'class': 'bookmark-block',
-                'data-url': node.attrs.url,
-                'data-title': node.attrs.title,
-                'data-description': node.attrs.description,
-                'data-thumbnail': node.attrs.thumbnail
+                // 아래 속성들은 HTMLAttributes에 이미 포함되어 있을 수 있지만, 
+                // 명시적으로 한 번 더 확인하여 저장 보장
+                'data-url': node.attrs.url || '',
+                'data-title': node.attrs.title || '',
+                'data-description': node.attrs.description || '',
+                'data-thumbnail': node.attrs.thumbnail || ''
             }
         ];
     },
@@ -91,7 +95,9 @@ export const BookmarkBlock = Node.create({
             wrapper.contentEditable = 'false';
 
             let isEditing = false;
-            let currentUrl = node.attrs.url || '';
+            const rawInitialUrl = node.attrs.url || '';
+            // href로 사용 가능한 안전 URL만 보존
+            let currentUrl = sanitizeHttpHref(rawInitialUrl, { allowRelative: false }) || '';
             let currentMetadata = {
                 title: node.attrs.title || '',
                 description: node.attrs.description || '',
@@ -111,7 +117,13 @@ export const BookmarkBlock = Node.create({
                 // 북마크 카드 컨테이너
                 const card = document.createElement('a');
                 card.className = 'bookmark-card';
-                card.href = currentUrl;
+                // 혹시라도 currentUrl이 비어있으면 링크를 무력화
+                if (currentUrl) {
+                    card.href = currentUrl;
+                } else {
+                    card.href = '#';
+                    card.addEventListener('click', (e) => e.preventDefault());
+                }
                 card.target = '_blank';
                 card.rel = 'noopener noreferrer';
 
@@ -205,7 +217,8 @@ export const BookmarkBlock = Node.create({
                 input.type = 'url';
                 input.className = 'bookmark-url-input';
                 input.placeholder = 'URL을 입력하세요 (예: https://example.com)';
-                input.value = currentUrl;
+				// 편집 시에는 원문을 최대한 보존(단, 저장 시 sanitize)
+				input.value = node.attrs.url || currentUrl;
 
                 const buttonContainer = document.createElement('div');
                 buttonContainer.className = 'bookmark-button-container';
@@ -263,11 +276,10 @@ export const BookmarkBlock = Node.create({
                     return;
                 }
 
-                // URL 유효성 검사
-                try {
-                    new URL(url);
-                } catch (error) {
-                    alert('유효하지 않은 URL입니다.');
+                // http/https allowlist 검증 (+ 스킴 누락 시 https:// 보정)
+                const safeUrl = sanitizeHttpHref(url, { allowRelative: false });
+                if (!safeUrl) {
+                    alert('http/https URL만 허용됩니다.');
                     return;
                 }
 
@@ -289,7 +301,7 @@ export const BookmarkBlock = Node.create({
                         headers: {
                             'Content-Type': 'application/json'
                         },
-                        body: JSON.stringify({ url })
+                        body: JSON.stringify({ 'url':safeUrl })
                     });
 
                     if (!response.ok) {
@@ -312,18 +324,19 @@ export const BookmarkBlock = Node.create({
                     }
 
                     // 메타데이터 업데이트
-                    currentUrl = url;
+                    currentUrl = safeUrl;
                     currentMetadata = {
-                        title: data.metadata.title || url,
+                        title: data.metadata.title || safeUrl,
                         description: data.metadata.description || '',
                         thumbnail: data.metadata.thumbnail || ''
                     };
 
-                    // 에디터에 저장
+            // 에디터에 저장 (ProseMirror 트랜잭션 사용)
                     if (typeof getPos === 'function') {
                         const pos = getPos();
                         try {
                             const tr = editor.view.state.tr;
+                            // 노드의 속성을 새 메타데이터로 업데이트
                             tr.setNodeMarkup(pos, null, {
                                 url: currentUrl,
                                 title: currentMetadata.title,
@@ -377,6 +390,7 @@ export const BookmarkBlock = Node.create({
                     // 편집 중이 아닐 때만 업데이트
                     if (!isEditing) {
                         const newUrl = updatedNode.attrs.url || '';
+                        const safe = sanitizeHttpHref(newUrl, { allowRelative: false }) || '';
                         const newMetadata = {
                             title: updatedNode.attrs.title || '',
                             description: updatedNode.attrs.description || '',
@@ -384,11 +398,11 @@ export const BookmarkBlock = Node.create({
                         };
 
                         // 데이터가 실제로 변경되었을 때만 다시 렌더링
-                        if (currentUrl !== newUrl ||
+                        if (currentUrl !== safe ||
                             currentMetadata.title !== newMetadata.title ||
                             currentMetadata.description !== newMetadata.description ||
                             currentMetadata.thumbnail !== newMetadata.thumbnail) {
-                            currentUrl = newUrl;
+                            currentUrl = safe;
                             currentMetadata = newMetadata;
                             showBookmarkCard();
                         }
@@ -470,8 +484,8 @@ export const BookmarkContainerBlock = Node.create({
                 ...HTMLAttributes,
                 'data-type': 'bookmark-container',
                 'class': 'bookmark-container',
-                'data-title': node.attrs.title,
-                'data-icon': node.attrs.icon
+                'data-title': node.attrs.title || '',
+                'data-icon': node.attrs.icon || '🔖'
             },
             0  // 자식 노드 렌더링 위치
         ];

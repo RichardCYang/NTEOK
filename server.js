@@ -24,6 +24,36 @@ const ipKeyGenerator = expressRateLimit.ipKeyGenerator || (expressRateLimit.defa
 // DOMPurify 보안 훅 설치 (target=_blank에 rel=noopener/noreferrer 강제 등)
 installDomPurifySecurityHooks(DOMPurify);
 
+// DOMPurify 추가 방어: data-url/data-thumbnail 스킴 검증
+// 북마크 블록은 data-url/data-thumbnail에 URL을 저장했다가, 클라이언트에서 <a href> / 이미지 프록시로 승격
+// href/src는 DOMPurify가 기본적으로 URI 검증을 하지만, data-*는 보통 검증 대상이 아니라서 별도 방어 필요
+const CONTROL_CHARS_RE = /[\u0000-\u001F\u007F]/;
+function isSafeHttpUrlOrRelative(value) {
+    if (typeof value !== "string") return false;
+    const v = value.trim();
+    if (!v) return false;
+    if (CONTROL_CHARS_RE.test(v)) return false;
+    if (v.startsWith("/") || v.startsWith("#")) return true; // 상대 URL 허용(필요 없으면 제거 가능)
+    try {
+        const u = new URL(v);
+        return u.protocol === "http:" || u.protocol === "https:";
+    } catch {
+        return false;
+    }
+}
+
+if (typeof DOMPurify?.addHook === "function") {
+    DOMPurify.addHook("uponSanitizeAttribute", (_node, hookEvent) => {
+        const name = String(hookEvent?.attrName || "").toLowerCase();
+        if (name === "data-url" || name === "data-thumbnail") {
+            if (!isSafeHttpUrlOrRelative(String(hookEvent.attrValue || ""))) {
+                hookEvent.keepAttr = false;
+                hookEvent.forceKeepAttr = false;
+            }
+        }
+    });
+}
+
 if (typeof ipKeyGenerator !== "function")
 	throw new Error("express-rate-limit의 ipKeyGenerator를 찾지 못했습니다. 라이브러리 버전을 확인해 주세요.");
 
@@ -369,7 +399,7 @@ function sanitizeHtmlContent(html) {
             'img', 'figure',
             'label', 'input'
         ],
-        ALLOWED_ATTR: ['style', 'class', 'href', 'target', 'rel', 'data-type', 'data-latex', 'colspan', 'rowspan', 'colwidth', 'src', 'alt', 'data-src', 'data-alt', 'data-caption', 'data-width', 'data-align', 'data-url', 'data-title', 'data-description', 'data-thumbnail', 'data-id', 'data-icon', 'data-checked', 'type', 'checked', 'data-callout-type', 'data-content', 'data-columns'],
+        ALLOWED_ATTR: ['style', 'class', 'href', 'target', 'rel', 'data-type', 'data-latex', 'colspan', 'rowspan', 'colwidth', 'src', 'alt', 'data-src', 'data-alt', 'data-caption', 'data-width', 'data-align', 'data-url', 'data-title', 'data-description', 'data-thumbnail', 'data-id', 'data-icon', 'data-checked', 'type', 'checked', 'data-callout-type', 'data-content', 'data-columns', 'data-is-open'],
         ALLOW_DATA_ATTR: true,
         ALLOWED_URI_REGEXP: /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|cid|xmpp):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i
     });

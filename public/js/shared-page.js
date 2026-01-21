@@ -1,12 +1,10 @@
+import { sanitizeHttpHref } from './url-utils.js';
 import { escapeHtml, addIcon } from './ui-utils.js';
 import { loadAndRenderComments, initCommentsManager } from './comments-manager.js';
 
 /**
  * 공개 페이지 스크립트
  */
-
-// 전역 상태
-const state = {
 
 /**
  * 북마크 블록 렌더링 함수
@@ -105,7 +103,15 @@ function renderBookmarkBlock(element) {
 function createBookmarkCard(bookmark) {
     const card = document.createElement('a');
     card.className = 'bookmark-card';
-    card.href = bookmark.url || '#';
+    const safeHref = sanitizeHttpHref(bookmark.url || '', { allowRelative: false });
+    if (safeHref) {
+        card.href = safeHref;
+    } else {
+        // 위험/비정상 URL이면 네비게이션 차단
+        card.href = '#';
+        card.classList.add('bookmark-disabled');
+        card.addEventListener('click', (e) => e.preventDefault());
+    }
     card.target = '_blank';
     card.rel = 'noopener noreferrer';
     card.style.color = 'inherit';
@@ -124,7 +130,7 @@ function createBookmarkCard(bookmark) {
 
     const urlContainer = document.createElement('div');
     urlContainer.className = 'bookmark-url';
-    urlContainer.textContent = bookmark.url || '';
+    urlContainer.textContent = safeHref || bookmark.url || '';
 
     textContainer.appendChild(titleElement);
     if (bookmark.description) {
@@ -140,8 +146,11 @@ function createBookmarkCard(bookmark) {
 
     if (bookmark.thumbnail) {
         const thumbnail = document.createElement('img');
-        const proxyUrl = `/api/pages/proxy/image?url=${encodeURIComponent(bookmark.thumbnail)}`;
-        thumbnail.src = proxyUrl;
+        const safeThumb = sanitizeHttpHref(bookmark.thumbnail, { allowRelative: false });
+        if (safeThumb) {
+            const proxyUrl = `/api/pages/proxy/image?url=${encodeURIComponent(safeThumb)}`;
+            thumbnail.src = proxyUrl;
+        }
         thumbnail.alt = bookmark.title || '';
 
         thumbnail.onload = () => {
