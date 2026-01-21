@@ -380,6 +380,33 @@ export const BookmarkBlock = Node.create({
                 showEditForm();
             }
 
+            // 편집 모드 변경 감지 로직
+            let lastIsEditable = editor.isEditable;
+            const checkEditable = () => {
+                if (editor.isEditable !== lastIsEditable) {
+                    lastIsEditable = editor.isEditable;
+                    // 편집 중이 아닐 때만 카드 다시 렌더링 (수정 버튼 표시 여부 업데이트)
+                    if (!isEditing) {
+                        showBookmarkCard();
+                    }
+                }
+            };
+
+            // 1. Transaction 이벤트 리스너 (상태 변경 감지)
+            editor.on('transaction', checkEditable);
+
+            // 2. MutationObserver (contenteditable 속성 변경 감지)
+            const observer = new MutationObserver(() => {
+                checkEditable();
+            });
+
+            if (editor.view && editor.view.dom) {
+                observer.observe(editor.view.dom, {
+                    attributes: true,
+                    attributeFilter: ['contenteditable']
+                });
+            }
+
             return {
                 dom: wrapper,
                 update: (updatedNode) => {
@@ -410,7 +437,11 @@ export const BookmarkBlock = Node.create({
                     return true;
                 },
                 stopEvent: () => true,
-                ignoreMutation: () => true
+                ignoreMutation: () => true,
+                destroy: () => {
+                    editor.off('transaction', checkEditable);
+                    observer.disconnect();
+                }
             };
         };
     },
@@ -864,21 +895,29 @@ export const BookmarkContainerBlock = Node.create({
             // 초기 상태로 UI 설정
             updateUI();
 
-            // 에디터 모드 변경 감지
-            const modeChangeHandler = () => {
-				let lastEditableState = editor.isEditable;
-	            // 비동기로 처리하여 editor.isEditable이 업데이트된 후에 실행
-				const timer = setInterval(() => {
-					if (lastEditableState != editor.isEditable) {
-						updateUI();
-						clearInterval(timer);
-						return;
-					}
-				}, 20);
+            // 편집 모드 변경 감지 로직
+            let lastIsEditable = editor.isEditable;
+            const checkEditable = () => {
+                if (editor.isEditable !== lastIsEditable) {
+                    lastIsEditable = editor.isEditable;
+                    updateUI();
+                }
             };
 
-            // update 이벤트만 감시 (selectionUpdate, transaction은 너무 자주 발생)
-            editor.on('update', modeChangeHandler);
+            // 1. Transaction 이벤트 리스너 (상태 변경 감지)
+            editor.on('transaction', checkEditable);
+
+            // 2. MutationObserver (contenteditable 속성 변경 감지 - 가장 확실한 방법)
+            const observer = new MutationObserver(() => {
+                checkEditable();
+            });
+
+            if (editor.view && editor.view.dom) {
+                observer.observe(editor.view.dom, {
+                    attributes: true,
+                    attributeFilter: ['contenteditable']
+                });
+            }
 
             return {
                 dom: wrapper,
@@ -925,7 +964,8 @@ export const BookmarkContainerBlock = Node.create({
                     return false;
                 },
                 destroy: () => {
-                    editor.off('update', modeChangeHandler);
+                    editor.off('transaction', checkEditable);
+                    observer.disconnect();
                 }
             };
         };
