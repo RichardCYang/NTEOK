@@ -2,6 +2,7 @@
  * 패스키 관리 모듈
  */
 
+import { escapeHtml } from './ui-utils.js';
 import { hideParentModalForChild, restoreParentModalFromChild } from './modal-parent-manager.js';
 
 // SimpleWebAuthn 동적 import
@@ -105,7 +106,7 @@ async function loadPasskeyList() {
                 <div>
                     <div style="font-weight: 500; font-size: 14px; color: #374151;">
                         <i class="fa-solid fa-key" style="margin-right: 8px; color: #2d5f5d;"></i>
-                        ${pk.deviceName}
+                        ${escapeHtml(pk.deviceName)}
                     </div>
                     <div style="font-size: 12px; color: #6b7280; margin-top: 4px;">
                         등록: ${new Date(pk.createdAt).toLocaleDateString('ko-KR')}
