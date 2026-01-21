@@ -1402,6 +1402,22 @@ export function bindToolbar(editor) {
         });
     }
 
+    // 보드 카드 포커스 추적을 위한 변수
+    let lastFocusedBoardCard = null;
+
+    // 툴바 버튼 클릭 시 포커스 해제 방지
+    toolbar.addEventListener("mousedown", (event) => {
+        const button = event.target.closest("button[data-command]");
+        if (button) {
+            // 보드 카드 내부 편집 중이라면 포커스 이동 방지
+            const activeCard = document.activeElement.closest('.board-card-content');
+            if (activeCard) {
+                lastFocusedBoardCard = activeCard;
+                event.preventDefault();
+            }
+        }
+    });
+
     toolbar.addEventListener("click", (event) => {
         const button = event.target.closest("button[data-command]");
         if (!button || !editor) return;
@@ -1409,6 +1425,72 @@ export function bindToolbar(editor) {
         const command = button.getAttribute("data-command");
         const colorValue = button.getAttribute("data-color");
         const fontFamilyValue = button.getAttribute("data-font-family");
+
+        // 보드 카드 내부 편집 중인지 확인 (현재 포커스 또는 마지막 포커스된 카드)
+        const activeCard = document.activeElement.closest('.board-card-content') || lastFocusedBoardCard;
+        
+        // 보드 카드 내부가 아니면 추적 변수 초기화
+        if (!document.activeElement.closest('.board-card-content')) {
+            lastFocusedBoardCard = null;
+        }
+
+        if (activeCard && ['bold', 'italic', 'strike', 'setColor', 'setFont', 'unsetColor', 'h1', 'h2', 'h3', 'h4', 'h5'].includes(command)) {
+            // 보드 카드 내부 편집 중이면 브라우저 기본 execCommand 사용
+            if (activeCard !== document.activeElement) {
+                activeCard.focus();
+            }
+
+            switch (command) {
+                case "bold":
+                    document.execCommand("bold", false, null);
+                    break;
+                case "italic":
+                    document.execCommand("italic", false, null);
+                    break;
+                case "strike":
+                    document.execCommand("strikethrough", false, null);
+                    break;
+                case "setColor":
+                    if (colorValue) document.execCommand("foreColor", false, colorValue);
+                    break;
+                case "unsetColor":
+                    document.execCommand("foreColor", false, "inherit"); 
+                    break;
+                case "setFont":
+                    if (fontFamilyValue) document.execCommand("fontName", false, fontFamilyValue);
+                    break;
+                case "h1":
+                    document.execCommand("formatBlock", false, "<h1>");
+                    break;
+                case "h2":
+                    document.execCommand("formatBlock", false, "<h2>");
+                    break;
+                case "h3":
+                    document.execCommand("formatBlock", false, "<h3>");
+                    break;
+                case "h4":
+                    document.execCommand("formatBlock", false, "<h4>");
+                    break;
+                case "h5":
+                    document.execCommand("formatBlock", false, "<h5>");
+                    break;
+            }
+            
+            // 드롭다운 닫기 처리
+            if (command === "setColor" || command === "unsetColor") {
+                if (colorMenuElement && colorDropdownElement) {
+                    colorMenuElement.setAttribute("hidden", "");
+                    colorDropdownElement.classList.remove("open");
+                }
+            }
+            if (command === "setFont") {
+                if (fontMenuElement && fontDropdownElement) {
+                    fontMenuElement.setAttribute("hidden", "");
+                    fontDropdownElement.classList.remove("open");
+                }
+            }
+            return;
+        }
 
         // 색상 드롭다운 토글
         if (command === "toggleColorDropdown") {

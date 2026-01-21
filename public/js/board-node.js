@@ -368,8 +368,10 @@ export const BoardBlock = Node.create({
                     column.cards.forEach(card => {
                         const cardEl = document.createElement('div');
                         cardEl.className = `board-card ${card.color ? 'color-' + card.color : ''}`;
-                        cardEl.draggable = editor.isEditable;
                         cardEl.dataset.cardId = card.id;
+
+                        // 카드 드래그 제어: 헤더를 잡았을 때만 드래그 가능하도록 설정
+                        cardEl.draggable = false; 
 
                         if (editor.isEditable) {
                             cardEl.ondragstart = (e) => {
@@ -380,6 +382,9 @@ export const BoardBlock = Node.create({
                                 draggedCardId = card.id;
                                 draggedFromColId = column.id;
                                 e.dataTransfer.effectAllowed = 'move';
+                                // 드래그 데이터 설정 (일부 브라우저 필수)
+                                e.dataTransfer.setData('text/plain', card.id);
+                                
                                 setTimeout(() => cardEl.classList.add('dragging'), 0);
                             };
                             cardEl.ondragend = () => {
@@ -392,7 +397,21 @@ export const BoardBlock = Node.create({
                         // 카드 상단 영역 (아이콘 + 도구 + 삭제 버튼)
                         const cardHeader = document.createElement('div');
                         cardHeader.className = 'board-card-header';
-                        cardHeader.style.display = 'flex';
+                        
+                        // 헤더 영역 표시 여부 결정: 편집 모드이거나 아이콘이 설정된 경우에만 표시
+                        const hasIcon = !!card.icon;
+                        if (!editor.isEditable && !hasIcon) {
+                            cardHeader.style.display = 'none';
+                        } else {
+                            cardHeader.style.display = 'flex';
+                        }
+                        
+                        // 헤더 영역에 마우스가 있을 때만 드래그 활성화 (편집 모드에서만)
+                        if (editor.isEditable) {
+                            cardHeader.onmouseenter = () => { cardEl.draggable = true; };
+                            cardHeader.onmouseleave = () => { cardEl.draggable = false; };
+                        }
+
                         cardHeader.style.justifyContent = 'space-between';
                         cardHeader.style.alignItems = 'flex-start';
                         cardHeader.style.marginBottom = '4px';
@@ -491,20 +510,32 @@ export const BoardBlock = Node.create({
                         const cardContent = document.createElement('div');
                         cardContent.className = 'board-card-content';
                         cardContent.contentEditable = editor.isEditable ? 'true' : 'false'; // 텍스트 편집 가능하게
-                        cardContent.textContent = card.content;
+                        cardContent.innerHTML = card.content; // rich text 지원을 위해 innerHTML 사용
 
                         // 카드 내용 수정 시 저장
                         if (editor.isEditable) {
+                            cardContent.onfocus = () => {
+                                // 툴바 표시
+                                const toolbar = document.querySelector('.editor-toolbar');
+                                if (toolbar) toolbar.classList.add('visible');
+                            };
+
                             cardContent.onblur = () => {
-                                const newContent = cardContent.textContent;
+                                const newContent = cardContent.innerHTML; // HTML 내용 저장
                                 if (newContent !== card.content) {
                                     card.content = newContent;
                                     saveData();
                                 }
                             };
-                            // Enter 키 방지 (줄바꿈 허용 여부에 따라 다름, 여기선 허용)
+                            // 키 입력 이벤트 처리
                             cardContent.onkeydown = (e) => {
-                                e.stopPropagation(); // 에디터의 이벤트 간섭 방지
+                                // Ctrl+B, Ctrl+I 등 기본 서식 단축키는 브라우저가 처리하도록 허용 (stopPropagation 안 함)
+                                if (e.ctrlKey || e.metaKey) {
+                                    if (['b', 'i', 'u', 's'].includes(e.key.toLowerCase())) {
+                                        return;
+                                    }
+                                }
+                                e.stopPropagation(); // 그 외 에디터의 이벤트 간섭 방지
                             };
                         }
 

@@ -2127,10 +2127,9 @@ body {
     border-radius: 4px;
     padding: 10px 12px;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-    cursor: grab;
+    cursor: default; /* 카드 전체는 기본 커서 */
     position: relative;
     transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s, background-color 0.2s;
-    min-height: 60px;
     display: flex;
     flex-direction: column;
 }
@@ -2155,33 +2154,39 @@ body {
     z-index: 10;
 }
 
-.board-card:hover {
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
-    transform: translateY(-2px);
-    z-index: 10;
-}
-
 .board-card.dragging {
     opacity: 0.5;
     transform: scale(1.05) !important;
 }
 
 .board-card-content {
-    font-size: 14px;
+    font-size: inherit;
     line-height: 1.6;
     color: var(--board-card-text); /* 테마 변수 적용 */
     outline: none;
     white-space: pre-wrap;
     word-break: break-word;
     flex: 1;
-    font-family: 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif;
+    font-family: inherit;
+    cursor: text; /* 컨텐츠 영역은 텍스트 커서 */
+}
+
+/* 헤더가 있을 때만 상단 여백 추가 */
+.board-card-header + .board-card-content {
+    margin-top: 4px;
 }
 
 .board-card-header {
     display: flex;
     justify-content: space-between;
     align-items: flex-start;
-    margin-bottom: 8px;
+    cursor: grab; /* 헤더 영역은 드래그 핸들 (grab 커서) */
+    padding: 4px;
+    border-radius: 4px;
+}
+
+.board-card-header:active {
+    cursor: grabbing;
 }
 
 .board-card-icon-btn, .board-card-color-btn {
