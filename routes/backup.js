@@ -23,6 +23,24 @@ if (!fs.existsSync(tempDir)) {
     fs.mkdirSync(tempDir, { recursive: true });
 }
 
+// 보안: ZIP Bomb / Decompression Bomb 방어용 제한값
+// OWASP 권고: 압축 해제 후 크기 및 내부 파일 수 제한 필요
+// - File Upload Cheat Sheet: 압축파일 처리 시 압축 해제 후 크기 고려 필요
+// - ASVS 논의: 최대 uncompressed size + 최대 files inside container 권고
+const MAX_BACKUP_ZIP_BYTES = 20 * 1024 * 1024;        	// 업로드 ZIP 자체 크기: 20MB
+const MAX_ZIP_ENTRIES = 2000;                         	// ZIP 내부 파일 개수 제한
+const MAX_ENTRY_UNCOMPRESSED_BYTES = 10 * 1024 * 1024;	// 엔트리 1개 압축해제 최대: 10MB
+const MAX_TOTAL_UNCOMPRESSED_BYTES = 200 * 1024 * 1024; // 전체 압축해제 최대: 200MB
+const MAX_SUSPICIOUS_RATIO = 2000;                    	// (선택) 초고압축 비율 의심 기준
+const MIN_RATIO_ENTRY_BYTES = 1 * 1024 * 1024;        	// ratio 검사 적용 최소 크기(1MB 이상)
+
+function getEntrySizes(entry) {
+	// adm-zip는 entry.header.size(압축해제 크기), entry.header.compressedSize(압축 크기)를 제공
+	const uncompressed = Number(entry?.header?.size || 0);
+	const compressed = Number(entry?.header?.compressedSize || 0);
+	return { uncompressed, compressed };
+}
+
 const backupUpload = multer({
     storage: multer.diskStorage({
         destination: (req, file, cb) => {
@@ -35,7 +53,7 @@ const backupUpload = multer({
         }
     }),
     limits: {
-        fileSize: 100 * 1024 * 1024 // 100MB
+        fileSize: MAX_BACKUP_ZIP_BYTES
     },
     fileFilter: (req, file, cb) => {
         if (file.mimetype === 'application/zip' || file.originalname.endsWith('.zip')) {
@@ -655,6 +673,42 @@ ${JSON.stringify(pageMetadata, null, 2)}
             // ZIP 파일 열기
             const zip = new AdmZip(uploadedFile.path);
             const zipEntries = zip.getEntries();
+
+            // 보안: ZIP Bomb 사전 검증
+            if (zipEntries.length > MAX_ZIP_ENTRIES)
+                throw new Error(`유효하지 않은 백업 파일: ZIP 엔트리 개수 초과(${zipEntries.length})`);
+
+            let totalUncompressed = 0;
+            for (const entry of zipEntries) {
+                if (entry.isDirectory) continue;
+
+                // ZipSlip 계열 우회 방지: entryName 기본 sanity check
+                // (기존 코드의 isSafePath와 별개로 사전 차단)
+                const name = String(entry.entryName || '');
+                if (!name || name.length > 512)
+                    throw new Error(`유효하지 않은 백업 파일: 엔트리 이름이 비정상`);
+
+                if (name.includes('..') || name.startsWith('/') || /^[A-Za-z]:/.test(name) || name.includes('\\'))
+                    throw new Error(`유효하지 않은 백업 파일: 위험한 경로 엔트리 감지`);
+
+                const { uncompressed, compressed } = getEntrySizes(entry);
+                if (uncompressed <= 0) continue;
+
+                // 엔트리 단일 크기 제한
+                if (uncompressed > MAX_ENTRY_UNCOMPRESSED_BYTES)
+                    throw new Error(`유효하지 않은 백업 파일: 엔트리 압축해제 크기 초과(${name})`);
+
+                totalUncompressed += uncompressed;
+                if (totalUncompressed > MAX_TOTAL_UNCOMPRESSED_BYTES)
+                    throw new Error(`유효하지 않은 백업 파일: 전체 압축해제 크기 초과`);
+
+                // (선택) 고압축 ratio 탐지: ratio 단독 사용은 false positive 가능 → 크기 조건과 조합
+                if (compressed > 0 && uncompressed >= MIN_RATIO_ENTRY_BYTES) {
+                    const ratio = uncompressed / compressed;
+                    if (ratio > MAX_SUSPICIOUS_RATIO)
+                        throw new Error(`유효하지 않은 백업 파일: 비정상적 압축 비율 감지(${name})`);
+                }
+            }
 
 			console.log(`[백업 불러오기] 사용자 ${userId} - 파일 개수: ${zipEntries.length}`);
 
