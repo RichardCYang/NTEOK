@@ -1793,11 +1793,86 @@ body {
     border-color: #c9c3b8;
 }
 
+.bookmark-layout-controls {
+    display: flex;
+    gap: 4px;
+    margin-left: auto;
+}
+
+.bookmark-layout-btn {
+    background: none;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    padding: 4px 6px;
+    cursor: pointer;
+    color: var(--sub-font-color);
+    transition: all 0.15s;
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.bookmark-layout-btn:hover {
+    background: var(--tertiary-color);
+    color: var(--font-color);
+}
+
+.bookmark-layout-btn.active {
+    background: var(--point-color);
+    color: var(--button-text-color);
+}
+
 .bookmark-container-content {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
     gap: 8px;
     margin-bottom: 0;
+}
+
+/* 리스트 레이아웃 */
+.bookmark-container-content[data-layout="list"] {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.bookmark-container-content[data-layout="list"] .bookmark-block-wrapper {
+    width: 100%;
+}
+
+.bookmark-container-content[data-layout="list"] .bookmark-card {
+    flex-direction: row;
+    height: 100px;
+    width: 100%;
+}
+
+.bookmark-container-content[data-layout="list"] .bookmark-thumbnail {
+    width: 160px;
+    height: 100%;
+    order: -1;
+}
+
+.bookmark-container-content[data-layout="list"] .bookmark-text {
+    padding: 12px 16px;
+    justify-content: center;
+}
+
+.bookmark-container-content[data-layout="list"] .bookmark-title {
+    font-size: 15px;
+    margin-bottom: 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.bookmark-container-content[data-layout="list"] .bookmark-description {
+    -webkit-line-clamp: 2;
+    margin-bottom: 4px;
+}
+
+.bookmark-container-content[data-layout="list"] .bookmark-url {
+    margin-top: 0;
 }
 
 /* 북마크 카드가 있을 때만 아래 마진 추가 */

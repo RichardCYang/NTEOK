@@ -496,6 +496,13 @@ export const BookmarkContainerBlock = Node.create({
                 renderHTML: attributes => {
                     return { 'data-icon': attributes.icon };
                 }
+            },
+            layout: {
+                default: 'grid',
+                parseHTML: element => element.getAttribute('data-layout') || 'grid',
+                renderHTML: attributes => {
+                    return { 'data-layout': attributes.layout };
+                }
             }
         };
     },
@@ -516,7 +523,8 @@ export const BookmarkContainerBlock = Node.create({
                 'data-type': 'bookmark-container',
                 'class': 'bookmark-container',
                 'data-title': node.attrs.title || '',
-                'data-icon': node.attrs.icon || '🔖'
+                'data-icon': node.attrs.icon || '🔖',
+                'data-layout': node.attrs.layout || 'grid'
             },
             0  // 자식 노드 렌더링 위치
         ];
@@ -533,6 +541,7 @@ export const BookmarkContainerBlock = Node.create({
             header.className = 'bookmark-container-header';
             header.style.display = 'flex';
             header.style.alignItems = 'center';
+            header.style.gap = '8px';
             header.contentEditable = 'false';
 
             const icon = document.createElement('span');
@@ -839,6 +848,62 @@ export const BookmarkContainerBlock = Node.create({
             header.appendChild(icon);
             header.appendChild(title);
 
+            // 레이아웃 전환 버튼 생성
+            const layoutControls = document.createElement('div');
+            layoutControls.className = 'bookmark-layout-controls';
+            layoutControls.style.display = 'flex';
+            layoutControls.style.gap = '4px';
+
+            const gridBtn = document.createElement('button');
+            gridBtn.className = 'bookmark-layout-btn';
+            gridBtn.type = 'button';
+            gridBtn.title = 'Grid 보기';
+            addIcon(gridBtn, 'fa-solid fa-grip');
+            
+            const listBtn = document.createElement('button');
+            listBtn.className = 'bookmark-layout-btn';
+            listBtn.type = 'button';
+            listBtn.title = 'List 보기';
+            addIcon(listBtn, 'fa-solid fa-list');
+
+            const updateLayoutButtons = (currentLayout) => {
+                gridBtn.classList.toggle('active', currentLayout === 'grid');
+                listBtn.classList.toggle('active', currentLayout === 'list');
+            };
+
+            const setLayout = (newLayout) => {
+                if (typeof getPos === 'function') {
+                    const pos = getPos();
+                    const currentNode = editor.view.state.doc.nodeAt(pos);
+                    if (currentNode) {
+                        const tr = editor.view.state.tr;
+                        tr.setNodeMarkup(pos, null, {
+                            ...currentNode.attrs,
+                            layout: newLayout
+                        });
+                        editor.view.dispatch(tr);
+                    }
+                }
+            };
+
+            gridBtn.onclick = (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setLayout('grid');
+            };
+
+            listBtn.onclick = (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setLayout('list');
+            };
+
+            layoutControls.appendChild(gridBtn);
+            layoutControls.appendChild(listBtn);
+            header.appendChild(layoutControls);
+
+            updateLayoutButtons(node.attrs.layout || 'grid');
+
             // DOM에 추가된 후에 설정
             setupIconInteraction();
             setupTitleInteraction();
@@ -846,10 +911,11 @@ export const BookmarkContainerBlock = Node.create({
             // 컨테이너 내용 래퍼
             const contentWrapper = document.createElement('div');
             contentWrapper.className = 'bookmark-container-content';
+            contentWrapper.setAttribute('data-layout', node.attrs.layout || 'grid');
 
             wrapper.appendChild(header);
             wrapper.appendChild(contentWrapper);
-
+            
             // 북마크 추가 버튼 생성
             const addButton = document.createElement('button');
             addButton.className = 'bookmark-add-button';
@@ -887,6 +953,7 @@ export const BookmarkContainerBlock = Node.create({
                     // 쓰기 모드(!editor.isEditable)에서만 버튼 표시
                     const newDisplay = editor.isEditable ? 'inline-block' : 'none';
                     addButton.style.display = newDisplay;
+                    layoutControls.style.display = editor.isEditable ? 'flex' : 'none';
                 } catch (error) {
                     console.error('[BookmarkContainer] updateUI 에러:', error);
                 }
@@ -936,6 +1003,11 @@ export const BookmarkContainerBlock = Node.create({
                             icon.textContent = updatedNode.attrs.icon;
                         }
                     }
+
+                    // 레이아웃 업데이트
+                    const newLayout = updatedNode.attrs.layout || 'grid';
+                    contentWrapper.setAttribute('data-layout', newLayout);
+                    updateLayoutButtons(newLayout);
 
                     updateUI();
                     return true;
