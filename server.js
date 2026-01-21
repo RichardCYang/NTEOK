@@ -383,9 +383,8 @@ function sendSafeDownload(res, filePath, downloadName) {
  * 에디터 콘텐츠 등 HTML이 필요한 필드에 사용
  */
 function sanitizeHtmlContent(html) {
-    if (typeof html !== 'string') {
+    if (typeof html !== 'string')
         return html;
-    }
 
     // DOMPurify로 안전한 HTML만 허용
     return DOMPurify.sanitize(html, {
