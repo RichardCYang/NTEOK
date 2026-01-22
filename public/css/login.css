@@ -1,6 +1,23 @@
 /* ===========================
    NTEOK 로그인/회원가입 페이지
    =========================== */
+
+:root {
+    /* 로그인 및 회원가입 페이지의 모달과 UI 스타일을 위한 테마 변수 정의 */
+    /* main.css에서 사용하는 변수들이 로그인 페이지에는 정의되어 있지 않아 발생하는 배경 투명화 문제를 해결합니다. */
+    --primary-color: #faf8f3;
+    --secondary-color: #f5f2ed;
+    --tertiary-color: #ebe8e1;
+    --point-color: #2d5f5d;
+    --point-hover-color: #1e4d4a;
+    --border-color: #d4cfc4;
+    --modal-backdrop-color: rgba(0, 0, 0, 0.5);
+    --box-shadow-color: rgba(0, 0, 0, 0.1);
+    --font-color: #1a1a1a;
+    --sub-font-color: #6b7280;
+    --placeholder-color: #9ca3af;
+}
+
 .login-body {
     margin: 0;
     padding: 0;
