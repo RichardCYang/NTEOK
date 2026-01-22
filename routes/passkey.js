@@ -104,7 +104,9 @@ module.exports = (dependencies) => {
                 })),
                 authenticatorSelection: {
                     residentKey: 'preferred',
-                    userVerification: 'preferred'
+					// UV(User Verification)를 강제해서(생체/PIN 등) UP-only(터치만) 다운그레이드를 방지
+					// WebAuthn 스펙상 userVerification='required'이면 UV 불가능한 인증기는 선택 단계에서 제외됨
+					userVerification: 'required'
                     // authenticatorAttachment 제거: 모든 인증기 유형(플랫폼/외부 보안키/스마트폰) 허용
                 }
             });
@@ -163,7 +165,8 @@ module.exports = (dependencies) => {
                 expectedChallenge: expectedChallenge,
                 expectedOrigin: expectedOrigin,
                 expectedRPID: rpID,
-                requireUserVerification: false
+				// 서버에서 UV를 강제(= uv flag must be true). UV 없으면 passkey를 MFA급으로 볼 수 없음.
+				requireUserVerification: true
             });
 
             if (!verification.verified || !verification.registrationInfo) {
@@ -221,7 +224,8 @@ module.exports = (dependencies) => {
             const options = await generateAuthenticationOptions({
                 rpID: rpID,
                 timeout: 60000,
-                userVerification: 'preferred'
+				// userless(passkey discoverable) 로그인에서는 UV 강제가 특히 중요
+				userVerification: 'required'
                 // allowCredentials를 제공하지 않음 -> userless 인증
             });
 
@@ -303,7 +307,8 @@ module.exports = (dependencies) => {
                     counter: passkey.counter,
                     transports: passkey.transports ? passkey.transports.split(',') : []
                 },
-                requireUserVerification: false
+				// UV flag 강제
+				requireUserVerification: true
             });
 
             if (!verification.verified) {
@@ -478,7 +483,8 @@ module.exports = (dependencies) => {
                     type: 'public-key',
                     transports: pk.transports ? pk.transports.split(',') : ['usb', 'ble', 'nfc', 'internal', 'hybrid']
                 })),
-                userVerification: 'preferred'
+				// 로컬 사용자 검증(생체/PIN) 강제
+				userVerification: 'required'
             });
 
             // 챌린지를 데이터베이스에 저장 (user_id와 함께)
@@ -559,7 +565,8 @@ module.exports = (dependencies) => {
                     counter: passkey.counter,
                     transports: passkey.transports ? passkey.transports.split(',') : []
                 },
-                requireUserVerification: false
+                // uv flag 강제
+                requireUserVerification: true
             });
 
             if (!verification.verified) {
@@ -725,7 +732,8 @@ module.exports = (dependencies) => {
                     type: 'public-key',
                     transports: pk.transports ? pk.transports.split(',') : ['usb', 'ble', 'nfc', 'internal', 'hybrid']
                 })),
-                userVerification: 'preferred'
+				// 중요한 작업 재인증(reauth)도 UV 강제 권장
+				userVerification: 'required'
             });
 
             // 챌린지를 데이터베이스에 저장
@@ -807,7 +815,8 @@ module.exports = (dependencies) => {
                     counter: passkey.counter,
                     transports: passkey.transports ? passkey.transports.split(',') : []
                 },
-                requireUserVerification: false
+                // UV flag 강제
+                requireUserVerification: true
             });
 
             if (!verification.verified) {
