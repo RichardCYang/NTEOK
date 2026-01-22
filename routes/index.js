@@ -13,7 +13,7 @@ const fsNative = require('fs');
  */
 
 module.exports = (dependencies) => {
-	const { getSessionFromRequest, fs, pool, logError, getClientIpFromRequest } = dependencies;
+	const { getSessionFromRequest, fs, pool, logError, getClientIpFromRequest, sanitizeHtmlContent } = dependencies;
 
     function sendHtmlWithNonce(res, filename, theme = 'default') {
         const filePath = path.join(__dirname, "..", "public", filename);
@@ -257,7 +257,7 @@ module.exports = (dependencies) => {
             res.json({
                 id: page.id,
                 title: page.title || "제목 없음",
-                content: page.content || "<p></p>",
+                content: sanitizeHtmlContent(page.content || "<p></p>"),
                 icon: page.icon || null,
                 coverImage: page.cover_image || null,
                 coverPosition: page.cover_position || 50

@@ -1,10 +1,71 @@
 import { sanitizeHttpHref } from './url-utils.js';
 import { escapeHtml, addIcon } from './ui-utils.js';
 import { loadAndRenderComments, initCommentsManager } from './comments-manager.js';
+import DOMPurify from 'https://esm.sh/dompurify@3.3.1';
 
 /**
  * 공개 페이지 스크립트
  */
+
+// 보안: 공유(공개) 페이지는 외부 사용자가 만든 HTML을 표시하므로, 방어적으로 한 번 더 정화
+// - 서버에서도 정화하지만(저장 시), 공개 뷰어에서 innerHTML을 사용하므로 클라이언트에서도 추가 정화(Defense in Depth)
+const _CONTROL_CHARS_RE = /[\u0000-\u001F\u007F]/;
+function _isSafeHttpUrlOrRelative(value) {
+    if (typeof value !== 'string') return false;
+    const v = value.trim();
+    if (!v) return false;
+    if (_CONTROL_CHARS_RE.test(v)) return false;
+    if (v.startsWith('/') || v.startsWith('#')) return true;
+    try {
+        const u = new URL(v);
+        return u.protocol === 'http:' || u.protocol === 'https:';
+    } catch {
+        return false;
+    }
+}
+
+const _purifier = (typeof DOMPurify === 'function' && !DOMPurify.sanitize)
+    ? DOMPurify(window)
+    : DOMPurify;
+
+// DOMPurify 훅: data-url / data-thumbnail에 javascript: 등 위험 스킴이 들어가는 것을 추가로 차단
+if (typeof _purifier?.addHook === 'function') {
+    _purifier.addHook('uponSanitizeAttribute', (_node, hookEvent) => {
+        const name = String(hookEvent?.attrName || '').toLowerCase();
+        if (name === 'data-url' || name === 'data-thumbnail') {
+            if (!_isSafeHttpUrlOrRelative(String(hookEvent.attrValue || ''))) {
+                hookEvent.keepAttr = false;
+                hookEvent.forceKeepAttr = false;
+            }
+        }
+    });
+}
+
+function sanitizeSharedHtml(html) {
+    const input = (typeof html === 'string') ? html : '';
+    return _purifier.sanitize(input, {
+        ALLOWED_TAGS: [
+            'p', 'br', 'strong', 'em', 'u', 's', 'code', 'pre',
+            'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+            'ul', 'ol', 'li', 'blockquote',
+            'a', 'span', 'div',
+            'hr',
+            'table', 'thead', 'tbody', 'tr', 'th', 'td',
+            'img', 'figure',
+            'label', 'input'
+        ],
+        ALLOWED_ATTR: [
+            'style', 'class', 'href', 'target', 'rel', 'data-type', 'data-latex',
+            'colspan', 'rowspan', 'colwidth',
+            'src', 'alt', 'data-src', 'data-alt', 'data-caption', 'data-width', 'data-align',
+            'data-url', 'data-title', 'data-description', 'data-thumbnail', 'data-id', 'data-icon',
+            'data-checked', 'type', 'checked', 'data-callout-type', 'data-content',
+            'data-columns', 'data-is-open'
+        ],
+        ALLOW_DATA_ATTR: true,
+        ALLOWED_URI_REGEXP: /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|cid|xmpp):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i
+    });
+}
 
 /**
  * 북마크 블록 렌더링 함수
@@ -227,7 +288,7 @@ function renderCheckboxes(container) {
 
             // 콘텐츠 div 생성
             const contentDiv = document.createElement('div');
-            contentDiv.innerHTML = content;
+            contentDiv.innerHTML = sanitizeSharedHtml(content);
             li.appendChild(contentDiv);
         });
     });
@@ -276,7 +337,7 @@ function renderCheckboxes(container) {
 
         // 콘텐츠 표시
         const editorEl = document.getElementById('page-editor');
-        editorEl.innerHTML = data.content || '<p></p>';
+        editorEl.innerHTML = sanitizeSharedHtml(data.content || '<p></p>');
         editorEl.classList.remove('shared-page-loading');
 
         // 북마크 블록 렌더링
