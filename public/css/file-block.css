@@ -30,8 +30,10 @@
     transition: background-color 0.2s ease !important;
 }
 
-.ProseMirror div.file-placeholder:hover {
+.ProseMirror div.file-placeholder:hover,
+.ProseMirror div.file-placeholder.drag-over {
     background-color: var(--item-hover-bg-color) !important;
+    border: 2px dashed var(--sub-font-color) !important;
 }
 
 .file-placeholder-left {
@@ -113,8 +115,10 @@
     transition: background-color 0.15s ease !important;
 }
 
-.ProseMirror div.file-block:hover {
+.ProseMirror div.file-block:hover,
+.ProseMirror div.file-block.drag-over {
     background-color: var(--item-hover-bg-color) !important;
+    border: 1px dashed var(--sub-font-color) !important;
 }
 
 .file-block-content {

@@ -63,6 +63,98 @@ export const FileBlock = Node.create({
             wrapper.className = 'file-block-wrapper';
             wrapper.contentEditable = 'false';
 
+            // 파일 업로드 처리 함수
+            const handleUpload = async (file) => {
+                if (!file) return;
+
+                if (file.size > 50 * 1024 * 1024) {
+                    alert('파일 크기는 50MB 이하여야 합니다.');
+                    return;
+                }
+
+                const placeholderText = wrapper.querySelector('.file-placeholder-text');
+                if (placeholderText) placeholderText.textContent = '업로드 중...';
+
+                try {
+                    const pageId = window.appState?.currentPageId;
+                    if (!pageId) throw new Error('페이지 ID 없음');
+
+                    const formData = new FormData();
+                    formData.append('file', file);
+
+                    const response = await secureFetch(`/api/pages/${pageId}/file`, {
+                        method: 'POST',
+                        body: formData
+                    });
+
+                    if (!response.ok) {
+                         const err = await response.json();
+                         throw new Error(err.error || '업로드 실패');
+                    }
+
+                    const data = await response.json();
+
+                    if (typeof getPos === 'function') {
+                        const pos = getPos();
+                        const tr = editor.view.state.tr;
+                        tr.setNodeMarkup(pos, null, {
+                            src: data.url,
+                            filename: data.filename,
+                            size: data.size
+                        });
+                        editor.view.dispatch(tr);
+                    }
+
+                } catch (error) {
+                    console.error('파일 업로드 오류:', error);
+                    alert('업로드 실패: ' + error.message);
+                    if (placeholderText) placeholderText.textContent = '업로드 실패. 다시 시도하세요.';
+                }
+            };
+
+            const triggerFileUpload = () => {
+                const input = document.createElement('input');
+                input.type = 'file';
+
+                input.onchange = (e) => {
+                    const file = e.target.files[0];
+                    handleUpload(file);
+                };
+
+                input.click();
+            };
+
+            // 드래그 앤 드롭 이벤트 설정 (데스크탑 환경 권장)
+            const setupDragAndDrop = (target) => {
+                // 터치 환경이 아닌 경우(데스크탑 등)에만 활성화하거나, 
+                // 일반적인 드래그 앤 드롭은 모바일에서 무시되므로 기본 적용 가능
+                
+                target.addEventListener('dragover', (e) => {
+                    if (!editor.isEditable) return;
+                    e.preventDefault();
+                    e.stopPropagation();
+                    target.classList.add('drag-over');
+                });
+
+                target.addEventListener('dragleave', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    target.classList.remove('drag-over');
+                });
+
+                target.addEventListener('drop', (e) => {
+                    if (!editor.isEditable) return;
+                    e.preventDefault();
+                    e.stopPropagation();
+                    target.classList.remove('drag-over');
+
+                    const files = e.dataTransfer.files;
+                    if (files && files.length > 0) {
+                        handleUpload(files[0]);
+                    }
+                });
+            };
+
             const render = () => {
                 wrapper.innerHTML = '';
                 
@@ -87,7 +179,7 @@ export const FileBlock = Node.create({
 
                     const text = document.createElement('span');
                     text.className = 'file-placeholder-text';
-                    text.textContent = '파일을 추가하세요';
+                    text.textContent = '파일을 추가하세요 (또는 드래그)';
 
                     leftPart.appendChild(icon);
                     leftPart.appendChild(text);
@@ -109,6 +201,9 @@ export const FileBlock = Node.create({
                     placeholder.onclick = (e) => {
                          if (editor.isEditable) triggerFileUpload();
                     };
+
+                    // 데스크탑 환경을 위한 드래그 앤 드롭 설정
+                    setupDragAndDrop(placeholder);
 
                     rightPart.appendChild(uploadBtn);
 
@@ -202,64 +297,11 @@ export const FileBlock = Node.create({
                          }
                     };
 
+                    // 이미 파일이 있는 경우에도 드래그 앤 드롭으로 교체 가능하게 설정
+                    setupDragAndDrop(container);
+
                     wrapper.appendChild(container);
                 }
-            };
-
-            const triggerFileUpload = () => {
-                const input = document.createElement('input');
-                input.type = 'file';
-
-                input.onchange = async (e) => {
-                    const file = e.target.files[0];
-                    if (!file) return;
-
-                    if (file.size > 50 * 1024 * 1024) {
-                        alert('파일 크기는 50MB 이하여야 합니다.');
-                        return;
-                    }
-
-                    const placeholderText = wrapper.querySelector('.file-placeholder-text');
-                    if (placeholderText) placeholderText.textContent = '업로드 중...';
-
-                    try {
-                        const pageId = window.appState?.currentPageId;
-                        if (!pageId) throw new Error('페이지 ID 없음');
-
-                        const formData = new FormData();
-                        formData.append('file', file);
-
-                        const response = await secureFetch(`/api/pages/${pageId}/file`, {
-                            method: 'POST',
-                            body: formData
-                        });
-
-                        if (!response.ok) {
-                             const err = await response.json();
-                             throw new Error(err.error || '업로드 실패');
-                        }
-
-                        const data = await response.json();
-
-                        if (typeof getPos === 'function') {
-                            const pos = getPos();
-                            const tr = editor.view.state.tr;
-                            tr.setNodeMarkup(pos, null, {
-                                src: data.url,
-                                filename: data.filename,
-                                size: data.size
-                            });
-                            editor.view.dispatch(tr);
-                        }
-
-                    } catch (error) {
-                        console.error('파일 업로드 오류:', error);
-                        alert('업로드 실패: ' + error.message);
-                        if (placeholderText) placeholderText.textContent = '업로드 실패. 다시 시도하세요.';
-                    }
-                };
-
-                input.click();
             };
 
             render();
