@@ -2,7 +2,8 @@
  * 페이지 및 컬렉션 관리 모듈
  */
 
-import { secureFetch, escapeHtml, showErrorInEditor, syncPageUpdatedAtPadding } from './ui-utils.js';
+import { escapeHtml, showErrorInEditor, syncPageUpdatedAtPadding, closeSidebar } from './ui-utils.js';
+import * as api from './api-utils.js';
 import { loadAndRenderComments } from './comments-manager.js';
 import { startPageSync, stopPageSync, startCollectionSync, stopCollectionSync, flushPendingUpdates, syncEditorFromMetadata, onLocalEditModeChanged, updateAwarenessMode } from './sync-manager.js';
 import { showCover, hideCover, updateCoverButtonsVisibility } from './cover-manager.js';
@@ -36,15 +37,8 @@ export function initPagesManager(appState) {
 export async function fetchCollections() {
     try {
         console.log("컬렉션 목록 요청: GET /api/collections");
-        const res = await fetch("/api/collections");
-        if (!res.ok) {
-            throw new Error("HTTP " + res.status + " " + res.statusText);
-        }
-
-        const data = await res.json();
+        const data = await api.get("/api/collections");
         applyCollectionsData(data);
-
-        // renderPageList()는 호출하는 쪽에서 처리 (중복 호출 방지)
     } catch (error) {
         console.error("컬렉션 목록 요청 오류:", error);
         showErrorInEditor("컬렉션을 불러오는 데 실패했다: " + error.message, state.editor);
@@ -57,19 +51,11 @@ export async function fetchCollections() {
 export async function fetchPageList() {
     try {
         console.log("페이지 목록 요청: GET /api/pages");
-        const res = await fetch("/api/pages");
-        if (!res.ok) {
-            throw new Error("HTTP " + res.status + " " + res.statusText);
-        }
-
-        const data = await res.json();
+        const data = await api.get("/api/pages");
         console.log("페이지 목록 응답:", data);
 
         // 제목은 평문으로 저장되므로 복호화 불필요
         applyPagesData(data);
-
-
-        // renderPageList()는 호출하는 쪽에서 처리 (중복 호출 방지)
 
         if (!state.pages.length) {
             if (state.editor) {
@@ -471,19 +457,8 @@ function initCollectionDragDrop() {
             state.collections.splice(evt.newIndex, 0, movedCollection);
 
             try {
-                const res = await secureFetch('/api/collections/reorder', {
-                    method: 'PATCH',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ collectionIds })
-                });
-
-                if (!res.ok) {
-                    const errorData = await res.json();
-                    throw new Error(errorData.error || '순서 변경 실패');
-                }
-
+                await api.patch('/api/collections/reorder', { collectionIds });
                 console.log('컬렉션 순서 변경 완료');
-
             } catch (error) {
                 console.error('컬렉션 순서 변경 오류:', error);
                 alert(`순서 변경에 실패했습니다: ${error.message}`);
@@ -558,20 +533,11 @@ function initPageDragDrop(pageListEl, collectionId, parentId, permission) {
                 const pageIds = pageItems.map(item => item.dataset.pageId);
 
                 try {
-                    const res = await secureFetch('/api/pages/reorder', {
-                        method: 'PATCH',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            collectionId: toCollectionId,
-                            pageIds,
-                            parentId: toParentId
-                        })
+                    await api.patch('/api/pages/reorder', {
+                        collectionId: toCollectionId,
+                        pageIds,
+                        parentId: toParentId
                     });
-
-                    if (!res.ok) {
-                        const errorData = await res.json();
-                        throw new Error(errorData.error || '순서 변경 실패');
-                    }
 
                     console.log('페이지 순서 변경 완료');
 
@@ -596,20 +562,11 @@ function initPageDragDrop(pageListEl, collectionId, parentId, permission) {
                 try {
                     const newSortOrder = evt.newIndex * 10;
 
-                    const res = await secureFetch(`/api/pages/${pageId}/move`, {
-                        method: 'PATCH',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            targetCollectionId: toCollectionId,
-                            targetParentId: toParentId,
-                            sortOrder: newSortOrder
-                        })
+                    await api.patch(`/api/pages/${pageId}/move`, {
+                        targetCollectionId: toCollectionId,
+                        targetParentId: toParentId,
+                        sortOrder: newSortOrder
                     });
-
-                    if (!res.ok) {
-                        const errorData = await res.json();
-                        throw new Error(errorData.error || '페이지 이동 실패');
-                    }
 
                     console.log('페이지 이동 완료:', pageId, '→', toCollectionId);
 
@@ -672,12 +629,7 @@ export async function loadPage(id) {
 
     try {
         console.log("단일 페이지 요청: GET /api/pages/" + id);
-        const res = await fetch("/api/pages/" + encodeURIComponent(id));
-        if (!res.ok) {
-            throw new Error("HTTP " + res.status + " " + res.statusText);
-        }
-
-        const page = await res.json();
+        const page = await api.get("/api/pages/" + encodeURIComponent(id));
         console.log("단일 페이지 응답:", page);
 
         // 현재 페이지 상태 설정
@@ -863,13 +815,7 @@ async function savePageTitle() {
     const title = titleInput.value || ((state.translations && state.translations['untitled']) || "제목 없음");
 
     try {
-        await secureFetch("/api/pages/" + encodeURIComponent(state.currentPageId), {
-            method: "PATCH",
-            headers: {
-                "Content-Type": "application/json"
-            },
-            body: JSON.stringify({ title })
-        });
+        await api.patch("/api/pages/" + encodeURIComponent(state.currentPageId), { title });
 
         // 페이지 목록 업데이트
         state.pages = state.pages.map((p) => {
@@ -942,17 +888,7 @@ export async function saveCurrentPage() {
             };
         }
 
-        const res = await secureFetch("/api/pages/" + encodeURIComponent(state.currentPageId), {
-            method: "PUT",
-            headers: {
-                "Content-Type": "application/json"
-            },
-            body: JSON.stringify(requestBody)
-        });
-
-        if (!res.ok) {
-            throw new Error("HTTP " + res.status + " " + res.statusText);
-        }
+        const page = await api.put("/api/pages/" + encodeURIComponent(state.currentPageId), requestBody);
 
         // 저장이 성공하면 임시 암호화 키 제거 및 플래그 초기화
         if (state.currentPageIsEncrypted && state.decryptionKeyIsInMemory) {
@@ -961,7 +897,6 @@ export async function saveCurrentPage() {
             console.log("재암호화 저장 후 임시 키를 제거하고 플래그를 초기화했습니다.");
         }
 
-        const page = await res.json();
         const decryptedTitle = titleInput ? titleInput.value || defaultTitle : defaultTitle;
 
         state.pages = state.pages.map((p) => {
@@ -1114,19 +1049,8 @@ export function bindNewCollectionButton() {
         const plainName = name.trim() || defaultName;
 
         try {
-            const res = await secureFetch("/api/collections", {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json"
-                },
-                body: JSON.stringify({ name: plainName })
-            });
+            const collection = await api.post("/api/collections", { name: plainName });
 
-            if (!res.ok) {
-                throw new Error("HTTP " + res.status + " " + res.statusText);
-            }
-
-            const collection = await res.json();
             collection.name = plainName;
             state.collections.push(collection);
             state.currentCollectionId = collection.id;

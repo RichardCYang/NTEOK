@@ -166,3 +166,82 @@ export function syncPageUpdatedAtPadding() {
         commentsContainer.style.paddingRight = `${totalRight}px`;
     }
 }
+
+/**
+ * 로딩 오버레이 표시
+ */
+export function showLoadingOverlay() {
+    const overlay = document.querySelector('.loading-overlay');
+    if (overlay) {
+        overlay.classList.remove('hidden');
+    }
+}
+
+/**
+ * 로딩 오버레이 숨기기
+ */
+export function hideLoadingOverlay() {
+    const overlay = document.querySelector('.loading-overlay');
+    if (overlay) {
+        overlay.classList.add('hidden');
+    }
+}
+
+/**
+ * 사이드바 열기
+ */
+export function openSidebar() {
+    const sidebar = document.querySelector(".sidebar");
+    const overlay = document.querySelector("#sidebar-overlay");
+
+    if (sidebar) {
+        sidebar.classList.add("open");
+    }
+    if (overlay) {
+        overlay.classList.add("visible");
+    }
+}
+
+/**
+ * 사이드바 닫기
+ */
+export function closeSidebar() {
+    const sidebar = document.querySelector(".sidebar");
+    const overlay = document.querySelector("#sidebar-overlay");
+
+    if (sidebar) {
+        sidebar.classList.remove("open");
+    }
+    if (overlay) {
+        overlay.classList.remove("visible");
+    }
+}
+
+/**
+ * 모달 표시/숨기기 토글
+ * @param {string|HTMLElement} modal - 모달 셀렉터 또는 엘리먼트
+ * @param {boolean} show - 표시 여부
+ */
+export function toggleModal(modal, show) {
+    const modalEl = typeof modal === 'string' ? document.querySelector(modal) : modal;
+    if (!modalEl) return;
+
+    if (show) {
+        modalEl.classList.remove('hidden');
+    } else {
+        modalEl.classList.add('hidden');
+    }
+}
+
+/**
+ * 모달 외부 클릭 시 닫기 이벤트 바인딩
+ * @param {HTMLElement} modalEl - 모달 엘리먼트
+ * @param {Function} closeFn - 닫기 함수
+ */
+export function bindModalOverlayClick(modalEl, closeFn) {
+    if (!modalEl || !closeFn) return;
+    const overlay = modalEl.querySelector('.modal-overlay');
+    if (overlay) {
+        overlay.addEventListener('click', closeFn);
+    }
+}

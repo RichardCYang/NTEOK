@@ -4,7 +4,23 @@
  */
 
 // ==================== Imports ====================
-import { secureFetch, escapeHtml, showErrorInEditor, closeAllDropdowns, openDropdown, showContextMenu, closeContextMenu, addIcon } from './ui-utils.js';
+import { 
+    secureFetch, 
+    escapeHtml, 
+    showErrorInEditor, 
+    closeAllDropdowns, 
+    openDropdown, 
+    showContextMenu, 
+    closeContextMenu, 
+    addIcon,
+    showLoadingOverlay,
+    hideLoadingOverlay,
+    openSidebar,
+    closeSidebar,
+    toggleModal,
+    bindModalOverlayClick
+} from './ui-utils.js';
+import * as api from './api-utils.js';
 import { initEditor, bindToolbar, bindSlashKeyHandlers, updateToolbarState } from './editor.js';
 import {
     initPagesManager,
@@ -122,21 +138,6 @@ let colorMenuElement = null;
 let fontDropdownElement = null;
 let fontMenuElement = null;
 
-// ==================== Loading Overlay Functions ====================
-function showLoadingOverlay() {
-    const overlay = document.querySelector('.loading-overlay');
-    if (overlay) {
-        overlay.classList.remove('hidden');
-    }
-}
-
-function hideLoadingOverlay() {
-    const overlay = document.querySelector('.loading-overlay');
-    if (overlay) {
-        overlay.classList.add('hidden');
-    }
-}
-
 // ==================== Helper Functions ====================
 
 /**
@@ -233,12 +234,8 @@ async function handlePageListClick(event, state) {
             const ok = confirm("이 컬렉션과 포함된 모든 페이지를 삭제하시겠습니까?");
             if (!ok) return;
             try {
-                const res = await secureFetch("/api/collections/" + encodeURIComponent(colId), {
-                    method: "DELETE"
-                });
-                if (!res.ok) {
-                    throw new Error("HTTP " + res.status + " " + res.statusText);
-                }
+                await api.del("/api/collections/" + encodeURIComponent(colId));
+                
                 state.collections = state.collections.filter((c) => c.id !== colId);
                 state.pages = state.pages.filter((p) => p.collectionId !== colId);
                 state.expandedCollections.delete(colId);
@@ -291,23 +288,13 @@ async function handlePageListClick(event, state) {
         const plainContent = "<p></p>";
 
         try {
-            const res = await secureFetch("/api/pages", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    title: plainTitle,
-                    content: plainContent,
-                    parentId: parentPageId,
-                    collectionId: colId
-                })
+            const page = await api.post("/api/pages", {
+                title: plainTitle,
+                content: plainContent,
+                parentId: parentPageId,
+                collectionId: colId
             });
 
-            if (!res.ok) {
-                const errorData = await res.json();
-                throw new Error(errorData.error || "HTTP " + res.status);
-            }
-
-            const page = await res.json();
             state.pages.unshift({
                 id: page.id,
                 title: plainTitle,
@@ -351,22 +338,13 @@ async function handlePageListClick(event, state) {
         const plainContent = "<p></p>";
 
         try {
-            const res = await secureFetch("/api/pages", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    title: plainTitle,
-                    content: plainContent,
-                    parentId: null,
-                    collectionId: colId
-                })
+            const page = await api.post("/api/pages", {
+                title: plainTitle,
+                content: plainContent,
+                parentId: null,
+                collectionId: colId
             });
 
-            if (!res.ok) {
-                throw new Error("HTTP " + res.status + " " + res.statusText);
-            }
-
-            const page = await res.json();
             state.pages.unshift({
                 id: page.id,
                 title: plainTitle,
@@ -515,17 +493,7 @@ async function handlePageListClick(event, state) {
             const newShareAllowed = !currentShareAllowed;
 
             // API 호출
-            secureFetch(`/api/pages/${encodeURIComponent(pageId)}/share-permission`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ shareAllowed: newShareAllowed })
-            })
-            .then(res => {
-                if (!res.ok) {
-                    throw new Error('HTTP ' + res.status);
-                }
-                return res.json();
-            })
+            api.put(`/api/pages/${encodeURIComponent(pageId)}/share-permission`, { shareAllowed: newShareAllowed })
             .then(() => {
                 // 상태 업데이트
                 const page = appState.pages.find(p => p.id === pageId);
@@ -548,12 +516,8 @@ async function handlePageListClick(event, state) {
             const ok = confirm("이 페이지를 삭제하시겠습니까?");
             if (!ok) return;
             try {
-                const res = await secureFetch("/api/pages/" + encodeURIComponent(pageId), {
-                    method: "DELETE"
-                });
-                if (!res.ok) {
-                    throw new Error("HTTP " + res.status + " " + res.statusText);
-                }
+                await api.del("/api/pages/" + encodeURIComponent(pageId));
+                
                 state.pages = state.pages.filter((p) => p.id !== pageId);
                 if (state.currentPageId === pageId) {
                     state.currentPageId = null;
@@ -578,7 +542,7 @@ async function handlePageListClick(event, state) {
                 }
             } catch (error) {
                 console.error("페이지 삭제 오류:", error);
-                if (error.message && error.message.includes("403")) {
+                if (error.status === 403) {
                     showDeletePermissionModal();
                 } else {
                     alert("페이지를 삭제하지 못했습니다: " + error.message);
@@ -653,13 +617,7 @@ function bindLogoutButton() {
 
     btn.addEventListener("click", async () => {
         try {
-            const res = await secureFetch("/api/auth/logout", {
-                method: "POST"
-            });
-
-            if (!res.ok) {
-                throw new Error("HTTP " + res.status);
-            }
+            await api.post("/api/auth/logout");
 
             // 암호화 키 삭제
             if (typeof window.cryptoManager !== 'undefined') {
@@ -708,36 +666,6 @@ async function decryptAndLoadPage(page, password) {
 }
 
 /**
- * 사이드바 열기
- */
-function openSidebar() {
-    const sidebar = document.querySelector(".sidebar");
-    const overlay = document.querySelector("#sidebar-overlay");
-
-    if (sidebar) {
-        sidebar.classList.add("open");
-    }
-    if (overlay) {
-        overlay.classList.add("visible");
-    }
-}
-
-/**
- * 사이드바 닫기
- */
-function closeSidebar() {
-    const sidebar = document.querySelector(".sidebar");
-    const overlay = document.querySelector("#sidebar-overlay");
-
-    if (sidebar) {
-        sidebar.classList.remove("open");
-    }
-    if (overlay) {
-        overlay.classList.remove("visible");
-    }
-}
-
-/**
  * 모바일 사이드바 바인딩
  */
 function bindMobileSidebar() {
@@ -761,20 +689,14 @@ function bindMobileSidebar() {
  * 읽기 전용 경고 모달 표시
  */
 function showReadonlyWarningModal() {
-    const modal = document.querySelector("#readonly-warning-modal");
-    if (modal) {
-        modal.classList.remove("hidden");
-    }
+    toggleModal("#readonly-warning-modal", true);
 }
 
 /**
  * 읽기 전용 경고 모달 닫기
  */
 async function closeReadonlyWarningModal() {
-    const modal = document.querySelector("#readonly-warning-modal");
-    if (modal) {
-        modal.classList.add("hidden");
-    }
+    toggleModal("#readonly-warning-modal", false);
 
     if (appState.isWriteMode) {
         const modeToggleBtn = document.querySelector("#mode-toggle-btn");
@@ -851,33 +773,21 @@ function bindReadonlyWarningModal() {
         confirmBtn.addEventListener("click", closeReadonlyWarningModal);
     }
 
-    const modal = document.querySelector("#readonly-warning-modal");
-    if (modal) {
-        const overlay = modal.querySelector(".modal-overlay");
-        if (overlay) {
-            overlay.addEventListener("click", closeReadonlyWarningModal);
-        }
-    }
+    bindModalOverlayClick(document.querySelector("#readonly-warning-modal"), closeReadonlyWarningModal);
 }
 
 /**
  * 삭제 권한 없음 모달 표시
  */
 function showDeletePermissionModal() {
-    const modal = document.querySelector("#delete-permission-modal");
-    if (modal) {
-        modal.classList.remove("hidden");
-    }
+    toggleModal("#delete-permission-modal", true);
 }
 
 /**
  * 삭제 권한 없음 모달 닫기
  */
 function closeDeletePermissionModal() {
-    const modal = document.querySelector("#delete-permission-modal");
-    if (modal) {
-        modal.classList.add("hidden");
-    }
+    toggleModal("#delete-permission-modal", false);
 }
 
 /**
@@ -895,33 +805,21 @@ function bindDeletePermissionModal() {
         confirmBtn.addEventListener("click", closeDeletePermissionModal);
     }
 
-    const modal = document.querySelector("#delete-permission-modal");
-    if (modal) {
-        const overlay = modal.querySelector(".modal-overlay");
-        if (overlay) {
-            overlay.addEventListener("click", closeDeletePermissionModal);
-        }
-    }
+    bindModalOverlayClick(document.querySelector("#delete-permission-modal"), closeDeletePermissionModal);
 }
 
 /**
  * 암호화 권한 없음 모달 표시
  */
 function showEncryptPermissionModal() {
-    const modal = document.querySelector("#encrypt-permission-modal");
-    if (modal) {
-        modal.classList.remove("hidden");
-    }
+    toggleModal("#encrypt-permission-modal", true);
 }
 
 /**
  * 암호화 권한 없음 모달 닫기
  */
 function closeEncryptPermissionModal() {
-    const modal = document.querySelector("#encrypt-permission-modal");
-    if (modal) {
-        modal.classList.add("hidden");
-    }
+    toggleModal("#encrypt-permission-modal", false);
     closeEncryptionModal();
 }
 
@@ -940,13 +838,7 @@ function bindEncryptPermissionModal() {
         confirmBtn.addEventListener("click", closeEncryptPermissionModal);
     }
 
-    const modal = document.querySelector("#encrypt-permission-modal");
-    if (modal) {
-        const overlay = modal.querySelector(".modal-overlay");
-        if (overlay) {
-            overlay.addEventListener("click", closeEncryptPermissionModal);
-        }
-    }
+    bindModalOverlayClick(document.querySelector("#encrypt-permission-modal"), closeEncryptPermissionModal);
 }
 
 /**
@@ -1101,12 +993,7 @@ async function init() {
         bindLoginLogsModal();
 
         try {
-            const bootstrapRes = await fetch("/api/bootstrap");
-            if (!bootstrapRes.ok) {
-                throw new Error("HTTP " + bootstrapRes.status);
-            }
-
-            const bootstrap = await bootstrapRes.json();
+            const bootstrap = await api.get("/api/bootstrap");
 
             if (bootstrap.user) {
                 applyCurrentUser(bootstrap.user);
@@ -1270,21 +1157,11 @@ async function saveCollectionSettings(event) {
     }
 
     try {
-        const res = await secureFetch(`/api/collections/${encodeURIComponent(currentSettingsCollectionId)}`, {
-            method: 'PUT',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                name,
-                defaultEncryption,
-                enforceEncryption
-            })
+        await api.put(`/api/collections/${encodeURIComponent(currentSettingsCollectionId)}`, {
+            name,
+            defaultEncryption,
+            enforceEncryption
         });
-
-        if (!res.ok) {
-            throw new Error('컬렉션 설정 저장 실패');
-        }
 
         // 낙관적 업데이트: 로컬 상태만 업데이트 (서버 재요청 불필요)
         const collection = appState.collections.find(c => c.id === currentSettingsCollectionId);
@@ -1705,15 +1582,7 @@ async function selectIcon(iconClass) {
     if (!currentIconPageId) return;
 
     try {
-        const res = await secureFetch(`/api/pages/${encodeURIComponent(currentIconPageId)}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ icon: iconClass })
-        });
-
-        if (!res.ok) {
-            throw new Error('HTTP ' + res.status);
-        }
+        await api.put(`/api/pages/${encodeURIComponent(currentIconPageId)}`, { icon: iconClass });
 
         // 상태 업데이트
         const page = appState.pages.find(p => p.id === currentIconPageId);
@@ -1734,15 +1603,7 @@ async function removeIcon() {
     if (!currentIconPageId) return;
 
     try {
-        const res = await secureFetch(`/api/pages/${encodeURIComponent(currentIconPageId)}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ icon: '' })
-        });
-
-        if (!res.ok) {
-            throw new Error('HTTP ' + res.status);
-        }
+        await api.put(`/api/pages/${encodeURIComponent(currentIconPageId)}`, { icon: '' });
 
         // 상태 업데이트
         const page = appState.pages.find(p => p.id === currentIconPageId);

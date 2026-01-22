@@ -3,6 +3,15 @@
  */
 
 import { hideParentModalForChild, restoreParentModalFromChild } from './modal-parent-manager.js';
+import { 
+    escapeHtml, 
+    showLoadingOverlay, 
+    hideLoadingOverlay, 
+    toggleModal, 
+    bindModalOverlayClick,
+    closeSidebar
+} from './ui-utils.js';
+import * as api from './api-utils.js';
 
 // 캐시 변수 (성능 최적화)
 let cachedCountries = null;
@@ -175,9 +184,7 @@ export async function openSettingsModal() {
 
     if (themeSelect) {
         try {
-            const { secureFetch } = await import('./ui-utils.js');
-            const response = await secureFetch('/api/themes');
-            const themes = await response.json();
+            const themes = await api.get('/api/themes');
 
             themeSelect.innerHTML = '';
             themes.forEach(theme => {
@@ -197,17 +204,14 @@ export async function openSettingsModal() {
         }
     }
 
-    modal.classList.remove("hidden");
+    toggleModal("#settings-modal", true);
 }
 
 /**
  * 설정 모달 닫기
  */
 export function closeSettingsModal() {
-    const modal = document.querySelector("#settings-modal");
-    if (modal) {
-        modal.classList.add("hidden");
-    }
+    toggleModal("#settings-modal", false);
 }
 
 /**
@@ -217,7 +221,6 @@ export async function saveSettings() {
     const defaultModeSelect = document.querySelector("#settings-default-mode");
     const themeSelect = document.querySelector("#settings-theme-select");
     const languageSelect = document.querySelector("#settings-language-select");
-    const { secureFetch } = await import('./ui-utils.js');
 
     const newSettings = { ...state.userSettings };
 
@@ -237,11 +240,7 @@ export async function saveSettings() {
 
         // 서버에 테마 저장 시도
         try {
-            await secureFetch('/api/themes/set', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ theme: themeName })
-            });
+            await api.post('/api/themes/set', { theme: themeName });
         } catch (error) {
             console.error('서버 테마 저장 실패:', error);
         }
@@ -483,26 +482,9 @@ export function applyCurrentUser(user) {
 
 export async function fetchAndDisplayCurrentUser() {
     try {
-        const res = await fetch("/api/auth/me");
-        if (!res.ok) {
-            throw new Error("HTTP " + res.status);
-        }
-
-        const user = await res.json();
+        const user = await api.get("/api/auth/me");
         applyCurrentUser(user);
         return;
-        state.currentUser = user;
-
-        const userNameEl = document.querySelector("#user-name");
-        const userAvatarEl = document.querySelector("#user-avatar");
-
-        if (userNameEl) {
-            userNameEl.textContent = user.username || "사용자";
-        }
-
-        if (userAvatarEl) {
-            userAvatarEl.textContent = user.username ? user.username[0].toUpperCase() : "?";
-        }
     } catch (error) {
         console.error("사용자 정보 불러오기 실패:", error);
         const userNameEl = document.querySelector("#user-name");
@@ -523,14 +505,12 @@ export async function fetchAndDisplayCurrentUser() {
  */
 async function exportBackup() {
     try {
-        const { secureFetch } = await import('./ui-utils.js');
-
         // 내보내기 시작 알림
         alert('백업 생성 중입니다. 데이터 양에 따라 시간이 걸릴 수 있습니다.');
 
-        const response = await secureFetch('/api/backup/export', {
-            method: 'GET'
-        });
+        // Blob 데이터 처리를 위해 직접 secureFetch 사용 (api.get은 json 기대)
+        const { secureFetch } = await import('./ui-utils.js');
+        const response = await secureFetch('/api/backup/export');
 
         if (!response.ok) {
             const errorData = await response.json();
@@ -580,14 +560,13 @@ async function importBackup(file) {
     }
 
     try {
-        const { secureFetch } = await import('./ui-utils.js');
-
         // FormData로 파일 전송
         const formData = new FormData();
         formData.append('backup', file);
 
         alert('백업 불러오기 중입니다. 데이터 양에 따라 시간이 걸릴 수 있습니다.');
 
+        const { secureFetch } = await import('./ui-utils.js');
         const response = await secureFetch('/api/backup/import', {
             method: 'POST',
             body: formData
@@ -627,10 +606,10 @@ async function uploadTheme(file) {
     }
 
     try {
-        const { secureFetch } = await import('./ui-utils.js');
         const formData = new FormData();
         formData.append('themeFile', file);
 
+        const { secureFetch } = await import('./ui-utils.js');
         const response = await secureFetch('/api/themes/upload', {
             method: 'POST',
             body: formData
@@ -661,12 +640,10 @@ export async function openSecuritySettingsModal() {
     const modal = document.querySelector("#security-settings-modal");
     if (!modal) return;
 
-    modal.classList.remove('hidden');
+    toggleModal("#security-settings-modal", true);
     hideParentModalForChild('#settings-modal', modal);
 
     try {
-        const { secureFetch } = await import('./ui-utils.js');
-
         // 보안 설정 로드 (캐싱 적용)
         let data;
         if (cachedSecuritySettings) {
@@ -674,11 +651,7 @@ export async function openSecuritySettingsModal() {
             data = cachedSecuritySettings;
         } else {
             // 최초 로드 시에만 API 호출
-            const response = await secureFetch('/api/auth/security-settings');
-            if (!response.ok) {
-                throw new Error('보안 설정 로드 실패');
-            }
-            data = await response.json();
+            data = await api.get('/api/auth/security-settings');
             cachedSecuritySettings = data;
         }
 
@@ -708,7 +681,7 @@ export async function openSecuritySettingsModal() {
 function closeSecuritySettingsModal() {
     const modal = document.querySelector("#security-settings-modal");
     if (modal) {
-        modal.classList.add('hidden');
+        toggleModal("#security-settings-modal", false);
         restoreParentModalFromChild(modal);
     }
 }
@@ -726,8 +699,6 @@ function backToMainSettings() {
  */
 async function saveSecuritySettings() {
     try {
-        const { secureFetch } = await import('./ui-utils.js');
-
         const blockDuplicateLoginToggle = document.querySelector('#block-duplicate-login-toggle');
         const countryWhitelistToggle = document.querySelector('#country-whitelist-toggle');
 
@@ -737,18 +708,7 @@ async function saveSecuritySettings() {
             allowedLoginCountries: state.allowedLoginCountries || []
         };
 
-        const response = await secureFetch('/api/auth/security-settings', {
-            method: 'PUT',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(payload)
-        });
-
-        if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(errorData.error || '보안 설정 저장 실패');
-        }
+        await api.put('/api/auth/security-settings', payload);
 
         // 캐시 무효화 (최신 데이터 반영)
         cachedSecuritySettings = payload;
@@ -795,27 +755,18 @@ export async function openCountryWhitelistModal() {
     if (!modal) return;
 
     try {
-        const { secureFetch } = await import('./ui-utils.js');
-
         // 국가 목록 및 현재 설정 로드 (캐싱 적용)
         let countriesData, settingsData;
 
         // 국가 목록은 정적이므로 캐시 사용
         if (!cachedCountries) {
-            const countriesRes = await secureFetch('/api/auth/countries');
-            if (!countriesRes.ok) {
-                throw new Error('국가 목록 로드 실패');
-            }
-            cachedCountries = await countriesRes.json();
+            countriesData = await api.get('/api/auth/countries');
+            cachedCountries = countriesData;
         }
         countriesData = cachedCountries;
 
         // 보안 설정은 변경될 수 있으므로 항상 최신 데이터 로드
-        const settingsRes = await secureFetch('/api/auth/security-settings');
-        if (!settingsRes.ok) {
-            throw new Error('보안 설정 로드 실패');
-        }
-        settingsData = await settingsRes.json();
+        settingsData = await api.get('/api/auth/security-settings');
         cachedSecuritySettings = settingsData;
 
         // 전역 상태에 저장
@@ -828,7 +779,7 @@ export async function openCountryWhitelistModal() {
         // 초기 선택 요약 업데이트
         updateSelectedCountriesSummary();
 
-        modal.classList.remove('hidden');
+        toggleModal('#country-whitelist-modal', true);
     } catch (error) {
         console.error('국가 화이트리스트 모달 열기 실패:', error);
         alert('국가 목록을 불러오는데 실패했습니다.');
@@ -901,10 +852,7 @@ async function saveCountryWhitelist() {
  * 국가 화이트리스트 모달 닫기
  */
 function closeCountryWhitelistModal() {
-    const modal = document.querySelector('#country-whitelist-modal');
-    if (modal) {
-        modal.classList.add('hidden');
-    }
+    toggleModal('#country-whitelist-modal', false);
 }
 
 /**
