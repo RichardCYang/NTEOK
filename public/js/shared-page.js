@@ -1,7 +1,7 @@
 import { sanitizeHttpHref } from './url-utils.js';
 import { escapeHtml, addIcon } from './ui-utils.js';
 import { loadAndRenderComments, initCommentsManager } from './comments-manager.js';
-import DOMPurify from 'https://esm.sh/dompurify@3.3.1';
+import DOMPurify from 'dompurify';
 
 /**
  * 공개 페이지 스크립트

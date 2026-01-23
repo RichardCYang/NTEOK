@@ -1,0 +1,3 @@
+/* esm.sh - @tiptap/extension-text-style@2.0.0-beta.209 */
+import{Mark as a,mergeAttributes as n,getMarkAttributes as u}from "@tiptap/core";var l=a.create({name:"textStyle",addOptions(){return{HTMLAttributes:{}}},parseHTML(){return[{tag:"span",getAttrs:t=>t.hasAttribute("style")?{}:!1}]},renderHTML({HTMLAttributes:t}){return["span",n(this.options.HTMLAttributes,t),0]},addCommands(){return{removeEmptyTextStyle:()=>({state:t,commands:e})=>{let r=u(t,this.type);return Object.entries(r).some(([,s])=>!!s)?!0:e.unsetMark(this.name)}}}});export{l as TextStyle,l as default};
+//# sourceMappingURL=extension-text-style.bundle.mjs.map

@@ -12,7 +12,7 @@ async function loadSimpleWebAuthn() {
     if (SimpleWebAuthnBrowser) return SimpleWebAuthnBrowser;
 
     try {
-        SimpleWebAuthnBrowser = await import('https://cdn.jsdelivr.net/npm/@simplewebauthn/browser@10.0.0/+esm');
+        SimpleWebAuthnBrowser = await import('/lib/simplewebauthn/browser.js');
         return SimpleWebAuthnBrowser;
     } catch (error) {
         console.error('SimpleWebAuthn 로드 실패:', error);

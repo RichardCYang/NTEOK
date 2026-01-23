@@ -1,0 +1,3 @@
+/* esm.sh - @tiptap/extension-table-header@2.0.0-beta.209 */
+import{Node as r,mergeAttributes as a}from "@tiptap/core";var o=r.create({name:"tableHeader",addOptions(){return{HTMLAttributes:{}}},content:"block+",addAttributes(){return{colspan:{default:1},rowspan:{default:1},colwidth:{default:null,parseHTML:t=>{let e=t.getAttribute("colwidth");return e?[parseInt(e,10)]:null}}}},tableRole:"header_cell",isolating:!0,parseHTML(){return[{tag:"th"}]},renderHTML({HTMLAttributes:t}){return["th",a(this.options.HTMLAttributes,t),0]}});export{o as TableHeader,o as default};
+//# sourceMappingURL=extension-table-header.bundle.mjs.map

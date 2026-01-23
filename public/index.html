@@ -4,36 +4,51 @@
         <meta charset="UTF-8" />
         <title>NTEOK</title>
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <!-- Font Awesome (SRI 적용 권장: scripts/pin-third-party.mjs로 자동 생성) -->
-        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" integrity="sha384-/o6I2CkkWC//PSjvWC/eYN7l3xM3tJm8ZzVkCOfp//W05QcE3mlGskpoHB6XqI+B" crossorigin="anonymous">
+        <!-- Font Awesome -->
+        <link rel="stylesheet" href="/lib/font-awesome/css/all.min.css">
 	    <link rel="stylesheet" href="/css/main.css">
 	    <link rel="stylesheet" href="/css/login.css">
 	    <link rel="stylesheet" href="/css/comments.css">
 	    <link rel="stylesheet" href="/css/file-block.css">
 	    <!-- KaTeX for Math Rendering -->
-	    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" integrity="sha384-n8MVd4RsNIU0tAv4ct0nTaAbDJwPJzDEaqSD1odI+WdtXRGWt2kTvGFasHpSy3SV" crossorigin="anonymous">
+	    <link rel="stylesheet" href="/lib/katex/katex.min.css">
 	    <script type="importmap" nonce="__CSP_NONCE__">
 	        {
 		        "imports": {
-			        "yjs": "https://esm.sh/yjs@13.6.18",
-			        "y-protocols/awareness": "https://esm.sh/y-protocols@1.0.6/awareness.js",
-					"y-protocols/awareness.js": "https://esm.sh/y-protocols@1.0.6/awareness.js",
-			        "lib0": "https://esm.sh/lib0@0.2.109",
-					"lib0/": "https://esm.sh/lib0@0.2.109/",
+			        "yjs": "/lib/yjs/yjs.js",
+			        "y-protocols": "/lib/y-protocols/awareness.js",
+			        "y-protocols/awareness": "/lib/y-protocols/awareness.js",
+					"y-protocols/awareness.js": "/lib/y-protocols/awareness.js",
+			        "lib0": "/lib/lib0/lib0.js",
+					"lib0/": "/lib/lib0/lib0.js",
 
-			        "y-prosemirror": "https://esm.sh/*y-prosemirror@1.2.1",
+			        "y-prosemirror": "/lib/y-prosemirror/y-prosemirror.js",
 
-			        "prosemirror-model": "https://esm.sh/prosemirror-model@1.22.3",
-			        "prosemirror-state": "https://esm.sh/prosemirror-state@1.4.3",
-			        "prosemirror-view": "https://esm.sh/prosemirror-view@1.39.0",
-			        "prosemirror-keymap": "https://esm.sh/prosemirror-keymap@1.2.2",
+			        "prosemirror-model": "/lib/prosemirror-model/prosemirror-model.js",
+			        "prosemirror-state": "/lib/prosemirror-state/prosemirror-state.js",
+			        "prosemirror-view": "/lib/prosemirror-view/prosemirror-view.js",
+			        "prosemirror-keymap": "/lib/prosemirror-keymap/prosemirror-keymap.js",
+					"prosemirror-schema-list": "/lib/prosemirror-schema-list/prosemirror-schema-list.js",
 
-			        "prosemirror-commands": "https://esm.sh/prosemirror-commands@1.5.2",
-			        "prosemirror-history": "https://esm.sh/prosemirror-history@1.4.1",
-			        "prosemirror-inputrules": "https://esm.sh/prosemirror-inputrules@1.4.0",
-			        "prosemirror-transform": "https://esm.sh/prosemirror-transform@1.9.0",
+			        "prosemirror-commands": "/lib/prosemirror-commands/prosemirror-commands.js",
+			        "prosemirror-history": "/lib/prosemirror-history/prosemirror-history.js",
+			        "prosemirror-inputrules": "/lib/prosemirror-inputrules/prosemirror-inputrules.js",
+			        "prosemirror-transform": "/lib/prosemirror-transform/prosemirror-transform.js",
 
-					"dompurify": "https://esm.sh/dompurify@3.3.1"
+					"@tiptap/core": "/lib/tiptap-extensions/core.js",
+					"@tiptap/extension-text-align": "/lib/tiptap-extensions/text-align.js",
+					"@tiptap/extension-color": "/lib/tiptap-extensions/color.js",
+					"@tiptap/extension-text-style": "/lib/tiptap-extensions/text-style.js",
+					"@tiptap/extension-font-family": "/lib/tiptap-extensions/font-family.js",
+					"@tiptap/extension-task-list": "/lib/tiptap-extensions/task-list.js",
+					"@tiptap/extension-task-item": "/lib/tiptap-extensions/task-item.js",
+					"@tiptap/extension-table": "/lib/tiptap-extensions/table.js",
+					"@tiptap/extension-table-row": "/lib/tiptap-extensions/table-row.js",
+					"@tiptap/extension-table-header": "/lib/tiptap-extensions/table-header.js",
+					"@tiptap/extension-table-cell": "/lib/tiptap-extensions/table-cell.js",
+					"@tiptap/prosemirror-tables": "/lib/tiptap-extensions/prosemirror-tables.js",
+
+					"dompurify": "/lib/dompurify/dompurify.js"
 		        },
 				"integrity": __IMPORTMAP_INTEGRITY__
 	        }
@@ -590,20 +605,20 @@
                 </main>
             </div>
         </div>
-        <!-- Tiptap 브라우저 번들 (전역 Tiptap 객체 제공) -->
-        <script src="https://cdn.jsdelivr.net/gh/panphora/tiptap-for-browser@2.0.0-beta.166/tiptap-for-browser.min.js" integrity="sha384-wVSDqb5WVwFD5Z28HXERfTDTL6CoNJ7WBKmC3jnXucW9tteXq+fW/eg4OpzRACzO" crossorigin="anonymous"></script>
+        <!-- Tiptap 브라우저 번들 -->
+        <script src="/lib/tiptap/tiptap-for-browser.min.js"></script>
 
         <!-- KaTeX for Math Rendering -->
-        <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js" integrity="sha384-XjKyOOlGwcjNTAIQHIpgOno0Hl1YQqzUOEleOLALmuqehneUG+vnGctmUb0ZY0l8" crossorigin="anonymous"></script>
+        <script src="/lib/katex/katex.min.js"></script>
 
         <!-- html2canvas for PDF Export -->
-        <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js" integrity="sha384-ZZ1pncU3bQe8y31yfZdMFdSpttDoPmOZg2wguVK9almUodir1PghgT0eY7Mrty8H" crossorigin="anonymous"></script>
+        <script src="/lib/html2canvas/html2canvas.min.js"></script>
 
         <!-- jsPDF for PDF Export -->
-        <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js" integrity="sha384-JcnsjUPPylna1s1fvi1u12X5qjY5OL56iySh75FdtrwhO/SWXgMjoVqcKyIIWOLk" crossorigin="anonymous"></script>
+        <script src="/lib/jspdf/jspdf.umd.min.js"></script>
 
         <!-- html2pdf.js for PDF Export -->
-        <script src="https://cdn.jsdelivr.net/npm/html2pdf.js@0.10.2/dist/html2pdf.bundle.min.js" integrity="sha384-aBc0BOllaGWrQx51DYt978St/L7B+21jzNGc4N/jnGD0NxGwj8S/ftRgW0AkXIak" crossorigin="anonymous"></script>
+        <script src="/lib/html2pdf/html2pdf.bundle.min.js"></script>
 
         <!-- 보안: CSRF 토큰 유틸리티 -->
         <script src="/js/csrf-utils.js"></script>
@@ -1695,7 +1710,7 @@
         </div>
 
         <!-- 드래그 앤 드롭 라이브러리 -->
-        <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js" integrity="sha384-eeLEhtwdMwD3X9y+8P3Cn7Idl/M+w8H4uZqkgD/2eJVkWIN1yKzEj6XegJ9dL3q0" crossorigin="anonymous"></script>
+        <script src="/lib/sortablejs/Sortable.min.js"></script>
 
         <!-- 메인 코드 (import 안 씀, 전역 Tiptap 사용) -->
         <script type="module" src="/js/app.js"></script>

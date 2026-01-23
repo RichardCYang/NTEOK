@@ -1,0 +1,3 @@
+/* esm.sh - @tiptap/extension-color@2.0.0-beta.209 */
+import "@tiptap/extension-text-style";import{Extension as e}from "@tiptap/core";var n=e.create({name:"color",addOptions(){return{types:["textStyle"]}},addGlobalAttributes(){return[{types:this.options.types,attributes:{color:{default:null,parseHTML:t=>{var r;return(r=t.style.color)===null||r===void 0?void 0:r.replace(/['"]+/g,"")},renderHTML:t=>t.color?{style:`color: ${t.color}`}:{}}}}]},addCommands(){return{setColor:t=>({chain:r})=>r().setMark("textStyle",{color:t}).run(),unsetColor:()=>({chain:t})=>t().setMark("textStyle",{color:null}).removeEmptyTextStyle().run()}}});export{n as Color,n as default};
+//# sourceMappingURL=extension-color.bundle.mjs.map

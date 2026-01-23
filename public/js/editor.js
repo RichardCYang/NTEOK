@@ -60,24 +60,24 @@ export const EXAMPLE_CONTENT = `
 import { secureFetch, syncPageUpdatedAtPadding } from './ui-utils.js';
 
 // 문단 정렬(TextAlign) 익스텐션 ESM import
-import { TextAlign } from "https://esm.sh/@tiptap/extension-text-align@2.0.0-beta.209";
+import { TextAlign } from "@tiptap/extension-text-align";
 
 // 텍스트 색상(Color) / TextStyle 익스텐션 ESM import
-import Color from "https://esm.sh/@tiptap/extension-color@2.0.0-beta.209";
-import TextStyle from "https://esm.sh/@tiptap/extension-text-style@2.0.0-beta.209";
+import Color from "@tiptap/extension-color";
+import TextStyle from "@tiptap/extension-text-style";
 
 // 폰트 패밀리(FontFamily) 익스텐션 ESM import
-import FontFamily from "https://esm.sh/@tiptap/extension-font-family@2.0.0-beta.209";
+import FontFamily from "@tiptap/extension-font-family";
 
 // TaskList / TaskItem 익스텐션 ESM import
-import TaskList from "https://esm.sh/@tiptap/extension-task-list@2.0.0-beta.209";
-import TaskItem from "https://esm.sh/@tiptap/extension-task-item@2.0.0-beta.209";
+import TaskList from "@tiptap/extension-task-list";
+import TaskItem from "@tiptap/extension-task-item";
 
 // Table 익스텐션 ESM import
-import Table from "https://esm.sh/@tiptap/extension-table@2.0.0-beta.209";
-import TableRow from "https://esm.sh/@tiptap/extension-table-row@2.0.0-beta.209";
-import TableHeader from "https://esm.sh/@tiptap/extension-table-header@2.0.0-beta.209";
-import TableCell from "https://esm.sh/@tiptap/extension-table-cell@2.0.0-beta.209";
+import Table from "@tiptap/extension-table";
+import TableRow from "@tiptap/extension-table-row";
+import TableHeader from "@tiptap/extension-table-header";
+import TableCell from "@tiptap/extension-table-cell";
 
 // Math 노드 import
 import { MathBlock, MathInline } from './math-node.js';

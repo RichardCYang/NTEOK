@@ -1,5 +1,5 @@
-import { Extension } from "https://esm.sh/@tiptap/core@2.0.0-beta.209";
-import { Plugin, PluginKey } from "https://esm.sh/prosemirror-state@1.4.3";
+import { Extension } from "@tiptap/core";
+import { Plugin, PluginKey } from "prosemirror-state";
 import { showContextMenu, closeContextMenu } from './ui-utils.js';
 
 // 핸들 요소 생성을 위한 유틸리티
@@ -71,8 +71,13 @@ export const DragHandle = Extension.create({
                     let dropIndicator = null;
                     let dropTargetPos = null;
 
-                    // 마우스 오버 핸들러 (데스크탑)
+                    // 마우스 오버 핸들러 (데스크탑) - Throttle 적용하여 성능 최적화 및 오류 빈도 감소
+                    let lastMouseMoveTime = 0;
                     const onMouseMove = (e) => {
+                        const now = Date.now();
+                        if (now - lastMouseMoveTime < 50) return; // 50ms 디바운스/쓰로틀
+                        lastMouseMoveTime = now;
+
                         // 읽기 모드이면 핸들 숨김
                         if (!editorView.editable) {
                             handle.style.opacity = '0';
@@ -87,8 +92,17 @@ export const DragHandle = Extension.create({
                         if (isMouseDown) return; // 드래그/클릭 동작 중에는 핸들 위치 고정
 
                         const view = editorView;
-                        // 좌표로 pos 찾기
-                        const pos = view.posAtCoords({ left: e.clientX, top: e.clientY });
+                        // 좌표로 pos 찾기 (예외 처리 추가: 커스텀 노드 등에서 내부 오류 발생 가능)
+                        let pos;
+                        try {
+                            pos = view.posAtCoords({ left: e.clientX, top: e.clientY });
+                        } catch (err) {
+                            // 특정 TypeError(nodeName)는 ProseMirror 내부 이슈이므로 무시하여 콘솔 노이즈 제거
+                            if (!(err instanceof TypeError && err.message.includes('nodeName'))) {
+                                console.warn('[DragHandle] posAtCoords error:', err);
+                            }
+                            return;
+                        }
                         if (!pos) return;
 
                         let $pos = view.state.doc.resolve(pos.pos);
@@ -111,14 +125,14 @@ export const DragHandle = Extension.create({
                         // $pos가 블록 바로 앞/뒤에 있는 경우 (Atom 노드 등)
                         const nodeAfter = $pos.nodeAfter;
                         // Atom 노드이거나 텍스트가 없는 특수 블록인 경우 우선 선택
-                        if (nodeAfter && nodeAfter.isBlock && (nodeAfter.isAtom || nodeAfter.type.name === 'horizontalRule')) {
+                        if (nodeAfter && nodeAfter.isBlock && (nodeAfter.isAtom || nodeAfter.type.name === 'horizontalRule' || nodeAfter.type.name === 'boardBlock')) {
                             if (isMouseOverNode($pos.pos, nodeAfter)) {
                                 targetPos = $pos.pos;
                                 targetNode = nodeAfter;
                             }
                         } else {
                             const nodeBefore = $pos.nodeBefore;
-                            if (nodeBefore && nodeBefore.isBlock && (nodeBefore.isAtom || nodeBefore.type.name === 'horizontalRule')) {
+                            if (nodeBefore && nodeBefore.isBlock && (nodeBefore.isAtom || nodeBefore.type.name === 'horizontalRule' || nodeBefore.type.name === 'boardBlock')) {
                                 if (isMouseOverNode($pos.pos - nodeBefore.nodeSize, nodeBefore)) {
                                     targetPos = $pos.pos - nodeBefore.nodeSize;
                                     targetNode = nodeBefore;
@@ -129,7 +143,7 @@ export const DragHandle = Extension.create({
                         // 2. Container Hierarchy Check (Table, ToggleList, TaskList 등 중첩 구조)
                         if (!targetNode) {
                             // 이동 가능한 블록의 부모가 될 수 있는 컨테이너 타입 정의
-                            const containerTypes = ['doc', 'toggleBlock', 'blockquote', 'taskList', 'bulletList', 'orderedList'];
+                            const containerTypes = ['doc', 'toggleBlock', 'blockquote', 'taskList', 'bulletList', 'orderedList', 'boardBlock'];
                             // 개별적으로 핸들이 붙어야 하는 리스트 아이템 타입
                             const listItemTypes = ['taskItem', 'listItem'];
                             
@@ -231,7 +245,13 @@ export const DragHandle = Extension.create({
                     };
 
                     const updateDropIndicator = (x, y) => {
-                        const pos = editorView.posAtCoords({ left: x, top: y });
+                        let pos;
+                        try {
+                            pos = editorView.posAtCoords({ left: x, top: y });
+                        } catch (err) {
+                            // nodeName 에러는 ProseMirror 내부 이슈이므로 로깅 생략
+                            return;
+                        }
                         if (!pos) return;
 
                         let $pos = editorView.state.doc.resolve(pos.pos);
@@ -242,18 +262,18 @@ export const DragHandle = Extension.create({
                         // 드롭 타겟 찾기 (onMouseMove와 유사 로직)
                         // 1. Leaf check (Atom 노드 우선)
                         const nodeAfter = $pos.nodeAfter;
-                        if (nodeAfter && nodeAfter.isBlock && nodeAfter.isAtom) {
+                        if (nodeAfter && nodeAfter.isBlock && (nodeAfter.isAtom || nodeAfter.type.name === 'boardBlock')) {
                             targetBlockPos = $pos.pos;
                         } else {
                             const nodeBefore = $pos.nodeBefore;
-                            if (nodeBefore && nodeBefore.isBlock && nodeBefore.isAtom) {
+                            if (nodeBefore && nodeBefore.isBlock && (nodeBefore.isAtom || nodeBefore.type.name === 'boardBlock')) {
                                 targetBlockPos = $pos.pos - nodeBefore.nodeSize;
                             }
                         }
 
                         // 2. Loop check (컨테이너 계층 탐색)
                         if (targetBlockPos === null) {
-                            const containerTypes = ['doc', 'toggleBlock', 'blockquote', 'taskList', 'bulletList', 'orderedList'];
+                            const containerTypes = ['doc', 'toggleBlock', 'blockquote', 'taskList', 'bulletList', 'orderedList', 'boardBlock'];
                             const listItemTypes = ['taskItem', 'listItem'];
 
                             for (let d = $pos.depth; d >= 0; d--) {

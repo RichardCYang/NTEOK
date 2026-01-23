@@ -5,11 +5,52 @@
         <title>NTEOK - 공개 페이지</title>
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <!-- Font Awesome 아이콘 -->
-        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" integrity="sha384-/o6I2CkkWC//PSjvWC/eYN7l3xM3tJm8ZzVkCOfp//W05QcE3mlGskpoHB6XqI+B" crossorigin="anonymous">
+        <link rel="stylesheet" href="/lib/font-awesome/css/all.min.css">
         <!-- KaTeX for Math Rendering -->
-        <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" integrity="sha384-n8MVd4RsNIU0tAv4ct0nTaAbDJwPJzDEaqSD1odI+WdtXRGWt2kTvGFasHpSy3SV" crossorigin="anonymous">
+        <link rel="stylesheet" href="/lib/katex/katex.min.css">
 	    <link rel="stylesheet" href="/css/main.css">
 	    <link rel="stylesheet" href="/css/comments.css">
+	    <script type="importmap" nonce="__CSP_NONCE__">
+	        {
+		        "imports": {
+			        "yjs": "/lib/yjs/yjs.js",
+			        "y-protocols": "/lib/y-protocols/awareness.js",
+			        "y-protocols/awareness": "/lib/y-protocols/awareness.js",
+					"y-protocols/awareness.js": "/lib/y-protocols/awareness.js",
+			        "lib0": "/lib/lib0/lib0.js",
+					"lib0/": "/lib/lib0/lib0.js",
+
+			        "y-prosemirror": "/lib/y-prosemirror/y-prosemirror.js",
+
+			        "prosemirror-model": "/lib/prosemirror-model/prosemirror-model.js",
+			        "prosemirror-state": "/lib/prosemirror-state/prosemirror-state.js",
+			        "prosemirror-view": "/lib/prosemirror-view/prosemirror-view.js",
+			        "prosemirror-keymap": "/lib/prosemirror-keymap/prosemirror-keymap.js",
+					"prosemirror-schema-list": "/lib/prosemirror-schema-list/prosemirror-schema-list.js",
+
+			        "prosemirror-commands": "/lib/prosemirror-commands/prosemirror-commands.js",
+			        "prosemirror-history": "/lib/prosemirror-history/prosemirror-history.js",
+			        "prosemirror-inputrules": "/lib/prosemirror-inputrules/prosemirror-inputrules.js",
+			        "prosemirror-transform": "/lib/prosemirror-transform/prosemirror-transform.js",
+
+					"@tiptap/core": "/lib/tiptap-extensions/core.js",
+					"@tiptap/extension-text-align": "/lib/tiptap-extensions/text-align.js",
+					"@tiptap/extension-color": "/lib/tiptap-extensions/color.js",
+					"@tiptap/extension-text-style": "/lib/tiptap-extensions/text-style.js",
+					"@tiptap/extension-font-family": "/lib/tiptap-extensions/font-family.js",
+					"@tiptap/extension-task-list": "/lib/tiptap-extensions/task-list.js",
+					"@tiptap/extension-task-item": "/lib/tiptap-extensions/task-item.js",
+					"@tiptap/extension-table": "/lib/tiptap-extensions/table.js",
+					"@tiptap/extension-table-row": "/lib/tiptap-extensions/table-row.js",
+					"@tiptap/extension-table-header": "/lib/tiptap-extensions/table-header.js",
+					"@tiptap/extension-table-cell": "/lib/tiptap-extensions/table-cell.js",
+					"@tiptap/prosemirror-tables": "/lib/tiptap-extensions/prosemirror-tables.js",
+
+					"dompurify": "/lib/dompurify/dompurify.js"
+		        },
+				"integrity": __IMPORTMAP_INTEGRITY__
+	        }
+	    </script>
         <style>
             body {
                 background-color: #f9fafb;
@@ -584,7 +625,7 @@
         </div>
 
         <!-- KaTeX for Math Rendering -->
-        <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+        <script src="/lib/katex/katex.min.js"></script>
 
         <!-- 유틸리티 스크립트 -->
         <script src="/js/csrf-utils.js"></script>

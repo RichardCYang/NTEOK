@@ -1,12 +1,7 @@
-// 문단 정렬(TextAlign) 익스텐션 ESM import
-import { TextAlign } from "https://esm.sh/@tiptap/extension-text-align@2.0.0-beta.209";
-
-// 텍스트 색상(Color) / TextStyle 익스텐션 ESM import
-import Color from "https://esm.sh/@tiptap/extension-color@2.0.0-beta.209";
-import TextStyle from "https://esm.sh/@tiptap/extension-text-style@2.0.0-beta.209";
-
-// 폰트 패밀리(FontFamily) 익스텐션 ESM import
-import FontFamily from "https://esm.sh/@tiptap/extension-font-family@2.0.0-beta.209";
+import { TextAlign } from "@tiptap/extension-text-align";
+import Color from "@tiptap/extension-color";
+import TextStyle from "@tiptap/extension-text-style";
+import FontFamily from "@tiptap/extension-font-family";
 
 // 전역 Tiptap 번들에서 Editor / StarterKit 가져오기
 // index.html 에서 tiptap-for-browser.min.js 우선 로딩 필요
