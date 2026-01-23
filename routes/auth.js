@@ -188,13 +188,19 @@ module.exports = (dependencies) => {
                 // 임시 세션 생성 (2FA 검증 대기)
                 const tempSessionId = crypto.randomBytes(32).toString("hex");
                 const now = new Date();
+                const clientIp = getClientIp(req);
+                const ua = req.headers["user-agent"] || "";
+                const uaHash = crypto.createHash("sha256").update(ua).digest("hex");
 
                 sessions.set(tempSessionId, {
                 	type: "2fa",
                     pendingUserId: user.id,
                     createdAt: now.getTime(),
                     expiresAt: now.getTime() + 10 * 60 * 1000, // 2단계 인증을 위한 임시 세션 만료 시간 : 10분
-                    lastAccessedAt: now.getTime()
+                    lastAccessedAt: now.getTime(),
+                    // 2FA 임시 세션 탈취/재사용 방지: 발급 당시 환경에 느슨하게 바인딩
+                    ipKey: clientIp,
+                    uaHash
                 });
 
                 // 사용 가능한 2FA 방법 목록

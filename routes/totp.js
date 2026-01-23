@@ -31,6 +31,7 @@ module.exports = (dependencies) => {
         CSRF_COOKIE_NAME,
         SESSION_TTL_MS,
         IS_PRODUCTION,
+        BASE_URL,
         BCRYPT_SALT_ROUNDS,
         logError,
         recordLoginAttempt,
@@ -47,6 +48,79 @@ module.exports = (dependencies) => {
             req.socket?.remoteAddress ||
             'unknown'
         );
+    }
+
+    /**
+     * Login CSRF 방지(2FA 검증 엔드포인트용)
+     * - CSRF 토큰 예외가 필요한 인증 단계(/verify-*)는
+     *   Origin/Referer + Sec-Fetch-Site 기반 동일 출처만 허용
+     */
+    function requireSameOriginForAuth(req, res, next) {
+        try {
+            const allowedOrigins = new Set(
+                String(process.env.ALLOWED_ORIGINS || BASE_URL || "")
+                    .split(",")
+                    .map(s => s.trim())
+                    .filter(Boolean)
+                    .map(u => new URL(u).origin)
+            );
+
+            const sfs = req.headers["sec-fetch-site"];
+            if (typeof sfs === "string" && sfs && sfs !== "same-origin" && sfs !== "same-site") {
+                return res.status(403).json({ error: "요청 출처가 유효하지 않습니다." });
+            }
+
+            const origin = req.headers.origin;
+            const referer = req.headers.referer;
+
+            let reqOrigin = null;
+            if (typeof origin === "string" && origin) {
+                reqOrigin = origin;
+            } else if (typeof referer === "string" && referer) {
+                reqOrigin = new URL(referer).origin;
+            }
+
+            if (!reqOrigin) return res.status(403).json({ error: "요청 출처가 유효하지 않습니다." });
+            if (!allowedOrigins.has(reqOrigin)) return res.status(403).json({ error: "요청 출처가 유효하지 않습니다." });
+
+            return next();
+        } catch (e) {
+            return res.status(403).json({ error: "요청 출처가 유효하지 않습니다." });
+        }
+    }
+
+    /**
+     * 2FA 임시 세션 검증
+     * - type=2fa 확인
+     * - expiresAt 즉시 검증 (주기적 정리 지연 보완)
+     * - (선택) 발급 당시 IP/UA 바인딩 검사
+     */
+    function getValid2FATempSession(req, tempSessionId) {
+        const s = sessions.get(tempSessionId);
+        if (!s || s.type !== "2fa" || !s.pendingUserId) return null;
+
+        const now = Date.now();
+        if (s.expiresAt && s.expiresAt <= now) {
+            sessions.delete(tempSessionId);
+            return null;
+        }
+
+        // 발급 당시 환경 바인딩(느슨)
+        const ipNow = getClientIp(req);
+        if (s.ipKey && ipNow && s.ipKey !== ipNow) {
+            sessions.delete(tempSessionId);
+            return null;
+        }
+
+        const uaNow = req.headers["user-agent"] || "";
+        const uaHashNow = crypto.createHash("sha256").update(uaNow).digest("hex");
+        if (s.uaHash && s.uaHash !== uaHashNow) {
+            sessions.delete(tempSessionId);
+            return null;
+        }
+
+        s.lastAccessedAt = now;
+        return s;
     }
 
     /**
@@ -217,22 +291,19 @@ module.exports = (dependencies) => {
      * 로그인 시 TOTP 검증
      * POST /api/totp/verify-login
      */
-    router.post("/verify-login", totpLimiter, async (req, res) => {
+    router.post("/verify-login", totpLimiter, requireSameOriginForAuth, async (req, res) => {
         try {
             const { token, tempSessionId } = req.body;
 
-            if (!token || !/^\d{6}$/.test(token)) {
+            if (!token || !/^\d{6}$/.test(token))
                 return res.status(400).json({ error: "유효한 6자리 코드를 입력하세요." });
-            }
 
-            if (!tempSessionId) {
+            if (!tempSessionId)
                 return res.status(400).json({ error: "세션 정보가 없습니다." });
-            }
 
-            const tempSession = sessions.get(tempSessionId);
-            if (!tempSession || !tempSession.pendingUserId) {
+			const tempSession = getValid2FATempSession(req, tempSessionId);
+			if (!tempSession)
                 return res.status(400).json({ error: "세션이 만료되었습니다. 다시 로그인하세요." });
-            }
 
             const userId = tempSession.pendingUserId;
 
@@ -354,33 +425,62 @@ module.exports = (dependencies) => {
      * 백업 코드로 로그인
      * POST /api/totp/verify-backup-code
      */
-    router.post("/verify-backup-code", totpLimiter, async (req, res) => {
+    router.post("/verify-backup-code", totpLimiter, requireSameOriginForAuth, async (req, res) => {
         try {
             const { backupCode, tempSessionId } = req.body;
 
-            if (!backupCode) {
+            if (!backupCode)
                 return res.status(400).json({ error: "백업 코드를 입력하세요." });
-            }
 
-            if (!tempSessionId) {
+            if (!tempSessionId)
                 return res.status(400).json({ error: "세션 정보가 없습니다." });
-            }
 
-            const tempSession = sessions.get(tempSessionId);
-            if (!tempSession || !tempSession.pendingUserId) {
+            const tempSession = getValid2FATempSession(req, tempSessionId);
+            if (!tempSession)
                 return res.status(400).json({ error: "세션이 만료되었습니다. 다시 로그인하세요." });
-            }
 
             const userId = tempSession.pendingUserId;
+
+            // 사용자 정보(국가 화이트리스트 포함) 조회
+            const [userRows] = await pool.execute(
+                "SELECT username, block_duplicate_login, country_whitelist_enabled, allowed_login_countries FROM users WHERE id = ?",
+                [userId]
+            );
+
+            if (userRows.length === 0) {
+                sessions.delete(tempSessionId);
+                return res.status(404).json({ error: "사용자를 찾을 수 없습니다." });
+            }
+
+            const { username, block_duplicate_login, country_whitelist_enabled, allowed_login_countries } = userRows[0];
+
+            // 국가 화이트리스트 체크 (※ 기존 취약점: 백업코드 경로에서 누락되어 우회 가능)
+            const countryCheck = checkCountryWhitelist(
+                { country_whitelist_enabled, allowed_login_countries },
+                getClientIp(req)
+            );
+
+            if (!countryCheck.allowed) {
+                await recordLoginAttempt(pool, {
+                    userId,
+                    username,
+                    ipAddress: getClientIp(req),
+                    port: req.connection.remotePort || 0,
+                    success: false,
+                    failureReason: countryCheck.reason,
+                    userAgent: req.headers['user-agent'] || null
+                });
+                sessions.delete(tempSessionId);
+                return res.status(403).json({ error: "현재 위치에서는 로그인할 수 없습니다. 계정 보안 설정을 확인하세요." });
+            }
 
             const [rows] = await pool.execute(
                 "SELECT id, code_hash FROM backup_codes WHERE user_id = ? AND used = 0",
                 [userId]
             );
 
-            if (rows.length === 0) {
+            if (rows.length === 0)
                 return res.status(401).json({ error: "사용 가능한 백업 코드가 없습니다." });
-            }
 
             let validCodeId = null;
             for (const row of rows) {
@@ -392,7 +492,16 @@ module.exports = (dependencies) => {
             }
 
             if (!validCodeId) {
-                return res.status(401).json({ error: "잘못된 백업 코드입니다." });
+	           	await recordLoginAttempt(pool, {
+	                userId,
+	                username,
+	                ipAddress: getClientIp(req),
+	                port: req.connection.remotePort || 0,
+	                success: false,
+	                failureReason: '백업 코드 불일치',
+	                userAgent: req.headers['user-agent'] || null
+	            });
+            	return res.status(401).json({ error: "잘못된 백업 코드입니다." });
             }
 
             const now = new Date();
@@ -401,17 +510,6 @@ module.exports = (dependencies) => {
                 "UPDATE backup_codes SET used = 1, used_at = ? WHERE id = ?",
                 [nowStr, validCodeId]
             );
-
-            const [userRows] = await pool.execute(
-                "SELECT username, block_duplicate_login FROM users WHERE id = ?",
-                [userId]
-            );
-
-            if (userRows.length === 0) {
-                return res.status(404).json({ error: "사용자를 찾을 수 없습니다." });
-            }
-
-            const { username, block_duplicate_login } = userRows[0];
 
             // 세션 생성
             const sessionResult = createSession({
@@ -450,6 +548,17 @@ module.exports = (dependencies) => {
             });
 
             res.json({ success: true });
+
+            // 로그인 로그 기록(성공)
+            recordLoginAttempt(pool, {
+                userId,
+                username,
+                ipAddress: getClientIp(req),
+                port: req.connection.remotePort || 0,
+                success: true,
+                failureReason: null,
+                userAgent: req.headers['user-agent'] || null
+            });
         } catch (error) {
             logError("POST /api/totp/verify-backup-code", error);
             res.status(500).json({ error: "백업 코드 검증 중 오류가 발생했습니다." });
