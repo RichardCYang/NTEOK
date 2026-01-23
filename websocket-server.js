@@ -375,169 +375,184 @@ function initWebSocketServer(server, sessions, getCollectionPermission, pool, sa
     });
 
     wss.on('connection', async (ws, req) => {
-        // Rate Limiting 체크
-		// - 개발(직접 접속): req.socket.remoteAddress 사용
-		// - 리버스 프록시(Nginx/Caddy/Cloudflare 등) 뒤: remoteAddress가 ::1/127.0.0.1로
-		//   고정되는 경우가 있어 X-Forwarded-For/X-Real-IP를 우선 반영(단, 루프백일 때만)
-		const remoteAddress = req.socket?.remoteAddress;
-		const xForwardedFor = req.headers['x-forwarded-for'];
-		const xRealIp = req.headers['x-real-ip'];
-		const forwardedIp = typeof xForwardedFor === 'string'
-			? xForwardedFor.split(',')[0].trim()
-			: (typeof xRealIp === 'string' ? xRealIp.trim() : null);
-		const isLoopback = remoteAddress === '::1'
-			|| remoteAddress === '127.0.0.1'
-			|| (typeof remoteAddress === 'string' && remoteAddress.startsWith('::ffff:127.'));
-		const clientIp = (forwardedIp && (isLoopback || !remoteAddress))
-			? forwardedIp
-			: (remoteAddress || 'unknown');
-        if (!checkWebSocketRateLimit(clientIp)) {
-            console.warn(`[WS Rate Limit] IP ${clientIp}의 연결 시도가 차단되었습니다.`);
-            ws.close(1008, 'Too many connection attempts. Please try again later.');
-            return;
-        }
+    	try
+     	{
+    		// Rate Limiting 체크
+			// - 개발(직접 접속): req.socket.remoteAddress 사용
+			// - 리버스 프록시(Nginx/Caddy/Cloudflare 등) 뒤: remoteAddress가 ::1/127.0.0.1로
+			//   고정되는 경우가 있어 X-Forwarded-For/X-Real-IP를 우선 반영(단, 루프백일 때만)
+			const remoteAddress = req.socket?.remoteAddress;
+			const xForwardedFor = req.headers['x-forwarded-for'];
+			const xRealIp = req.headers['x-real-ip'];
+			const forwardedIp = typeof xForwardedFor === 'string'
+				? xForwardedFor.split(',')[0].trim()
+				: (typeof xRealIp === 'string' ? xRealIp.trim() : null);
+			const isLoopback = remoteAddress === '::1'
+				|| remoteAddress === '127.0.0.1'
+				|| (typeof remoteAddress === 'string' && remoteAddress.startsWith('::ffff:127.'));
+			const clientIp = (forwardedIp && (isLoopback || !remoteAddress))
+				? forwardedIp
+				: (remoteAddress || 'unknown');
+		    if (!checkWebSocketRateLimit(clientIp)) {
+		        console.warn(`[WS Rate Limit] IP ${clientIp}의 연결 시도가 차단되었습니다.`);
+		        ws.close(1008, 'Too many connection attempts. Please try again later.');
+		        return;
+		    }
 
-        // Origin 검증 (CSWSH 방지 강화)
-        // - 기본 정책: Origin/Referer가 없으면 차단
-        // - 예외가 필요하면 WS_ALLOW_NO_ORIGIN=true 로 opt-in
-        const allowNoOrigin = String(process.env.WS_ALLOW_NO_ORIGIN || "false").toLowerCase() === "true";
+		    // Origin 검증 (CSWSH 방지 강화)
+		    // - 기본 정책: Origin/Referer가 없으면 차단
+		    // - 예외가 필요하면 WS_ALLOW_NO_ORIGIN=true 로 opt-in
+		    const allowNoOrigin = String(process.env.WS_ALLOW_NO_ORIGIN || "false").toLowerCase() === "true";
 
-        // 허용 Origin 목록: ALLOWED_ORIGINS(콤마) 우선, 없으면 BASE_URL만 허용
-        let allowedOrigins = new Set();
-        try {
-            allowedOrigins = new Set(
-                String(process.env.ALLOWED_ORIGINS || BASE_URL || "")
-                    .split(",")
-                    .map(s => s.trim())
-                    .filter(Boolean)
-                    .map(u => new URL(u).origin)
-            );
-        } catch (_) {
-            // 파싱 실패 시 보수적으로 BASE_URL origin만 허용
-            try {
-                allowedOrigins = new Set([new URL(BASE_URL).origin]);
-            } catch {}
-        }
+		    // 허용 Origin 목록: ALLOWED_ORIGINS(콤마) 우선, 없으면 BASE_URL만 허용
+		    let allowedOrigins = new Set();
+		    try {
+		        allowedOrigins = new Set(
+		            String(process.env.ALLOWED_ORIGINS || BASE_URL || "")
+		                .split(",")
+		                .map(s => s.trim())
+		                .filter(Boolean)
+		                .map(u => new URL(u).origin)
+		        );
+		    } catch (_) {
+		        // 파싱 실패 시 보수적으로 BASE_URL origin만 허용
+		        try {
+		            allowedOrigins = new Set([new URL(BASE_URL).origin]);
+		        } catch {}
+		    }
 
-        const originHeader = req.headers.origin;
-        const refererHeader = req.headers.referer;
-        let reqOrigin = null;
-        if (typeof originHeader === "string" && originHeader) reqOrigin = originHeader;
-        else if (typeof refererHeader === "string" && refererHeader) reqOrigin = new URL(refererHeader).origin;
+		    const originHeader = req.headers.origin;
+		    const refererHeader = req.headers.referer;
+		    let reqOrigin = null;
 
-        if (!reqOrigin && !allowNoOrigin) {
-            console.warn(`[WS 보안] Origin/Referer 없는 연결 차단 - IP: ${clientIp}`);
-            ws.close(1008, 'Origin required');
-            return;
-        }
+		    // Origin/Referer는 신뢰할 수 없는 입력이므로 파싱 오류가 나더라도 예외가 전파되지 않게 방어
+		    if (typeof originHeader === "string" && originHeader && originHeader !== "null") {
+		        reqOrigin = originHeader.trim();
+		    } else if (typeof refererHeader === "string" && refererHeader) {
+		        try {
+		            reqOrigin = new URL(refererHeader).origin;
+		        } catch {
+		            reqOrigin = null;
+		        }
+		    }
 
-		if (reqOrigin) {
-			try {
-				const originUrl = new URL(reqOrigin).origin;
-                if (!allowedOrigins.has(originUrl)) {
-                    console.warn(`[WS 보안] 허용되지 않은 Origin 차단 - Origin: ${originUrl}, IP: ${clientIp}`);
-                    ws.close(1008, 'Invalid origin');
-                    return;
-                }
+		    if (!reqOrigin && !allowNoOrigin) {
+		        console.warn(`[WS 보안] Origin/Referer 없는 연결 차단 - IP: ${clientIp}`);
+		        ws.close(1008, 'Origin required');
+		        return;
+		    }
 
-                // 프로덕션에서는 https Origin만 허용(선택적으로 강화)
-                if (IS_PRODUCTION && originUrl.startsWith("http://")) {
-                    console.warn(`[WS 보안] HTTP Origin 차단(Production) - Origin: ${originUrl}, IP: ${clientIp}`);
-                    ws.close(1008, 'HTTPS required in production');
-                    return;
-                }
-            } catch (error) {
-                console.warn(`[WS 보안] Origin 파싱 실패 - Origin: ${origin}, IP: ${clientIp}`, error.message);
-                ws.close(1008, 'Invalid origin format');
-                return;
-            }
-		} else {
-            // Origin 헤더가 없는 경우 (일부 클라이언트 라이브러리)
-            // 프로덕션 환경에서는 차단, 개발 환경에서는 경고만
-            if (IS_PRODUCTION) {
-                console.warn(`[WS 보안] Origin 헤더 없는 연결 시도 차단 - IP: ${clientIp}`);
-                ws.close(1008, 'Origin header required');
-                return;
-            } else {
-                console.warn(`[WS 개발] Origin 헤더 없는 연결 허용 (개발 환경) - IP: ${clientIp}`);
-            }
-        }
+			if (reqOrigin) {
+				try {
+					const originUrl = new URL(reqOrigin).origin;
+		            if (!allowedOrigins.has(originUrl)) {
+		                console.warn(`[WS 보안] 허용되지 않은 Origin 차단 - Origin: ${originUrl}, IP: ${clientIp}`);
+		                ws.close(1008, 'Invalid origin');
+		                return;
+		            }
 
-        // 쿠키 파싱
-        const cookies = {};
-        if (req.headers.cookie) {
-            req.headers.cookie.split(';').forEach(cookie => {
-                const parts = cookie.split('=');
-                cookies[parts[0].trim()] = (parts[1] || '').trim();
-            });
-        }
+		            // 프로덕션에서는 https Origin만 허용(선택적으로 강화)
+		            if (IS_PRODUCTION && originUrl.startsWith("http://")) {
+		                console.warn(`[WS 보안] HTTP Origin 차단(Production) - Origin: ${originUrl}, IP: ${clientIp}`);
+		                ws.close(1008, 'HTTPS required in production');
+		                return;
+		            }
+		        } catch (error) {
+		       	console.warn(`[WS 보안] Origin 파싱 실패 - Origin: ${String(reqOrigin || originHeader || refererHeader || '')}, IP: ${clientIp}`, error.message);
+		            ws.close(1008, 'Invalid origin format');
+		            return;
+		        }
+			} else {
+		        // Origin 헤더가 없는 경우 (일부 클라이언트 라이브러리)
+		        // 프로덕션 환경에서는 차단, 개발 환경에서는 경고만
+		        if (IS_PRODUCTION) {
+		            console.warn(`[WS 보안] Origin 헤더 없는 연결 시도 차단 - IP: ${clientIp}`);
+		            ws.close(1008, 'Origin header required');
+		            return;
+		        } else {
+		            console.warn(`[WS 개발] Origin 헤더 없는 연결 허용 (개발 환경) - IP: ${clientIp}`);
+		        }
+		    }
 
-        // 세션 인증
-        const sessionId = cookies[SESSION_COOKIE_NAME];
-        if (!sessionId) {
-            ws.close(1008, 'Unauthorized');
-            return;
-        }
+		    // 쿠키 파싱
+		    const cookies = {};
+		    if (req.headers.cookie) {
+		        req.headers.cookie.split(';').forEach(cookie => {
+		            const parts = cookie.split('=');
+		            cookies[parts[0].trim()] = (parts[1] || '').trim();
+		        });
+		    }
 
-        const session = typeof getSessionFromId === 'function' ? getSessionFromId(sessionId) : sessions.get(sessionId);
-        if (!session || !session.userId) {
-            ws.close(1008, 'Unauthorized');
-            return;
-        }
+		    // 세션 인증
+		    const sessionId = cookies[SESSION_COOKIE_NAME];
+		    if (!sessionId) {
+		        ws.close(1008, 'Unauthorized');
+		        return;
+		    }
 
-        // 연결 메타데이터 저장
-        ws.userId = session.userId;
-        ws.username = session.username;
-        ws.sessionId = sessionId;
-		ws.isAlive = true;
+		    const session = typeof getSessionFromId === 'function' ? getSessionFromId(sessionId) : sessions.get(sessionId);
+		    if (!session || !session.userId) {
+		        ws.close(1008, 'Unauthorized');
+		        return;
+		    }
 
-		// 세션 -> WebSocket 연결 매핑 등록 (로그아웃/세션 만료 대응)
-		registerSessionConnection(sessionId, ws);
+		    // 연결 메타데이터 저장
+		    ws.userId = session.userId;
+		    ws.username = session.username;
+		    ws.sessionId = sessionId;
+			ws.isAlive = true;
 
-		// 핑/퐁 heartbeat
-        ws.on('pong', () => {
-            ws.isAlive = true;
-        });
+			// 세션 -> WebSocket 연결 매핑 등록 (로그아웃/세션 만료 대응)
+			registerSessionConnection(sessionId, ws);
 
-        // 메시지 핸들러
-		ws.on('message', async (message) => {
-			// 과도하게 큰 메시지는 즉시 차단 (DoS 방지)
-            const messageBytes = typeof message === 'string'
-                ? Buffer.byteLength(message, 'utf8')
-                : message?.length;
-            if (messageBytes && messageBytes > WS_MAX_MESSAGE_BYTES) {
-                ws.close(1009, 'Message too big');
-                return;
-            }
+			// 핑/퐁 heartbeat
+		    ws.on('pong', () => {
+		        ws.isAlive = true;
+		    });
 
-            try {
-                const data = JSON.parse(message);
-                await handleWebSocketMessage(ws, data, pool, getCollectionPermission, sanitizeHtmlContent, getSessionFromId);
-            } catch (error) {
-                console.error('[WS] 메시지 처리 오류:', error);
-                ws.send(JSON.stringify({ event: 'error', data: { message: '메시지 처리 실패' } }));
-            }
-        });
+		    // 메시지 핸들러
+			ws.on('message', async (message) => {
+				// 과도하게 큰 메시지는 즉시 차단 (DoS 방지)
+		        const messageBytes = typeof message === 'string'
+		            ? Buffer.byteLength(message, 'utf8')
+		            : message?.length;
+		        if (messageBytes && messageBytes > WS_MAX_MESSAGE_BYTES) {
+		            ws.close(1009, 'Message too big');
+		            return;
+		        }
 
-        // 연결 종료 핸들러
-        ws.on('close', () => {
-            cleanupWebSocketConnection(ws, pool, sanitizeHtmlContent);
-        });
+		        try {
+		            const data = JSON.parse(message);
+		            await handleWebSocketMessage(ws, data, pool, getCollectionPermission, sanitizeHtmlContent, getSessionFromId);
+		        } catch (error) {
+		            console.error('[WS] 메시지 처리 오류:', error);
+		            ws.send(JSON.stringify({ event: 'error', data: { message: '메시지 처리 실패' } }));
+		        }
+		    });
 
-        // 에러 핸들러
-        ws.on('error', (error) => {
-            console.error('[WS] 연결 오류:', error);
-            cleanupWebSocketConnection(ws, pool, sanitizeHtmlContent);
-        });
+		    // 연결 종료 핸들러
+		    ws.on('close', () => {
+		        cleanupWebSocketConnection(ws, pool, sanitizeHtmlContent);
+		    });
 
-        // 초기 연결 확인 메시지
-        ws.send(JSON.stringify({
-            event: 'connected',
-            data: {
-                userId: session.userId,
-                username: session.username
-            }
-        }));
+		    // 에러 핸들러
+		    ws.on('error', (error) => {
+		        console.error('[WS] 연결 오류:', error);
+		        cleanupWebSocketConnection(ws, pool, sanitizeHtmlContent);
+		    });
+
+		    // 초기 연결 확인 메시지
+		    ws.send(JSON.stringify({
+		        event: 'connected',
+		        data: {
+		            userId: session.userId,
+		            username: session.username
+		        }
+		    }));
+      	} catch (err) {
+			console.error('[WS] connection handler error:', err);
+			try { ws.close(1011, 'Internal error'); } catch (_) {}
+		}
     });
 
     // 60초마다 Heartbeat (끊어진 연결 정리)
