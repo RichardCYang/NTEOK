@@ -3,7 +3,7 @@
  * html2pdf.js를 사용하여 페이지를 PDF로 변환
  */
 
-import { secureFetch } from './ui-utils.js';
+import { secureFetch, escapeHtmlAttr } from './ui-utils.js';
 
 /**
  * html2pdf 라이브러리 로드 대기
@@ -287,7 +287,7 @@ function createPDFContainer(pageData) {
                 position: relative;
             ">
                 <img
-                    src="${coverUrl}"
+                    src="${escapeHtmlAttr(coverUrl)}"
                     crossorigin="anonymous"
                     referrerpolicy="no-referrer"
                     onerror="this.style.display='none'"

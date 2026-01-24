@@ -26,6 +26,21 @@ export function escapeHtml(text) {
 }
 
 /**
+ * XSS 방지: HTML 속성(attribute) 컨텍스트 이스케이프
+ * - escapeHtml()은 텍스트 노드엔 안전하지만, attribute의 따옴표(")/' 는 별도로 이스케이프가 필요함
+ * - 예: src="${userInput}" 같은 템플릿 문자열에 사용
+ */
+export function escapeHtmlAttr(text) {
+    if (text === undefined || text === null) return '';
+    return String(text)
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#x27;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+}
+
+/**
  * XSS 방지용 버튼 아이콘 추가 함수
  */
 export function addIcon(button, icon) {

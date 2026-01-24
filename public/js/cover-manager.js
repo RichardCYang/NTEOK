@@ -2,7 +2,7 @@
  * 커버 이미지 관리 모듈
  */
 
-import { secureFetch } from './ui-utils.js';
+import { secureFetch, escapeHtmlAttr } from './ui-utils.js';
 
 let state = null;
 let isRepositioning = false;
@@ -345,9 +345,9 @@ async function loadUserCovers() {
 
         // 커버 이미지 렌더링
         gallery.innerHTML = covers.map(cover => `
-            <div class="user-cover-option" data-cover="${cover.path}">
-                <img src="/covers/${cover.path}" alt="사용자 커버">
-                <button class="delete-cover-btn" data-filename="${cover.filename}" title="삭제">
+        	<div class="user-cover-option" data-cover="${escapeHtmlAttr(cover.path)}">
+                <img src="/covers/${escapeHtmlAttr(cover.path)}" alt="사용자 커버">
+                <button class="delete-cover-btn" data-filename="${escapeHtmlAttr(cover.filename)}" title="삭제">
                     <i class="fa-solid fa-trash"></i>
                 </button>
             </div>

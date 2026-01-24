@@ -1637,8 +1637,12 @@ const coverStorage = multer.diskStorage({
         cb(null, userCoverDir);
     },
     filename: (req, file, cb) => {
-        const uniqueName = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}${path.extname(file.originalname)}`;
-        cb(null, uniqueName);
+	    // 보안: 원본 파일명/확장자는 신뢰하지 않음
+	    // - file.originalname은 공격자가 임의 문자열(따옴표, 공백, 이벤트 핸들러 등)을 넣을 수 있음
+	    // - 확장자를 그대로 이어붙이면 이후 HTML 템플릿/DOM 렌더링 과정에서 속성 주입(XSS)로 이어질 수 있음
+	    // - 일단 안전한 임시 확장자로 저장한 뒤, 라우트에서 파일 시그니처 검증 후 정상 확장자로 변경
+	    const uniqueBase = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}`;
+	    cb(null, `${uniqueBase}.upload`);
     }
 });
 
@@ -1666,8 +1670,9 @@ const editorImageStorage = multer.diskStorage({
         cb(null, userImgDir);
     },
     filename: (req, file, cb) => {
-        const uniqueName = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}${path.extname(file.originalname)}`;
-        cb(null, uniqueName);
+		// coverStorage와 동일한 이유로 임시 확장자로 저장
+		const uniqueBase = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}`;
+		cb(null, `${uniqueBase}.upload`);
     }
 });
 
@@ -1806,7 +1811,9 @@ function getSessionFromId(sessionId) {
             authMiddleware,
             csrfMiddleware,
             toIsoString,
-            sanitizeInput,
+			sanitizeInput,
+			sanitizeFilenameComponent,
+            sanitizeExtension,
             sanitizeHtmlContent,
             generatePageId,
             generateCollectionId,

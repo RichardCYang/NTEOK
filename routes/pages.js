@@ -25,7 +25,9 @@ module.exports = (dependencies) => {
         pool,
         authMiddleware,
         toIsoString,
-        sanitizeInput,
+		sanitizeInput,
+		sanitizeFilenameComponent,
+        sanitizeExtension,
         sanitizeHtmlContent,
         generatePageId,
         formatDateForDb,
@@ -41,7 +43,44 @@ module.exports = (dependencies) => {
         path,
         fs,
         yjsDocuments
-    } = dependencies;
+	} = dependencies;
+
+    /**
+     * 보안: 업로드된 이미지 파일명을 정규화하여 속성 주입(XSS) 및 MIME 혼동을 차단
+     * - multer 저장 단계에서는 .upload 같은 임시 확장자로 저장
+     * - 여기서 파일 시그니처 검증 결과(detected.ext)에 맞춰 안전한 확장자로 변경
+     * - 파일명에는 [a-zA-Z0-9._-] 외 문자를 제거하여 HTML/헤더/경로 컨텍스트 위험 문자 차단
+     */
+	function normalizeUploadedImageFile(fileObj, detectedExt) {
+	    if (!fileObj?.path || !fileObj?.filename) throw new Error('INVALID_UPLOAD');
+	    const ext = `.${String(detectedExt || '').toLowerCase()}`;
+		const safeExt = sanitizeExtension(ext);
+
+	    if (!safeExt || !['.jpg', '.jpeg', '.png', '.gif', '.webp'].includes(safeExt))
+	        throw new Error('UNSUPPORTED_IMAGE_TYPE');
+
+	    const dir = path.dirname(fileObj.path);
+	    const rawBase = path.basename(fileObj.filename, path.extname(fileObj.filename));
+	    const base = sanitizeFilenameComponent(rawBase, 80).replace(/[^a-zA-Z0-9._-]/g, '') || crypto.randomBytes(8).toString('hex');
+	    let newFilename = `${base}${safeExt}`;
+		let newPath = path.join(dir, newFilename);
+
+	    if (fs.existsSync(newPath)) {
+	        const suffix = crypto.randomBytes(4).toString('hex');
+	        newFilename = `${base}-${suffix}${safeExt}`;
+	        newPath = path.join(dir, newFilename);
+		}
+
+	    const resolvedDir = path.resolve(dir) + path.sep;
+		const resolvedNewPath = path.resolve(newPath);
+
+	    if (!resolvedNewPath.startsWith(resolvedDir)) throw new Error('PATH_TRAVERSAL_BLOCKED');
+	    if (newPath !== fileObj.path) {
+	        fs.renameSync(fileObj.path, newPath);
+	        fileObj.path = newPath;
+	        fileObj.filename = newFilename;
+	    }
+	}
 
     const ALLOWED_PROTOCOLS = new Set(["http:", "https:"]);
 	const ALLOWED_PORTS = new Set([80, 443]);
@@ -1219,14 +1258,22 @@ module.exports = (dependencies) => {
         try {
 			// 업로드 파일 시그니처 검증 (Content-Type 스푸핑 방지)
 			const allowed = new Set(['jpg','jpeg','png','gif','webp']);
-			assertImageFileSignature(req.file.path, allowed);
+            const detected = assertImageFileSignature(req.file.path, allowed);
+            normalizeUploadedImageFile(req.file, detected.ext);
+
+            const cleanupUpload = () => {
+                try {
+                    if (req.file?.path && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+                } catch (_) {}
+            };
 
             // 권한 확인
             const [rows] = await pool.execute(
                 `SELECT p.collection_id, p.cover_image FROM pages p WHERE p.id = ?`,
                 [id]
             );
-            if (!rows.length) {
+			if (!rows.length) {
+				cleanupUpload();
                 return res.status(404).json({ error: "페이지를 찾을 수 없습니다." });
             }
 
@@ -1251,7 +1298,11 @@ module.exports = (dependencies) => {
 
             console.log("POST /api/pages/:id/cover 업로드 완료:", coverPath);
             res.json({ coverImage: coverPath });
-        } catch (error) {
+		} catch (error) {
+			try {
+                if (req.file?.path && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+            } catch (_) {}
+
             logError("POST /api/pages/:id/cover", error);
             res.status(500).json({ error: "커버 업로드 실패" });
         }
@@ -1458,19 +1509,28 @@ module.exports = (dependencies) => {
         try {
 			// 업로드 파일 시그니처 검증 (Content-Type 스푸핑 방지)
 			const allowed = new Set(['jpg','jpeg','png','gif','webp']);
-			assertImageFileSignature(req.file.path, allowed);
+            const detected = assertImageFileSignature(req.file.path, allowed);
+            normalizeUploadedImageFile(req.file, detected.ext);
+
+            const cleanupUpload = () => {
+                try {
+                    if (req.file?.path && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+                } catch (_) {}
+            };
 
             // 권한 확인
             const [rows] = await pool.execute(
                 `SELECT p.collection_id FROM pages p WHERE p.id = ?`,
                 [id]
             );
-            if (!rows.length) {
+			if (!rows.length) {
+				cleanupUpload();
                 return res.status(404).json({ error: "페이지를 찾을 수 없습니다." });
             }
 
             const { permission } = await getCollectionPermission(rows[0].collection_id, userId);
-            if (!permission || permission === 'READ') {
+			if (!permission || permission === 'READ') {
+				cleanupUpload();
                 return res.status(403).json({ error: "권한이 없습니다." });
             }
 
@@ -1503,7 +1563,11 @@ module.exports = (dependencies) => {
             const imageUrl = `/imgs/${imagePath}`;
 
             res.json({ url: imageUrl });
-        } catch (error) {
+		} catch (error) {
+			try {
+                if (req.file?.path && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+            } catch (_) {}
+
             logError("POST /api/pages/:id/editor-image", error);
             res.status(500).json({ error: "이미지 업로드 실패" });
         }
