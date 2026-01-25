@@ -1363,11 +1363,14 @@ app.use((req, res, next) => {
         "frame-ancestors 'none'; " +
         "frame-src 'self' https://www.youtube.com https://youtube.com; " +
         "form-action 'self'; " +
-        `script-src 'self' 'nonce-${nonce}' https://cdn.jsdelivr.net https://esm.sh; ` +
+        // NOTE: CSP의 핵심은 nonce가 있는 스크립트만 실행 되도록 하는 것
+        // 기존처럼 광범위 CDN(예: jsdelivr/esm.sh)을 script-src에 allowlist 하면,
+        // XSS가 단 1곳이라도 생겼을 때 공격자가 외부 스크립트를 로드해 완전한 계정 탈취로 확장하기 쉬움 (방어 심층화 상실).
+        `script-src 'nonce-${nonce}' 'strict-dynamic'; ` +
         "style-src 'self' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://fonts.googleapis.com 'unsafe-inline'; " +
         "font-src 'self' https://cdnjs.cloudflare.com https://fonts.gstatic.com; " +
         "img-src 'self' data:; " +
-        "connect-src 'self' https://cdn.jsdelivr.net https://esm.sh;"
+        "connect-src 'self';"
     );
 
     // 추가 보안 헤더

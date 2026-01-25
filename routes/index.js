@@ -43,9 +43,14 @@ module.exports = (dependencies) => {
                 `;
             }
 
-            let out = html.replace(/__CSP_NONCE__/g, nonce);
+			let out = html.replace(/__CSP_NONCE__/g, nonce);
 
-            // Importmap integrity 주입: HTML 내 __IMPORTMAP_INTEGRITY__ 플레이스홀더를
+			// 보안: 모든 <script> 태그에 nonce 자동 부여
+			// - HTML 파일에 nonce가 누락되어도 CSP에 의해 차단되지 않도록 서버에서 일괄 주입
+			// - 이미 nonce가 있는 <script> (예: importmap)는 그대로 유지
+			out = out.replace(/<script\b(?![^>]*\bnonce=)([^>]*?)>/gi, `<script nonce="${nonce}"$1>`);
+
+			// Importmap integrity 주입: HTML 내 __IMPORTMAP_INTEGRITY__ 플레이스홀더를
             // public/importmap-integrity.json 내용으로 치환 (없으면 빈 객체)
             if (out.includes("__IMPORTMAP_INTEGRITY__")) {
                 try {
