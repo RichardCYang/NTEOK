@@ -3,7 +3,7 @@
  * html2pdf.js를 사용하여 페이지를 PDF로 변환
  */
 
-import { secureFetch, escapeHtmlAttr } from './ui-utils.js';
+import { secureFetch, escapeHtml, escapeHtmlAttr } from './ui-utils.js';
 
 /**
  * html2pdf 라이브러리 로드 대기
@@ -469,7 +469,11 @@ async function renderMathBlocks(container) {
                     output: 'html'
                 });
             } catch (error) {
-                el.innerHTML = `<span style="color: red;">수식 렌더링 오류: ${latex}</span>`;
+	            // 보안: innerHTML에 사용자 입력(latex)을 직접 삽입하지 않는다 (DOM XSS 방지)
+	            const errSpan = document.createElement('span');
+	            errSpan.style.color = 'red';
+	            errSpan.textContent = `수식 렌더링 오류: ${latex}`;
+	            el.replaceChildren(errSpan);
             }
         }
     });
@@ -514,8 +518,8 @@ function renderBookmarkBlocks(container) {
             const proxied = getProxiedImageUrl(thumbnail);
             thumbnailHTML = `
                 <img
-                    src="${proxied}"
-                    alt="${escapeHtml(title)}"
+					src="${escapeHtmlAttr(proxied)}"
+					alt="${escapeHtmlAttr(title)}"
                     crossorigin="anonymous"
                     referrerpolicy="no-referrer"
                     style="
