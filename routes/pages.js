@@ -434,10 +434,15 @@ module.exports = (dependencies) => {
 
             const row = rows[0];
 
+            // 보안: 저장형 XSS 방지(Defense-in-Depth): 응답 직전에도 한 번 더 정화
+            // - 과거(패치 전) 저장된 악성 콘텐츠가 남아있을 수 있음
+            // - 특히 YouTube 블록은 data-src를 iframe.src로 승격하므로, data-src가 안전하지 않으면 XSS로 이어짐
+            const safeContent = sanitizeHtmlContent(row.content || "<p></p>");
+
             const page = {
                 id: row.id,
                 title: row.title || "제목 없음",
-                content: row.content || "<p></p>",
+                content: safeContent,
                 encryptionSalt: row.encryption_salt || null,
                 encryptedContent: row.encrypted_content || null,
                 createdAt: toIsoString(row.created_at),

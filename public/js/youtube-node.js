@@ -5,6 +5,53 @@
 
 const Node = Tiptap.Core.Node;
 
+// 보안: YouTube embed URL allowlist + 정규화 (Defense-in-Depth)
+const _YT_ALLOWED_HOSTS = new Set([
+    'youtube.com',
+    'www.youtube.com',
+    'm.youtube.com',
+    'youtu.be',
+    'youtube-nocookie.com',
+    'www.youtube-nocookie.com'
+]);
+
+function _parseStartSeconds(urlObj) {
+    const raw = urlObj.searchParams.get('start') || urlObj.searchParams.get('t') || '';
+    if (!raw) return null;
+    if (/^\d+$/.test(raw)) {
+        const n = parseInt(raw, 10);
+        return Number.isFinite(n) && n > 0 && n < 24 * 60 * 60 ? n : null;
+    }
+    const m = String(raw).toLowerCase().match(/^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/);
+    if (!m) return null;
+    const h = m[1] ? parseInt(m[1], 10) : 0;
+    const mm = m[2] ? parseInt(m[2], 10) : 0;
+    const s = m[3] ? parseInt(m[3], 10) : 0;
+    const total = h * 3600 + mm * 60 + s;
+    return Number.isFinite(total) && total > 0 && total < 24 * 60 * 60 ? total : null;
+}
+
+function normalizeYouTubeEmbedUrl(value) {
+    if (typeof value !== 'string') return null;
+    const v = value.trim();
+    if (!v) return null;
+    let u;
+    try { u = new URL(v); } catch { return null; }
+    if (!(u.protocol === 'http:' || u.protocol === 'https:')) return null;
+    const host = u.hostname.toLowerCase();
+    if (!_YT_ALLOWED_HOSTS.has(host)) return null;
+    let videoId = null;
+    if (host === 'youtu.be') videoId = u.pathname.split('/').filter(Boolean)[0] || null;
+    else if (u.pathname.startsWith('/embed/')) videoId = u.pathname.split('/').filter(Boolean)[1] || null;
+    else if (u.pathname === '/watch') videoId = u.searchParams.get('v');
+    else if (u.pathname.startsWith('/shorts/')) videoId = u.pathname.split('/').filter(Boolean)[1] || null;
+    if (!videoId || !/^[A-Za-z0-9_-]{11}$/.test(videoId)) return null;
+    const out = new URL(`https://www.youtube-nocookie.com/embed/${videoId}`);
+    const start = _parseStartSeconds(u);
+    if (start) out.searchParams.set('start', String(start));
+    return out.toString();
+}
+
 export const YoutubeBlock = Node.create({
     name: 'youtubeBlock',
 
@@ -34,8 +81,9 @@ export const YoutubeBlock = Node.create({
             {
                 tag: 'div[data-type="youtube"]',
                 getAttrs: (element) => {
+                	const normalized = normalizeYouTubeEmbedUrl(element.getAttribute('data-src') || '');
                     return {
-                        src: element.getAttribute('data-src'),
+                        src: normalized,
                         width: element.getAttribute('data-width') || '100%',
                         align: element.getAttribute('data-align') || 'center',
                         caption: element.getAttribute('data-caption') || ''
@@ -46,11 +94,12 @@ export const YoutubeBlock = Node.create({
     },
 
     renderHTML({ node, HTMLAttributes }) {
+    	const safeSrc = normalizeYouTubeEmbedUrl(node.attrs.src || '') || 'about:blank';
         return [
             'div',
             {
                 'data-type': 'youtube',
-                'data-src': node.attrs.src,
+                'data-src': safeSrc,
                 'data-width': node.attrs.width || '100%',
                 'data-align': node.attrs.align || 'center',
                 'data-caption': node.attrs.caption || '',
@@ -63,10 +112,12 @@ export const YoutubeBlock = Node.create({
                 [
                     'iframe',
                     {
-                        'src': node.attrs.src,
+                        'src': safeSrc,
                         'frameborder': '0',
                         'allowfullscreen': 'true',
-                        'allow': 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture'
+                        'allow': 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture',
+                        'sandbox': 'allow-scripts allow-presentation',
+                        'referrerpolicy': 'strict-origin-when-cross-origin'
                     }
                 ]
             ],
@@ -106,8 +157,9 @@ export const YoutubeBlock = Node.create({
             container.style.backgroundColor = '#000'; // 로딩 전 배경
 
             // Iframe
+            const safeSrc = normalizeYouTubeEmbedUrl(node.attrs.src || '');
             const iframe = document.createElement('iframe');
-            iframe.src = node.attrs.src;
+            iframe.src = safeSrc || 'about:blank';
             iframe.style.position = 'absolute';
             iframe.style.top = '0';
             iframe.style.left = '0';
@@ -116,7 +168,9 @@ export const YoutubeBlock = Node.create({
             iframe.frameBorder = '0';
             iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture';
             iframe.allowFullscreen = true;
-            
+            iframe.sandbox = 'allow-scripts allow-presentation';
+            iframe.referrerPolicy = 'strict-origin-when-cross-origin';
+
             // 드래그/리사이즈 중 iframe 이벤트 방지용 오버레이
             const overlay = document.createElement('div');
             overlay.style.position = 'absolute';
@@ -128,7 +182,7 @@ export const YoutubeBlock = Node.create({
             overlay.style.display = editor.isEditable ? 'block' : 'none'; // 쓰기 모드에서만 클릭 방지 (재생을 원하면 읽기 모드로)
             // 더블 클릭시 재생 가능하게 하거나, 별도 버튼을 둘 수도 있음.
             // 여기서는 쓰기 모드에서 오버레이를 두어 선택이 용이하게 함.
-            
+
             container.appendChild(iframe);
             container.appendChild(overlay);
 
@@ -168,7 +222,7 @@ export const YoutubeBlock = Node.create({
                     e.stopPropagation();
                     currentAlign = align;
                     wrapper.setAttribute('data-align', align);
-                    
+
                     if (align === 'center') wrapper.style.margin = '0 auto';
                     else if (align === 'right') wrapper.style.marginLeft = 'auto';
                     else wrapper.style.margin = '0';
@@ -201,7 +255,7 @@ export const YoutubeBlock = Node.create({
             // 캡션 영역
             const captionContainer = document.createElement('div');
             captionContainer.className = 'image-caption-container'; // 기존 CSS 재사용
-            
+
             const captionInput = document.createElement('input');
             captionInput.type = 'text';
             captionInput.className = 'image-caption-input';
@@ -223,7 +277,7 @@ export const YoutubeBlock = Node.create({
                     }
                 }, 500);
             };
-            
+
             // 키보드 이벤트 차단 (엔터 등)
             captionInput.onkeydown = (e) => {
                 e.stopPropagation();
@@ -256,7 +310,7 @@ export const YoutubeBlock = Node.create({
             const onResizeMove = (e) => {
                 if (!isResizing) return;
                 const deltaX = e.clientX - startX;
-                let newWidth = startWidth + deltaX * 2; 
+                let newWidth = startWidth + deltaX * 2;
                 const editorElement = document.querySelector('#editor .ProseMirror');
                 const maxWidth = editorElement ? editorElement.offsetWidth : 800;
                 newWidth = Math.max(200, Math.min(newWidth, maxWidth));
@@ -268,7 +322,7 @@ export const YoutubeBlock = Node.create({
                 isResizing = false;
                 document.removeEventListener('mousemove', onResizeMove);
                 document.removeEventListener('mouseup', onResizeEnd);
-                
+
                 if (typeof getPos === 'function') {
                     const pos = getPos();
                     const tr = editor.view.state.tr;
@@ -295,11 +349,11 @@ export const YoutubeBlock = Node.create({
                 dom: wrapper,
                 update: (updatedNode) => {
                     if (updatedNode.type.name !== this.name) return false;
-                    
+
                     if (updatedNode.attrs.src !== iframe.src) {
                         iframe.src = updatedNode.attrs.src;
                     }
-                    
+
                     if (updatedNode.attrs.caption !== currentCaption && document.activeElement !== captionInput) {
                         currentCaption = updatedNode.attrs.caption || '';
                         captionInput.value = currentCaption;
@@ -315,7 +369,7 @@ export const YoutubeBlock = Node.create({
                         if (currentAlign === 'center') wrapper.style.margin = '0 auto';
                         else if (currentAlign === 'right') wrapper.style.marginLeft = 'auto';
                         else wrapper.style.margin = '0';
-                        
+
                         alignMenu.querySelectorAll('.align-button').forEach(btn => {
                              if (btn.getAttribute('data-align') === currentAlign) btn.classList.add('active');
                              else btn.classList.remove('active');

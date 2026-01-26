@@ -42,6 +42,65 @@ function isSafeHttpUrlOrRelative(value) {
     }
 }
 
+// 보안: data-src(특히 YouTube 블록) 값은 DOMPurify의 기본 URI 검증 대상이 아니므로 별도 검증이 필요
+// - 이 앱은 <div data-type="youtube" data-src="..."></div> 형태로 URL을 저장한 뒤, 클라이언트에서 iframe.src 로 승격(render)
+// - 따라서 data-src에 javascript:/data: 등의 위험 스킴이 섞이면 저장형 XSS로 이어질 수 있음
+const YOUTUBE_ALLOWED_HOSTS = new Set([
+    'youtube.com',
+    'www.youtube.com',
+    'm.youtube.com',
+    'youtu.be',
+    'youtube-nocookie.com',
+    'www.youtube-nocookie.com'
+]);
+
+function parseYoutubeStartSeconds(u) {
+    // start=123 또는 t=123 / t=1m30s 정도만 보수적으로 지원
+    const startRaw = u.searchParams.get('start') || u.searchParams.get('t') || '';
+    if (!startRaw) return null;
+
+    if (/^\d+$/.test(startRaw)) {
+        const n = parseInt(startRaw, 10);
+        return Number.isFinite(n) && n > 0 && n < 24 * 60 * 60 ? n : null;
+    }
+
+    const m = String(startRaw).toLowerCase().match(/^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/);
+    if (!m) return null;
+    const h = m[1] ? parseInt(m[1], 10) : 0;
+    const mm = m[2] ? parseInt(m[2], 10) : 0;
+    const s = m[3] ? parseInt(m[3], 10) : 0;
+    const total = h * 3600 + mm * 60 + s;
+    return Number.isFinite(total) && total > 0 && total < 24 * 60 * 60 ? total : null;
+}
+
+function normalizeYouTubeEmbedUrl(value) {
+    if (typeof value !== 'string') return null;
+    const v = value.trim();
+    if (!v) return null;
+    if (CONTROL_CHARS_RE.test(v)) return null;
+
+    let u;
+    try { u = new URL(v); } catch { return null; }
+
+    if (!(u.protocol === 'http:' || u.protocol === 'https:')) return null;
+
+    const host = u.hostname.toLowerCase();
+    if (!YOUTUBE_ALLOWED_HOSTS.has(host)) return null;
+
+    let videoId = null;
+    if (host === 'youtu.be') videoId = u.pathname.split('/').filter(Boolean)[0] || null;
+    else if (u.pathname.startsWith('/embed/')) videoId = u.pathname.split('/').filter(Boolean)[1] || null;
+    else if (u.pathname === '/watch') videoId = u.searchParams.get('v');
+    else if (u.pathname.startsWith('/shorts/')) videoId = u.pathname.split('/').filter(Boolean)[1] || null;
+
+    if (!videoId || !/^[A-Za-z0-9_-]{11}$/.test(videoId)) return null;
+
+    const out = new URL(`https://www.youtube-nocookie.com/embed/${videoId}`);
+    const start = parseYoutubeStartSeconds(u);
+    if (start) out.searchParams.set('start', String(start));
+    return out.toString();
+}
+
 if (typeof DOMPurify?.addHook === "function") {
     DOMPurify.addHook("uponSanitizeAttribute", (_node, hookEvent) => {
         const name = String(hookEvent?.attrName || "").toLowerCase();
@@ -49,6 +108,20 @@ if (typeof DOMPurify?.addHook === "function") {
             if (!isSafeHttpUrlOrRelative(String(hookEvent.attrValue || ""))) {
                 hookEvent.keepAttr = false;
                 hookEvent.forceKeepAttr = false;
+            }
+        }
+
+        // 보안: YouTube 블록의 data-src(=iframe.src 승격값) 스킴/도메인 엄격 검증
+        if (name === "data-src") {
+            const nodeType = String(_node?.getAttribute?.('data-type') || '').toLowerCase();
+            if (nodeType === 'youtube') {
+                const safe = normalizeYouTubeEmbedUrl(String(hookEvent.attrValue || ''));
+                if (!safe) {
+                    hookEvent.keepAttr = false;
+                    hookEvent.forceKeepAttr = false;
+                } else {
+                    hookEvent.attrValue = safe;
+                }
             }
         }
     });
