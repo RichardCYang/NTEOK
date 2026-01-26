@@ -23,15 +23,10 @@ function getLocationFromIP(ip) {
             };
         }
 
-        // IPv6 매핑된 IPv4 주소 처리 (예: ::ffff:192.168.1.1)
-        let cleanIP = ip;
-        if (ip.startsWith('::ffff:')) {
-            cleanIP = ip.substring(7);
-        }
-
-        // 사설 IP 또는 localhost는 null 반환 (국가 화이트리스트 체크에서 별도 처리)
-        if (cleanIP === '::1' || cleanIP === '127.0.0.1' || cleanIP === 'localhost' ||
-            cleanIP.startsWith('192.168.') || cleanIP.startsWith('10.')) {
+        const cleanIP = normalizeIp(ip);
+        // 사설/로컬/예약(IPv4/IPv6) 대역은 GeoIP 조회 의미가 없고,
+        // SSRF/화이트리스트 로직과의 일관성을 위해 동일한 판정을 사용
+        if (!cleanIP || isPrivateOrLocalIP(cleanIP)) {
             return {
                 country: null,
                 region: null,
@@ -40,22 +35,7 @@ function getLocationFromIP(ip) {
             };
         }
 
-        // 172.16.0.0 ~ 172.31.255.255 범위 체크
-        const match = cleanIP.match(/^172\.(\d+)\./);
-        if (match) {
-            const secondOctet = parseInt(match[1]);
-            if (secondOctet >= 16 && secondOctet <= 31) {
-                return {
-                    country: null,
-                    region: null,
-                    city: null,
-                    timezone: null
-                };
-            }
-        }
-
         const geo = geoip.lookup(cleanIP);
-
         if (!geo) {
             return {
                 country: null,
@@ -88,28 +68,28 @@ function getLocationFromIP(ip) {
  * @returns {boolean} 사설 IP 또는 localhost 여부
  */
 function isPrivateOrLocalIP(ip) {
-    if (!ip) return true;
+	if (!ip) return true;
 
-    // IPv6 매핑된 IPv4 주소 처리 (예: ::ffff:192.168.1.1)
-    let cleanIP = ip;
-    if (ip.startsWith('::ffff:')) {
-        cleanIP = ip.substring(7);
+    const cleanIP = normalizeIp(ip);
+    if (!cleanIP) return true;
+
+    // 과거 호환: 문자열 localhost는 로컬로 취급
+    if (String(cleanIP).toLowerCase() === 'localhost') return true;
+    // IP가 아니면(예: unknown) 여기서는 로컬로 판정하지 않음
+    if (net.isIP(cleanIP) === 0) return false;
+
+    try {
+        let addr = ipaddr.parse(cleanIP);
+        // IPv4-mapped IPv6 (::ffff:127.0.0.1 등) -> IPv4로 변환 후 판정
+        if (addr.kind() === 'ipv6' && typeof addr.isIPv4MappedAddress === 'function' && addr.isIPv4MappedAddress())
+            addr = addr.toIPv4Address();
+
+        // SSRF 방어 관점: "unicast(공인 글로벌 유니캐스트)"만 통과, 나머지는 전부 차단
+        return addr.range() !== 'unicast';
+    } catch (e) {
+        // 파싱 실패는 보수적으로 로컬로 판정
+        return true;
     }
-
-    // localhost 체크
-    if (cleanIP === '::1' || cleanIP === '127.0.0.1' || cleanIP === 'localhost') return true;
-
-    // 사설 IP 대역 체크
-    if (cleanIP.startsWith('192.168.') || cleanIP.startsWith('10.')) return true;
-
-    // 172.16.0.0 ~ 172.31.255.255 범위 체크
-    const match = cleanIP.match(/^172\.(\d+)\./);
-    if (match) {
-        const secondOctet = parseInt(match[1]);
-        if (secondOctet >= 16 && secondOctet <= 31) return true;
-    }
-
-    return false;
 }
 
 /**
