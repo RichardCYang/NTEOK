@@ -740,15 +740,6 @@ function sanitizeFileName(filename) {
 }
 
 /**
- * HTML 이스케이프
- */
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-}
-
-/**
  * 로딩 오버레이 생성
  */
 function createLoadingOverlay() {

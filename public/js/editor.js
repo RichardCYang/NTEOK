@@ -57,7 +57,7 @@ export const EXAMPLE_CONTENT = `
  */
 
 // UI Utils import
-import { secureFetch, syncPageUpdatedAtPadding } from './ui-utils.js';
+import { secureFetch, syncPageUpdatedAtPadding, escapeHtml } from './ui-utils.js';
 
 // 문단 정렬(TextAlign) 익스텐션 ESM import
 import { TextAlign } from "@tiptap/extension-text-align";
@@ -106,10 +106,90 @@ import { FileBlock } from './file-node.js';
 // DragHandle extension import
 import { DragHandle } from './drag-handle-extension.js';
 
+// ProseMirror Plugin import
+import { Plugin, PluginKey } from "prosemirror-state";
+
 // 전역 Tiptap 번들에서 Editor / StarterKit 가져오기
 const Editor = Tiptap.Core.Editor;
 const StarterKit = Tiptap.StarterKit;
 const Extension = Tiptap.Core.Extension;
+
+/**
+ * 공통 이미지 업로드 처리 함수
+ * @param {Editor} editor Tiptap 에디터 인스턴스
+ * @param {File} file 업로드할 이미지 파일
+ */
+async function handleImageUpload(editor, file) {
+    // 페이지 ID 가져오기
+    const pageId = window.appState?.currentPageId;
+    if (!pageId) {
+        alert('페이지 ID를 찾을 수 없습니다.');
+        return;
+    }
+
+    // FormData 생성
+    const formData = new FormData();
+    formData.append('image', file);
+
+    // 서버에 업로드 (secureFetch 사용)
+    const response = await secureFetch(`/api/pages/${pageId}/editor-image`, {
+        method: 'POST',
+        body: formData
+    });
+
+    if (!response.ok) {
+        throw new Error('이미지 업로드 실패');
+    }
+
+    const data = await response.json();
+
+    // 에디터에 이미지 삽입 (ImageWithCaption 노드 사용)
+    editor.chain().focus().setImageWithCaption({
+        src: data.url,
+        alt: file.name || 'uploaded image',
+        caption: ''
+    }).run();
+}
+
+/**
+ * 클립보드 이미지 붙여넣기 처리를 위한 익스텐션
+ */
+const ImagePaste = Extension.create({
+    name: 'imagePaste',
+    addProseMirrorPlugins() {
+        const { editor } = this;
+        return [
+            new Plugin({
+                key: new PluginKey('imagePaste'),
+                props: {
+                    handlePaste: (view, event) => {
+                        const items = (event.clipboardData || event.originalEvent?.clipboardData)?.items;
+                        if (!items) return false;
+
+                        let handled = false;
+                        for (const item of items) {
+                            if (item.type.indexOf('image') === 0) {
+                                const file = item.getAsFile();
+                                if (file) {
+                                    // 기본 붙여넣기 동작 방지
+                                    event.preventDefault();
+                                    // 비동기로 업로드 처리 (this.editor 참조 전달)
+                                    handleImageUpload(editor, file).catch(err => {
+                                        console.error('이미지 붙여넣기 업로드 실패:', err);
+                                        alert('이미지 업로드에 실패했습니다.');
+                                    });
+                                    handled = true;
+                                }
+                            }
+                        }
+                        // 이미지가 처리되었다면 true 반환하여 브라우저 기본 동작 차단
+                        return handled;
+                    }
+                }
+            })
+        ];
+    }
+});
 
 // 시스템 폰트 리스트
 export const SYSTEM_FONTS = [
@@ -303,36 +383,8 @@ export const SLASH_ITEMS = [
                 }
 
                 try {
-                    // 페이지 ID 가져오기
-                    const pageId = window.appState?.currentPageId;
-                    if (!pageId) {
-                        alert('페이지 ID를 찾을 수 없습니다.');
-                        return;
-                    }
-
-                    // FormData 생성
-                    const formData = new FormData();
-                    formData.append('image', file);
-
-                    // 서버에 업로드 (secureFetch 사용)
-                    const response = await secureFetch(`/api/pages/${pageId}/editor-image`, {
-                        method: 'POST',
-                        body: formData
-                    });
-
-                    if (!response.ok) {
-                        throw new Error('이미지 업로드 실패');
-                    }
-
-                    const data = await response.json();
-
-                    // 에디터에 이미지 삽입
-                    editor.chain().focus().setImageWithCaption({
-                        src: data.url,
-                        alt: file.name,
-                        caption: ''
-                    }).run();
-
+                    // 공통 이미지 업로드 함수 사용
+                    await handleImageUpload(editor, file);
                 } catch (error) {
                     console.error('이미지 업로드 오류:', error);
                     alert('이미지 업로드에 실패했습니다.');
@@ -825,20 +877,6 @@ function renderSlashMenuItems() {
 }
 
 /**
- * HTML 이스케이프 함수
- */
-function escapeHtml(text) {
-    const map = {
-        '&': '&amp;',
-        '<': '&lt;',
-        '>': '&gt;',
-        '"': '&quot;',
-        "'": '&#039;'
-    };
-    return text.replace(/[&<>"']/g, m => map[m]);
-}
-
-/**
  * 슬래시 메뉴 열기
  */
 function openSlashMenu(coords, fromPos, editor) {
@@ -1222,6 +1260,7 @@ export function initEditor() {
             YoutubeBlock,
             FileBlock,
             DragHandle,
+            ImagePaste,
         ],
         content: EXAMPLE_CONTENT,
         onSelectionUpdate() {
