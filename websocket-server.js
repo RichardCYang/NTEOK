@@ -7,6 +7,35 @@ const WebSocket = require("ws");
 const Y = require("yjs");
 const { formatDateForDb } = require("./network-utils");
 
+/**
+ * NOTE: WebSocket/Yjs 경로의 메타데이터도 반드시 서버에서 검증해야 함 (OWASP WebSocket Security)
+ * icon 검증/정규화 (HTTP API와 동일한 보안 수준 유지)
+ * - FontAwesome class 허용: fa-solid fa-star 또는 fa-star
+ * - Emoji/짧은 텍스트 허용(길이 제한 + 위험문자 차단)
+ * - 실패 시 null 반환 (fail-closed)
+ */
+function validateAndNormalizeIcon(raw) {
+	if (raw === undefined || raw === null) return null;
+	if (typeof raw !== "string") return null;
+	const icon = raw.trim();
+	if (icon === "") return null;
+
+	// HTML/태그 관련 문자 차단
+	if (/[<>]/.test(icon)) return null;
+	// 제어문자 차단
+	if (/[\x00-\x1F\x7F]/.test(icon)) return null;
+
+	const FA_CLASS_RE = /^(fa-(?:solid|regular|brands|duotone|light|thin))\s+fa-[a-z0-9-]+$/i;
+	const FA_SINGLE_RE = /^fa-[a-z0-9-]+$/i;
+
+	if (FA_CLASS_RE.test(icon) || FA_SINGLE_RE.test(icon)) return icon;
+
+	// emoji/짧은 문자열: 공백/따옴표/백틱/& 차단 + 길이 제한
+	if (icon.length <= 8 && !/\s/.test(icon) && !/["'`&]/.test(icon)) return icon;
+
+	return null;
+}
+
 // WebSocket 연결 풀
 const wsConnections = {
     pages: new Map(), // pageId -> Set<{ws, userId, username, color}>
@@ -150,8 +179,11 @@ async function saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc) {
         const yMetadata = ydoc.getMap('metadata');
 
         // 메타데이터 추출
-        const title = yMetadata.get('title') || '제목 없음';
-        const icon = yMetadata.get('icon') || null;
+		const title = yMetadata.get('title') || '제목 없음';
+
+        // 보안: WebSocket/Yjs 경로에서도 icon 정규화/검증 (DB 오염 방지)
+		const icon = validateAndNormalizeIcon(yMetadata.get('icon'));
+
         const sortOrder = yMetadata.get('sortOrder') || 0;
         const parentId = yMetadata.get('parentId') || null;
 

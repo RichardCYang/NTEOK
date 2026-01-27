@@ -756,6 +756,47 @@ function handleDuplicateLogin(data) {
 }
 
 /**
+ * 보안: 사이드바 아이콘을 안전하게 생성 (innerHTML 금지)
+ * - FontAwesome class: 허용 문자만 남기고 className으로 세팅
+ * - Emoji/텍스트: textContent로만 삽입
+ */
+function createSafeSidebarIconElement(value) {
+	if (!value) return null;
+	const v = String(value);
+
+	// FontAwesome 클래스처럼 보이면 className으로만 설정
+	if (v.startsWith('fa-')) {
+		const safeClass = v.replace(/[^a-zA-Z0-9 _-]/g, '').trim();
+		if (!safeClass) return null;
+		const i = document.createElement('i');
+		i.className = safeClass;
+		i.style.marginRight = "6px";
+		i.style.color = "#2d5f5d";
+		return i;
+	}
+
+	// Emoji/짧은 텍스트: textContent 사용
+	const s = document.createElement('span');
+	s.className = "page-icon";
+	s.style.marginRight = "6px";
+	s.style.fontSize = "16px";
+	s.textContent = v;
+	return s;
+}
+
+/**
+ * titleSpan에서 아이콘을 제외한 텍스트만 안전하게 추출
+ */
+function getSidebarTitleText(titleSpan) {
+	if (!titleSpan) return '';
+	const texts = [];
+	titleSpan.childNodes.forEach(n => {
+		if (n.nodeType === Node.TEXT_NODE) texts.push(n.textContent || '');
+	});
+	return texts.join('').trim();
+}
+
+/**
  * 사이드바 페이지 정보 업데이트
  */
 function updatePageInSidebar(pageId, field, value) {
@@ -767,23 +808,28 @@ function updatePageInSidebar(pageId, field, value) {
     if (field === 'title') {
         const titleSpan = pageElement.querySelector('.page-list-item-title');
         if (titleSpan) {
-            const icon = titleSpan.querySelector('i, span.page-icon');
-            const iconHtml = icon ? icon.outerHTML : '';
-            titleSpan.innerHTML = iconHtml + escapeHtml(value);
+        	// 기존 아이콘을 안전한 값(className/textContent)으로 재구성
+            const existingIcon = titleSpan.querySelector('i, span.page-icon');
+            let iconValue = null;
+            if (existingIcon)
+                iconValue = existingIcon.tagName === 'I' ? existingIcon.className : existingIcon.textContent;
+
+            // 전체를 DOM API로 재구성 (innerHTML 금지)
+            titleSpan.textContent = '';
+            const iconEl = createSafeSidebarIconElement(iconValue);
+            if (iconEl) titleSpan.appendChild(iconEl);
+            titleSpan.appendChild(document.createTextNode(String(value ?? '')));
         }
     } else if (field === 'icon') {
         const titleSpan = pageElement.querySelector('.page-list-item-title');
         if (titleSpan) {
-            const textContent = titleSpan.textContent.trim();
-            let iconHtml = '';
-            if (value) {
-                if (value.startsWith('fa-')) {
-                    iconHtml = `<i class="${value}" style="margin-right: 6px; color: #2d5f5d;"></i>`;
-                } else {
-                    iconHtml = `<span class="page-icon" style="margin-right: 6px; font-size: 16px;">${value}</span>`;
-                }
-            }
-            titleSpan.innerHTML = iconHtml + escapeHtml(textContent);
+        	const titleText = getSidebarTitleText(titleSpan);
+
+            // 전체를 DOM API로 재구성 (innerHTML 금지)
+            titleSpan.textContent = '';
+            const iconEl = createSafeSidebarIconElement(value);
+            if (iconEl) titleSpan.appendChild(iconEl);
+            titleSpan.appendChild(document.createTextNode(titleText));
         }
     }
 }
