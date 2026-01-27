@@ -1556,10 +1556,11 @@ app.get('/covers/:userId/:filename', authMiddleware, async (req, res) => {
                 LEFT JOIN collection_shares cs_cur ON c.id = cs_cur.collection_id AND cs_cur.shared_with_user_id = ?
                 LEFT JOIN collection_shares cs_req ON c.id = cs_req.collection_id AND cs_req.shared_with_user_id = ?
                 WHERE p.cover_image = ?
+                AND p.user_id = ?  -- 보안패치: 커버 파일 소유자 == 페이지 소유자
                 AND (c.user_id = ? OR cs_cur.shared_with_user_id IS NOT NULL)
                 AND (c.user_id = ? OR cs_req.shared_with_user_id IS NOT NULL)
                 LIMIT 1`,
-            [currentUserId, requestedUserId, coverPath, currentUserId, requestedUserId]
+            [currentUserId, requestedUserId, coverPath, requestedUserId, currentUserId, requestedUserId]
         );
 
         if (rows.length > 0) {
@@ -1619,10 +1620,11 @@ app.get('/imgs/:userId/:filename', authMiddleware, async (req, res) => {
 	            LEFT JOIN collection_shares cs_cur ON c.id = cs_cur.collection_id AND cs_cur.shared_with_user_id = ?
 	            WHERE p.content LIKE ? ESCAPE '\\\\'
 	            AND (c.user_id = ? OR cs_cur.shared_with_user_id IS NOT NULL)
-	            -- 보안패치 : 이미지 소유자가 실제로 참여/생성한 페이지 or 컬렉션에서만 허용
-	            AND (p.user_id = ? OR c.user_id = ?)
+	            -- 보안패치: 파일 소유자와 참조하는 페이지 소유자를 반드시 일치시킨다.
+                -- 공유 컬렉션에서 협업자가 content를 조작해 타 사용자 파일을 참조하는 것을 차단(IDOR/BOLA 완화)
+                AND p.user_id = ?
 	            LIMIT 1`,
-            [currentUserId, likePattern, currentUserId, requestedUserId, requestedUserId]
+            [currentUserId, likePattern, currentUserId, requestedUserId]
         );
 
         if (rows.length > 0) {
@@ -1681,9 +1683,10 @@ app.get('/paperclip/:userId/:filename', authMiddleware, async (req, res) => {
                 LEFT JOIN collection_shares cs_cur ON c.id = cs_cur.collection_id AND cs_cur.shared_with_user_id = ?
                 WHERE p.content LIKE ? ESCAPE '\\\\'
                 AND (c.user_id = ? OR cs_cur.shared_with_user_id IS NOT NULL)
-                AND (p.user_id = ? OR c.user_id = ?)
+                -- 보안패치: 파일 소유자 == 참조 페이지 소유자
+                AND p.user_id = ?
                 LIMIT 1`,
-            [currentUserId, likePattern, currentUserId, requestedUserId, requestedUserId]
+            [currentUserId, likePattern, currentUserId, requestedUserId]
         );
 
         if (rows.length > 0) {
