@@ -19,8 +19,21 @@ module.exports = (dependencies) => {
         BASE_URL,
         logError,
         recordLoginAttempt,
-        checkCountryWhitelist
-    } = dependencies;
+		checkCountryWhitelist,
+        getClientIpFromRequest
+	} = dependencies;
+
+    // auth.js와 동일한 방식으로 IP 추출 통일
+    function getClientIp(req) {
+        return (
+            req.clientIp ||
+            (typeof getClientIpFromRequest === 'function' ? getClientIpFromRequest(req) : null) ||
+            req.ip ||
+            req.connection?.remoteAddress ||
+            req.socket?.remoteAddress ||
+            'unknown'
+        );
+    }
 
     const {
         generateRegistrationOptions,
@@ -361,21 +374,21 @@ module.exports = (dependencies) => {
                     country_whitelist_enabled: country_whitelist_enabled,
                     allowed_login_countries: allowed_login_countries
                 },
-                req.ip || req.connection.remoteAddress
+                getClientIp(req)
             );
 
             if (!countryCheck.allowed) {
                 await recordLoginAttempt(pool, {
                     userId: userId,
                     username: username,
-                    ipAddress: req.ip || req.connection.remoteAddress,
+                    ipAddress: getClientIp(req),
                     port: req.connection.remotePort || 0,
                     success: false,
                     failureReason: countryCheck.reason,
                     userAgent: req.headers['user-agent'] || null
                 });
 
-                console.warn(`[로그인 실패] IP: ${req.ip}, 사유: ${countryCheck.reason}`);
+                console.warn(`[로그인 실패] IP: ${getClientIp(req)}, 사유: ${countryCheck.reason}`);
                 return res.status(403).json({
                     error: "현재 위치에서는 로그인할 수 없습니다. 계정 보안 설정을 확인하세요."
                 });
@@ -425,7 +438,7 @@ module.exports = (dependencies) => {
             recordLoginAttempt(pool, {
                 userId: userId,
                 username: username,
-                ipAddress: req.ip || req.connection.remoteAddress,
+                ipAddress: getClientIp(req),
                 port: req.connection.remotePort || 0,
                 success: true,
                 failureReason: null,
