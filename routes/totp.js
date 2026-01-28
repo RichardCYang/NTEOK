@@ -26,6 +26,8 @@ module.exports = (dependencies) => {
         sessions,
         createSession,
         generateCsrfToken,
+        encryptTotpSecret,
+        decryptTotpSecret,
         formatDateForDb,
         SESSION_COOKIE_NAME,
         CSRF_COOKIE_NAME,
@@ -228,7 +230,7 @@ module.exports = (dependencies) => {
 
             await pool.execute(
                 "UPDATE users SET totp_secret = ?, totp_enabled = 1, updated_at = ? WHERE id = ?",
-                [secret, nowStr, userId]
+                [encryptTotpSecret(secret), nowStr, userId]
             );
 
             delete session.totpTempSecret;
@@ -319,7 +321,7 @@ module.exports = (dependencies) => {
             const { totp_secret, username, block_duplicate_login, country_whitelist_enabled, allowed_login_countries } = rows[0];
 
             const verified = speakeasy.totp.verify({
-                secret: totp_secret,
+                secret: decryptTotpSecret(totp_secret),
                 encoding: 'base32',
                 token: token,
                 window: 2

@@ -192,6 +192,69 @@ const CSRF_COOKIE_NAME = "nteok_csrf";
 const IS_PRODUCTION = process.env.NODE_ENV === "production";
 const BASE_URL = process.env.BASE_URL || (IS_PRODUCTION ? "https://localhost:3000" : "http://localhost:3000");
 
+// TOTP 비밀키 (2FA) 최소 암호화
+// - TOTP 공유 비밀키를 DB에 평문 저장하면, DB 유출 시 2FA가 즉시 무력화됨
+// - 해결: AES-256-GCM(AEAD)으로 암호화하여 저장 + 키는 환경변수/시크릿 매니저로 분리
+function decode32ByteKey(raw) {
+    if (!raw) return null;
+    const s = String(raw).trim();
+    if (!s) return null;
+    // 64-hex(32 bytes)
+    if (/^[0-9a-fA-F]{64}$/.test(s)) return Buffer.from(s, "hex");
+    // base64(32 bytes)
+    try {
+        const b64 = s.replace(/-/g, "+").replace(/_/g, "/");
+        const buf = Buffer.from(b64, "base64");
+        if (buf.length === 32) return buf;
+    } catch {}
+    return null;
+}
+
+const _decodedTotpSecretKey = decode32ByteKey(process.env.TOTP_SECRET_ENC_KEY);
+const TOTP_SECRET_ENC_KEY = _decodedTotpSecretKey || (!IS_PRODUCTION ? crypto.randomBytes(32) : null);
+
+if (!_decodedTotpSecretKey) {
+    if (IS_PRODUCTION) {
+        console.error("❌ [SECURITY] TOTP_SECRET_ENC_KEY가 설정되지 않았습니다. (프로덕션에서는 필수)");
+        process.exit(1);
+    } else {
+        console.warn("⚠️  [SECURITY] TOTP_SECRET_ENC_KEY가 없어 임시 키로 동작합니다. 재시작 시 기존 2FA 복호화가 불가능할 수 있습니다.");
+    }
+}
+
+function encryptTotpSecret(plainBase32) {
+    if (!plainBase32) return null;
+    if (!TOTP_SECRET_ENC_KEY)
+        throw new Error("TOTP_SECRET_ENC_KEY 누락 -> TOTP 비밀키를 암호화 할 수 없습니다");
+
+    const iv = crypto.randomBytes(12);
+    const cipher = crypto.createCipheriv("aes-256-gcm", TOTP_SECRET_ENC_KEY, iv);
+    const ciphertext = Buffer.concat([cipher.update(String(plainBase32), "utf8"), cipher.final()]);
+    const tag = cipher.getAuthTag();
+    return `v1:${iv.toString("base64")}:${tag.toString("base64")}:${ciphertext.toString("base64")}`;
+}
+
+function decryptTotpSecret(storedValue) {
+    if (!storedValue) return null;
+    const s = String(storedValue);
+
+    // 레거시(평문 base32) 호환
+    if (!s.startsWith("v1:")) return s;
+    if (!TOTP_SECRET_ENC_KEY)
+        throw new Error("TOTP_SECRET_ENC_KEY 누락 -> TOTP 비밀키를 복호화 할 수 없습니다");
+
+    const parts = s.split(":");
+    if (parts.length !== 4)
+    	throw new Error("유효하지 않은 암호화 TOTP 비밀키 형식");
+
+    const iv = Buffer.from(parts[1], "base64");
+    const tag = Buffer.from(parts[2], "base64");
+    const data = Buffer.from(parts[3], "base64");
+    const decipher = crypto.createDecipheriv("aes-256-gcm", TOTP_SECRET_ENC_KEY, iv);
+    decipher.setAuthTag(tag);
+    return Buffer.concat([decipher.update(data), decipher.final()]).toString("utf8");
+}
+
 // 보안 개선: 기본 관리자 계정 비밀번호를 강제로 변경하도록 경고
 // 운영(PROD)에서는 ADMIN_PASSWORD 미설정 상태로 부팅하지 않도록 fail-closed 처리
 const DEFAULT_ADMIN_USERNAME = process.env.ADMIN_USERNAME || "admin";
@@ -221,7 +284,7 @@ const BCRYPT_SALT_ROUNDS = Number(process.env.BCRYPT_SALT_ROUNDS || 12);
 
 // 프로덕션 환경에서 필수 환경변수 검증
 if (IS_PRODUCTION) {
-    const requiredEnvVars = ['DB_HOST', 'DB_USER', 'DB_PASSWORD', 'DB_NAME', 'BASE_URL', 'ADMIN_PASSWORD'];
+    const requiredEnvVars = ['DB_HOST', 'DB_USER', 'DB_PASSWORD', 'DB_NAME', 'BASE_URL', 'ADMIN_PASSWORD', 'TOTP_SECRET_ENC_KEY'];
     const missingVars = requiredEnvVars.filter(key => !process.env[key]);
 
     if (missingVars.length > 0) {
@@ -761,7 +824,7 @@ async function initDb() {
             password_hash VARCHAR(255) NOT NULL,
             created_at DATETIME NOT NULL,
             updated_at DATETIME NOT NULL,
-            totp_secret VARCHAR(64) NULL,
+            totp_secret TEXT NULL,
             totp_enabled TINYINT(1) NOT NULL DEFAULT 0,
             passkey_enabled TINYINT(1) NOT NULL DEFAULT 0,
             block_duplicate_login TINYINT(1) NOT NULL DEFAULT 0,
@@ -811,6 +874,15 @@ async function initDb() {
     }
 
     // (TOTP 컬럼들은 이제 CREATE TABLE에 포함됨)
+    // 과거 VARCHAR(64) -> 암호문(v1:iv:tag:cipher) 저장을 위해 TEXT로 확장
+    try {
+        await pool.execute(`
+            ALTER TABLE users
+            MODIFY COLUMN totp_secret TEXT NULL
+        `);
+    } catch (error) {
+        console.warn("⚠️ totp_secret 컬럼 타입 변경을 건너뜁니다:", error.message);
+    }
 
     // users 가 하나도 없으면 기본 관리자 계정 생성
     const [userRows] = await pool.execute("SELECT COUNT(*) AS cnt FROM users");
@@ -1884,6 +1956,8 @@ function getSessionFromId(sessionId) {
             createSession,
             getSessionFromRequest,
             generateCsrfToken,
+            encryptTotpSecret,
+            decryptTotpSecret,
             formatDateForDb,
             validatePasswordStrength,
             logError,
