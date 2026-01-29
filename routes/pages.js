@@ -471,7 +471,7 @@ module.exports = (dependencies) => {
     /**
      * 새 페이지 생성
      * POST /api/pages
-     * body: { title?: string, content?: string, parentId?: string, sortOrder?: number, collectionId: string, icon?: string }
+     * body: { title?: string, content?: string, parentId?: string, sortOrder?: number, collectionId: string, icon?: string, isEncrypted?: boolean, encryptionSalt?: string, encryptedContent?: string }
      */
     router.post("/", authMiddleware, async (req, res) => {
         const rawTitle = typeof req.body.title === "string" ? req.body.title : "";
@@ -480,8 +480,15 @@ module.exports = (dependencies) => {
         const now = new Date();
         const id = generatePageId(now);
         const nowStr = formatDateForDb(now);
+        // 평문 콘텐츠(암호화 페이지에서는 저장하지 않음)
         const rawContent = typeof req.body.content === "string" ? req.body.content : "<p></p>";
         const content = sanitizeHtmlContent(rawContent);
+
+        // 암호화 관련 필드 (클라이언트에서 생성된 값)
+        const isEncryptedFromBody = typeof req.body.isEncrypted === "boolean" ? req.body.isEncrypted : null;
+        const encryptionSaltFromBody = typeof req.body.encryptionSalt === "string" ? req.body.encryptionSalt : null;
+        const encryptedContentFromBody = typeof req.body.encryptedContent === "string" ? req.body.encryptedContent : null;
+
         const userId = req.user.id;
 
         const parentId =
@@ -514,6 +521,50 @@ module.exports = (dependencies) => {
             const { permission } = await getCollectionPermission(collectionId, userId);
             if (!permission || permission === 'READ') {
                 return res.status(403).json({ error: "페이지를 생성할 권한이 없습니다." });
+            }
+
+            // 보안: 서버 측 암호화 정책 강제
+            // - 기존 구현은 컬렉션 enforceEncryption/defaultEncryption 설정이 있어도
+            //   /api/pages 생성에서 평문(content)을 그대로 DB에 저장할 수 있었음(클라이언트 정책 신뢰).
+            // - 악성/구형 클라이언트 또는 공유받은 EDIT 사용자가 임의 요청으로 평문 저장을 유도하면
+            //   암호화 강제 컬렉션의 기밀성이 깨짐.
+            const [colRows] = await pool.execute(
+                `SELECT default_encryption, enforce_encryption FROM collections WHERE id = ? LIMIT 1`,
+                [collectionId]
+            );
+
+            if (!colRows.length)
+                return res.status(404).json({ error: "컬렉션을 찾을 수 없습니다." });
+
+            const enforceEncryption = colRows[0].enforce_encryption === 1;
+            const defaultEncryption = colRows[0].default_encryption === 1;
+
+            // 컬렉션 정책에 따라 신규 페이지의 암호화 여부 결정
+            // - enforceEncryption: 무조건 암호화(평문 저장 금지)
+            // - defaultEncryption: 요청에 명시가 없으면 암호화로 간주(하위 호환 위해 명시적으로 false면 평문 허용)
+            const shouldEncrypt = enforceEncryption ? true : (isEncryptedFromBody !== null ? isEncryptedFromBody : defaultEncryption);
+
+            if (enforceEncryption && isEncryptedFromBody === false)
+                return res.status(400).json({ error: "이 컬렉션은 암호화를 강제합니다. 평문 페이지를 생성할 수 없습니다." });
+
+            // 암호화 페이지인 경우: 서버는 평문 content를 저장하지 않으며, 암호문 필드를 필수로 요구
+            let contentToStore = content;
+            let isEncryptedToStore = 0;
+            let encryptionSaltToStore = null;
+            let encryptedContentToStore = null;
+
+            if (shouldEncrypt) {
+                if (!encryptionSaltFromBody || !encryptedContentFromBody) {
+                    return res.status(400).json({
+                        error: "암호화된 페이지를 생성하려면 encryptionSalt와 encryptedContent가 필요합니다."
+                    });
+                }
+
+                // 보안: 평문 저장 금지
+                contentToStore = '';
+                isEncryptedToStore = 1;
+                encryptionSaltToStore = encryptionSaltFromBody;
+                encryptedContentToStore = encryptedContentFromBody;
             }
 
             if (parentId) {
@@ -564,22 +615,33 @@ module.exports = (dependencies) => {
 
             await pool.execute(
                 `
-                INSERT INTO pages (id, user_id, parent_id, title, content, sort_order, created_at, updated_at, collection_id, icon)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO pages (
+                    id, user_id, parent_id, title, content,
+                    sort_order, created_at, updated_at, collection_id, icon,
+                    is_encrypted, encryption_salt, encrypted_content
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 `,
-                [id, userId, parentId, title, content, sortOrder, nowStr, nowStr, collectionId, icon]
+                [
+	                id, userId, parentId, title, contentToStore,
+	                sortOrder, nowStr, nowStr, collectionId, icon,
+	                isEncryptedToStore, encryptionSaltToStore, encryptedContentToStore
+	            ]
             );
 
             const page = {
                 id,
                 title,
-                content,
+                content: contentToStore,
+                encryptionSalt: encryptionSaltToStore,
+                encryptedContent: encryptedContentToStore,
                 parentId,
                 sortOrder,
                 collectionId,
                 createdAt: now.toISOString(),
                 updatedAt: now.toISOString(),
-                icon
+                icon,
+                isEncrypted: Boolean(isEncryptedToStore)
             };
 
             console.log("POST /api/pages 생성:", id);
@@ -650,9 +712,31 @@ module.exports = (dependencies) => {
                 return res.status(403).json({ error: "페이지를 수정할 권한이 없습니다." });
             }
 
+            // 보안: 서버 측 암호화 정책 강제 (enforceEncryption=1이면 평문 전환 금지)
+            const [colRows] = await pool.execute(
+                `SELECT enforce_encryption FROM collections WHERE id = ? LIMIT 1`,
+                [existing.collection_id]
+            );
+            const enforceEncryption = colRows.length && colRows[0].enforce_encryption === 1;
+
             // 암호화 여부 결정
             const newIsEncrypted = isEncryptedFromBody !== null ? (isEncryptedFromBody ? 1 : 0) : existing.is_encrypted;
             const isChangingEncryptionState = existing.is_encrypted !== newIsEncrypted;
+
+            if (enforceEncryption && newIsEncrypted !== 1) {
+                return res.status(400).json({
+                    error: "이 컬렉션은 암호화를 강제합니다. 페이지를 평문으로 변경할 수 없습니다."
+                });
+            }
+
+            // 평문 -> 암호화로 전환하는 경우, 암호화 필드는 반드시 제공되어야 함
+            if (isChangingEncryptionState && newIsEncrypted === 1) {
+                if (!encryptionSaltFromBody || !encryptedContentFromBody) {
+                    return res.status(400).json({
+                        error: "암호화로 전환하려면 encryptionSalt와 encryptedContent가 필요합니다."
+                    });
+                }
+            }
 
             if (isChangingEncryptionState && permission !== "ADMIN") {
             	return res.status(403).json({ error: "암호화 설정 변경 권한이 없습니다." });
@@ -726,7 +810,9 @@ module.exports = (dependencies) => {
                 collectionId: existing.collection_id,
                 createdAt: toIsoString(existing.created_at),
                 updatedAt: now.toISOString(),
-                icon: newIcon
+                icon: newIcon,
+                isEncrypted: Boolean(newIsEncrypted),
+                horizontalPadding: newHorizontalPadding
             };
 
             console.log("PUT /api/pages/:id 수정 완료:", id);
