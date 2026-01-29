@@ -1,3 +1,5 @@
+import { secureFetch } from './ui-utils.js';
+
 async function handleRegister(event) {
     event.preventDefault();
 
@@ -61,7 +63,7 @@ async function handleRegister(event) {
             body: JSON.stringify({ username, password })
         });
 
-        const res = await fetch("/api/auth/register", options);
+        const res = await secureFetch("/api/auth/register", options);
 
         if (!res.ok) {
             let message = "회원가입에 실패했습니다.";

@@ -782,24 +782,8 @@ function authMiddleware(req, res, next) {
  */
 function csrfMiddleware(req, res, next) {
     // 안전한 메서드는 CSRF 검증 불필요
-    if (["GET", "HEAD", "OPTIONS"].includes(req.method)) {
+    if (["GET", "HEAD", "OPTIONS"].includes(req.method))
         return next();
-    }
-
-    // 로그인/회원가입/2FA 검증은 CSRF 토큰 없이도 허용 (첫 접속 시)
-    // 참고: app.use("/api", csrfMiddleware)로 적용되므로 req.path는 /api 이후 경로
-    if (req.path === "/auth/login" ||
-        req.path === "/auth/register" ||
-        req.path === "/totp/verify-login" ||
-        req.path === "/totp/verify-backup-code" ||
-        req.path === "/passkey/authenticate/options" ||
-        req.path === "/passkey/authenticate/verify" ||
-        req.path === "/passkey/login/options" ||
-        req.path === "/passkey/login/verify" ||
-        req.path === "/passkey/login/userless/options" ||
-        req.path === "/passkey/login/userless/verify") {
-        return next();
-    }
 
     // CSRF 토큰 검증
     if (!verifyCsrfToken(req)) {
