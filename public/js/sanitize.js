@@ -1,5 +1,46 @@
 import DOMPurify from 'dompurify';
 
+// DOMPurify는 기본적으로 href/src 같은 URI 속성만 프로토콜 검증을 수행
+// 이 앱은 data-src/data-url 같은 data-*를 실제 URL sink로 승격시키므로 data-*도 별도 검증 필요
+const CONTROL_CHARS_RE = /[\u0000-\u001F\u007F]/;
+function isSafeHttpUrlOrRelative(value) {
+	if (typeof value !== 'string') return false;
+	const v = value.trim();
+	if (!v) return false;
+	if (CONTROL_CHARS_RE.test(v)) return false;
+	if (v.startsWith('//')) return false;	// protocol-relative 차단
+	if (v.startsWith('/') || v.startsWith('#')) return true;
+	try {
+		const u = new URL(v);
+		return u.protocol === 'http:' || u.protocol === 'https:';
+	} catch {
+		return false;
+	}
+}
+
+// 훅은 1회만 설치 (중복 설치 방지)
+if (!DOMPurify.__nteokDataSrcHookInstalled) {
+	DOMPurify.__nteokDataSrcHookInstalled = true;
+	DOMPurify.addHook('uponSanitizeAttribute', (node, data) => {
+		const name = String(data?.attrName || '').toLowerCase();
+		if (name !== 'data-src') return;
+		const nodeType = String(node?.getAttribute?.('data-type') || '').toLowerCase();
+		const raw = String(data?.attrValue || '');
+
+		if (!isSafeHttpUrlOrRelative(raw)) {
+		    data.keepAttr = false;
+		    data.forceKeepAttr = false;
+		    return;
+		}
+
+		// file-block는 내부 첨부만 허용
+		if (nodeType === 'file-block' && !raw.startsWith('/paperclip/')) {
+		    data.keepAttr = false;
+		    data.forceKeepAttr = false;
+		}
+	});
+}
+
 // 서버(server.js)의 sanitizeHtmlContent 정책과 최대한 유사하게 유지하는 것이 중요
 // 암호화 콘텐츠는 서버에서 정화할 수 없으므로 클라이언트가 최후의 방어
 export const EDITOR_PURIFY_CONFIG = {

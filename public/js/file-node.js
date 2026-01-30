@@ -4,6 +4,7 @@
  */
 
 import { secureFetch } from './ui-utils.js';
+import { sanitizeHttpHref } from './url-utils.js';
 
 const Node = Tiptap.Core.Node;
 
@@ -126,9 +127,9 @@ export const FileBlock = Node.create({
 
             // 드래그 앤 드롭 이벤트 설정 (데스크탑 환경 권장)
             const setupDragAndDrop = (target) => {
-                // 터치 환경이 아닌 경우(데스크탑 등)에만 활성화하거나, 
+                // 터치 환경이 아닌 경우(데스크탑 등)에만 활성화하거나,
                 // 일반적인 드래그 앤 드롭은 모바일에서 무시되므로 기본 적용 가능
-                
+
                 target.addEventListener('dragover', (e) => {
                     if (!editor.isEditable) return;
                     e.preventDefault();
@@ -157,7 +158,7 @@ export const FileBlock = Node.create({
 
             const render = () => {
                 wrapper.innerHTML = '';
-                
+
                 // 무채색 클립 아이콘 SVG
                 const clipIconSvg = `
                     <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -169,10 +170,10 @@ export const FileBlock = Node.create({
                     // 1. Placeholder State (Embed Form Style)
                     const placeholder = document.createElement('div');
                     placeholder.className = 'file-placeholder';
-                    
+
                     const leftPart = document.createElement('div');
                     leftPart.className = 'file-placeholder-left';
-                    
+
                     const icon = document.createElement('span');
                     icon.className = 'file-placeholder-icon';
                     icon.innerHTML = clipIconSvg;
@@ -191,13 +192,13 @@ export const FileBlock = Node.create({
                     uploadBtn.className = 'file-upload-btn';
                     uploadBtn.innerHTML = '&#43;'; // Plus sign (+)
                     uploadBtn.title = '파일 업로드';
-                    
+
                     uploadBtn.onclick = (e) => {
                         e.preventDefault();
                         e.stopPropagation();
                         triggerFileUpload();
                     };
-                    
+
                     placeholder.onclick = (e) => {
                          if (editor.isEditable) triggerFileUpload();
                     };
@@ -215,14 +216,14 @@ export const FileBlock = Node.create({
                     // 2. Filled State (File Card Style)
                     const container = document.createElement('div');
                     container.className = 'file-block';
-                    
+
                     const content = document.createElement('div');
                     content.className = 'file-block-content';
 
                     const icon = document.createElement('span');
                     icon.className = 'file-icon';
                     icon.innerHTML = clipIconSvg;
-                    
+
                     const info = document.createElement('div');
                     info.className = 'file-info';
 
@@ -246,13 +247,13 @@ export const FileBlock = Node.create({
 
                     const deleteBtn = document.createElement('button');
                     deleteBtn.className = 'file-delete-btn';
-                    deleteBtn.innerHTML = '&times;'; 
+                    deleteBtn.innerHTML = '&times;';
                     deleteBtn.title = '파일 삭제';
 
                     deleteBtn.onclick = async (e) => {
                         e.preventDefault();
                         e.stopPropagation();
-                        
+
                         const fileUrl = node.attrs.src;
                         if (!fileUrl) return;
 
@@ -288,13 +289,25 @@ export const FileBlock = Node.create({
 
                     rightPart.appendChild(deleteBtn);
                     container.appendChild(rightPart);
-                    
+
                     container.onclick = (e) => {
-                         if (e.target.closest('.file-delete-btn')) return;
-                         e.preventDefault();
-                         if (node.attrs.src) {
-                             window.open(node.attrs.src, '_blank');
-                         }
+                        if (e.target.closest('.file-delete-btn')) return;
+                        e.preventDefault();
+
+						if (node.attrs.src) {
+							// allowRelative=true로 내부 경로 허용, addHttpsIfMissing=false로 스킴 자동추가 방지
+							const safe = sanitizeHttpHref(node.attrs.src, {
+							    allowRelative: true,
+							    addHttpsIfMissing: false
+							});
+
+							// file-block는 내부 첨부만 허용
+							if (safe && safe.startsWith('/paperclip/')) {
+							    window.open(safe, '_blank', 'noopener,noreferrer');
+							} else {
+							    console.warn('[Blocked unsafe file src]', node.attrs.src);
+							}
+						}
                     };
 
                     // 이미 파일이 있는 경우에도 드래그 앤 드롭으로 교체 가능하게 설정
@@ -310,7 +323,7 @@ export const FileBlock = Node.create({
                 dom: wrapper,
                 update: (updatedNode) => {
                     if (updatedNode.type.name !== this.name) return false;
-                    if (updatedNode.attrs.src !== node.attrs.src || 
+                    if (updatedNode.attrs.src !== node.attrs.src ||
                         updatedNode.attrs.filename !== node.attrs.filename ||
                         updatedNode.attrs.size !== node.attrs.size) {
                         node = updatedNode;

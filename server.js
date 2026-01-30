@@ -33,7 +33,10 @@ function isSafeHttpUrlOrRelative(value) {
     const v = value.trim();
     if (!v) return false;
     if (CONTROL_CHARS_RE.test(v)) return false;
-    if (v.startsWith("/") || v.startsWith("#")) return true; // 상대 URL 허용(필요 없으면 제거 가능)
+    // 상대 URL 허용(필요 없으면 제거 가능)
+    // 주의: //evil.com 같은 protocol-relative URL은 외부로 탈출하므로 차단
+    if (v.startsWith("//")) return false;
+    if (v.startsWith("/") || v.startsWith("#")) return true;
     try {
         const u = new URL(v);
         return u.protocol === "http:" || u.protocol === "https:";
@@ -111,16 +114,38 @@ if (typeof DOMPurify?.addHook === "function") {
             }
         }
 
-        // 보안: YouTube 블록의 data-src(=iframe.src 승격값) 스킴/도메인 엄격 검증
+        // data-src는 DOMPurify 기본 URI 검증 대상이 아니므로 별도 검증 필요
+        // - file-block: data-src를 클릭 시 window.open()에 사용(저장형 XSS/피싱 sink)
+        // - image-with-caption: data-src를 img.src로 승격
+        // - youtube-block: data-src를 iframe.src로 승격 (도메인/형식 엄격 검증)
         if (name === "data-src") {
             const nodeType = String(_node?.getAttribute?.('data-type') || '').toLowerCase();
-            if (nodeType === 'youtube') {
-                const safe = normalizeYouTubeEmbedUrl(String(hookEvent.attrValue || ''));
+            const raw = String(hookEvent.attrValue || "");
+
+            // YouTube는 허용 도메인/경로로 정규화 (fail-closed)
+            if (nodeType === "youtube-block" || nodeType === "youtube") {
+                const safe = normalizeYouTubeEmbedUrl(raw);
                 if (!safe) {
                     hookEvent.keepAttr = false;
                     hookEvent.forceKeepAttr = false;
                 } else {
                     hookEvent.attrValue = safe;
+                }
+                return;
+            }
+
+            // 일반적인 data-src는 http(s) 또는 안전한 상대경로만 허용
+            if (!isSafeHttpUrlOrRelative(raw)) {
+                hookEvent.keepAttr = false;
+                hookEvent.forceKeepAttr = false;
+                return;
+            }
+
+            // file-block는 내부 첨부(/paperclip/...)만 허용하여 XSS/피싱 표면 축소
+            if (nodeType === "file-block") {
+                if (!(raw.startsWith("/paperclip/") && !raw.startsWith("//"))) {
+                    hookEvent.keepAttr = false;
+                    hookEvent.forceKeepAttr = false;
                 }
             }
         }
