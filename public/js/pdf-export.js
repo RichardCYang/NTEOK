@@ -3,7 +3,7 @@
  * html2pdf.js를 사용하여 페이지를 PDF로 변환
  */
 
-import { secureFetch, escapeHtml, escapeHtmlAttr } from './ui-utils.js';
+import { secureFetch, escapeHtml, escapeHtmlAttr, addIcon } from './ui-utils.js';
 
 /**
  * html2pdf 라이브러리 로드 대기
@@ -571,7 +571,24 @@ function renderBookmarkBlocks(container) {
             padding-bottom: 8px;
             border-bottom: 2px solid #333;
         `;
-        header.innerHTML = `${icon} ${escapeHtml(title)}`;
+
+        // 보안: innerHTML 금지 -> data-icon / data-title은 사용자 콘텐츠에서 오므로, 엔티티(&lt; 등)가 실제 태그로 승격되어
+        // DOM XSS로 이어질 수 있음 (textContent / createElement 사용)
+        const iconEl = document.createElement('span');
+        iconEl.style.marginRight = '6px';
+        if (icon && icon.includes('fa-')) {
+            // FontAwesome 클래스도 기존 앱처럼 지원(내부적으로 class를 정화)
+            addIcon(iconEl, icon);
+        } else {
+            iconEl.textContent = icon;
+        }
+
+        const titleEl = document.createElement('span');
+        titleEl.textContent = title;
+
+        header.appendChild(iconEl);
+        header.appendChild(titleEl);
+
         el.insertBefore(header, el.firstChild);
     });
 }
