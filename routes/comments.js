@@ -3,7 +3,7 @@ const router = express.Router();
 
 /**
  * Comments Routes
- * 
+ *
  * 이 파일은 댓글 관련 라우트를 처리합니다.
  * - 댓글 목록 조회
  * - 댓글 작성
@@ -19,16 +19,143 @@ module.exports = (dependencies) => {
         logError,
         formatDateForDb,
         getCollectionPermission
-    } = dependencies;
+	} = dependencies;
 
-    // 댓글 조회 (페이지 ID 기준)
-    router.get('/:pageId', async (req, res) => {
-        const pageId = req.params.pageId;
-        const session = dependencies.getSessionFromRequest(req);
-        const userId = session ? session.userId : null;
+	// Public (published-link) comments: token 기반으로만 접근
+	//  - 기존 /api/comments/:pageId 공개 허용 로직은 IDOR/권한 우회(데이터 유출) 위험
+	//  - allow_comments=0 이어도 댓글이 노출되던 버그를 서버에서 강제 차단
+
+	/**
+	 * GET /api/comments/shared/:token
+	 * - 공개 페이지 댓글 조회
+	 * - 발행 링크 token으로 page_id를 찾아서 접근제어를 수행
+	 */
+	router.get('/shared/:token', async (req, res) => {
+		const token = req.params.token;
+		const session = dependencies.getSessionFromRequest(req);
+		const userId = session ? session.userId : null;
+
+		try {
+		    const [publishRows] = await pool.execute(
+			    `SELECT page_id, allow_comments
+			        FROM page_publish_links
+			        WHERE token = ? AND is_active = 1
+			        ORDER BY created_at DESC
+			        LIMIT 1`,
+			    [token]
+		    );
+
+		    if (publishRows.length === 0)
+			    return res.status(404).json({ error: "페이지를 찾을 수 없습니다." });
+
+		    const pageId = publishRows[0].page_id;
+		    const allowComments = Number(publishRows[0].allow_comments) === 1;
+
+		    // allow_comments=false이면 공개 방문자는 차단
+		    if (!allowComments) {
+			    // (옵션) 로그인 사용자 중 내부 권한자가 있다면 예외 허용 가능
+			    if (!userId)
+			        return res.status(403).json({ error: "댓글이 비활성화되었습니다." });
+
+				// 내부 권한 확인(소유자/공유자)
+			    const [pageRows] = await pool.execute(
+			        `SELECT id, user_id, collection_id FROM pages WHERE id = ?`,
+			        [pageId]
+				);
+
+				if (!pageRows.length)
+					return res.status(404).json({ error: "페이지를 찾을 수 없습니다." });
+
+			    const page = pageRows[0];
+			    let canReadInternal = false;
+				if (page.user_id === userId) {
+					canReadInternal = true;
+				} else {
+			        const { permission } = await getCollectionPermission(page.collection_id, userId);
+			        if (permission) canReadInternal = true;
+			    }
+
+				if (!canReadInternal)
+			        return res.status(403).json({ error: "댓글이 비활성화되었습니다." });
+		    }
+
+		    const [comments] = await pool.execute(
+			    `SELECT c.id, c.content, c.created_at, c.user_id, c.guest_name, u.username
+			        FROM comments c
+			    LEFT JOIN users u ON c.user_id = u.id
+			        WHERE c.page_id = ?
+			        ORDER BY c.created_at ASC`,
+			    [pageId]
+		    );
+
+		    res.json(comments.map(c => ({
+			    id: c.id,
+			    content: c.content,
+			    createdAt: toIsoString(c.created_at),
+			    author: c.user_id ? c.username : c.guest_name,
+			    isGuest: !c.user_id,
+			    isMyComment: userId ? (c.user_id === userId) : false
+		    })));
+		} catch (e) {
+		    logError("GET /api/comments/shared/:token", e);
+		    res.status(500).json({ error: "댓글 목록 조회 실패" });
+		}
+	});
+
+	/**
+	 * POST /api/comments/shared/:token
+	 * - 공개 페이지 댓글 작성(게스트 허용)
+	 */
+	router.post('/shared/:token', async (req, res) => {
+		const token = req.params.token;
+		const session = dependencies.getSessionFromRequest(req);
+		const userId = session ? session.userId : null;
+		const { content, guestName } = req.body;
+
+		if (!content || typeof content !== 'string' || content.trim() === '')
+		    return res.status(400).json({ error: "댓글 내용을 입력해주세요." });
+
+		const sanitizedContent = sanitizeInput(content.trim());
+		const sanitizedGuestName = guestName ? sanitizeInput(guestName.trim()) : 'Guest';
+
+		try {
+		    const [publishRows] = await pool.execute(
+			    `SELECT page_id, allow_comments
+			        FROM page_publish_links
+			        WHERE token = ? AND is_active = 1
+			        ORDER BY created_at DESC
+			        LIMIT 1`,
+			    [token]
+			);
+
+			if (!publishRows.length)
+				return res.status(404).json({ error: "페이지를 찾을 수 없습니다." });
+
+		    const pageId = publishRows[0].page_id;
+		    const allowComments = Number(publishRows[0].allow_comments) === 1;
+		    if (!allowComments && !userId)
+			    return res.status(403).json({ error: "댓글을 작성할 권한이 없습니다." });
+
+		    const nowStr = formatDateForDb(new Date());
+		    await pool.execute(
+			    `INSERT INTO comments (page_id, user_id, guest_name, content, created_at, updated_at)
+			            VALUES (?, ?, ?, ?, ?, ?)`,
+			    [pageId, userId, userId ? null : sanitizedGuestName, sanitizedContent, nowStr, nowStr]
+		    );
+		    res.status(201).json({ success: true });
+		} catch (e) {
+		    logError("POST /api/comments/shared/:token", e);
+		    res.status(500).json({ error: "댓글 작성 실패" });
+		}
+	});
+
+    // Internal comments: pageId 기반은 로그인(인증) 전용
+    router.get('/:pageId', authMiddleware, async (req, res) => {
+		const pageId = req.params.pageId;
+        const userId = req.user.id;
 
         try {
-            // 1. 페이지 존재 및 권한 확인
+            // 페이지 존재 및 권한 확인
             // - 소유자
             // - 공유받은 사용자 (컬렉션 공유)
             // - 발행된 페이지이고 댓글 허용된 경우 (공개)
@@ -64,25 +191,10 @@ module.exports = (dependencies) => {
                 }
             }
 
-            // 공개 페이지 확인 (비로그인 또는 권한 없는 경우)
-            if (!canRead) {
-                const [publishRows] = await pool.execute(
-                    `SELECT allow_comments FROM page_publish_links
-                     WHERE page_id = ? AND is_active = 1`,
-                    [pageId]
-                );
-
-                if (publishRows.length > 0) {
-                    // 발행된 페이지라면 누구나 읽기 가능 (댓글도 보임)
-                    canRead = true;
-                }
-            }
-
-            if (!canRead) {
+            if (!canRead)
                 return res.status(403).json({ error: "접근 권한이 없습니다." });
-            }
 
-            // 2. 댓글 목록 조회
+            // 댓글 목록 조회
             const [comments] = await pool.execute(
                 `SELECT c.id, c.content, c.created_at, c.user_id, c.guest_name,
                         u.username
@@ -111,10 +223,9 @@ module.exports = (dependencies) => {
     });
 
     // 댓글 작성
-    router.post('/:pageId', async (req, res) => {
-        const pageId = req.params.pageId;
-        const session = dependencies.getSessionFromRequest(req);
-        const userId = session ? session.userId : null;
+    router.post('/:pageId', authMiddleware, async (req, res) => {
+		const pageId = req.params.pageId;
+        const userId = req.user.id;
         const { content, guestName } = req.body;
 
         if (!content || typeof content !== 'string' || content.trim() === '') {
@@ -128,7 +239,7 @@ module.exports = (dependencies) => {
         const sanitizedGuestName = guestName ? sanitizeInput(guestName.trim()) : 'Guest';
 
         try {
-            // 1. 권한 확인
+            // 권한 확인
             const [pageRows] = await pool.execute(
                 `SELECT p.id, p.user_id, p.collection_id
                  FROM pages p
@@ -155,31 +266,17 @@ module.exports = (dependencies) => {
                 }
             }
 
-            // 공개 페이지 댓글 허용 여부 확인
-            if (!canComment) {
-                const [publishRows] = await pool.execute(
-                    `SELECT allow_comments FROM page_publish_links
-                     WHERE page_id = ? AND is_active = 1`,
-                    [pageId]
-                );
-
-                if (publishRows.length > 0 && publishRows[0].allow_comments) {
-                    canComment = true;
-                }
-            }
-
-            if (!canComment) {
+            if (!canComment)
                 return res.status(403).json({ error: "댓글을 작성할 권한이 없습니다." });
-            }
 
-            // 2. 댓글 저장
+            // 댓글 저장
             const now = new Date();
             const nowStr = formatDateForDb(now);
 
             await pool.execute(
-                `INSERT INTO comments (page_id, user_id, guest_name, content, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?)`,
-                [pageId, userId, userId ? null : sanitizedGuestName, sanitizedContent, nowStr, nowStr]
+	            `INSERT INTO comments (page_id, user_id, guest_name, content, created_at, updated_at)
+	                VALUES (?, ?, ?, ?, ?, ?)`,
+	            [pageId, userId, null, sanitizedContent, nowStr, nowStr]
             );
 
             res.status(201).json({ success: true });
@@ -268,7 +365,7 @@ module.exports = (dependencies) => {
             const nowStr = formatDateForDb(now);
 
             await pool.execute(
-                `UPDATE comments 
+                `UPDATE comments
                  SET content = ?, updated_at = ?
                  WHERE id = ?`,
                 [sanitizedContent, nowStr, commentId]

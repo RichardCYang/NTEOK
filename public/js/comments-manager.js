@@ -2,7 +2,8 @@ import { secureFetch, escapeHtml } from './ui-utils.js';
 
 // 상태 관리
 const state = {
-    pageId: null,
+	pageId: null,
+    shareToken: null,
     comments: [],
     isVisible: true,
     currentUser: null,
@@ -15,23 +16,25 @@ export function initCommentsManager(appState) {
 }
 
 // 댓글 섹션 렌더링
-export async function loadAndRenderComments(pageId, containerId = 'page-comments-section') {
-    state.pageId = pageId;
+export async function loadAndRenderComments(pageId, containerId = 'page-comments-section', shareToken = null) {
+	state.pageId = pageId;
+    state.shareToken = shareToken;
     const container = document.getElementById(containerId);
     if (!container) return;
 
     // 초기화: 로딩 중에는 아무것도 표시하지 않거나 로딩 인디케이터 표시
     // 노션 스타일: 상단에 조그만 버튼만 보이게 하려면 로딩 중에도 버튼 형태가 나을 수 있음
     // 여기서는 데이터 로드 후 렌더링
-    
+
     try {
-        const res = await secureFetch(`/api/comments/${pageId}`);
-        
+    	const endpoint = shareToken ? `/api/comments/shared/${encodeURIComponent(shareToken)}` : `/api/comments/${pageId}`;
+        const res = await secureFetch(endpoint);
+
         // 403 Forbidden 등 에러 처리
-        if (res.status === 403) {
-             container.innerHTML = '';
-             container.classList.add('hidden');
-             return;
+        if (res.status === 403 || res.status === 404) {
+	        container.innerHTML = '';
+	        container.classList.add('hidden');
+	        return;
         }
 
         if (!res.ok) {
@@ -52,7 +55,7 @@ export async function loadAndRenderComments(pageId, containerId = 'page-comments
 // 댓글 목록 렌더링
 function renderComments(container) {
     const count = state.comments.length;
-    
+
     // 토글 버튼 텍스트
     let toggleText = '';
     if (count === 0) {
@@ -66,10 +69,10 @@ function renderComments(container) {
     if (state.isExpanded) {
         // 기존 댓글 목록 HTML
         const commentsHtml = state.comments.map(comment => renderCommentItem(comment)).join('');
-        
+
         // 입력 블록 HTML (마지막에 추가)
         const inputBlockHtml = renderNewCommentBlock();
-        
+
         bodyHtml = `
             <div class="comments-body">
                 <div class="comments-header-row">
@@ -78,7 +81,7 @@ function renderComments(container) {
                         <i class="fa-solid fa-angle-up"></i>
                     </button>
                 </div>
-                
+
                 <div class="comments-list">
                     ${commentsHtml}
                     ${inputBlockHtml}
@@ -116,14 +119,14 @@ function renderComments(container) {
 // 새 댓글 입력 블록 HTML 생성
 function renderNewCommentBlock() {
     const showNameInput = !state.currentUser;
-    
+
     let avatarContent;
     if (state.currentUser) {
         avatarContent = escapeHtml(state.currentUser.username.charAt(0).toUpperCase());
     } else {
         avatarContent = '<i class="fa-regular fa-user"></i>';
     }
-    
+
     const authorName = state.currentUser ? state.currentUser.username : (showNameInput ? 'Guest' : 'Anonymous');
 
     return `
@@ -168,12 +171,12 @@ function bindEvents(container) {
 
     if (input) {
         // 초기 포커스: 댓글이 없으면 바로 포커스, 있으면 사용자가 클릭해야 함 (여기선 자동 포커스 끔)
-        // input.focus(); 
-        
+        // input.focus();
+
         input.addEventListener('input', function() {
             this.style.height = 'auto';
             this.style.height = (this.scrollHeight) + 'px';
-            
+
             if (this.value.trim().length > 0) {
                 submitBtn.removeAttribute('disabled');
                 submitBtn.classList.add('active');
@@ -189,7 +192,7 @@ function bindEvents(container) {
                 submitComment();
             }
         });
-        
+
         if (nameInput) {
             nameInput.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter') {
@@ -203,7 +206,7 @@ function bindEvents(container) {
     if (submitBtn) {
         submitBtn.addEventListener('click', submitComment);
     }
-    
+
     // 기존 댓글 액션 (삭제, 수정)
     container.querySelectorAll('.delete-comment-btn').forEach(btn => {
         btn.addEventListener('click', (e) => {
@@ -232,7 +235,7 @@ function bindEvents(container) {
             cancelEditing();
         });
     });
-    
+
     // 수정 텍스트에어리어 자동 높이
     container.querySelectorAll('.edit-comment-textarea').forEach(textarea => {
         textarea.addEventListener('input', function() {
@@ -258,13 +261,13 @@ function bindEvents(container) {
 function renderCommentItem(comment) {
     // 시간 포맷 (상대 시간)
     const timeAgo = formatTimeAgo(new Date(comment.createdAt));
-    
+
     // 아바타: 이니셜 (게스트인 경우 아이콘 사용 고려 가능하나, 일관성을 위해 이니셜/물음표 사용)
     const initial = comment.author ? comment.author.charAt(0).toUpperCase() : '?';
-    
+
     // 내 댓글 여부: API에서 isMyComment를 보내주므로 그것을 사용
     const canDelete = comment.isMyComment;
-    
+
     return `
         <div class="comment-item" id="comment-${comment.id}">
             <div class="comment-avatar">${escapeHtml(initial)}</div>
@@ -290,7 +293,7 @@ async function submitComment() {
     const nameInput = document.getElementById('guest-name-input');
     const content = input.value.trim();
     const guestName = nameInput ? nameInput.value.trim() : null;
-    
+
     if (!content) return;
 
     // 버튼 비활성화
@@ -302,8 +305,8 @@ async function submitComment() {
 
     try {
         const body = { content, guestName };
-
-        const res = await secureFetch(`/api/comments/${state.pageId}`, {
+		const endpoint = state.shareToken ? `/api/comments/shared/${encodeURIComponent(state.shareToken)}` : `/api/comments/${state.pageId}`;
+		const res = await secureFetch(endpoint, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body)
@@ -314,8 +317,7 @@ async function submitComment() {
         }
 
         // 재로드
-        await loadAndRenderComments(state.pageId);
-
+        await loadAndRenderComments(state.pageId, 'page-comments-section', state.shareToken);
     } catch (error) {
         console.error('댓글 작성 오류:', error);
         alert('댓글을 등록하지 못했습니다.');
@@ -367,7 +369,7 @@ function formatTimeAgo(date) {
     if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)}분 전`;
     if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)}시간 전`;
     if (diffInSeconds < 604800) return `${Math.floor(diffInSeconds / 86400)}일 전`;
-    
+
     // 그 외는 날짜 표시
     return date.toLocaleDateString();
 }

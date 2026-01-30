@@ -398,9 +398,8 @@ function renderCheckboxes(container) {
 
         // 댓글 시스템 초기화 (게스트 모드)
         initCommentsManager({ currentUser: null });
-        // 댓글 로드
-        loadAndRenderComments(data.id);
-
+        // 보안: 댓글 로드 -> 공개 댓글은 pageId가 아니라 발행 링크 token으로 접근
+        loadAndRenderComments(data.id, 'page-comments-section', token);
     } catch (error) {
         console.error('페이지 로드 오류:', error);
         const editorEl = document.getElementById('page-editor');
