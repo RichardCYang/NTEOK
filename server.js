@@ -485,13 +485,19 @@ function generateCsrfToken() {
  * XSS 방지: HTML 태그 제거 (sanitization)
  * 사용자 입력값에서 잠재적으로 위험한 HTML 태그를 제거
  * 제목 등 평문 필드에 사용
+ *
+ * 보안: 기존 정규식 기반 제거 방식(replace(/<[^>]*>/g, ''))은 우회 가능성이 높음
+ * DOMPurify를 사용하여 모든 태그와 속성을 허용하지 않음으로써 안전한 텍스트만 남기도록 개선
  */
 function sanitizeInput(input) {
     if (typeof input !== 'string') {
         return input;
     }
-    // HTML 태그 제거
-    return input.replace(/<[^>]*>/g, '');
+    // DOMPurify를 사용하여 모든 태그를 제거 (Text만 남김)
+    return DOMPurify.sanitize(input, {
+        ALLOWED_TAGS: [], // 허용할 태그 없음
+        ALLOWED_ATTR: []  // 허용할 속성 없음
+    });
 }
 
 /**
