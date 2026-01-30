@@ -4,7 +4,7 @@
  */
 
 import * as Y from 'yjs';
-import DOMPurify from 'dompurify';
+import { sanitizeEditorHtml } from './sanitize.js';
 import { Awareness, encodeAwarenessUpdate, applyAwarenessUpdate, removeAwarenessStates } from 'y-protocols/awareness.js';
 import { ySyncPlugin, yCursorPlugin, yUndoPlugin, undo, redo, prosemirrorToYXmlFragment } from 'y-prosemirror';
 import { keymap } from 'prosemirror-keymap';
@@ -12,38 +12,6 @@ import { DOMParser } from 'prosemirror-model';
 import { escapeHtml, showErrorInEditor, syncPageUpdatedAtPadding } from './ui-utils.js';
 import { showCover, hideCover } from './cover-manager.js';
 import { renderPageList } from './pages-manager.js';
-
-// 보안: 협업/메타데이터 HTML 스냅샷은 절대 신뢰하지 않기
-// - WebSocket/Yjs 업데이트는 클라이언트를 우회해 임의 HTML을 주입할 수 있음
-// - setContent()는 HTML을 파싱해 DOM을 만들므로, 반드시 DOMPurify로 정화 후 적용
-const PURIFY_CONFIG = {
-	// 허용할 HTML 태그 목록
-	ALLOWED_TAGS: [
-		'p','br','strong','em','u','s','code','pre',
-		'h1','h2','h3','h4','h5','h6',
-		'ul','ol','li','blockquote',
-		'a','span','div','hr',
-		'table','thead','tbody','tr','th','td',
-		'img','figure',
-		'label','input'
-	],
-	// 허용할 속성 목록 (커스텀 데이터 속성 포함)
-	ALLOWED_ATTR: [
-		'style','class','href','target','rel','data-type','data-latex','colspan','rowspan','colwidth',
-		'src','alt','data-src','data-alt','data-caption','data-width','data-align','data-url','data-title',
-		'data-description','data-thumbnail','data-id','data-icon','data-checked','type','checked',
-		'data-callout-type','data-content','data-columns','data-is-open'
-	],
-	// data-* 속성 허용 여부 (true로 설정하여 커스텀 노드의 속성 보존)
-	ALLOW_DATA_ATTR: true,
-	// 안전한 URI 패턴 정의
-	ALLOWED_URI_REGEXP: /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|cid|xmpp):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i
-};
-
-function sanitizeEditorHtml(html) {
-	if (!html || typeof html !== 'string') return html;
-	return DOMPurify.sanitize(html, PURIFY_CONFIG);
-}
 
 // 전역 상태
 let ws = null;

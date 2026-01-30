@@ -9,6 +9,7 @@ import { startPageSync, stopPageSync, startCollectionSync, stopCollectionSync, f
 import { showCover, hideCover, updateCoverButtonsVisibility } from './cover-manager.js';
 import { checkPublishStatus, updatePublishButton } from './publish-manager.js';
 import { loadAndRenderSubpages, onEditModeChange } from './subpages-manager.js';
+import { sanitizeEditorHtml } from './sanitize.js';
 import { EXAMPLE_CONTENT } from './editor.js';
 
 // 전역 상태 (app.js에서 전달받음)
@@ -290,7 +291,7 @@ export function renderPageList() {
                     const toggleSpan = document.createElement("span");
                     toggleSpan.className = "page-toggle collection-toggle";
                     if (isExpanded) toggleSpan.classList.add("expanded");
-                    
+
                     if (hasChildren) {
                         toggleSpan.innerHTML = '<i class="fa-solid fa-caret-right"></i>';
                         toggleSpan.style.cursor = "pointer";
@@ -694,7 +695,10 @@ export async function loadPage(id) {
         }
 
         if (state.editor) {
-            state.editor.commands.setContent(content, { emitUpdate: false });
+	        // 평문은 서버에서 정화하지만, 방어적으로 클라이언트도 정화 가능
+	        // 암호문은 서버에서 정화 불가 → 반드시 필요
+	        const safeContent = sanitizeEditorHtml(content);
+	        state.editor.commands.setContent(safeContent, { emitUpdate: false });
         }
 
         // state.pages 배열 업데이트 (동기화 문제 해결)
@@ -847,9 +851,13 @@ export async function saveCurrentPage() {
 
     const defaultTitle = (state.translations && state.translations['untitled']) || "제목 없음";
     let title = titleInput ? titleInput.value || defaultTitle : defaultTitle;
-    let content = state.editor.getHTML();
+	let content = state.editor.getHTML();
 
-    try {
+	// 저장 전(특히 암호화 저장) HTML 정화
+	// - 평문 저장은 서버에서도 정화하지만, 암호화 저장은 서버가 정화할 수 없음
+	content = sanitizeEditorHtml(content);
+
+	try {
         // 현재 페이지 정보 조회
         const currentPage = state.pages.find(p => p.id === state.currentPageId);
         if (!currentPage) {
@@ -865,9 +873,9 @@ export async function saveCurrentPage() {
             if (!state.decryptionKeyIsInMemory) {
                 throw new Error("암호화 키가 없어 저장할 수 없습니다. 페이지를 새로고침하고 다시 시도하세요.");
             }
-            
+
             const encryptedContent = await cryptoManager.encrypt(content);
-            
+
             requestBody = {
                 title: title,
                 content: '', // 원본 content는 비움
@@ -875,7 +883,7 @@ export async function saveCurrentPage() {
                 isEncrypted: true, // 암호화 상태 유지
                 // salt는 서버에서 기존 값을 유지하므로 보내지 않음
             };
-            
+
             console.log("임시 복호화된 페이지를 다시 암호화하여 저장합니다.");
 
         } else {
@@ -959,7 +967,7 @@ export async function toggleEditMode() {
         // 저장이 성공하면 읽기 모드로 전환
         state.isWriteMode = false;
 		state.editor.setEditable(false);
-        
+
         // 읽기 모드로 전환 시 에디터 포커스를 명시적으로 해제해야
     	// 원격 사용자에게 내 커서가 남아있는 현상을 방지할 수 있음.
         state.editor.commands?.blur?.();

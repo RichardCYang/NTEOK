@@ -4,6 +4,7 @@
 
 import { secureFetch } from './ui-utils.js';
 import { loadPage, renderPageList, fetchPageList } from './pages-manager.js';
+import { sanitizeEditorHtml } from './sanitize.js';
 import { stopPageSync } from './sync-manager.js';
 
 // 전역 상태
@@ -242,10 +243,10 @@ export async function handleDecryption(event) {
     try {
         const page = state.currentDecryptingPage;
 
-        // 0. 이전 페이지의 실시간 동기화 중지 (중요!)
+        // 이전 페이지의 실시간 동기화 중지 (중요!)
         stopPageSync();
 
-        // 1. 페이지 데이터 가져오기 (encryptionSalt, encryptedContent)
+        // 페이지 데이터 가져오기 (encryptionSalt, encryptedContent)
         const res = await fetch(`/api/pages/${encodeURIComponent(page.id)}`);
         if (!res.ok) {
             throw new Error("페이지를 불러올 수 없습니다.");
@@ -257,16 +258,19 @@ export async function handleDecryption(event) {
             throw new Error("암호화 데이터가 없습니다.");
         }
 
-        // 2. 비밀번호로 키 생성 (기존 salt 사용)
+        // 비밀번호로 키 생성 (기존 salt 사용)
         await cryptoManager.initializeKey(password, pageData.encryptionSalt);
         state.decryptionKeyIsInMemory = true; // 키가 메모리에 있음을 표시
 
-        // 3. 콘텐츠 복호화 (메모리에서만)
-        const decryptedContent = await cryptoManager.decrypt(pageData.encryptedContent);
+        // 콘텐츠 복호화 (메모리에서만)
+		const decryptedContentRaw = await cryptoManager.decrypt(pageData.encryptedContent);
 
-        closeDecryptionModal();
+		// 보안: 암호화 콘텐츠는 서버에서 정화할 수 없으므로, 클라이언트에서 반드시 정화
+		const decryptedContent = sanitizeEditorHtml(decryptedContentRaw);
 
-        // 4. 에디터에 복호화된 콘텐츠를 표시하고 읽기 모드로 유지
+		closeDecryptionModal();
+
+        // 에디터에 복호화된 콘텐츠를 표시하고 읽기 모드로 유지
         state.currentPageId = page.id;
         state.currentPageIsEncrypted = true; // 저장 시 재암호화를 위해 상태 유지
 
@@ -282,7 +286,7 @@ export async function handleDecryption(event) {
         if (state.editor) {
             state.editor.commands.setContent(decryptedContent, { emitUpdate: false });
             // 복호화 직후에는 읽기 모드를 유지해야 하므로 편집 불가능 상태로 설정
-            state.editor.setEditable(false); 
+            state.editor.setEditable(false);
         }
 
         // UI는 읽기 모드로 유지

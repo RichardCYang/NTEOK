@@ -4,14 +4,14 @@
  */
 
 // ==================== Imports ====================
-import { 
-    secureFetch, 
-    escapeHtml, 
-    showErrorInEditor, 
-    closeAllDropdowns, 
-    openDropdown, 
-    showContextMenu, 
-    closeContextMenu, 
+import {
+    secureFetch,
+    escapeHtml,
+    showErrorInEditor,
+    closeAllDropdowns,
+    openDropdown,
+    showContextMenu,
+    closeContextMenu,
     addIcon,
     showLoadingOverlay,
     hideLoadingOverlay,
@@ -21,6 +21,7 @@ import {
     bindModalOverlayClick
 } from './ui-utils.js';
 import * as api from './api-utils.js';
+import { sanitizeEditorHtml } from './sanitize.js';
 import { initEditor, bindToolbar, bindSlashKeyHandlers, updateToolbarState } from './editor.js';
 import {
     initPagesManager,
@@ -150,7 +151,7 @@ async function handlePageListClick(event, state) {
         event.stopPropagation();
 
         const contextMenu = document.querySelector("#context-menu");
-        const isAlreadyOpen = contextMenu && !contextMenu.classList.contains("hidden") && 
+        const isAlreadyOpen = contextMenu && !contextMenu.classList.contains("hidden") &&
                              contextMenu.dataset.triggerId === colMenuBtn.dataset.collectionId;
 
         closeAllDropdowns();
@@ -235,7 +236,7 @@ async function handlePageListClick(event, state) {
             if (!ok) return;
             try {
                 await api.del("/api/collections/" + encodeURIComponent(colId));
-                
+
                 state.collections = state.collections.filter((c) => c.id !== colId);
                 state.pages = state.pages.filter((p) => p.collectionId !== colId);
                 state.expandedCollections.delete(colId);
@@ -373,7 +374,7 @@ async function handlePageListClick(event, state) {
         event.stopPropagation();
 
         const contextMenu = document.querySelector("#context-menu");
-        const isAlreadyOpen = contextMenu && !contextMenu.classList.contains("hidden") && 
+        const isAlreadyOpen = contextMenu && !contextMenu.classList.contains("hidden") &&
                              contextMenu.dataset.triggerId === pageMenuBtn.dataset.pageId;
 
         closeAllDropdowns();
@@ -517,7 +518,7 @@ async function handlePageListClick(event, state) {
             if (!ok) return;
             try {
                 await api.del("/api/pages/" + encodeURIComponent(pageId));
-                
+
                 state.pages = state.pages.filter((p) => p.id !== pageId);
                 if (state.currentPageId === pageId) {
                     state.currentPageId = null;
@@ -642,7 +643,8 @@ async function decryptAndLoadPage(page, password) {
     await cryptoManager.initializeKey(password);
 
     // 콘텐츠 복호화 (새 형식은 salt 포함, 구 형식은 기존 방식 사용)
-    const content = await cryptoManager.decrypt(page.content, password);
+    const contentRaw = await cryptoManager.decrypt(page.content, password);
+    const content = sanitizeEditorHtml(contentRaw);
 
     appState.currentPageId = page.id;
     appState.currentPageIsEncrypted = false;  // 복호화 완료 - 편집 가능 상태
@@ -1049,7 +1051,7 @@ async function init() {
                     // 첫 번째 루트 페이지 찾기
                     const rootPages = appState.pages.filter(p => !p.parentId);
                     const firstPage = rootPages.length > 0 ? rootPages[0] : appState.pages[0];
-                    
+
                     if (!firstPage.isEncrypted) {
                         loadPage(firstPage.id);
                     }
