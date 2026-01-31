@@ -545,6 +545,43 @@ function sendSafeDownload(res, filePath, downloadName) {
     return res.download(filePath, downloadName);
 }
 
+// DOMPurify는 JSDOM 위에서 동작 -> 이때 입력 HTML을 DOM으로 파싱하는 과정에서
+// <style> 태그 내부의 CSS 파서가 과도한 재귀/시간을 유발하거나(회귀 버그 포함) 예외를
+// 던지면서 서비스 가용성을 떨어뜨릴 수 있음 -> 따라서 DOMPurify 호출 전에 <style> / stylesheet 링크를 사전 제거하고,
+// 입력 크기에 상한을 두며, 예외 발생 시 안전한 폴백을 적용
+// 일반적인 노트 HTML은 수십 KB 수준이므로 512KiB 상한이면 충분
+const MAX_HTML_SANITIZE_BYTES = 512 * 1024;
+
+function escapeHtmlToText(str) {
+	return String(str).replace(/[&<>"']/g, (ch) => {
+		switch (ch) {
+		    case "&": return "&amp;";
+		    case "<": return "&lt;";
+		    case ">": return "&gt;";
+		    case '"': return "&quot;";
+		    case "'": return "&#39;";
+		    default: return ch;
+		}
+	});
+}
+
+function prefilterHtmlForSanitizer(html) {
+	let out = String(html);
+
+	// 크기 상한: 매우 큰 입력은 파싱/정화 비용이 급증할 수 있으므로 방어적으로 절단
+	if (Buffer.byteLength(out, "utf8") > MAX_HTML_SANITIZE_BYTES)
+		out = out.slice(0, MAX_HTML_SANITIZE_BYTES);
+
+	// JSDOM CSS 파서 DoS 회피: 금지 태그라도 파싱은 먼저 일어나므로 사전 제거 필요
+	out = out.replace(/<style\b[^>]*>[\s\S]*?<\/style\s*>/gi, "");
+
+	// rel=stylesheet 링크도 방어적으로 제거(에디터 콘텐츠에서 필요 없음)
+	out = out.replace(/<link\b[^>]*\brel\s*=\s*(['"])\s*stylesheet\s*\1[^>]*>/gi, "");
+	out = out.replace(/<link\b(?=[^>]*\brel\s*=\s*stylesheet\b)[^>]*>/gi, "");
+
+	return out;
+}
+
 /**
  * 보안 개선: HTML 콘텐츠 정화 (DOMPurify)
  * 에디터 콘텐츠 등 HTML이 필요한 필드에 사용
@@ -553,22 +590,32 @@ function sanitizeHtmlContent(html) {
     if (typeof html !== 'string')
         return html;
 
-    // DOMPurify로 안전한 HTML만 허용
-    return DOMPurify.sanitize(html, {
-        ALLOWED_TAGS: [
-            'p', 'br', 'strong', 'em', 'u', 's', 'code', 'pre',
-            'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
-            'ul', 'ol', 'li', 'blockquote',
-            'a', 'span', 'div',
-            'hr',
-            'table', 'thead', 'tbody', 'tr', 'th', 'td',
-            'img', 'figure',
-            'label', 'input'
-        ],
-        ALLOWED_ATTR: ['style', 'class', 'href', 'target', 'rel', 'data-type', 'data-latex', 'colspan', 'rowspan', 'colwidth', 'src', 'alt', 'data-src', 'data-alt', 'data-caption', 'data-width', 'data-align', 'data-url', 'data-title', 'data-description', 'data-thumbnail', 'data-id', 'data-icon', 'data-checked', 'type', 'checked', 'data-callout-type', 'data-content', 'data-columns', 'data-is-open'],
-        ALLOW_DATA_ATTR: true,
-        ALLOWED_URI_REGEXP: /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|cid|xmpp):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i
-    });
+    // 방어적 사전 처리(크기 제한, <style> 제거 등)
+    const prefiltered = prefilterHtmlForSanitizer(html);
+
+	// DOMPurify로 안전한 HTML만 허용(예외는 폴백)
+	try {
+		return DOMPurify.sanitize(prefiltered, {
+	        ALLOWED_TAGS: [
+	            'p', 'br', 'strong', 'em', 'u', 's', 'code', 'pre',
+	            'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+	            'ul', 'ol', 'li', 'blockquote',
+	            'a', 'span', 'div',
+	            'hr',
+	            'table', 'thead', 'tbody', 'tr', 'th', 'td',
+	            'img', 'figure',
+	            'label', 'input'
+	        ],
+	        ALLOWED_ATTR: ['style', 'class', 'href', 'target', 'rel', 'data-type', 'data-latex', 'colspan', 'rowspan', 'colwidth', 'src', 'alt', 'data-src', 'data-alt', 'data-caption', 'data-width', 'data-align', 'data-url', 'data-title', 'data-description', 'data-thumbnail', 'data-id', 'data-icon', 'data-checked', 'type', 'checked', 'data-callout-type', 'data-content', 'data-columns', 'data-is-open'],
+	        ALLOW_DATA_ATTR: true,
+	        ALLOWED_URI_REGEXP: /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|cid|xmpp):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i
+	    });
+	} catch (err) {
+		// 파서 회귀/비정상 입력 예외가 프로세스 전체에 영향을 주지 않도록 방어
+		console.warn('[보안] sanitizeHtmlContent 실패:', err);
+		const escaped = escapeHtmlToText(prefiltered);
+		return `<p>${escaped}</p>`;
+	}
 }
 
 /**

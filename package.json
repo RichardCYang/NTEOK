@@ -28,7 +28,7 @@
 		"html2pdf.js": "^0.14.0",
 		"ipaddr.js": "^2.3.0",
 		"isomorphic-dompurify": "^2.34.0",
-		"jsdom": "^27.3.0",
+		"jsdom": "27.2.0",
 		"multer": "^2.0.2",
 		"mysql2": "^3.15.3",
 		"qrcode": "^1.5.4",
