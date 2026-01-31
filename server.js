@@ -217,6 +217,16 @@ const CSRF_COOKIE_NAME = "nteok_csrf";
 const IS_PRODUCTION = process.env.NODE_ENV === "production";
 const BASE_URL = process.env.BASE_URL || (IS_PRODUCTION ? "https://localhost:3000" : "http://localhost:3000");
 
+/**
+ * HTTPS 강제 옵션
+ * - 프로덕션에서 인증서 발급/로드가 실패했을 때 HTTP로 조용히 폴백하면, 평문 전송(자격증명/세션 탈취) 위험이 매우 큼
+ * - 기본값(안전): 프로덕션에서는 HTTPS 실패 시 서버 시작을 중단(fail-closed)
+ * - 예외적으로(긴급 대응 등) HTTP 폴백이 필요하면 ALLOW_INSECURE_HTTP_FALLBACK=true 로 명시적으로 허용
+ * - REQUIRE_HTTPS=true 를 켜면 개발 환경에서도 동일하게 fail-closed로 동작
+ */
+const REQUIRE_HTTPS = String(process.env.REQUIRE_HTTPS || '').toLowerCase() === 'true';
+const ALLOW_INSECURE_HTTP_FALLBACK = String(process.env.ALLOW_INSECURE_HTTP_FALLBACK || '').toLowerCase() === 'true';
+
 // TOTP 비밀키 (2FA) 최소 암호화
 // - TOTP 공유 비밀키를 DB에 평문 저장하면, DB 유출 시 2FA가 즉시 무력화됨
 // - 해결: AES-256-GCM(AEAD)으로 암호화하여 저장 + 키는 환경변수/시크릿 매니저로 분리
@@ -2166,11 +2176,23 @@ function getSessionFromId(sessionId) {
 
             } catch (certError) {
                 console.error('\n' + '='.repeat(80));
-                console.error('❌ HTTPS 인증서 발급 실패. HTTP 모드로 폴백합니다.');
+                console.error('❌ HTTPS 인증서 발급 실패.');
                 console.error(`   오류: ${certError.message}`);
-                console.error('='.repeat(80) + '\n');
+				console.error('='.repeat(80) + '\n');
 
-                // HTTP 모드로 폴백
+				// 보안: 프로덕션에서는 HTTPS 실패 시 HTTP로 조용히 폴백하면 안 됨 (fail-open → 평문 전송)
+                const mustFailClosed = (IS_PRODUCTION || REQUIRE_HTTPS) && !ALLOW_INSECURE_HTTP_FALLBACK;
+
+                if (mustFailClosed) {
+                    console.error('🛑 [보안] HTTPS 설정이 실패했으므로 서버 시작을 중단합니다. (HTTP 폴백 금지)');
+                    console.error('   - 점검: DUCKDNS_DOMAIN / DUCKDNS_TOKEN / CERT_EMAIL, DNS 레코드, 방화벽/포트(80/443) 개방 여부');
+                    console.error('   - 긴급 상황에서만: ALLOW_INSECURE_HTTP_FALLBACK=true 로 명시적으로 HTTP 폴백을 허용할 수 있습니다. (비권장)');
+                    process.exit(1);
+                }
+
+                console.warn('⚠️  [DEV/OVERRIDE] HTTPS 설정 실패로 HTTP 모드로 폴백합니다. (프로덕션에서는 비권장)');
+
+				// HTTP 모드로 폴백
                 const httpServer = app.listen(PORT, () => {
                     console.log(`⚠️  NTEOK 앱이 HTTP로 실행 중: http://localhost:${PORT}`);
                 });
