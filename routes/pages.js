@@ -123,8 +123,13 @@ module.exports = (dependencies) => {
 	function isPublicRoutableIp(address) {
 	    try {
 		    // net.isIP: 0(아님), 4, 6
-		    if (!net.isIP(address)) return false;
-		    const parsed = ipaddr.parse(address);
+			if (!net.isIP(address)) return false;
+
+			// SSRF 우회 방지:
+			// Node/프록시 환경에 따라 IPv4가 IPv4-mapped IPv6(::ffff:127.0.0.1 등)로 들어올 수 있고,
+			// 이를 그대로 range()로 판정하면 내부 대역이 unicast로 오인될 여지가 있음
+			// ipaddr.process()는 IPv4-mapped IPv6를 자동으로 IPv4로 변환
+			const parsed = ipaddr.process(address);
 
 		    // ipaddr.js range()가 unicast가 아니면 내부/특수 대역으로 취급 (보수적으로 차단)
 		    return parsed.range() === "unicast";
