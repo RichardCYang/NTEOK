@@ -1,6 +1,10 @@
 const express = require('express');
 const router = express.Router();
 
+// express-rate-limit v8+ 호환 (pages.js에서 쓰는 패턴과 동일)
+const erl = require("express-rate-limit");
+const rateLimit = erl.rateLimit || erl;
+
 /**
  * Comments Routes
  *
@@ -20,6 +24,48 @@ module.exports = (dependencies) => {
         formatDateForDb,
         getCollectionPermission
 	} = dependencies;
+
+    /**
+     * Abuse/DoS 방어: 공개(발행 링크) 댓글 작성 엔드포인트 전용 제한
+     * - /api 전역 limiter(분당 100)만으로는 공개 댓글 작성 남용을 충분히 막기 어려움
+     * - token(페이지) 단위 + IP(게스트) 또는 userId(로그인) 단위로 더 촘촘히 제한
+     */
+    const SHARED_COMMENT_MAX_LEN = 2000;   // 필요 시 운영 정책에 맞게 조정
+    const GUEST_NAME_MAX_LEN = 32;
+
+    const sharedCommentGuestLimiter = rateLimit({
+        windowMs: 10 * 60 * 1000, // 10분
+        max: 20,                  // 토큰+IP당 10분에 20회
+        standardHeaders: true,
+        legacyHeaders: false,
+        message: { error: "댓글 작성 요청이 너무 많습니다. 잠시 후 다시 시도해 주세요." },
+        keyGenerator: (req) => {
+            const token = String(req.params.token || "");
+            const ip = req.clientIp || req.ip || req.connection?.remoteAddress || "unknown";
+            return `guest:${token}:${ip}`;
+        },
+    });
+
+    const sharedCommentUserLimiter = rateLimit({
+        windowMs: 10 * 60 * 1000,
+        max: 60,                  // userId+token당 10분에 60회(로그인은 조금 더 여유)
+        standardHeaders: true,
+        legacyHeaders: false,
+        message: { error: "댓글 작성 요청이 너무 많습니다. 잠시 후 다시 시도해 주세요." },
+        keyGenerator: (req) => {
+            const token = String(req.params.token || "");
+            const session = dependencies.getSessionFromRequest(req);
+            const userId = session?.userId;
+            return userId ? `user:${userId}:${token}` : `user:unknown:${token}`;
+        },
+    });
+
+    // 세션 존재 여부로 limiter 선택 (공개 엔드포인트라 authMiddleware 없음)
+    const sharedCommentWriteLimiter = (req, res, next) => {
+        const session = dependencies.getSessionFromRequest(req);
+        if (session?.userId) return sharedCommentUserLimiter(req, res, next);
+        return sharedCommentGuestLimiter(req, res, next);
+    };
 
 	// Public (published-link) comments: token 기반으로만 접근
 	//  - 기존 /api/comments/:pageId 공개 허용 로직은 IDOR/권한 우회(데이터 유출) 위험
@@ -106,7 +152,7 @@ module.exports = (dependencies) => {
 	 * POST /api/comments/shared/:token
 	 * - 공개 페이지 댓글 작성(게스트 허용)
 	 */
-	router.post('/shared/:token', async (req, res) => {
+	router.post('/shared/:token', sharedCommentWriteLimiter, async (req, res) => {
 		const token = req.params.token;
 		const session = dependencies.getSessionFromRequest(req);
 		const userId = session ? session.userId : null;
@@ -115,8 +161,23 @@ module.exports = (dependencies) => {
 		if (!content || typeof content !== 'string' || content.trim() === '')
 		    return res.status(400).json({ error: "댓글 내용을 입력해주세요." });
 
-		const sanitizedContent = sanitizeInput(content.trim());
-		const sanitizedGuestName = guestName ? sanitizeInput(guestName.trim()) : 'Guest';
+		const rawContent = content.trim();
+        if (rawContent.length > SHARED_COMMENT_MAX_LEN) {
+            return res.status(413).json({
+                error: `댓글은 최대 ${SHARED_COMMENT_MAX_LEN}자까지 입력할 수 있습니다.`
+            });
+        }
+
+        // 게스트만 이름 길이 제한 적용 (로그인 사용자는 guestName 무시)
+        const rawGuestName = guestName ? String(guestName).trim() : 'Guest';
+        if (!userId && rawGuestName.length > GUEST_NAME_MAX_LEN) {
+            return res.status(400).json({
+                error: `이름은 최대 ${GUEST_NAME_MAX_LEN}자까지 입력할 수 있습니다.`
+            });
+        }
+
+        const sanitizedContent = sanitizeInput(rawContent);
+        const sanitizedGuestName = userId ? null : sanitizeInput(rawGuestName);
 
 		try {
 		    const [publishRows] = await pool.execute(
@@ -140,7 +201,7 @@ module.exports = (dependencies) => {
 		    await pool.execute(
 			    `INSERT INTO comments (page_id, user_id, guest_name, content, created_at, updated_at)
 			            VALUES (?, ?, ?, ?, ?, ?)`,
-			    [pageId, userId, userId ? null : sanitizedGuestName, sanitizedContent, nowStr, nowStr]
+			    [pageId, userId, sanitizedGuestName, sanitizedContent, nowStr, nowStr]
 		    );
 		    res.status(201).json({ success: true });
 		} catch (e) {
