@@ -6,8 +6,12 @@ const http = require("node:http");
 const https = require("node:https");
 const net = require("node:net");
 const ipaddr = require("ipaddr.js");
-const rateLimit = require("express-rate-limit");
 const { assertImageFileSignature } = require("../security-utils.js");
+
+// express-rate-limit v8+는 default export(rateLimit 함수)와 named export를 함께 제공 -> CommonJS 환경에서 둘 다 안전하게 쓰기 위해 래핑
+const erl = require("express-rate-limit");
+const rateLimit = erl.rateLimit || erl; // v8+: erl.rateLimit, 구버전/호환: erl 자체가 함수
+const { ipKeyGenerator } = erl;
 
 /**
  * Pages Routes
@@ -95,8 +99,11 @@ module.exports = (dependencies) => {
         legacyHeaders: false,
         keyGenerator: (req) => {
             const uid = req.user?.id ? String(req.user.id) : "anon";
-            const ip = req.clientIp || req.ip || "unknown";
-            return `outbound:${uid}:${ip}`;
+            const rawIp = req.clientIp || req.ip;
+            // IPv6 우회 방지: 반드시 ipKeyGenerator로 서브넷 마스킹 적용
+            // (IPv4는 그대로 반환, IPv6는 CIDR 서브넷으로 묶임)
+            const ipKey = rawIp ? ipKeyGenerator(rawIp, 56) : "noip";
+            return `outbound:${uid}:${ipKey}`;
         },
         handler: (req, res) => {
             return res
