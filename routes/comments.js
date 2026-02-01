@@ -327,7 +327,7 @@ module.exports = (dependencies) => {
     });
 
     // 댓글 수정
-    router.put('/:commentId', async (req, res) => {
+    router.put('/:commentId', authMiddleware, async (req, res) => {
         const commentId = req.params.commentId;
         const session = dependencies.getSessionFromRequest(req);
         const userId = session ? session.userId : null;
