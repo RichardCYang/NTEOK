@@ -6,6 +6,7 @@ const http = require("node:http");
 const https = require("node:https");
 const net = require("node:net");
 const ipaddr = require("ipaddr.js");
+const rateLimit = require("express-rate-limit");
 const { assertImageFileSignature } = require("../security-utils.js");
 
 /**
@@ -81,6 +82,41 @@ module.exports = (dependencies) => {
 	        fileObj.filename = newFilename;
 	    }
 	}
+
+	/**
+     * 보안: 외부 리소스(이미지 프록시/북마크 메타데이터) 요청 전용 레이트리밋
+     * - 서버 아웃바운드 트래픽/SSRF 표면을 일반 API보다 더 강하게 제어
+     * - key: userId + clientIp (계정 공유/토큰 유출 상황에서도 폭주 완화)
+     */
+    const outboundProxyLimiter = rateLimit({
+        windowMs: 60 * 1000,
+        max: 30,
+        standardHeaders: true,
+        legacyHeaders: false,
+        keyGenerator: (req) => {
+            const uid = req.user?.id ? String(req.user.id) : "anon";
+            const ip = req.clientIp || req.ip || "unknown";
+            return `outbound:${uid}:${ip}`;
+        },
+        handler: (req, res) => {
+            return res
+                .status(429)
+                .json({ error: "외부 리소스 요청이 너무 많습니다. 잠시 후 다시 시도해 주세요." });
+        },
+    });
+
+    /**
+     * 보안: 브라우저 교차 출처 요청(오픈 프록시 악용)을 1차 차단
+     * - Sec-Fetch-Site 헤더가 있는 경우 cross-site 요청은 거부
+     * - 헤더가 없는 비브라우저 클라이언트는 통과(단, authMiddleware/레이트리밋 적용)
+     * 참고: Sec-Fetch-Site는 요청이 same-origin/cross-site인지 서버가 판별 가능
+     */
+    function blockCrossSiteFetch(req, res, next) {
+        const sfs = String(req.headers["sec-fetch-site"] || "").toLowerCase();
+        if (sfs && !["same-origin", "same-site", "none"].includes(sfs))
+            return res.status(403).json({ error: "교차 출처 요청은 허용되지 않습니다." });
+        return next();
+    }
 
     const ALLOWED_PROTOCOLS = new Set(["http:", "https:"]);
 	const ALLOWED_PORTS = new Set([80, 443]);
@@ -1755,7 +1791,7 @@ module.exports = (dependencies) => {
      * 북마크 메타데이터 추출
      * POST /api/pages/:id/bookmark-metadata
      */
-    router.post("/:id/bookmark-metadata", authMiddleware, outboundFetchLimiter, async (req, res) => {
+    router.post("/:id/bookmark-metadata", authMiddleware, blockCrossSiteFetch, outboundProxyLimiter, outboundFetchLimiter, async (req, res) => {
         const pageId = req.params.id;
         const userId = req.user.id;
         const { url } = req.body;
@@ -1765,28 +1801,34 @@ module.exports = (dependencies) => {
             const [rows] = await pool.execute(
                 `SELECT p.collection_id FROM pages p WHERE p.id = ? AND p.user_id = ?`,
                 [pageId, userId]
-            );
-            if (!rows.length) {
+			);
+
+            if (!rows.length)
                 return res.status(404).json({ success: false, error: "페이지를 찾을 수 없습니다." });
-            }
 
             // URL 유효성 검사
-            if (!url || typeof url !== 'string') {
+            if (!url || typeof url !== 'string')
                 return res.status(400).json({ success: false, error: "유효한 URL을 입력해주세요." });
-            }
 
-            let parsedUrl;
+            if (url.length > 2048)
+            	return res.status(400).json({ success: false, error: "URL이 너무 깁니다." });
+
+			let parsedUrl;
             try {
                 parsedUrl = new URL(url);
-                if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
+                if (!['http:', 'https:'].includes(parsedUrl.protocol))
                     throw new Error('HTTP/HTTPS URL만 지원합니다.');
-                }
-            } catch (error) {
+
+                // 보안(SSRF/오픈 프록시 하드닝)
+                if (parsedUrl.username || parsedUrl.password)
+                    throw new Error('URL에 사용자 정보(user:pass@)를 포함할 수 없습니다.');
+
+				// IP literal(예: http://127.0.0.1, http://[::1]) 직접 입력 차단
+                if (net.isIP(parsedUrl.hostname))
+                    throw new Error('IP 주소 직접 요청은 허용하지 않습니다.');
+			} catch (error) {
                 return res.status(400).json({ success: false, error: "유효하지 않은 URL입니다." });
             }
-
-            // SSRF 방지: 내부 IP 주소 차단
-            const hostname = parsedUrl.hostname.toLowerCase();
 
             // URL에서 HTML 가져오기
             const axios = require('axios');
@@ -1855,27 +1897,33 @@ module.exports = (dependencies) => {
      * 북마크 이미지 프록시 (CSP 정책 우회)
      * GET /api/pages/proxy/image?url=...
      */
-    router.get("/proxy/image", authMiddleware, outboundFetchLimiter, async (req, res) => {
+    router.get("/proxy/image", authMiddleware, blockCrossSiteFetch, outboundProxyLimiter, outboundFetchLimiter, async (req, res) => {
         const { url } = req.query;
 
         try {
             // URL 유효성 검사
-            if (!url || typeof url !== 'string') {
+            if (!url || typeof url !== 'string')
                 return res.status(400).json({ error: "유효한 URL을 입력해주세요." });
-            }
 
-            let parsedUrl;
+            if (url.length > 2048)
+            	return res.status(400).json({ error: "URL이 너무 깁니다." });
+
+			let parsedUrl;
             try {
                 parsedUrl = new URL(url);
-                if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
+                if (!['http:', 'https:'].includes(parsedUrl.protocol))
                     throw new Error('HTTP/HTTPS URL만 지원합니다.');
-                }
-            } catch (error) {
+
+                // 보안(SSRF/오픈 프록시 하드닝)
+                if (parsedUrl.username || parsedUrl.password)
+                    throw new Error('URL에 사용자 정보(user:pass@)를 포함할 수 없습니다.');
+
+                // IP literal(예: http://127.0.0.1, http://[::1]) 직접 입력 차단
+				if (net.isIP(parsedUrl.hostname))
+                    throw new Error('IP 주소 직접 요청은 허용하지 않습니다.');
+			} catch (error) {
                 return res.status(400).json({ error: "유효하지 않은 URL입니다." });
             }
-
-            // SSRF 방지: 내부 IP 주소 차단
-            const hostname = parsedUrl.hostname.toLowerCase();
 
             // 이미지 가져오기
             const axios = require('axios');
