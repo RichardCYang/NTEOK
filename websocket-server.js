@@ -44,6 +44,104 @@ const wsConnections = {
     sessions: new Map() // sessionId -> Set<WebSocket>
 };
 
+/**
+ * ==================== 권한 회수(Revocation) 처리 ====================
+ *
+ * [취약점] 공유 권한이 삭제/회수되더라도 기존 WebSocket 구독이 유지되면,
+ *   - 서버는 구독 시점에만 권한을 확인하고
+ *   - 이후 브로드캐스트(wsBroadcastToPage/wsBroadcastToCollection)는
+ *     연결 풀에 남아있는 소켓에게 계속 데이터를 전송할 수 있음
+ *
+ * 결과적으로, 공유를 해제한 뒤에도 상대가 페이지/컬렉션의 실시간 업데이트를 계속 수신하여
+ * 공유 해제(권한 회수)가 즉시 반영되지 않는 Broken Access Control이 발생
+ *
+ * [해결] 공유 삭제(또는 권한 회수) 시점에, 해당 사용자에 대해
+ *   - 컬렉션 구독 제거
+ *   - 해당 컬렉션에 속한 페이지 구독 제거
+ *   - 클라이언트에게 access-revoked 이벤트로 UI 갱신 유도
+ */
+async function wsRevokeUserAccessFromCollection(pool, collectionId, revokedUserId, opts = {}) {
+	const reason = typeof opts.reason === 'string' ? opts.reason : '접근 권한이 회수되었습니다.';
+	if (!pool || !collectionId || !Number.isFinite(revokedUserId)) return;
+
+	const affectedSockets = new Set();
+	const affectedPageIds = [];
+
+	// 컬렉션 구독 제거
+	const collectionSet = wsConnections.collections.get(collectionId);
+	if (collectionSet) {
+		for (const conn of Array.from(collectionSet)) {
+			if (conn.userId === revokedUserId) {
+				collectionSet.delete(conn);
+				affectedSockets.add(conn.ws);
+			}
+		}
+		if (collectionSet.size === 0) wsConnections.collections.delete(collectionId);
+	}
+
+	// 해당 컬렉션에 속한 페이지 목록 조회
+	let pageRows = [];
+	try {
+		const [rows] = await pool.execute(
+			`SELECT id FROM pages WHERE collection_id = ?`,
+			[collectionId]
+		);
+		pageRows = Array.isArray(rows) ? rows : [];
+	} catch (e) {
+		console.error('[WS] 권한 회수 처리 중 페이지 목록 조회 실패:', e);
+		pageRows = [];
+	}
+
+	// 페이지 구독 제거
+	for (const row of pageRows) {
+		const pageId = row?.id;
+		if (!pageId) continue;
+		const pageSet = wsConnections.pages.get(pageId);
+		if (!pageSet) continue;
+
+		let removed = false;
+		for (const conn of Array.from(pageSet)) {
+			if (conn.userId === revokedUserId) {
+				pageSet.delete(conn);
+				affectedSockets.add(conn.ws);
+				removed = true;
+			}
+		}
+
+		if (removed) {
+			affectedPageIds.push(pageId);
+			// 다른 사용자들에게 'user-left'를 브로드캐스트하여 커서/awareness 정리 유도
+			try {
+				wsBroadcastToPage(pageId, 'user-left', { userId: revokedUserId }, revokedUserId);
+			} catch (e) {
+				// 브로드캐스트 실패는 무시(권한 회수 자체는 계속 진행)
+			}
+		}
+
+		if (pageSet.size === 0) wsConnections.pages.delete(pageId);
+	}
+
+	// 당사자에게 알림(UX): 클라이언트가 페이지/컬렉션 UI를 갱신할 수 있도록 이벤트 전송
+	const payload = JSON.stringify({
+		event: 'access-revoked',
+		data: {
+			collectionId,
+			pageIds: affectedPageIds,
+			message: reason
+		}
+	});
+
+	for (const ws of affectedSockets) {
+		try {
+			if (ws && ws.readyState === WebSocket.OPEN) {
+				ws.send(payload);
+			}
+		} catch (e) {
+			// ignore
+		}
+	}
+}
+
 // Yjs 문서 캐시 (메모리 관리)
 const yjsDocuments = new Map(); // pageId -> {ydoc, lastAccess, saveTimeout}
 
@@ -1019,7 +1117,8 @@ module.exports = {
     initWebSocketServer,
     wsBroadcastToPage,
     wsBroadcastToCollection,
-    wsBroadcastToUser,
+	wsBroadcastToUser,
+    wsRevokeUserAccessFromCollection,
     startRateLimitCleanup,
     startInactiveConnectionsCleanup,
     wsConnections,

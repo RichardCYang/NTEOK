@@ -17,7 +17,8 @@ module.exports = (dependencies) => {
         formatDateForDb,
         getCollectionPermission,
         hasEncryptedPages,
-        generateShareToken,
+		generateShareToken,
+        wsRevokeUserAccessFromCollection,
         BASE_URL,
         logError
     } = dependencies;
@@ -144,16 +145,43 @@ module.exports = (dependencies) => {
 
         try {
             const { isOwner } = await getCollectionPermission(collectionId, userId);
-            if (!isOwner) {
+            if (!isOwner)
                 return res.status(403).json({ error: "권한이 없습니다." });
-            }
 
-            await pool.execute(
+            // 보안: 삭제 대상 공유 레코드의 사용자 ID를 먼저 조회
+ 			// - 권한 회수 시 WS 구독(페이지/컬렉션)을 즉시 해제하기 위함
+ 			const [shareRows] = await pool.execute(
+				`SELECT shared_with_user_id FROM collection_shares WHERE id = ? AND collection_id = ?`,
+				[shareId, collectionId]
+ 			);
+
+ 			if (!shareRows.length)
+    			return res.status(404).json({ error: "공유 항목을 찾을 수 없습니다." });
+
+ 			const revokedUserId = shareRows[0].shared_with_user_id;
+
+			await pool.execute(
                 `DELETE FROM collection_shares WHERE id = ? AND collection_id = ?`,
                 [shareId, collectionId]
             );
 
-            res.json({ ok: true });
+			// 보안: 공유 삭제(권한 회수) 시점에 기존 WS 구독을 강제로 제거하여
+			// 공유 해제 후에도 실시간 업데이트가 계속 수신되는 문제를 차단
+			try {
+				if (typeof wsRevokeUserAccessFromCollection === 'function') {
+					await wsRevokeUserAccessFromCollection(
+						pool,
+						collectionId,
+						revokedUserId,
+						{ reason: '컬렉션 공유가 해제되었습니다.' }
+					);
+				}
+			} catch (e) {
+				// 권한 회수(WS) 실패는 로그만 남기고 API는 성공으로 응답 (DB가 원본 권한 상태)
+				console.error('[Shares] WS 권한 회수 처리 실패:', e);
+			}
+
+			res.json({ ok: true });
         } catch (error) {
             logError("DELETE /api/collections/:id/shares/:shareId", error);
             res.status(500).json({ error: "공유 삭제 중 오류가 발생했습니다." });

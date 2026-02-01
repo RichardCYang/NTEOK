@@ -240,6 +240,9 @@ function handleWebSocketMessage(message) {
             break;
         case 'duplicate-login':
             handleDuplicateLogin(data);
+			break;
+		case 'access-revoked':
+            handleAccessRevoked(data);
             break;
         case 'awareness-update':
             handleRemoteAwarenessUpdate(data);
@@ -721,6 +724,44 @@ function handlePageDeleted(data) {
 function handleDuplicateLogin(data) {
     alert(data.message || '다른 위치에서 로그인하여 현재 세션이 종료됩니다.');
     window.location.href = '/login';
+}
+
+/**
+ * 서버 측 권한 회수 알림
+ * - 컬렉션 공유가 삭제되었거나 접근 권한이 회수된 경우
+ * - 기존 WS 구독이 강제로 해제되며(서버), 클라이언트는 UI를 갱신
+ */
+function handleAccessRevoked(data) {
+    try {
+        const collectionId = data?.collectionId;
+        const revokedPageIds = Array.isArray(data?.pageIds) ? data.pageIds : [];
+        const message = data?.message || '접근 권한이 회수되었습니다.';
+
+        // 현재 보고 있는 페이지가 영향권이면 즉시 동기화 종료 + 에러 표기
+        if (state.currentPageId && revokedPageIds.includes(state.currentPageId)) {
+            stopPageSync();
+            if (state.editor)
+                showErrorInEditor(message, state.editor);
+            state.currentPageId = null;
+        }
+
+        // 현재 구독 중인 컬렉션이 권한 회수 대상이면 구독 종료
+        if (collectionId && state.currentCollectionId === collectionId) {
+            stopCollectionSync();
+            state.currentCollectionId = null;
+        }
+
+        showInfo(message);
+
+        // 사이드바 목록 새로고침 (권한 변경 즉시 반영)
+        if (state.fetchPageList) {
+            state.fetchPageList().then(() => {
+                renderPageList();
+            });
+        }
+    } catch (error) {
+        console.error('[WS] access-revoked 처리 오류:', error);
+    }
 }
 
 /**
