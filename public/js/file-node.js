@@ -303,7 +303,11 @@ export const FileBlock = Node.create({
 
 							// file-block는 내부 첨부만 허용
 							if (safe && safe.startsWith('/paperclip/')) {
-							    window.open(safe, '_blank', 'noopener,noreferrer');
+								// 다운로드 파일명은 서버에서 ?name= 으로 받아 Content-Disposition에 안전하게 반영
+								const name = (node.attrs.filename || '').trim();
+								const sep = safe.includes('?') ? '&' : '?';
+								const href = name ? `${safe}${sep}name=${encodeURIComponent(name)}` : safe;
+								window.open(href, '_blank', 'noopener,noreferrer');
 							} else {
 							    console.warn('[Blocked unsafe file src]', node.attrs.src);
 							}

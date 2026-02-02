@@ -1816,6 +1816,23 @@ app.get('/paperclip/:userId/:filename', authMiddleware, async (req, res) => {
         const sanitizedFilename = path.basename(filename);
         const filePath = path.join(__dirname, 'paperclip', String(requestedUserId), sanitizedFilename);
 
+        // 다운로드 파일명(표시용)은 URL query (?name=)로 받되, 헤더/경로 컨텍스트에 안전하게 정규화
+        // - 저장 파일명이 콘텐츠 해시(예: <sha256>.ext)일 수 있으므로, 사용자에게는 원본명을 유지
+        // - 쿼리가 없으면 기존 규칙(<random>__<displayName>)에서 displayName을 추출
+        const getDownloadName = () => {
+            const raw = req.query?.name;
+            if (typeof raw === 'string' && raw.trim().length) {
+                let safe = sanitizeFilenameComponent(raw, 200);
+                // 확장자가 비어있으면 저장 파일 확장자를 보존(브라우저 UX)
+                if (safe && !path.extname(safe)) {
+                    const ext = sanitizeExtension(path.extname(sanitizedFilename));
+                    if (ext) safe += ext;
+                }
+                return safe || 'download';
+            }
+            return deriveDownloadNameFromStoredFilename(sanitizedFilename);
+        };
+
         // 파일 존재 확인
         if (!fs.existsSync(filePath)) {
             return res.status(404).json({ error: '파일을 찾을 수 없습니다.' });
@@ -1823,7 +1840,7 @@ app.get('/paperclip/:userId/:filename', authMiddleware, async (req, res) => {
 
         // 권한 확인: 본인 파일이거나, 공유받은 페이지의 파일인 경우
         if (requestedUserId === currentUserId) {
-			const downloadName = deriveDownloadNameFromStoredFilename(sanitizedFilename);
+			const downloadName = getDownloadName();
 			return sendSafeDownload(res, filePath, downloadName);
         }
 
@@ -1850,7 +1867,7 @@ app.get('/paperclip/:userId/:filename', authMiddleware, async (req, res) => {
 
         if (rows.length > 0) {
             // 공유받은 페이지의 파일 - 접근 허용 (다운로드)
-			const downloadName = deriveDownloadNameFromStoredFilename(sanitizedFilename);
+			const downloadName = getDownloadName();
 			return sendSafeDownload(res, filePath, downloadName);
         }
 

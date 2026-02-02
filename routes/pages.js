@@ -1594,10 +1594,15 @@ module.exports = (dependencies) => {
 
     /**
      * 파일 해시 계산
+     * 보안(가용성): 업로드 중복 제거를 위해 기존 구현은 폴더 전체를 순회하며
+     * 각 파일을 매번 다시 해시(MD5) -> 업로드 1회당 O(N * 파일크기) I/O/CPU가 발생
+     * 공격자가 대용량 파일을 다수 업로드한 뒤 반복 업로드하면 서버 리소스 고갈(DoS)이 가능
+     * 개선: sha256 해시를 사용하고, 콘텐츠 해시 기반 파일명으로 저장하여
+     * (해시값.ext) 형태의 O(1) 존재 여부 체크로 중복을 처리
      */
     function calculateFileHash(filePath) {
         return new Promise((resolve, reject) => {
-            const hash = crypto.createHash('md5');
+        	const hash = crypto.createHash('sha256');
             const stream = fs.createReadStream(filePath);
 
             stream.on('data', (data) => hash.update(data));
@@ -1607,34 +1612,33 @@ module.exports = (dependencies) => {
     }
 
     /**
-     * 사용자 폴더에서 같은 해시의 파일 찾기
+     * 업로드 파일을 콘텐츠 해시 기반으로 정규화 & 중복 제거
+     *  - 최종 파일명: <sha256-hex><ext>
+     *  - 동일 파일이 이미 존재하면: 새 파일 삭제 후 기존 파일 재사용
      */
-    async function findDuplicateImage(userImgDir, newFileHash, newFilePath) {
+    async function finalizeUploadByContentHash(uploadedPath, destDir, extWithDot) {
+        const safeExt = sanitizeExtension(extWithDot);
+        const hashHex = await calculateFileHash(uploadedPath);
+        const finalFileName = `${hashHex}${safeExt}`;
+        const finalPath = path.join(destDir, finalFileName);
+
+        const resolvedDir = path.resolve(destDir) + path.sep;
+        const resolvedFinal = path.resolve(finalPath);
+        if (!resolvedFinal.startsWith(resolvedDir)) throw new Error('PATH_TRAVERSAL_BLOCKED');
+
         try {
-            const files = fs.readdirSync(userImgDir);
-
-            for (const file of files) {
-                const filePath = path.join(userImgDir, file);
-
-                // 새로 업로드된 파일은 제외
-                if (filePath === newFilePath) continue;
-
-                // 파일인지 확인
-                const stat = fs.statSync(filePath);
-                if (!stat.isFile()) continue;
-
-                // 해시 비교
-                const existingFileHash = await calculateFileHash(filePath);
-                if (existingFileHash === newFileHash) {
-                    return file; // 중복 파일명 반환
-                }
+            // rename은 같은 디렉토리 내에서는 원자적으로 동작(대부분 FS) -> race에도 강함
+            fs.renameSync(uploadedPath, finalPath);
+        } catch (err) {
+	        // 동시에 같은 파일이 업로드되어 이미 존재할 수 있음
+	        if (err && (err.code === 'EEXIST' || err.code === 'ENOTEMPTY')) {
+	            try { if (fs.existsSync(uploadedPath)) fs.unlinkSync(uploadedPath); } catch (_) {}
+	        } else {
+            	throw err;
             }
-
-            return null; // 중복 없음
-        } catch (error) {
-            console.error('중복 파일 검사 오류:', error);
-            return null;
         }
+
+        return finalFileName;
     }
 
     /**
@@ -1675,27 +1679,16 @@ module.exports = (dependencies) => {
 
             // 업로드된 파일 정보
             const uploadedFilePath = req.file.path;
-            const uploadedFileName = req.file.filename;
             const userImgDir = path.dirname(uploadedFilePath);
 
-            // 파일 해시 계산
-            const fileHash = await calculateFileHash(uploadedFilePath);
+            // 콘텐츠 해시 기반 파일명으로 정규화 + 중복 제거 (O(1) 체크)
+            const finalFileName = await finalizeUploadByContentHash(
+                uploadedFilePath,
+                userImgDir,
+                `.${detected.ext}`
+            );
 
-            // 중복 파일 확인
-            const duplicateFileName = await findDuplicateImage(userImgDir, fileHash, uploadedFilePath);
-
-            let finalFileName;
-
-            if (duplicateFileName) {
-                // 중복 파일이 있으면 새 파일 삭제
-                fs.unlinkSync(uploadedFilePath);
-                finalFileName = duplicateFileName;
-                console.log("POST /api/pages/:id/editor-image 중복 이미지 발견, 기존 파일 사용:", finalFileName);
-            } else {
-                // 중복이 없으면 새 파일 사용
-                finalFileName = uploadedFileName;
-                console.log("POST /api/pages/:id/editor-image 새 이미지 업로드 완료:", finalFileName);
-            }
+            console.log("POST /api/pages/:id/editor-image 업로드 처리 완료:", finalFileName);
 
             // 이미지 경로 반환
             const imagePath = `${userId}/${finalFileName}`;
@@ -1748,39 +1741,27 @@ module.exports = (dependencies) => {
             const uploadedFileName = req.file.filename;
             const userFileDir = path.dirname(uploadedFilePath);
 
-            // 파일 해시 계산
-            const fileHash = await calculateFileHash(uploadedFilePath);
+            // 확장자(표시용/다운로드 편의)만 유지하고, 파일명은 콘텐츠 해시로 고정
+            const rawExt = path.extname(uploadedFileName);
+            const safeExt = sanitizeExtension(rawExt);
 
-            // 중복 파일 확인 (findDuplicateImage 함수 재사용 가능하지만 이름이...)
-            // findDuplicateImage는 해당 디렉토리의 모든 파일을 뒤지므로 파일도 체크 가능
-            const duplicateFileName = await findDuplicateImage(userFileDir, fileHash, uploadedFilePath);
+            const finalFileName = await finalizeUploadByContentHash(
+                uploadedFilePath,
+                userFileDir,
+                safeExt
+            );
 
-            let finalFileName;
-
-            if (duplicateFileName) {
-                // 중복 파일이 있으면 새 파일 삭제
-                fs.unlinkSync(uploadedFilePath);
-                finalFileName = duplicateFileName;
-                console.log("POST /api/pages/:id/file 중복 파일 발견, 기존 파일 사용:", finalFileName);
-            } else {
-                // 중복이 없으면 새 파일 사용
-                finalFileName = uploadedFileName;
-                console.log("POST /api/pages/:id/file 새 파일 업로드 완료:", finalFileName);
-            }
+            console.log("POST /api/pages/:id/file 업로드 처리 완료:", finalFileName);
 
             // 파일 URL 반환
             // /paperclip/:userId/:filename
+            // 다운로드 파일명은 클라이언트가 ?name= 으로 전달하고, 서버가 안전하게 적용
             const fileUrl = `/paperclip/${userId}/${finalFileName}`;
-
-            // 원본 파일명 (사용자에게 보여줄 이름) - 중복 시에는 기존 파일명(랜덤생성됨)을 쓰게 되는데...
-            // 블록에는 "사용자가 올린 원본 이름"을 보여주고 싶지만, 중복 처리 로직 때문에
-            // 물리적 파일명은 랜덤해시가 붙어있음.
-            // 하지만 클라이언트에서는 req.file.originalname을 알고 있으므로 그걸 쓰면 됨.
-            // 단, 중복 파일인 경우 req.file.originalname이 맞는지? 맞음. 방금 올린거니까.
+            const safeDisplayName = sanitizeFilenameComponent(req.file.originalname, 200);
 
             res.json({
                 url: fileUrl,
-                filename: req.file.originalname,
+                filename: safeDisplayName,
                 size: req.file.size
             });
 
