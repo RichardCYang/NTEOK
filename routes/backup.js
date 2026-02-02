@@ -70,12 +70,49 @@ module.exports = (dependencies) => {
         authMiddleware,
         toIsoString,
         sanitizeInput,
-        sanitizeHtmlContent,
+		sanitizeHtmlContent,
+        generatePublishToken,
         generatePageId,
         generateCollectionId,
         formatDateForDb,
         logError
-    } = dependencies;
+	} = dependencies;
+
+    /**
+     * 보안: 백업 가져오기(import)에서 발행(공개 공유) 토큰을 그대로 복원하면 신뢰할 수 없는
+     * 백업 파일(또는 변조된 백업)을 가져오는 순간 공격자가 알고 있는 토큰으로 페이지가 즉시 공개되어 내용이 유출될 수 있음
+     *
+     * 기본 동작: import 시 기존 토큰을 무시하고 새 토큰을 재발급하여 복원
+     * (기능 호환이 필요한 경우에만 환경변수로 opt-in)
+     *   - KEEP_IMPORT_PUBLISH_TOKENS=true : 백업에 포함된 토큰을 그대로 유지(신뢰된 백업 전제)
+     */
+    const KEEP_IMPORT_PUBLISH_TOKENS = String(process.env.KEEP_IMPORT_PUBLISH_TOKENS || '').toLowerCase() === 'true';
+
+    function isValidPublishToken(token) {
+        return typeof token === 'string' && /^[a-f0-9]{64}$/i.test(token);
+    }
+
+    async function insertPublishLinkWithRetry(connection, { token, pageId, ownerUserId, createdAt, updatedAt, allowComments = 0 }) {
+        let t = token;
+        for (let i = 0; i < 5; i++) {
+            try {
+                await connection.execute(
+                    `INSERT INTO page_publish_links (token, page_id, owner_user_id, is_active, created_at, updated_at, allow_comments)
+                     VALUES (?, ?, ?, 1, ?, ?, ?)` ,
+                    [t, pageId, ownerUserId, createdAt, updatedAt, allowComments]
+                );
+                return t;
+            } catch (e) {
+                // 토큰 충돌(중복 키) 발생 시 재생성
+                if (e && (e.code === 'ER_DUP_ENTRY' || e.errno === 1062)) {
+                    t = generatePublishToken();
+                    continue;
+                }
+                throw e;
+            }
+        }
+        throw new Error('PUBLISH_TOKEN_INSERT_RETRY_EXCEEDED');
+    }
 
     /**
      * 기본 커버 이미지 목록
@@ -883,21 +920,29 @@ ${JSON.stringify(pageMetadata, null, 2)}
                     );
 
                     // 발행 정보 복원
+                    // 보안: import는 신뢰할 수 없는 입력일 수 있으므로,
+                    // - 기본값: 백업에 포함된 publishToken을 그대로 사용하지 않고 새 토큰을 재발급
+                    // - opt-in(KEEP_IMPORT_PUBLISH_TOKENS=true) 시에만 검증된 토큰을 유지
                     if (pageData.publishToken) {
-                        await connection.execute(
-                            `INSERT INTO page_publish_links (token, page_id, owner_user_id, is_active, created_at, updated_at)
-                             VALUES (?, ?, ?, 1, ?, ?)`,
-                            [
-                                pageData.publishToken,
-                                pageId,
-                                userId,
-                                pageData.publishedAt ? formatDateForDb(new Date(pageData.publishedAt)) : nowStr,
-                                nowStr
-                            ]
-                        );
-                        // 보안: 토큰 일부만 표시
-                        const maskedToken = pageData.publishToken.substring(0, 8) + '...';
-                        console.log(`[발행 정보 복원] ${pageData.title} - 토큰: ${maskedToken}`);
+                    	const keepToken = KEEP_IMPORT_PUBLISH_TOKENS && isValidPublishToken(pageData.publishToken);
+                        const requestedToken = keepToken ? pageData.publishToken : generatePublishToken();
+
+                        const createdAt = pageData.publishedAt ? formatDateForDb(new Date(pageData.publishedAt)) : nowStr;
+
+                        const finalToken = await insertPublishLinkWithRetry(connection, {
+                            token: requestedToken,
+                            pageId,
+                            ownerUserId: userId,
+                            createdAt,
+                            updatedAt: nowStr,
+                            // 안전 기본값: import로는 공개 댓글을 자동 활성화하지 않음
+                            allowComments: 0
+                        });
+
+						// 보안: 토큰 일부만 표시
+						const maskedToken = String(finalToken).substring(0, 8) + '...';
+                        const note = keepToken ? '' : ' (import 보안: 토큰 재발급)';
+                        console.log(`[발행 정보 복원] ${pageData.title} - 토큰: ${maskedToken}${note}`);
                     }
 
                     totalPages++;
