@@ -454,48 +454,32 @@ module.exports = (dependencies) => {
      * 패스키 직접 로그인 시작 - 챌린지 생성 (비밀번호 없이)
      * POST /api/passkey/login/options
      */
-    router.post("/login/options", async (req, res) => {
+    router.post("/login/options", passkeyLimiter, async (req, res) => {
         try {
             const { username } = req.body;
 
-            if (!username) {
+            if (!username)
                 return res.status(400).json({ error: "아이디를 입력해주세요." });
-            }
 
-            // 사용자 조회
+            /**
+             * 보안: 계정(아이디) 열거 방지
+             * - 존재/미존재/패스키 활성 여부에 따라 HTTP 코드/메시지가 달라지면 열거가 가능해짐
+             * - WebAuthn 스펙에서도 allowCredentials의 차이가 등록 여부를 누설할 수 있다고 경고함
+             *   → 항상 동일한 형태의 options를 반환하고, 서버 내부에서만 user_id를 결정
+             */
             const [userRows] = await pool.execute(
                 "SELECT id, passkey_enabled FROM users WHERE username = ?",
                 [username]
             );
 
-            if (userRows.length === 0) {
-                return res.status(404).json({ error: "존재하지 않는 아이디입니다." });
-            }
+            // 존재 + passkey_enabled=1 인 경우만 실제 user_id 사용, 그 외는 sentinel(0)
+            const challengeUserId =
+                (userRows.length > 0 && userRows[0].passkey_enabled) ? userRows[0].id : 0;
 
-            const user = userRows[0];
-
-            if (!user.passkey_enabled) {
-                return res.status(400).json({ error: "패스키가 등록되지 않은 계정입니다." });
-            }
-
-            // 사용자의 등록된 패스키 조회
-            const [passkeys] = await pool.execute(
-                "SELECT credential_id, transports FROM passkeys WHERE user_id = ?",
-                [user.id]
-            );
-
-            if (passkeys.length === 0) {
-                return res.status(404).json({ error: "등록된 패스키가 없습니다." });
-            }
-
+            // allowCredentials를 생략(Discoverable Credential)하여 등록 여부/개수 누출 방지
             const options = await generateAuthenticationOptions({
                 rpID: rpID,
                 timeout: 60000,
-                allowCredentials: passkeys.map(pk => ({
-                    id: pk.credential_id,
-                    type: 'public-key',
-                    transports: pk.transports ? pk.transports.split(',') : ['usb', 'ble', 'nfc', 'internal', 'hybrid']
-                })),
 				// 로컬 사용자 검증(생체/PIN) 강제
 				userVerification: 'required'
             });
@@ -511,7 +495,7 @@ module.exports = (dependencies) => {
                 `INSERT INTO webauthn_challenges
                  (user_id, session_id, challenge, operation, created_at, expires_at)
                  VALUES (?, ?, ?, 'passkey_login', ?, ?)`,
-                [user.id, tempSessionId, options.challenge, formatDateForDb(now), formatDateForDb(expiresAt)]
+                [challengeUserId, tempSessionId, options.challenge, formatDateForDb(now), formatDateForDb(expiresAt)]
             );
 
             res.json({
@@ -532,9 +516,8 @@ module.exports = (dependencies) => {
         try {
             const { credential, tempSessionId } = req.body;
 
-            if (!credential || !tempSessionId) {
+            if (!credential || !tempSessionId)
                 return res.status(400).json({ error: "인증 정보가 없습니다." });
-            }
 
             // 챌린지 조회
             const [challenges] = await pool.execute(
@@ -545,12 +528,23 @@ module.exports = (dependencies) => {
                 [tempSessionId]
             );
 
-            if (challenges.length === 0) {
+            if (challenges.length === 0)
                 return res.status(400).json({ error: "유효한 챌린지를 찾을 수 없습니다. 다시 시도해 주세요." });
-            }
 
             const expectedChallenge = challenges[0].challenge;
             const userId = challenges[0].user_id;
+
+            /**
+             * 보안: /login/options에서 sentinel user_id(0)로 저장된 경우
+             * - 존재하지 않는 계정/패스키 비활성 계정에 대해 동일한 실패 응답을 반환하여 열거를 방지
+             */
+            if (!userId || userId <= 0) {
+                await pool.execute(
+                    "DELETE FROM webauthn_challenges WHERE session_id = ? AND operation = 'passkey_login'",
+                    [tempSessionId]
+                );
+                return res.status(401).json({ error: "인증에 실패했습니다." });
+            }
 
             // credential_id로 패스키 조회
             const credentialIdBase64 = credential.id;
@@ -559,9 +553,8 @@ module.exports = (dependencies) => {
                 [credentialIdBase64, userId]
             );
 
-            if (passkeys.length === 0) {
+            if (passkeys.length === 0)
                 return res.status(404).json({ error: "등록되지 않은 패스키입니다." });
-            }
 
             const passkey = passkeys[0];
             const publicKey = Buffer.from(passkey.public_key, 'base64');
@@ -620,9 +613,8 @@ module.exports = (dependencies) => {
                 [userId]
             );
 
-            if (userRows.length === 0) {
+            if (userRows.length === 0)
                 return res.status(404).json({ error: "사용자를 찾을 수 없습니다." });
-            }
 
             const { username, block_duplicate_login, country_whitelist_enabled, allowed_login_countries } = userRows[0];
 
@@ -716,14 +708,12 @@ module.exports = (dependencies) => {
         try {
             const { tempSessionId } = req.body;
 
-            if (!tempSessionId) {
+            if (!tempSessionId)
                 return res.status(400).json({ error: "세션 정보가 없습니다." });
-            }
 
             const tempSession = sessions.get(tempSessionId);
-            if (!tempSession || !tempSession.pendingUserId) {
+            if (!tempSession || !tempSession.pendingUserId)
                 return res.status(400).json({ error: "세션이 만료되었습니다. 다시 로그인하세요." });
-            }
 
             const userId = tempSession.pendingUserId;
 
@@ -733,9 +723,8 @@ module.exports = (dependencies) => {
                 [userId]
             );
 
-            if (passkeys.length === 0) {
+            if (passkeys.length === 0)
                 return res.status(404).json({ error: "등록된 패스키가 없습니다." });
-            }
 
             const options = await generateAuthenticationOptions({
                 rpID: rpID,
@@ -775,14 +764,12 @@ module.exports = (dependencies) => {
         try {
             const { credential, tempSessionId } = req.body;
 
-            if (!credential || !tempSessionId) {
+            if (!credential || !tempSessionId)
                 return res.status(400).json({ error: "인증 정보가 없습니다." });
-            }
 
             const tempSession = sessions.get(tempSessionId);
-            if (!tempSession || !tempSession.pendingUserId) {
+            if (!tempSession || !tempSession.pendingUserId)
                 return res.status(400).json({ error: "세션이 만료되었습니다. 다시 로그인하세요." });
-            }
 
             const userId = tempSession.pendingUserId;
 
@@ -795,9 +782,8 @@ module.exports = (dependencies) => {
                 [userId, tempSessionId]
             );
 
-            if (challenges.length === 0) {
+            if (challenges.length === 0)
                 return res.status(400).json({ error: "유효한 챌린지를 찾을 수 없습니다. 다시 시도해 주세요." });
-            }
 
             const expectedChallenge = challenges[0].challenge;
 
@@ -809,9 +795,8 @@ module.exports = (dependencies) => {
                 [credentialIdBase64, userId]
             );
 
-            if (passkeys.length === 0) {
+            if (passkeys.length === 0)
                 return res.status(404).json({ error: "등록되지 않은 패스키입니다." });
-            }
 
             const passkey = passkeys[0];
             const publicKey = Buffer.from(passkey.public_key, 'base64');
@@ -870,9 +855,8 @@ module.exports = (dependencies) => {
                 [userId]
             );
 
-            if (userRows.length === 0) {
+            if (userRows.length === 0)
                 return res.status(404).json({ error: "사용자를 찾을 수 없습니다." });
-            }
 
             const { username, block_duplicate_login } = userRows[0];
 
@@ -945,9 +929,8 @@ module.exports = (dependencies) => {
             const userId = req.user.id;
             const passkeyId = parseInt(req.params.id);
 
-            if (isNaN(passkeyId)) {
+            if (isNaN(passkeyId))
                 return res.status(400).json({ error: "잘못된 패스키 ID입니다." });
-            }
 
             // 본인의 패스키인지 확인
             const [passkeys] = await pool.execute(
@@ -955,9 +938,8 @@ module.exports = (dependencies) => {
                 [passkeyId, userId]
             );
 
-            if (passkeys.length === 0) {
+            if (passkeys.length === 0)
                 return res.status(404).json({ error: "패스키를 찾을 수 없습니다." });
-            }
 
             await pool.execute("DELETE FROM passkeys WHERE id = ?", [passkeyId]);
 
