@@ -8,9 +8,8 @@ async function handleRegister(event) {
     const passwordConfirmInput = document.querySelector("#passwordConfirm");
     const errorEl = document.querySelector("#register-error");
 
-    if (!usernameInput || !passwordInput || !passwordConfirmInput || !errorEl) {
+    if (!usernameInput || !passwordInput || !passwordConfirmInput || !errorEl)
         return;
-    }
 
     const username = usernameInput.value.trim();
     const password = passwordInput.value;
@@ -37,6 +36,15 @@ async function handleRegister(event) {
     // 보안 개선: 비밀번호 강도 검증 강화
     if (password.length < 10) {
         errorEl.textContent = "비밀번호는 10자 이상이어야 합니다.";
+        return;
+    }
+
+    // bcrypt 입력은 72바이트까지만 유효할 수 있으므로(UTF-8 기준) 회원가입 단계에서 제한
+    // (한글/이모지 포함 시 바이트 수가 빠르게 증가할 수 있음)
+    const BCRYPT_MAX_PASSWORD_BYTES = 72;
+    const passwordBytes = new TextEncoder().encode(password).length;
+    if (passwordBytes > BCRYPT_MAX_PASSWORD_BYTES) {
+        errorEl.textContent = `비밀번호가 너무 깁니다. (UTF-8 기준 최대 ${BCRYPT_MAX_PASSWORD_BYTES}바이트)`;
         return;
     }
 

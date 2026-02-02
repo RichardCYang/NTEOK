@@ -635,13 +635,22 @@ function sanitizeHtmlContent(html) {
  * @returns {{valid: boolean, error?: string}}
  */
 function validatePasswordStrength(password) {
-    if (!password || typeof password !== 'string') {
+    if (!password || typeof password !== 'string')
         return { valid: false, error: "비밀번호를 입력해 주세요." };
+
+    // bcrypt는 대부분 구현에서 입력의 처음 72바이트까지만 사용
+    // UTF-8 기준이므로 한글/이모지 등은 일반 문자 수 보다 더 빨리 제한에 도달
+    const BCRYPT_MAX_PASSWORD_BYTES = 72;
+    const passwordBytes = Buffer.byteLength(password, "utf8");
+    if (passwordBytes > BCRYPT_MAX_PASSWORD_BYTES) {
+        return {
+            valid: false,
+            error: `비밀번호가 너무 깁니다. (UTF-8 기준 최대 ${BCRYPT_MAX_PASSWORD_BYTES}바이트)`
+        };
     }
 
-    if (password.length < 10) {
+    if (password.length < 10)
         return { valid: false, error: "비밀번호는 10자 이상이어야 합니다." };
-    }
 
     const hasUpperCase = /[A-Z]/.test(password);
     const hasLowerCase = /[a-z]/.test(password);
