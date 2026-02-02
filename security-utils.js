@@ -43,7 +43,10 @@ function installDomPurifySecurityHooks(DOMPurify) {
 	if (!DOMPurify?.addHook) return;
 	DOMPurify.addHook('afterSanitizeAttributes', (node) => {
 		if (String(node.tagName).toLowerCase() === 'a') {
-		    if (node.getAttribute('target') === '_blank') {
+			// HTML 표준상 target 예약 키워드(_blank 등)는 대소문자 구별 없음
+			// 따라서 _BLANK 같은 대/소문자 변형으로 tabnabbing 방어(rel=noopener/noreferrer) 우회가 가능하므로 공백 제거 + 소문자 정규화 후 비교
+			const target = String(node.getAttribute('target') || '').trim().toLowerCase();
+			if (target === '_blank') {
 			    const rel = (node.getAttribute('rel') || '').toLowerCase();
 			    const set = new Set(rel.split(/\s+/).filter(Boolean));
 			    set.add('noopener'); set.add('noreferrer');
