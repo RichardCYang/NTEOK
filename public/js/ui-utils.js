@@ -7,11 +7,39 @@
  * POST, PUT, DELETE 요청에 자동으로 CSRF 토큰 헤더 추가
  */
 export function secureFetch(url, options = {}) {
-    // GET 요청이 아닌 경우 CSRF 토큰 추가
-    if (!options.method || options.method.toUpperCase() !== 'GET') {
-        options = window.csrfUtils.addCsrfHeader(options);
+	// URL 정규화 (상대경로/절대경로 모두 처리)
+    let targetUrl;
+    try {
+        targetUrl = new URL(url, window.location.href);
+    } catch (e) {
+        // URL 파싱 실패는 보수적으로 차단
+        throw new Error('[보안]: Invalid URL');
     }
-    return fetch(url, options);
+
+    // same-origin 여부 판단
+    const isSameOrigin = (targetUrl.origin === window.location.origin);
+
+    // 기본 credentials 정책을 안전하게 설정
+    //  - same-origin 요청은 쿠키 포함 가능
+    //  - cross-origin 요청은 기본적으로 쿠키 포함 금지
+    const finalOptions = { ...options };
+    if (!finalOptions.credentials)
+        finalOptions.credentials = isSameOrigin ? 'same-origin' : 'omit';
+
+    // CSRF 헤더는 same-origin + state-changing 요청에만 부착
+    const method = (finalOptions.method || 'GET').toUpperCase();
+    const isStateChanging = !['GET', 'HEAD', 'OPTIONS'].includes(method);
+
+    if (isSameOrigin && isStateChanging) {
+        finalOptions.headers = finalOptions.headers || {};
+        // csrfUtils가 headers를 덮어쓸 수 있으므로 여기서 합쳐도 되고,
+        // 기존 구현 유지하려면 csrfUtils.addCsrfHeader를 사용해도 됨.
+        finalOptions.headers = window.csrfUtils.addCsrfHeader({
+            headers: finalOptions.headers
+        }).headers;
+    }
+
+    return fetch(targetUrl.toString(), finalOptions);
 }
 
 /**
