@@ -638,6 +638,11 @@ function validatePasswordStrength(password) {
     if (!password || typeof password !== 'string')
         return { valid: false, error: "비밀번호를 입력해 주세요." };
 
+    // bcrypt 구현(특히 C 기반)에서는 NUL(\\u0000) 등 제어문자를 문자열 종료로 처리하는 경우가 있어
+    // 강도 정책 우회/인증 모호성(동일 해시) 문제가 생길 수 있으므로 선제적으로 차단
+    if (CONTROL_CHARS_RE.test(password))
+        return { valid: false, error: "비밀번호에 제어 문자를 사용할 수 없습니다." };
+
     // bcrypt는 대부분 구현에서 입력의 처음 72바이트까지만 사용
     // UTF-8 기준이므로 한글/이모지 등은 일반 문자 수 보다 더 빨리 제한에 도달
     const BCRYPT_MAX_PASSWORD_BYTES = 72;

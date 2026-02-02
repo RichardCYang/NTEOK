@@ -39,6 +39,10 @@ module.exports = (dependencies) => {
         getClientIpFromRequest
 	} = dependencies;
 
+    // bcrypt 계열 구현은 NUL(0x00) 등 제어문자 처리 방식이 환경별로 달라
+    // 인증 모호성/강도 정책 우회를 유발할 수 있으므로 공통적으로 차단
+    const PASSWORD_CONTROL_CHARS_RE = /[\u0000-\u001F\u007F]/;
+
     function getClientIp(req) {
         return (
             req.clientIp ||
@@ -103,8 +107,14 @@ module.exports = (dependencies) => {
     router.post("/login", authLimiter, requireSameOriginForAuth, async (req, res) => {
         const { username, password } = req.body || {};
 
-        if (typeof username !== "string" || typeof password !== "string") {
+        if (typeof username !== "string" || typeof password !== "string")
             return res.status(400).json({ error: "아이디와 비밀번호를 모두 입력해 주세요." });
+
+        // 보안: 제어문자 포함 비밀번호 차단 (bcrypt 입력 처리 모호성/정책 우회 방지)
+        if (PASSWORD_CONTROL_CHARS_RE.test(password)) {
+            // 사용자 존재/정책 노출 방지: 동일한 실패 메시지 유지
+            console.warn(`[로그인 실패] IP: ${req.ip}, 사유: 비정상 비밀번호 입력`);
+            return res.status(401).json({ error: "아이디 또는 비밀번호가 올바르지 않습니다." });
         }
 
         const trimmedUsername = username.trim();
@@ -317,13 +327,15 @@ module.exports = (dependencies) => {
     router.delete("/account", authMiddleware, async (req, res) => {
         const { password, confirmText } = req.body || {};
 
-        if (typeof password !== "string" || !password.trim()) {
+        if (typeof password !== "string" || !password.trim())
             return res.status(400).json({ error: "비밀번호를 입력해 주세요." });
-        }
 
-        if (confirmText !== "계정 삭제") {
+        // 계정 삭제도 bcrypt.compare()가 들어가므로 동일하게 제어문자 차단
+        if (PASSWORD_CONTROL_CHARS_RE.test(password))
+            return res.status(400).json({ error: "비밀번호 형식이 올바르지 않습니다." });
+
+        if (confirmText !== "계정 삭제")
             return res.status(400).json({ error: '확인 문구를 정확히 입력해 주세요. "계정 삭제"를 입력하세요.' });
-        }
 
         try {
             const [rows] = await pool.execute(
