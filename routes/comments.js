@@ -4,6 +4,16 @@ const router = express.Router();
 // express-rate-limit v8+ 호환 (pages.js에서 쓰는 패턴과 동일)
 const erl = require("express-rate-limit");
 const rateLimit = erl.rateLimit || erl;
+const { ipKeyGenerator } = erl;
+
+// server.js와 동일한 기본값(운영 정책에 맞게 환경변수로 조절 가능)
+// - IPv6를 /56 단위로 묶어 주소 조금씩 바꾸는 우회를 방지
+const RATE_LIMIT_IPV6_SUBNET = (() => {
+	const n = Number(process.env.RATE_LIMIT_IPV6_SUBNET ?? 56);
+	// 0~128 범위로 클램프(이상치 방어)
+	if (!Number.isFinite(n)) return 56;
+	return Math.max(0, Math.min(128, n));
+})();
 
 /**
  * Comments Routes
@@ -41,8 +51,10 @@ module.exports = (dependencies) => {
         message: { error: "댓글 작성 요청이 너무 많습니다. 잠시 후 다시 시도해 주세요." },
         keyGenerator: (req) => {
             const token = String(req.params.token || "");
-            const ip = req.clientIp || req.ip || req.connection?.remoteAddress || "unknown";
-            return `guest:${token}:${ip}`;
+            const rawIp = req.clientIp || req.ip || req.connection?.remoteAddress;
+            // 중요: IPv6 우회 방지를 위해 ipKeyGenerator로 서브넷 마스킹 적용
+            const ipKey = rawIp ? ipKeyGenerator(rawIp, RATE_LIMIT_IPV6_SUBNET) : "noip";
+            return `guest:${token}:${ipKey}`;
         },
     });
 
