@@ -1734,10 +1734,12 @@ app.get('/covers/:userId/:filename', authMiddleware, async (req, res) => {
                 LEFT JOIN collection_shares cs_req ON c.id = cs_req.collection_id AND cs_req.shared_with_user_id = ?
                 WHERE p.cover_image = ?
                 AND p.user_id = ?  -- 보안패치: 커버 파일 소유자 == 페이지 소유자
+                -- 보안패치: 암호화 + 공유불가 페이지의 자산(커버)은 공유 사용자에게 노출 금지
+                AND NOT (p.is_encrypted = 1 AND p.share_allowed = 0 AND p.user_id != ?)
                 AND (c.user_id = ? OR cs_cur.shared_with_user_id IS NOT NULL)
                 AND (c.user_id = ? OR cs_req.shared_with_user_id IS NOT NULL)
                 LIMIT 1`,
-            [currentUserId, requestedUserId, coverPath, requestedUserId, currentUserId, requestedUserId]
+                [currentUserId, requestedUserId, coverPath, requestedUserId, currentUserId, currentUserId, requestedUserId]
         );
 
         if (rows.length > 0) {
