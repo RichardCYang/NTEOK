@@ -5,6 +5,7 @@
 	"main": "server.js",
 	"scripts": {
 		"test": "echo \"Error: no test specified\" && exit 1",
+		"prestart": "node scripts/check-public-leaks.mjs",
 		"start": "node server.js",
 		"security:pin-third-party": "node scripts/pin-third-party.mjs"
 	},

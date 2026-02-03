@@ -1568,6 +1568,24 @@ const outboundFetchLimiter = rateLimit({
 const JSON_BODY_LIMIT = process.env.JSON_BODY_LIMIT || "1mb";
 app.use(express.json({ limit: JSON_BODY_LIMIT }));
 
+/**
+ * 보안: 웹 루트(public)에 남은 백업/임시 파일 노출 차단
+ * - .backup/.bak/.old/.tmp/.swp 등은 개발 중 흔히 생기며, 남아 있으면 소스/설정/비밀값 유출 위험
+ * - OWASP WSTG: Old/Backup/Unreferenced file 점검 권고
+ */
+const PUBLIC_FORBIDDEN_EXT_RE = /\.(?:bak|backup|old|tmp|swp|swo|orig|save)$/i;
+app.use((req, res, next) => {
+    // 정적 파일 접근에서 주로 발생하므로 GET/HEAD만 타겟
+    if (req.method === "GET" || req.method === "HEAD") {
+        const p = String(req.path || "");
+        if (PUBLIC_FORBIDDEN_EXT_RE.test(p)) {
+            // 존재 여부(oracle) 최소화를 위해 404로 응답
+            return res.status(404).end();
+        }
+    }
+    next();
+});
+
 // urlencoded를 쓰는 폼 요청이 있다면 함께 제한(없으면 유지해도 무방)
 app.use(express.urlencoded({ extended: false, limit: JSON_BODY_LIMIT }));
 app.use(cookieParser());

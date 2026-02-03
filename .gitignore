@@ -6,6 +6,16 @@ yarn-debug.log*
 yarn-error.log*
 lerna-debug.log*
 
+# Web root(public) 내 백업/임시 파일 (절대 배포 금지)
+public/**/*.backup
+public/**/*.bak
+public/**/*.old
+public/**/*.tmp
+public/**/*.swp
+public/**/*.swo
+public/**/*.orig
+public/**/*.save
+
 # Diagnostic reports (https://nodejs.org/api/report.html)
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 
