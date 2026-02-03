@@ -974,9 +974,8 @@ module.exports = (dependencies) => {
         const userId = req.user.id;
         const { targetCollectionId, targetParentId, sortOrder } = req.body;
 
-        if (!targetCollectionId) {
+        if (!targetCollectionId)
             return res.status(400).json({ error: "targetCollectionId가 필요합니다." });
-        }
 
         try {
             // 현재 페이지 정보 조회
@@ -985,33 +984,45 @@ module.exports = (dependencies) => {
                 [pageId]
             );
 
-            if (!pageRows.length) {
+            if (!pageRows.length)
                 return res.status(404).json({ error: "페이지를 찾을 수 없습니다." });
-            }
 
             const currentCollectionId = pageRows[0].collection_id;
             const isEncrypted = pageRows[0].is_encrypted;
 
             // 같은 컬렉션으로 이동 시 거부
-            if (currentCollectionId === targetCollectionId) {
+            if (currentCollectionId === targetCollectionId)
                 return res.status(400).json({ error: "같은 컬렉션으로 이동할 수 없습니다. 순서 변경은 /reorder API를 사용하세요." });
-            }
 
             // 암호화된 페이지는 이동 불가
-            if (isEncrypted) {
+            if (isEncrypted)
                 return res.status(400).json({ error: "암호화된 페이지는 다른 컬렉션으로 이동할 수 없습니다." });
-            }
 
             // 출발 컬렉션 권한 확인
             const { permission: sourcePerm } = await getCollectionPermission(currentCollectionId, userId);
-            if (!sourcePerm || sourcePerm === 'READ') {
+            if (!sourcePerm || sourcePerm === 'READ')
                 return res.status(403).json({ error: "페이지를 이동할 권한이 없습니다." });
-            }
 
             // 도착 컬렉션 권한 확인
             const { permission: targetPerm } = await getCollectionPermission(targetCollectionId, userId);
-            if (!targetPerm || targetPerm === 'READ') {
+            if (!targetPerm || targetPerm === 'READ')
                 return res.status(403).json({ error: "대상 컬렉션에 페이지를 추가할 권한이 없습니다." });
+
+            // 보안: 대상 컬렉션이 암호화를 강제(enforce_encryption=1)하는 경우
+            // 평문 페이지(is_encrypted=0)는 이동을 허용하면 안 됨 -> 그렇지 않으면 암호화 강제 컬렉션에 평문이 저장되어 기밀성 깨짐
+            const [targetColRows] = await pool.execute(
+                `SELECT enforce_encryption FROM collections WHERE id = ? LIMIT 1`,
+                [targetCollectionId]
+            );
+
+            if (!targetColRows.length)
+                return res.status(404).json({ error: "대상 컬렉션을 찾을 수 없습니다." });
+
+            const targetEnforceEncryption = targetColRows[0].enforce_encryption === 1;
+            if (targetEnforceEncryption) {
+                return res.status(400).json({
+                    error: "대상 컬렉션은 암호화를 강제합니다. 평문 페이지는 이동할 수 없습니다. 먼저 페이지를 암호화(또는 새로 생성)해 주세요."
+                });
             }
 
             // 페이지 이동 (최상위로, 계층 구조 제거)
