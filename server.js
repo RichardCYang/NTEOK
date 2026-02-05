@@ -1799,11 +1799,15 @@ app.get('/imgs/:userId/:filename', authMiddleware, async (req, res) => {
 	            LEFT JOIN collection_shares cs_cur ON c.id = cs_cur.collection_id AND cs_cur.shared_with_user_id = ?
 	            WHERE p.content LIKE ? ESCAPE '\\\\'
 	            AND (c.user_id = ? OR cs_cur.shared_with_user_id IS NOT NULL)
-	            -- 보안패치: 파일 소유자와 참조하는 페이지 소유자를 반드시 일치시킨다.
+				-- 보안패치: 암호화 + 공유불가 페이지의 자산은
+	            -- 페이지 본문 접근이 차단된 사용자(컬렉션 소유자 포함)에게도 노출되면 안 됨
+	            -- 페이지 API에서는 차단 중이나 자산 라우트에서 누락되면 우회 열람이 가능해짐
+	            AND NOT (p.is_encrypted = 1 AND p.share_allowed = 0 AND p.user_id != ?)
+	            -- 보안패치: 파일 소유자와 참조하는 페이지 소유자를 반드시 일치시킴
                 -- 공유 컬렉션에서 협업자가 content를 조작해 타 사용자 파일을 참조하는 것을 차단(IDOR/BOLA 완화)
                 AND p.user_id = ?
 	            LIMIT 1`,
-            [currentUserId, likePattern, currentUserId, requestedUserId]
+			[currentUserId, likePattern, currentUserId, currentUserId, requestedUserId]
         );
 
         if (rows.length > 0) {
@@ -1879,10 +1883,13 @@ app.get('/paperclip/:userId/:filename', authMiddleware, async (req, res) => {
                 LEFT JOIN collection_shares cs_cur ON c.id = cs_cur.collection_id AND cs_cur.shared_with_user_id = ?
                 WHERE p.content LIKE ? ESCAPE '\\\\'
                 AND (c.user_id = ? OR cs_cur.shared_with_user_id IS NOT NULL)
+                -- 보안패치: 암호화 + 공유불가 페이지의 첨부파일은
+                -- 페이지 본문 접근이 차단된 사용자에게 우회적으로 다운로드되면 안 됨
+                AND NOT (p.is_encrypted = 1 AND p.share_allowed = 0 AND p.user_id != ?)
                 -- 보안패치: 파일 소유자 == 참조 페이지 소유자
                 AND p.user_id = ?
                 LIMIT 1`,
-            [currentUserId, likePattern, currentUserId, requestedUserId]
+            [currentUserId, likePattern, currentUserId, currentUserId, requestedUserId]
         );
 
         if (rows.length > 0) {
