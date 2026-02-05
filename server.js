@@ -545,6 +545,15 @@ function deriveDownloadNameFromStoredFilename(stored) {
     return safeStored;
 }
 
+function setNoStore(res) {
+    // 민감 데이터(세션/노트/첨부/개인 이미지 등)가 브라우저/프록시/히스토리에 캐시되지 않도록 강제
+    // - no-store: 어떤 캐시(브라우저/공유 프록시)에도 저장 금지
+    // - Pragma/Expires: 구형/레거시 캐시 동작 보조
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+}
+
 function sendSafeDownload(res, filePath, downloadName) {
     // 무조건 다운로드로 취급되게 바이너리 처리
     res.setHeader('Content-Type', 'application/octet-stream');
@@ -552,7 +561,7 @@ function sendSafeDownload(res, filePath, downloadName) {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     // 혹시 문서로 렌더링되는 상황에서도 강한 제한
     res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
-    res.setHeader('Cache-Control', 'no-store');
+    setNoStore(res);
     return res.download(filePath, downloadName);
 }
 
@@ -1660,6 +1669,13 @@ app.use("/api", csrfMiddleware);
 // 일반 API 레이트 리밋 적용
 app.use("/api", generalLimiter);
 
+// 보안: API 응답(노트/메타데이터 등 민감 정보)이 브라우저 캐시/히스토리에 남지 않도록 설정
+// - SPA에서도 XHR/Fetch 응답이 디스크 캐시에 남을 수 있으며, 공유 PC/키오스크에서 특히 위험
+app.use("/api", (req, res, next) => {
+    setNoStore(res);
+    next();
+});
+
 // 정적 자산 캐싱 설정 (성능 최적화)
 app.use(express.static(path.join(__dirname, "public"), {
     index: false,
@@ -1703,6 +1719,8 @@ app.get('/covers/:userId/:filename', authMiddleware, async (req, res) => {
 
 	if (!Number.isFinite(requestedUserId))
 		return res.status(400).json({ error: '잘못된 요청입니다.' });
+
+	setNoStore(res);
 
 	const filename = req.params.filename;
     const currentUserId = req.user.id;
@@ -1763,6 +1781,8 @@ app.get('/imgs/:userId/:filename', authMiddleware, async (req, res) => {
 
 	if (!Number.isFinite(requestedUserId))
 		return res.status(400).json({ error: '잘못된 요청입니다.' });
+
+	setNoStore(res);
 
 	const filename = req.params.filename;
     const currentUserId = req.user.id;
