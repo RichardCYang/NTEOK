@@ -66,7 +66,8 @@ const backupUpload = multer({
 
 module.exports = (dependencies) => {
     const {
-        pool,
+		pool,
+        backupRepo,
         authMiddleware,
         toIsoString,
         sanitizeInput,
@@ -459,62 +460,23 @@ ${JSON.stringify(pageMetadata, null, 2)}
         const userId = req.user.id;
 
         try {
-            // 1. 사용자의 모든 컬렉션 조회 (암호화 정보 포함)
-            const [collections] = await pool.execute(
-                `SELECT id, name, sort_order, created_at, updated_at,
-                        is_encrypted, default_encryption, enforce_encryption
-                 FROM collections
-                 WHERE user_id = ?
-                 ORDER BY sort_order ASC`,
-                [userId]
-            );
+			// DB 접근은 repo에서만 수행 (접근제어 SQL 정책 중앙화 포함)
+			const { collections, shares, pages, publishes } = await backupRepo.getExportRows(userId);
 
-            if (collections.length === 0) {
+            if (!collections || collections.length === 0)
                 return res.status(404).json({ error: '내보낼 데이터가 없습니다.' });
-            }
 
-            // 2. 컬렉션 공유 정보 조회
-            const collectionIds = collections.map(c => c.id);
-            const [shares] = await pool.execute(
-                `SELECT cs.collection_id, cs.shared_with_user_id, cs.permission,
-                        u.username as shared_with_username
-                 FROM collection_shares cs
-                 JOIN users u ON cs.shared_with_user_id = u.id
-                 WHERE cs.collection_id IN (${collectionIds.map(() => '?').join(',')})`,
-                collectionIds
-            );
-
-            // 3. 모든 페이지 조회 (암호화 데이터 포함)
-            const [pages] = await pool.execute(
-                `SELECT id, title, content, encryption_salt, encrypted_content,
-                        created_at, updated_at, parent_id, sort_order, collection_id,
-                        is_encrypted, share_allowed, icon, cover_image, cover_position
-                 FROM pages
-                 WHERE collection_id IN (SELECT id FROM collections WHERE user_id = ?)
-                 ORDER BY collection_id ASC, parent_id IS NULL DESC, sort_order ASC`,
-                [userId]
-            );
-
-            // 3-1. 페이지별 발행 상태 조회
-            const pageIds = pages.map(p => p.id);
+            // 페이지별 발행 상태 조회
             const publishMap = new Map();
 
-            if (pageIds.length > 0) {
-                const [publishes] = await pool.execute(
-                    `SELECT page_id, token, created_at FROM page_publish_links
-                     WHERE page_id IN (${pageIds.map(() => '?').join(',')}) AND is_active = 1`,
-                    pageIds
-                );
+			(publishes || []).forEach(pub => {
+				publishMap.set(pub.page_id, {
+					token: pub.token,
+					createdAt: toIsoString(pub.created_at)
+				});
+			});
 
-                publishes.forEach(pub => {
-                    publishMap.set(pub.page_id, {
-                        token: pub.token,
-                        createdAt: toIsoString(pub.created_at)
-                    });
-                });
-            }
-
-            // 3-2. ZIP 아카이브 생성
+            // ZIP 아카이브 생성
             const archive = archiver('zip', {
                 zlib: { level: 9 } // 최대 압축
             });
@@ -532,7 +494,7 @@ ${JSON.stringify(pageMetadata, null, 2)}
             // 아카이브를 응답으로 파이프
             archive.pipe(res);
 
-            // 4. 이미지 수집
+            // 이미지 수집
             const imagesToInclude = new Set();
 
             // 커버 이미지 수집
@@ -568,7 +530,7 @@ ${JSON.stringify(pageMetadata, null, 2)}
                 }
             }
 
-            // 5. 컬렉션 메타데이터 생성
+            // 컬렉션 메타데이터 생성
             const collectionMap = new Map();
             const sharesByCollection = new Map();
 
@@ -609,7 +571,7 @@ ${JSON.stringify(pageMetadata, null, 2)}
                 );
             }
 
-            // 6. 페이지 추가
+            // 페이지 추가
             for (const page of pages) {
                 const collection = collectionMap.get(page.collection_id);
                 if (!collection) continue;
@@ -641,7 +603,7 @@ ${JSON.stringify(pageMetadata, null, 2)}
                 archive.append(html, { name: `pages/${collectionFolderName}/${pageFolderName}.html` });
             }
 
-            // 6. 이미지 추가
+            // 이미지 추가
             for (const imageRef of imagesToInclude) {
                 const normalized = normalizeUserImageRefForExport(imageRef, userId);
 
@@ -670,7 +632,7 @@ ${JSON.stringify(pageMetadata, null, 2)}
                 archive.file(finalPath, { name: `images/${normalized}` });
             }
 
-            // 7. 백업 정보 파일 추가
+            // 백업 정보 파일 추가
             const backupInfo = {
                 version: '1.0',
                 exportDate: new Date().toISOString(),
@@ -680,7 +642,7 @@ ${JSON.stringify(pageMetadata, null, 2)}
             };
             archive.append(JSON.stringify(backupInfo, null, 2), { name: 'backup-info.json' });
 
-            // 8. ZIP 완료
+            // ZIP 완료
             await archive.finalize();
 
             console.log(`[백업 내보내기] 사용자 ${userId} - 컬렉션: ${collections.length}, 페이지: ${pages.length}, 이미지: ${imagesToInclude.size}`);

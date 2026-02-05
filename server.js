@@ -2090,12 +2090,20 @@ function getSessionFromId(sessionId) {
 
         // ==================== 라우트 Import (DB 초기화 후) ====================
 
+        // ==================== Authorization Policy + Repositories ====================
+        // 접근 제어(SQL 조건) 및 DB 접근 경로를 중앙화하여
+        // 라우트별 누락으로 인한 Broken Access Control(BOLA/IDOR) 류 취약점 재발을 방지
+        const pageSqlPolicy = require('./authz/page-sql-policy');
+        const repositories = require('./repositories')({ pool, pageSqlPolicy });
+
         /**
          * 각 라우트 파일에 필요한 의존성들을 주입합니다.
          * pool이 initDb()에서 생성되므로, DB 초기화 이후에 라우트를 등록합니다.
          */
         const routeDependencies = {
-            pool,
+			pool,
+			pageSqlPolicy,
+            ...repositories,
             bcrypt,
             crypto,
             express,

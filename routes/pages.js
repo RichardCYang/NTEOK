@@ -27,7 +27,8 @@ const { ipKeyGenerator } = erl;
 
 module.exports = (dependencies) => {
     const {
-        pool,
+		pool,
+        pagesRepo,
         authMiddleware,
         toIsoString,
 		sanitizeInput,
@@ -395,38 +396,8 @@ module.exports = (dependencies) => {
                     ? req.query.collectionId.trim()
                     : null;
 
-            // 성능 최적화: 쿼리를 UNION ALL로 분리 (DISTINCT 제거)
-            // 1. 본인 소유 페이지 (인덱스: idx_pages_collection_user)
-            // 2. 공유받은 컬렉션의 페이지 (인덱스: idx_shared_with_user)
-            let query = `
-                (
-                    SELECT p.id, p.title, p.updated_at, p.parent_id, p.sort_order,
-                           p.collection_id, p.is_encrypted, p.share_allowed, p.user_id,
-                           p.icon, p.cover_image, p.cover_position, p.horizontal_padding
-                    FROM pages p
-                    INNER JOIN collections c ON p.collection_id = c.id
-                    WHERE c.user_id = ?
-                    ${collectionId ? 'AND p.collection_id = ?' : ''}
-                )
-                UNION ALL
-                (
-                    SELECT p.id, p.title, p.updated_at, p.parent_id, p.sort_order,
-                           p.collection_id, p.is_encrypted, p.share_allowed, p.user_id,
-                           p.icon, p.cover_image, p.cover_position, p.horizontal_padding
-                    FROM pages p
-                    INNER JOIN collection_shares cs ON p.collection_id = cs.collection_id
-                    WHERE cs.shared_with_user_id = ?
-                      AND NOT (p.is_encrypted = 1 AND p.share_allowed = 0 AND p.user_id != ?)
-                    ${collectionId ? 'AND p.collection_id = ?' : ''}
-                )
-                ORDER BY collection_id ASC, parent_id IS NULL DESC, sort_order ASC, updated_at DESC
-            `;
-
-            const params = collectionId
-                ? [userId, collectionId, userId, userId, collectionId]
-                : [userId, userId, userId];
-
-            const [rows] = await pool.execute(query, params);
+            // DB 접근은 repo에서만 수행 (접근제어 SQL 정책 중앙화 포함)
+            const rows = await pagesRepo.listPagesForUser({ userId, collectionId });
 
             const list = rows.map((row) => ({
                 id: row.id,
@@ -462,25 +433,11 @@ module.exports = (dependencies) => {
         const userId = req.user.id;
 
         try {
-            const [rows] = await pool.execute(
-                `SELECT p.id, p.title, p.content, p.encryption_salt, p.encrypted_content,
-                        p.created_at, p.updated_at, p.parent_id, p.sort_order, p.collection_id,
-                        p.is_encrypted, p.share_allowed, p.user_id, p.icon, p.cover_image, p.cover_position,
-                        p.horizontal_padding
-                 FROM pages p
-                 LEFT JOIN collections c ON p.collection_id = c.id
-                 LEFT JOIN collection_shares cs ON p.collection_id = cs.collection_id AND cs.shared_with_user_id = ?
-                 WHERE p.id = ? AND (p.user_id = ? OR c.user_id = ? OR cs.collection_id IS NOT NULL)
-                 AND NOT (p.is_encrypted = 1 AND p.share_allowed = 0 AND p.user_id != ?)`,
-                [userId, id, userId, userId, userId]
-            );
-
-            if (!rows.length) {
+           	const row = await pagesRepo.getPageByIdForUser({ userId, pageId: id });
+            if (!row) {
                 console.warn("GET /api/pages/:id - 페이지 없음 또는 권한 없음:", id);
                 return res.status(404).json({ error: "Page not found" });
             }
-
-            const row = rows[0];
 
             // 보안: 저장형 XSS 방지(Defense-in-Depth): 응답 직전에도 한 번 더 정화
             // - 과거(패치 전) 저장된 악성 콘텐츠가 남아있을 수 있음

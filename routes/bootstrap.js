@@ -8,7 +8,7 @@ const router = express.Router();
  */
 
 module.exports = (dependencies) => {
-    const { pool, authMiddleware, toIsoString, logError } = dependencies;
+	const { bootstrapRepo, authMiddleware, toIsoString, logError } = dependencies;
 
     /**
      * 부트스트랩 데이터
@@ -18,84 +18,16 @@ module.exports = (dependencies) => {
         try {
             const userId = req.user.id;
 
-            const [userRows, collectionRows, pageRows] = await Promise.all([
-                pool.execute(
-                    `SELECT id, username, theme FROM users WHERE id = ?`,
-                    [userId]
-                ),
-                pool.execute(
-                    `(
-                        SELECT c.id, c.name, c.sort_order, c.created_at, c.updated_at,
-                               c.user_id as owner_id, c.is_encrypted,
-                               c.default_encryption, c.enforce_encryption,
-                               'OWNER' as permission
-                        FROM collections c
-                        WHERE c.user_id = ?
-                    )
-                    UNION ALL
-                    (
-                        SELECT c.id, c.name, c.sort_order, c.created_at, c.updated_at,
-                               c.user_id as owner_id, c.is_encrypted,
-                               c.default_encryption, c.enforce_encryption,
-                               cs.permission as permission
-                        FROM collections c
-                        INNER JOIN collection_shares cs ON c.id = cs.collection_id
-                        WHERE cs.shared_with_user_id = ?
-                    )
-                    ORDER BY sort_order ASC, updated_at DESC`,
-                    [userId, userId]
-                ),
-                pool.execute(
-                    `(
-                        SELECT p.id, p.title, p.updated_at, p.parent_id, p.sort_order,
-                               p.collection_id, p.is_encrypted, p.share_allowed, p.user_id,
-                               p.icon, p.cover_image, p.cover_position, p.horizontal_padding
-                        FROM pages p
-                        INNER JOIN collections c ON p.collection_id = c.id
-                        WHERE c.user_id = ?
-                    )
-                    UNION ALL
-                    (
-                        SELECT p.id, p.title, p.updated_at, p.parent_id, p.sort_order,
-                               p.collection_id, p.is_encrypted, p.share_allowed, p.user_id,
-                               p.icon, p.cover_image, p.cover_position, p.horizontal_padding
-                        FROM pages p
-                        INNER JOIN collection_shares cs ON p.collection_id = cs.collection_id
-                        WHERE cs.shared_with_user_id = ?
-                          AND NOT (p.is_encrypted = 1 AND p.share_allowed = 0 AND p.user_id != ?)
-                    )
-                    ORDER BY collection_id ASC, parent_id IS NULL DESC, sort_order ASC, updated_at DESC`,
-                    [userId, userId, userId]
-                )
-            ]);
+            // DB 접근은 repo에서만 수행 (접근제어 SQL 정책 중앙화 포함)
+            const { userRow, collectionsRaw, pageRows, shareCountMap } = await bootstrapRepo.getBootstrapRows(userId);
 
-            const user = userRows[0]?.[0]
+            const user = userRow
                 ? {
-                    id: userRows[0][0].id,
-                    username: userRows[0][0].username,
-                    theme: userRows[0][0].theme || 'default'
+			        id: userRow.id,
+			        username: userRow.username,
+			        theme: userRow.theme || 'default'
                 }
                 : null;
-
-            const collectionsRaw = collectionRows[0] || [];
-            const collectionIds = collectionsRaw.map(row => row.id);
-            let shareCountMap = {};
-
-            if (collectionIds.length > 0) {
-                const placeholders = collectionIds.map(() => '?').join(',');
-                const [shareCounts] = await pool.execute(
-                    `SELECT collection_id, COUNT(*) as share_count
-                     FROM collection_shares
-                     WHERE collection_id IN (${placeholders})
-                     GROUP BY collection_id`,
-                    collectionIds
-                );
-
-                shareCountMap = shareCounts.reduce((map, row) => {
-                    map[row.collection_id] = row.share_count;
-                    return map;
-                }, {});
-            }
 
             const collections = collectionsRaw.map((row) => ({
                 id: row.id,
@@ -111,7 +43,7 @@ module.exports = (dependencies) => {
                 enforceEncryption: Boolean(row.enforce_encryption)
             }));
 
-            const pages = (pageRows[0] || []).map((row) => ({
+            const pages = (pageRows || []).map((row) => ({
                 id: row.id,
                 title: row.title || "제목 없음",
                 updatedAt: toIsoString(row.updated_at),
