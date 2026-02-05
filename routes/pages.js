@@ -89,6 +89,20 @@ module.exports = (dependencies) => {
 	}
 
 	/**
+	 * 보안: WebSocket 컬렉션 브로드캐스트 시 페이지 가시성(객체 수준 권한)을 함께 전달
+	 * - 비공유 암호화 페이지(share_allowed=0)는 생성자만 볼 수 있어야 하므로,
+	 *   collection 단위 이벤트라도 수신자별 필터링이 필요
+	 */
+	function wsPageVisibilityFromRow(row) {
+		const ownerUserId = Number(row && row.user_id);
+		return {
+			ownerUserId,
+			isEncrypted: Boolean(row && row.is_encrypted === 1),
+			shareAllowed: Boolean(row && row.share_allowed === 1)
+		};
+	}
+
+	/**
      * 보안: 외부 리소스(이미지 프록시/북마크 메타데이터) 요청 전용 레이트리밋
      * - 서버 아웃바운드 트래픽/SSRF 표면을 일반 API보다 더 강하게 제어
      * - key: userId + clientIp (계정 공유/토큰 유출 상황에서도 폭주 완화)
@@ -698,7 +712,7 @@ module.exports = (dependencies) => {
         try {
             const [rows] = await pool.execute(
                 `SELECT id, title, content, encryption_salt, encrypted_content,
-                        created_at, updated_at, parent_id, sort_order, collection_id, is_encrypted, user_id, icon,
+                        created_at, updated_at, parent_id, sort_order, collection_id, is_encrypted, share_allowed, user_id, icon,
                         horizontal_padding
                  FROM pages
                  WHERE id = ?`,
@@ -827,7 +841,7 @@ module.exports = (dependencies) => {
                     pageId: id,
                     field: 'title',
                     value: newTitle
-                });
+                }, null, { pageVisibility: wsPageVisibilityFromRow(existing) });
             }
 
             if (iconFromBody !== undefined && newIcon !== existing.icon) {
@@ -835,7 +849,7 @@ module.exports = (dependencies) => {
                     pageId: id,
                     field: 'icon',
                     value: newIcon
-                });
+                }, null, { pageVisibility: wsPageVisibilityFromRow(existing) });
             }
 
             if (horizontalPaddingFromBody !== undefined && newHorizontalPadding !== existing.horizontal_padding) {
@@ -843,7 +857,7 @@ module.exports = (dependencies) => {
                     pageId: id,
                     field: 'horizontalPadding',
                     value: newHorizontalPadding
-                });
+                }, null, { pageVisibility: wsPageVisibilityFromRow(existing) });
             }
 
             res.json(page);
@@ -1027,20 +1041,18 @@ module.exports = (dependencies) => {
 
         try {
             const [rows] = await pool.execute(
-                `SELECT collection_id FROM pages WHERE id = ?`,
+            	`SELECT collection_id, is_encrypted, share_allowed, user_id FROM pages WHERE id = ?`,
                 [id]
             );
 
-            if (!rows.length) {
+            if (!rows.length)
                 return res.status(404).json({ error: "페이지를 찾을 수 없습니다." });
-            }
 
             const collectionId = rows[0].collection_id;
             const { permission } = await getCollectionPermission(collectionId, userId);
 
-            if (!permission || permission === 'READ') {
+            if (!permission || permission === 'READ')
                 return res.status(403).json({ error: "페이지를 수정할 권한이 없습니다." });
-            }
 
             const now = new Date();
             const nowStr = formatDateForDb(now);
@@ -1055,7 +1067,7 @@ module.exports = (dependencies) => {
                 pageId: id,
                 field: 'title',
                 value: sanitizedTitle
-            });
+            }, null, { pageVisibility: wsPageVisibilityFromRow(rows[0]) });
 
             res.json({ success: true, title: sanitizedTitle });
         } catch (error) {
@@ -1376,18 +1388,18 @@ module.exports = (dependencies) => {
 
             // 권한 확인
             const [rows] = await pool.execute(
-                `SELECT p.collection_id, p.cover_image FROM pages p WHERE p.id = ?`,
+            	`SELECT p.collection_id, p.cover_image, p.is_encrypted, p.share_allowed, p.user_id FROM pages p WHERE p.id = ?`,
                 [id]
             );
+
 			if (!rows.length) {
 				cleanupUpload();
                 return res.status(404).json({ error: "페이지를 찾을 수 없습니다." });
             }
 
             const { permission } = await getCollectionPermission(rows[0].collection_id, userId);
-            if (!permission || permission === 'READ') {
+            if (!permission || permission === 'READ')
                 return res.status(403).json({ error: "권한이 없습니다." });
-            }
 
             // DB 업데이트
             const coverPath = `${userId}/${req.file.filename}`;
@@ -1401,7 +1413,7 @@ module.exports = (dependencies) => {
                 pageId: id,
                 field: 'coverImage',
                 value: coverPath
-            }, userId);
+            }, userId, { pageVisibility: wsPageVisibilityFromRow(rows[0]) });
 
             console.log("POST /api/pages/:id/cover 업로드 완료:", coverPath);
             res.json({ coverImage: coverPath });
@@ -1428,17 +1440,16 @@ module.exports = (dependencies) => {
         try {
             // 권한 확인
             const [rows] = await pool.execute(
-                `SELECT p.collection_id, p.cover_image FROM pages p WHERE p.id = ?`,
+            	`SELECT p.collection_id, p.cover_image, p.is_encrypted, p.share_allowed, p.user_id FROM pages p WHERE p.id = ?`,
                 [id]
             );
-            if (!rows.length) {
+
+            if (!rows.length)
                 return res.status(404).json({ error: "페이지를 찾을 수 없습니다." });
-            }
 
             const { permission } = await getCollectionPermission(rows[0].collection_id, userId);
-            if (!permission || permission === 'READ') {
+            if (!permission || permission === 'READ')
                 return res.status(403).json({ error: "권한이 없습니다." });
-            }
 
             // 업데이트할 필드 결정
             const updates = [];
@@ -1498,14 +1509,14 @@ module.exports = (dependencies) => {
                     pageId: id,
                     field: 'coverImage',
                     value: normalizedCoverImage
-                }, userId);
+                }, userId, { pageVisibility: wsPageVisibilityFromRow(rows[0]) });
             }
             if (typeof coverPosition === 'number') {
                 wsBroadcastToCollection(rows[0].collection_id, 'metadata-change', {
                     pageId: id,
                     field: 'coverPosition',
                     value: Math.max(0, Math.min(100, coverPosition))
-                }, userId);
+                }, userId, { pageVisibility: wsPageVisibilityFromRow(rows[0]) });
             }
 
             console.log("PUT /api/pages/:id/cover 업데이트 완료");
@@ -1527,17 +1538,16 @@ module.exports = (dependencies) => {
         try {
             // 권한 확인
             const [rows] = await pool.execute(
-                `SELECT p.collection_id, p.cover_image FROM pages p WHERE p.id = ?`,
+            	`SELECT p.collection_id, p.cover_image, p.is_encrypted, p.share_allowed, p.user_id FROM pages p WHERE p.id = ?`,
                 [id]
             );
-            if (!rows.length) {
+
+            if (!rows.length)
                 return res.status(404).json({ error: "페이지를 찾을 수 없습니다." });
-            }
 
             const { permission } = await getCollectionPermission(rows[0].collection_id, userId);
-            if (!permission || permission === 'READ') {
+            if (!permission || permission === 'READ')
                 return res.status(403).json({ error: "권한이 없습니다." });
-            }
 
             // DB 업데이트 (파일은 삭제하지 않고 사용자 이미지 탭에 유지)
             await pool.execute(
@@ -1550,7 +1560,7 @@ module.exports = (dependencies) => {
                 pageId: id,
                 field: 'coverImage',
                 value: null
-            }, userId);
+            }, userId, { pageVisibility: wsPageVisibilityFromRow(rows[0]) });
 
             console.log("DELETE /api/pages/:id/cover 제거 완료");
             res.json({ success: true });

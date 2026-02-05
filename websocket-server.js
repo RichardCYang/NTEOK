@@ -431,14 +431,24 @@ function wsBroadcastToPage(pageId, event, data, excludeUserId = null) {
 /**
  * WebSocket 브로드캐스트 (컬렉션)
  */
-function wsBroadcastToCollection(collectionId, event, data, excludeUserId = null) {
+function wsBroadcastToCollection(collectionId, event, data, excludeUserId = null, options = {}) {
     const connections = wsConnections.collections.get(collectionId);
     if (!connections) return;
+
+	// 보안: 공유 컬렉션 안에 비공유 암호화 페이지(share_allowed=0)가 존재할 수 있으므로,
+	// 컬렉션 단위 브로드캐스트라도 객체 수준(page) 접근 제어를 재검증하여 메타데이터 누출을 방지
+	// - options.pageVisibility: { ownerUserId: number, isEncrypted: boolean, shareAllowed: boolean }
+	const pv = options && options.pageVisibility ? options.pageVisibility : null;
+	const restrictToOwner = pv && pv.isEncrypted === true && pv.shareAllowed === false && Number.isFinite(pv.ownerUserId);
 
     const message = JSON.stringify({ event, data });
 
     connections.forEach(conn => {
         if (excludeUserId && conn.userId === excludeUserId) return;
+
+        // 비공유 암호화 페이지는 생성자(소유자)에게만 이벤트 전달
+        if (restrictToOwner && conn.userId !== pv.ownerUserId) return;
+
         try {
             if (conn.ws.readyState === WebSocket.OPEN) {
                 conn.ws.send(message);
