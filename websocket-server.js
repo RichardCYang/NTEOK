@@ -438,10 +438,14 @@ function wsBroadcastToCollection(collectionId, event, data, excludeUserId = null
 	// 보안: 공유 컬렉션 안에 비공유 암호화 페이지(share_allowed=0)가 존재할 수 있으므로,
 	// 컬렉션 단위 브로드캐스트라도 객체 수준(page) 접근 제어를 재검증하여 메타데이터 누출을 방지
 	// - options.pageVisibility: { ownerUserId: number, isEncrypted: boolean, shareAllowed: boolean }
+	// - options.pageVisibilities: { [pageId]: { ownerUserId, isEncrypted, shareAllowed } } (pageIds 배열 필터링용)
 	const pv = options && options.pageVisibility ? options.pageVisibility : null;
 	const restrictToOwner = pv && pv.isEncrypted === true && pv.shareAllowed === false && Number.isFinite(pv.ownerUserId);
 
-    const message = JSON.stringify({ event, data });
+	const pvs = options && options.pageVisibilities ? options.pageVisibilities : null;
+	const shouldFilterPageIds = Boolean(pvs && data && Array.isArray(data.pageIds));
+
+    const baseMessage = shouldFilterPageIds ? null : JSON.stringify({ event, data });
 
     connections.forEach(conn => {
         if (excludeUserId && conn.userId === excludeUserId) return;
@@ -449,8 +453,28 @@ function wsBroadcastToCollection(collectionId, event, data, excludeUserId = null
         // 비공유 암호화 페이지는 생성자(소유자)에게만 이벤트 전달
         if (restrictToOwner && conn.userId !== pv.ownerUserId) return;
 
+        let payloadData = data;
+
+  		// pages-reordered 같은 pageIds 배열 이벤트는 수신자별로 숨김 페이지를 필터링
+  		if (shouldFilterPageIds) {
+ 			const original = data.pageIds;
+ 			const filtered = original.filter((pageId) => {
+				const v = pvs[pageId];
+				if (!v) return true;
+				const r = v && v.isEncrypted === true && v.shareAllowed === false && Number.isFinite(v.ownerUserId);
+				if (!r) return true;
+				return conn.userId === v.ownerUserId;
+ 			});
+
+ 			// 숨김 페이지만 포함된 이벤트는 굳이 전송하지 않음(존재 자체를 암시하지 않도록)
+ 			if (filtered.length === 0) return;
+
+ 			payloadData = Object.assign({}, data, { pageIds: filtered });
+  		}
+
         try {
-            if (conn.ws.readyState === WebSocket.OPEN) {
+			if (conn.ws.readyState === WebSocket.OPEN) {
+				const message = baseMessage || JSON.stringify({ event, data: payloadData });
                 conn.ws.send(message);
             }
         } catch (error) {

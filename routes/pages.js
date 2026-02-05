@@ -28,7 +28,8 @@ const { ipKeyGenerator } = erl;
 module.exports = (dependencies) => {
     const {
 		pool,
-        pagesRepo,
+		pagesRepo,
+        pageSqlPolicy,
         authMiddleware,
         toIsoString,
 		sanitizeInput,
@@ -890,22 +891,31 @@ module.exports = (dependencies) => {
 
             await conn.beginTransaction();
 
-            // 모든 페이지가 같은 컬렉션, 같은 부모에 속하는지 확인
-            const parentIdCondition = parentId ? `parent_id = ?` : `parent_id IS NULL`;
+            // 모든 페이지가 같은 컬렉션, 같은 부모에 속하는지 확인 + (보안) 페이지 가시성 정책 적용
+            const parentIdCondition = parentId ? `p.parent_id = ?` : `p.parent_id IS NULL`;
             const placeholders = pageIds.map(() => '?').join(',');
             const params = parentId
                 ? [collectionId, parentId, ...pageIds]
                 : [collectionId, ...pageIds];
 
-            const [rows] = await conn.execute(
-                `SELECT id FROM pages WHERE collection_id = ? AND ${parentIdCondition} AND id IN (${placeholders})`,
-                params
+            const vis = pageSqlPolicy.andVisible({ alias: "p", viewerUserId: userId });
+
+			const [rows] = await conn.execute(
+				`SELECT p.id, p.user_id, p.is_encrypted, p.share_allowed
+                		FROM pages p
+                  		WHERE p.collection_id = ? AND ${parentIdCondition} AND p.id IN (${placeholders})
+                    	${vis.sql}`,
+                [...params, ...vis.params]
             );
 
             if (rows.length !== pageIds.length) {
                 await conn.rollback();
-                return res.status(400).json({ error: "일부 페이지가 조건에 맞지 않습니다." });
-            }
+                return res.status(400).json({ error: "일부 페이지가 조건에 맞지 않거나 접근 권한이 없습니다." });
+			}
+
+            // 보안: pages-reordered 이벤트에서 비공유 암호화 페이지 메타데이터(존재/ID) 누출 방지용 맵
+            const pageVisibilities = Object.create(null);
+            for (const r of rows) pageVisibilities[r.id] = wsPageVisibilityFromRow(r);
 
             // 순서 업데이트
             for (let i = 0; i < pageIds.length; i++) {
@@ -922,7 +932,7 @@ module.exports = (dependencies) => {
             wsBroadcastToCollection(collectionId, 'pages-reordered', {
                 parentId,
                 pageIds
-            }, userId);
+            }, userId, { pageVisibilities });
 
             res.json({ ok: true, updated: pageIds.length });
 
