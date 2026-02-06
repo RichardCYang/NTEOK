@@ -108,6 +108,7 @@ import { DragHandle } from './drag-handle-extension.js';
 
 // ProseMirror Plugin import
 import { Plugin, PluginKey } from "prosemirror-state";
+import { Decoration, DecorationSet } from "prosemirror-view";
 
 // 전역 Tiptap 번들에서 Editor / StarterKit 가져오기
 const Editor = Tiptap.Core.Editor;
@@ -150,6 +151,59 @@ async function handleImageUpload(editor, file) {
         caption: ''
     }).run();
 }
+
+/**
+ * Placeholder 익스텐션
+ * 에디터가 비어있을 때 안내 문구를 표시
+ */
+const Placeholder = Extension.create({
+    name: 'placeholder',
+    addOptions() {
+        return {
+            placeholder: '명령을 사용하려면 / 를 입력하세요',
+            showOnlyCurrent: true,
+            showOnlyWhenEditable: true,
+        }
+    },
+    addProseMirrorPlugins() {
+        return [
+            new Plugin({
+                key: new PluginKey('placeholder'),
+                props: {
+                    decorations: (state) => {
+                        const { doc, selection } = state;
+                        const { isEditable } = this.editor;
+
+                        if (this.options.showOnlyWhenEditable && !isEditable) {
+                            return null;
+                        }
+
+                        if (!this.editor.isFocused) {
+                            return null;
+                        }
+
+                        const { $anchor } = selection;
+                        const node = $anchor.parent;
+
+                        // 현재 블록이 텍스트 블록이고 비어있는지 확인
+                        if (node.type.isTextblock && node.content.size === 0) {
+                            const pos = $anchor.before($anchor.depth);
+                            const decoration = Decoration.node(pos, pos + node.nodeSize, {
+                                class: 'is-empty',
+                                'data-placeholder': typeof this.options.placeholder === 'function'
+                                    ? this.options.placeholder({ node, pos, editor: this.editor })
+                                    : this.options.placeholder,
+                            });
+                            return DecorationSet.create(doc, [decoration]);
+                        }
+
+                        return null;
+                    },
+                },
+            }),
+        ];
+    },
+});
 
 /**
  * 클립보드 이미지 붙여넣기 처리를 위한 익스텐션
@@ -1261,6 +1315,11 @@ export function initEditor() {
             FileBlock,
             DragHandle,
             ImagePaste,
+            Placeholder.configure({
+                placeholder: '명령을 사용하려면 / 를 입력하세요',
+                showOnlyCurrent: true,
+                showOnlyWhenEditable: true,
+            }),
         ],
         content: EXAMPLE_CONTENT,
         onSelectionUpdate() {

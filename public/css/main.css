@@ -878,8 +878,13 @@ body {
     transition: background-color 0.1s ease;
 }
 
-.editor .ProseMirror p.is-editor-empty:first-child::before {
+/* Tiptap Placeholder extension 스타일 */
+.editor .ProseMirror .is-empty::before {
+    content: attr(data-placeholder);
+    float: left;
     color: var(--placeholder-color);
+    pointer-events: none;
+    height: 0;
 }
 
 .editor .ProseMirror p:hover {
