@@ -1009,9 +1009,6 @@ export async function toggleEditMode() {
         if (titleInput) {
             titleInput.removeAttribute("readonly");
         }
-        if (toolbar) {
-            toolbar.classList.add("visible");
-        }
 
         modeToggleBtn.classList.add("write-mode");
         if (iconEl) {

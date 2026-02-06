@@ -158,430 +158,73 @@
                     </div>
                     <div class="editor-toolbar">
                         <!-- Undo/Redo 버튼 -->
-                        <button
-                            type="button"
-                            data-command="undo"
-                            title="실행 취소 (Ctrl+Z)"
-                            aria-label="실행 취소">
+                        <button type="button" data-command="undo" title="실행 취소">
                             <i class="fa-solid fa-rotate-left"></i>
                         </button>
-                        <button
-                            type="button"
-                            data-command="redo"
-                            title="다시 실행 (Ctrl+Y)"
-                            aria-label="다시 실행">
+                        <button type="button" data-command="redo" title="다시 실행">
                             <i class="fa-solid fa-rotate-right"></i>
                         </button>
                         <span class="toolbar-separator"></span>
 
-                        <button type="button" data-command="bold">
-                            <b>B</b>
-                        </button>
-                        <button type="button" data-command="italic">
-                            <i>I</i>
-                        </button>
-                        <button type="button" data-command="strike">
-                            <s>S</s>
-                        </button>
+                        <button type="button" data-command="bold"><b>B</b></button>
+                        <button type="button" data-command="italic"><i>I</i></button>
+                        <button type="button" data-command="strike"><s>S</s></button>
 
-                        <!-- 텍스트 색상 드롭다운 -->
                         <div class="toolbar-color-dropdown" data-role="color-dropdown">
-                            <!-- 드롭다운 토글 버튼 -->
-                            <button
-                                type="button"
-                                class="toolbar-button"
-                                data-command="toggleColorDropdown"
-                                title="텍스트 색상"
-                                aria-label="텍스트 색상"
-                            >
+                            <button type="button" class="toolbar-button" data-command="toggleColorDropdown" title="색상">
                                 <i class="fa-solid fa-font"></i>
-                                <i class="fa-solid fa-caret-down caret-icon"></i>
                             </button>
-
-                            <!-- 실제 색상 리스트 메뉴 -->
                             <div class="toolbar-color-menu" data-color-menu hidden>
-                                <!-- 기본 색상 -->
-                                <button type="button" class="color-option" data-command="setColor" data-color="#000000">
-                                    <span class="color-swatch" style="background-color: #000000"></span>
-                                    <span>검정</span>
-                                </button>
-                                <button type="button" class="color-option" data-command="setColor" data-color="#374151">
-                                    <span class="color-swatch" style="background-color: #374151"></span>
-                                    <span>진회색</span>
-                                </button>
-                                <button type="button" class="color-option" data-command="setColor" data-color="#6b7280">
-                                    <span class="color-swatch" style="background-color: #6b7280"></span>
-                                    <span>회색</span>
-                                </button>
-                                <button type="button" class="color-option" data-command="setColor" data-color="#9ca3af">
-                                    <span class="color-swatch" style="background-color: #9ca3af"></span>
-                                    <span>연회색</span>
-                                </button>
-                                <button type="button" class="color-option" data-command="setColor" data-color="#d1d5db">
-                                    <span class="color-swatch" style="background-color: #d1d5db"></span>
-                                    <span>밝은 회색</span>
-                                </button>
-
-                                <!-- 빨강 계열 -->
-                                <button type="button" class="color-option" data-command="setColor" data-color="#7f1d1d">
-                                    <span class="color-swatch" style="background-color: #7f1d1d"></span>
-                                    <span>진한 빨강</span>
-                                </button>
-                                <button type="button" class="color-option" data-command="setColor" data-color="#b91c1c">
-                                    <span class="color-swatch" style="background-color: #b91c1c"></span>
-                                    <span>어두운 빨강</span>
-                                </button>
-                                <button type="button" class="color-option" data-command="setColor" data-color="#dc2626">
-                                    <span class="color-swatch" style="background-color: #dc2626"></span>
-                                    <span>빨강</span>
-                                </button>
-                                <button type="button" class="color-option" data-command="setColor" data-color="#ef4444">
-                                    <span class="color-swatch" style="background-color: #ef4444"></span>
-                                    <span>밝은 빨강</span>
-                                </button>
-                                <button type="button" class="color-option" data-command="setColor" data-color="#fca5a5">
-                                    <span class="color-swatch" style="background-color: #fca5a5"></span>
-                                    <span>연한 빨강</span>
-                                </button>
-
-                                <!-- 주황 계열 -->
-                                <button type="button" class="color-option" data-command="setColor" data-color="#7c2d12">
-                                    <span class="color-swatch" style="background-color: #7c2d12"></span>
-                                    <span>진한 주황</span>
-                                </button>
-                                <button type="button" class="color-option" data-command="setColor" data-color="#c2410c">
-                                    <span class="color-swatch" style="background-color: #c2410c"></span>
-                                    <span>어두운 주황</span>
-                                </button>
-                                <button type="button" class="color-option" data-command="setColor" data-color="#ea580c">
-                                    <span class="color-swatch" style="background-color: #ea580c"></span>
-                                    <span>주황</span>
-                                </button>
-                                <button type="button" class="color-option" data-command="setColor" data-color="#f97316">
-                                    <span class="color-swatch" style="background-color: #f97316"></span>
-                                    <span>밝은 주황</span>
-                                </button>
-                                <button type="button" class="color-option" data-command="setColor" data-color="#fdba74">
-                                    <span class="color-swatch" style="background-color: #fdba74"></span>
-                                    <span>연한 주황</span>
-                                </button>
-
-                                <!-- 노랑 계열 -->
-                                <button type="button" class="color-option" data-command="setColor" data-color="#713f12">
-                                    <span class="color-swatch" style="background-color: #713f12"></span>
-                                    <span>진한 노랑</span>
-                                </button>
-                                <button type="button" class="color-option" data-command="setColor" data-color="#ca8a04">
-                                    <span class="color-swatch" style="background-color: #ca8a04"></span>
-                                    <span>어두운 노랑</span>
-                                </button>
-                                <button type="button" class="color-option" data-command="setColor" data-color="#eab308">
-                                    <span class="color-swatch" style="background-color: #eab308"></span>
-                                    <span>노랑</span>
-                                </button>
-                                <button type="button" class="color-option" data-command="setColor" data-color="#facc15">
-                                    <span class="color-swatch" style="background-color: #facc15"></span>
-                                    <span>밝은 노랑</span>
-                                </button>
-                                <button type="button" class="color-option" data-command="setColor" data-color="#fde047">
-                                    <span class="color-swatch" style="background-color: #fde047"></span>
-                                    <span>연한 노랑</span>
-                                </button>
-
-                                <!-- 초록 계열 -->
-                                <button type="button" class="color-option" data-command="setColor" data-color="#14532d">
-                                    <span class="color-swatch" style="background-color: #14532d"></span>
-                                    <span>진한 초록</span>
-                                </button>
-                                <button type="button" class="color-option" data-command="setColor" data-color="#15803d">
-                                    <span class="color-swatch" style="background-color: #15803d"></span>
-                                    <span>어두운 초록</span>
-                                </button>
-                                <button type="button" class="color-option" data-command="setColor" data-color="#16a34a">
-                                    <span class="color-swatch" style="background-color: #16a34a"></span>
-                                    <span>초록</span>
-                                </button>
-                                <button type="button" class="color-option" data-command="setColor" data-color="#22c55e">
-                                    <span class="color-swatch" style="background-color: #22c55e"></span>
-                                    <span>밝은 초록</span>
-                                </button>
-                                <button type="button" class="color-option" data-command="setColor" data-color="#86efac">
-                                    <span class="color-swatch" style="background-color: #86efac"></span>
-                                    <span>연한 초록</span>
-                                </button>
-
-                                <!-- 청록 계열 -->
-                                <button type="button" class="color-option" data-command="setColor" data-color="#134e4a">
-                                    <span class="color-swatch" style="background-color: #134e4a"></span>
-                                    <span>진한 청록</span>
-                                </button>
-                                <button type="button" class="color-option" data-command="setColor" data-color="#0f766e">
-                                    <span class="color-swatch" style="background-color: #0f766e"></span>
-                                    <span>어두운 청록</span>
-                                </button>
-                                <button type="button" class="color-option" data-command="setColor" data-color="#14b8a6">
-                                    <span class="color-swatch" style="background-color: #14b8a6"></span>
-                                    <span>청록</span>
-                                </button>
-                                <button type="button" class="color-option" data-command="setColor" data-color="#2dd4bf">
-                                    <span class="color-swatch" style="background-color: #2dd4bf"></span>
-                                    <span>밝은 청록</span>
-                                </button>
-                                <button type="button" class="color-option" data-command="setColor" data-color="#99f6e4">
-                                    <span class="color-swatch" style="background-color: #99f6e4"></span>
-                                    <span>연한 청록</span>
-                                </button>
-
-                                <!-- 파랑 계열 -->
-                                <button type="button" class="color-option" data-command="setColor" data-color="#1e3a8a">
-                                    <span class="color-swatch" style="background-color: #1e3a8a"></span>
-                                    <span>진한 파랑</span>
-                                </button>
-                                <button type="button" class="color-option" data-command="setColor" data-color="#1d4ed8">
-                                    <span class="color-swatch" style="background-color: #1d4ed8"></span>
-                                    <span>어두운 파랑</span>
-                                </button>
-                                <button type="button" class="color-option" data-command="setColor" data-color="#2563eb">
-                                    <span class="color-swatch" style="background-color: #2563eb"></span>
-                                    <span>파랑</span>
-                                </button>
-                                <button type="button" class="color-option" data-command="setColor" data-color="#3b82f6">
-                                    <span class="color-swatch" style="background-color: #3b82f6"></span>
-                                    <span>밝은 파랑</span>
-                                </button>
-                                <button type="button" class="color-option" data-command="setColor" data-color="#93c5fd">
-                                    <span class="color-swatch" style="background-color: #93c5fd"></span>
-                                    <span>연한 파랑</span>
-                                </button>
-
-                                <!-- 보라 계열 -->
-                                <button type="button" class="color-option" data-command="setColor" data-color="#581c87">
-                                    <span class="color-swatch" style="background-color: #581c87"></span>
-                                    <span>진한 보라</span>
-                                </button>
-                                <button type="button" class="color-option" data-command="setColor" data-color="#7e22ce">
-                                    <span class="color-swatch" style="background-color: #7e22ce"></span>
-                                    <span>어두운 보라</span>
-                                </button>
-                                <button type="button" class="color-option" data-command="setColor" data-color="#9333ea">
-                                    <span class="color-swatch" style="background-color: #9333ea"></span>
-                                    <span>보라</span>
-                                </button>
-                                <button type="button" class="color-option" data-command="setColor" data-color="#a855f7">
-                                    <span class="color-swatch" style="background-color: #a855f7"></span>
-                                    <span>밝은 보라</span>
-                                </button>
-                                <button type="button" class="color-option" data-command="setColor" data-color="#d8b4fe">
-                                    <span class="color-swatch" style="background-color: #d8b4fe"></span>
-                                    <span>연한 보라</span>
-                                </button>
-
-                                <!-- 분홍 계열 -->
-                                <button type="button" class="color-option" data-command="setColor" data-color="#831843">
-                                    <span class="color-swatch" style="background-color: #831843"></span>
-                                    <span>진한 분홍</span>
-                                </button>
-                                <button type="button" class="color-option" data-command="setColor" data-color="#be185d">
-                                    <span class="color-swatch" style="background-color: #be185d"></span>
-                                    <span>어두운 분홍</span>
-                                </button>
-                                <button type="button" class="color-option" data-command="setColor" data-color="#db2777">
-                                    <span class="color-swatch" style="background-color: #db2777"></span>
-                                    <span>분홍</span>
-                                </button>
-                                <button type="button" class="color-option" data-command="setColor" data-color="#ec4899">
-                                    <span class="color-swatch" style="background-color: #ec4899"></span>
-                                    <span>밝은 분홍</span>
-                                </button>
-                                <button type="button" class="color-option" data-command="setColor" data-color="#f9a8d4">
-                                    <span class="color-swatch" style="background-color: #f9a8d4"></span>
-                                    <span>연한 분홍</span>
-                                </button>
-
-                                <!-- 색상 초기화 -->
-                                <button
-                                    type="button"
-                                    class="color-option color-option--clear"
-                                    data-command="unsetColor"
-                                    title="텍스트 색상 초기화"
-                                >
-                                    <i class="fa-solid fa-eraser"></i>
-                                    <span>색상 초기화</span>
-                                </button>
+                                <!-- 색상 옵션들 동일 -->
+                                <button type="button" class="color-option" data-command="setColor" data-color="#000000"><span class="color-swatch" style="background-color: #000000"></span><span>검정</span></button>
+                                <button type="button" class="color-option" data-command="setColor" data-color="#ef4444"><span class="color-swatch" style="background-color: #ef4444"></span><span>빨강</span></button>
+                                <button type="button" class="color-option" data-command="setColor" data-color="#22c55e"><span class="color-swatch" style="background-color: #22c55e"></span><span>초록</span></button>
+                                <button type="button" class="color-option" data-command="setColor" data-color="#3b82f6"><span class="color-swatch" style="background-color: #3b82f6"></span><span>파랑</span></button>
+                                <button type="button" class="color-option" data-command="unsetColor"><i class="fa-solid fa-eraser"></i><span>초기화</span></button>
                             </div>
                         </div>
 
-                        <!-- 폰트 패밀리 드롭다운 -->
                         <div class="toolbar-color-dropdown" data-role="font-dropdown">
-                            <!-- 드롭다운 토글 버튼 -->
-                            <button
-                                type="button"
-                                class="toolbar-button"
-                                data-command="toggleFontDropdown"
-                                title="폰트 변경"
-                                aria-label="폰트 변경"
-                            >
+                            <button type="button" class="toolbar-button" data-command="toggleFontDropdown" title="폰트">
                                 <i class="fa-solid fa-text-height"></i>
-                                <i class="fa-solid fa-caret-down caret-icon"></i>
                             </button>
-
-                            <!-- 실제 폰트 리스트 메뉴 -->
-                            <div class="toolbar-font-menu" data-font-menu hidden>
-                                <!-- 폰트 옵션은 JavaScript에서 동적으로 생성됨 -->
-                            </div>
+                            <div class="toolbar-font-menu" data-font-menu hidden></div>
                         </div>
 
                         <span class="toolbar-separator"></span>
-
                         <button type="button" data-command="h1">H1</button>
                         <button type="button" data-command="h2">H2</button>
-                        <button type="button" data-command="h3">H3</button>
-                        <button type="button" data-command="h4">H4</button>
-                        <button type="button" data-command="h5">H5</button>
 
-                        <button type="button" data-command="bulletList">
-                            • 리스트
-                        </button>
-                        <button type="button" data-command="orderedList">
-                            1. 리스트
+                        <!-- 확장 메뉴 버튼 -->
+                        <button type="button" data-command="toggleMoreMenu" title="더보기">
+                            <i class="fa-solid fa-ellipsis"></i>
                         </button>
 
-                        <!-- 정렬 버튼들 (Left / Center / Right / Justify) -->
-                        <span class="toolbar-separator"></span>
-
-                        <!-- 왼쪽 정렬 -->
-                        <button
-                            type="button"
-                            data-command="alignLeft"
-                            title="왼쪽 정렬"
-                            aria-label="왼쪽 정렬"
-                        >
-                            <i class="fa-solid fa-align-left"></i>
-                        </button>
-
-                        <!-- 가운데 정렬 -->
-                        <button
-                            type="button"
-                            data-command="alignCenter"
-                            title="가운데 정렬"
-                            aria-label="가운데 정렬"
-                        >
-                            <i class="fa-solid fa-align-center"></i>
-                        </button>
-
-                        <!-- 오른쪽 정렬 -->
-                        <button
-                            type="button"
-                            data-command="alignRight"
-                            title="오른쪽 정렬"
-                            aria-label="오른쪽 정렬"
-                        >
-                            <i class="fa-solid fa-align-right"></i>
-                        </button>
-
-                        <!-- 양쪽 정렬 -->
-                        <button
-                            type="button"
-                            data-command="alignJustify"
-                            title="양쪽 정렬"
-                            aria-label="양쪽 정렬"
-                        >
-                            <i class="fa-solid fa-align-justify"></i>
-                        </button>
-
-                        <span class="toolbar-separator"></span>
-
-                        <!-- 여백 조절 드롭다운 -->
-                        <div class="toolbar-padding-dropdown" data-role="padding-dropdown">
-                            <button
-                                type="button"
-                                class="toolbar-button"
-                                data-command="togglePaddingDropdown"
-                                title="좌우 여백 조절"
-                                aria-label="좌우 여백 조절"
-                            >
-                                <i class="fa-solid fa-arrows-left-right"></i>
-                                <i class="fa-solid fa-caret-down caret-icon"></i>
-                            </button>
-
-                            <div class="toolbar-padding-menu" data-padding-menu hidden>
-                                <!-- 기본값 -->
-                                <button
-                                    type="button"
-                                    class="padding-option"
-                                    data-command="setPadding"
-                                    data-padding="default"
-                                >
-                                    <span>기본값</span>
-                                </button>
-
-                                <!-- 프리셋 옵션 -->
-                                <button
-                                    type="button"
-                                    class="padding-option"
-                                    data-command="setPadding"
-                                    data-padding="60"
-                                >
-                                    <span>좁게 (60px)</span>
-                                </button>
-                                <button
-                                    type="button"
-                                    class="padding-option"
-                                    data-command="setPadding"
-                                    data-padding="120"
-                                >
-                                    <span>보통 (120px)</span>
-                                </button>
-                                <button
-                                    type="button"
-                                    class="padding-option"
-                                    data-command="setPadding"
-                                    data-padding="180"
-                                >
-                                    <span>넓게 (180px)</span>
-                                </button>
-                                <button
-                                    type="button"
-                                    class="padding-option"
-                                    data-command="setPadding"
-                                    data-padding="240"
-                                >
-                                    <span>매우 넓게 (240px)</span>
-                                </button>
-
-                                <div class="padding-divider"></div>
-
-                                <!-- 커스텀 입력 -->
-                                <div class="padding-custom">
-                                    <label for="padding-custom-input">커스텀 (px)</label>
-                                    <div class="padding-custom-controls">
-                                        <input
-                                            type="number"
-                                            id="padding-custom-input"
-                                            min="0"
-                                            max="300"
-                                            step="10"
-                                            placeholder="60-240"
-                                        />
-                                        <button
-                                            type="button"
-                                            data-command="applyCustomPadding"
-                                        >
-                                            <i class="fa-solid fa-check"></i>
-                                        </button>
-                                    </div>
-                                </div>
+                        <!-- 확장 메뉴 (Dropdown) -->
+                        <div class="toolbar-more-menu hidden">
+                            <div class="more-menu-group">
+                                <button type="button" data-command="h3">H3</button>
+                                <button type="button" data-command="h4">H4</button>
+                                <button type="button" data-command="h5">H5</button>
+                            </div>
+                            <div class="more-menu-separator"></div>
+                            <div class="more-menu-group">
+                                <button type="button" data-command="bulletList"><i class="fa-solid fa-list-ul"></i> 리스트</button>
+                                <button type="button" data-command="orderedList"><i class="fa-solid fa-list-ol"></i> 번호</button>
+                            </div>
+                            <div class="more-menu-separator"></div>
+                            <div class="more-menu-group horizontal">
+                                <button type="button" data-command="alignLeft"><i class="fa-solid fa-align-left"></i></button>
+                                <button type="button" data-command="alignCenter"><i class="fa-solid fa-align-center"></i></button>
+                                <button type="button" data-command="alignRight"><i class="fa-solid fa-align-right"></i></button>
+                                <button type="button" data-command="alignJustify"><i class="fa-solid fa-align-justify"></i></button>
+                            </div>
+                            <div class="more-menu-separator"></div>
+                            <div class="more-menu-group">
+                                <button type="button" data-command="blockquote"><i class="fa-solid fa-quote-left"></i> 인용</button>
+                                <button type="button" data-command="codeBlock"><i class="fa-solid fa-code"></i> 코드</button>
                             </div>
                         </div>
-
-                        <span class="toolbar-separator"></span>
-
-                        <button type="button" data-command="blockquote">
-                            “ 인용
-                        </button>
-                        <button type="button" data-command="codeBlock">
-                            { } 코드
-                        </button>
                     </div>
 
                     <!-- 페이지 업데이트 시간 표시 -->

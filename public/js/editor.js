@@ -1265,12 +1265,19 @@ export function initEditor() {
         content: EXAMPLE_CONTENT,
         onSelectionUpdate() {
             updateToolbarState(editor);
+            // 마우스가 눌려있지 않을 때만 (키보드 선택 등) 즉시 업데이트
+            if (!isMouseDown) {
+                updateBubbleMenuPosition(editor);
+            }
             // 문서 변경 없이 커서만 이동해도(←/→ 클릭 이동) 메뉴 컨텍스트가 깨지면 닫혀야 함
             if (slashState.active)
             	syncSlashMenu(editor);
         },
         onTransaction({ transaction }) {
             updateToolbarState(editor);
+            if (!isMouseDown) {
+                updateBubbleMenuPosition(editor);
+            }
 
             // 크기 조절 중이 아닐 때만 핸들 재생성
             if (!isResizingTable) {
@@ -1298,13 +1305,145 @@ export function initEditor() {
 			// 슬래시 메뉴 동기화(삭제/이동/필터 등)
 			if (slashState.active)
 				syncSlashMenu(editor);
+            
+            if (!isMouseDown) {
+                updateBubbleMenuPosition(editor);
+            }
         }
     });
 
     // 테이블 컨텍스트 메뉴 바인딩
     bindTableContextMenu(editor);
 
+    // 마우스 드래그 종료 시 버블 메뉴 표시
+    const proseMirrorEl = document.querySelector("#editor .ProseMirror");
+    if (proseMirrorEl) {
+        proseMirrorEl.addEventListener("mousedown", () => {
+            isMouseDown = true;
+        });
+        window.addEventListener("mouseup", () => {
+            if (isMouseDown) {
+                isMouseDown = false;
+                // 약간의 지연을 주어 selection이 확정된 후 위치 계산
+                setTimeout(() => {
+                    updateBubbleMenuPosition(editor);
+                }, 10);
+            }
+        });
+    }
+
+    // 스크롤 시 버블 메뉴 위치 업데이트
+    document.querySelector(".editor")?.addEventListener("scroll", () => {
+        if (editor && window.appState?.isWriteMode && !isMouseDown) {
+            updateBubbleMenuPosition(editor);
+        }
+    }, { passive: true });
+
     return editor;
+}
+
+let isMouseDown = false;
+
+/**
+ * 버블 메뉴(툴바) 위치 업데이트
+ */
+export function updateBubbleMenuPosition(editor) {
+    const toolbar = document.querySelector(".editor-toolbar");
+    if (!toolbar) return;
+
+    if (!editor) return;
+
+    const { state, view } = editor;
+    const { selection } = state;
+
+    // 현재 포커스가 에디터 내부에 있거나, 툴바(드롭다운 포함) 내부에 있는지 확인
+    const isFocused = editor.isFocused || (document.activeElement && toolbar.contains(document.activeElement));
+
+    // 쓰기 모드이고, 포커스가 유효하며, 선택 영역이 비어있지 않은 경우
+    if (window.appState?.isWriteMode && isFocused && !selection.empty) {
+        // 모드 전환 버튼을 클릭한 직후에는 메뉴를 띄우지 않음
+        if (document.activeElement && document.activeElement.closest('#mode-toggle-btn')) {
+            return;
+        }
+
+        try {
+            let rect;
+            if (selection.node) {
+                // 노드 선택 (이미지 등)
+                const node = view.nodeDOM(selection.from);
+                if (node instanceof HTMLElement) {
+                    rect = node.getBoundingClientRect();
+                }
+            }
+
+            if (!rect) {
+                // 텍스트 선택
+                const domSelection = window.getSelection();
+                if (domSelection.rangeCount > 0) {
+                    const range = domSelection.getRangeAt(0);
+                    rect = range.getBoundingClientRect();
+                }
+            }
+
+            if (!rect || (rect.width === 0 && rect.height === 0)) {
+                // Fallback to coordsAtPos
+                const startCoords = view.coordsAtPos(selection.from);
+                const endCoords = view.coordsAtPos(selection.to);
+                rect = {
+                    left: Math.min(startCoords.left, endCoords.left),
+                    right: Math.max(startCoords.right, endCoords.right),
+                    top: Math.min(startCoords.top, endCoords.top),
+                    bottom: Math.max(startCoords.bottom, endCoords.bottom),
+                    width: Math.abs(startCoords.left - endCoords.left),
+                    height: Math.abs(startCoords.top - endCoords.top)
+                };
+            }
+            
+            const left = rect.left + rect.width / 2;
+            const top = rect.top;
+            
+            toolbar.classList.add("visible");
+            
+            // 툴바 크기 측정
+            const toolbarWidth = toolbar.offsetWidth;
+            const toolbarHeight = toolbar.offsetHeight;
+            
+            // 위치 설정
+            let finalLeft = left - (toolbarWidth / 2);
+            let finalTop = top - toolbarHeight - 10;
+            
+            // 화면 경계 체크
+            if (finalLeft < 10) finalLeft = 10;
+            if (finalLeft + toolbarWidth > window.innerWidth - 10) {
+                finalLeft = window.innerWidth - toolbarWidth - 10;
+            }
+            
+            if (finalTop < 10) {
+                // 상단 공간 부족 시 선택 영역 아래에 표시
+                finalTop = rect.bottom + 10;
+            }
+
+            toolbar.style.left = `${finalLeft}px`;
+            toolbar.style.top = `${finalTop}px`;
+        } catch (e) {
+            console.error("버블 메뉴 위치 계산 오류:", e);
+        }
+    } else {
+        // 드롭다운이나 확장 메뉴가 열려있는 동안은 닫지 않음
+        const isDropdownOpen = toolbar.querySelector(".toolbar-color-dropdown.open") || 
+                               toolbar.querySelector(".toolbar-font-dropdown.open") ||
+                               toolbar.querySelector(".toolbar-padding-dropdown.open") ||
+                               !toolbar.querySelector(".toolbar-more-menu").classList.contains("hidden");
+        
+        if (!isDropdownOpen) {
+            toolbar.classList.remove("visible");
+            // 툴바가 숨겨질 때 확장 메뉴도 확실히 숨김
+            const moreMenu = toolbar.querySelector(".toolbar-more-menu");
+            const moreBtn = toolbar.querySelector("[data-command='toggleMoreMenu']");
+            if (moreMenu) moreMenu.classList.add("hidden");
+            if (moreBtn) moreBtn.classList.remove("active");
+        }
+    }
 }
 
 /**
@@ -1444,17 +1583,21 @@ export function bindToolbar(editor) {
     // 보드 카드 포커스 추적을 위한 변수
     let lastFocusedBoardCard = null;
 
-    // 툴바 버튼 클릭 시 포커스 해제 방지
+    // 툴바 클릭 시 에디터 포커스 및 선택 해제 방지
     toolbar.addEventListener("mousedown", (event) => {
+        // 드롭다운 내부 입력창(커스텀 여백 등)은 제외
+        if (event.target.closest('input')) return;
+        
         const button = event.target.closest("button[data-command]");
         if (button) {
             // 보드 카드 내부 편집 중이라면 포커스 이동 방지
             const activeCard = document.activeElement.closest('.board-card-content');
             if (activeCard) {
                 lastFocusedBoardCard = activeCard;
-                event.preventDefault();
             }
         }
+        
+        event.preventDefault();
     });
 
     toolbar.addEventListener("click", (event) => {
@@ -1597,6 +1740,30 @@ export function bindToolbar(editor) {
             return;
         }
 
+        // 확장 메뉴 토글
+        if (command === "toggleMoreMenu") {
+            const moreMenu = toolbar.querySelector(".toolbar-more-menu");
+            if (!moreMenu) return;
+
+            const isOpen = !moreMenu.classList.contains("hidden");
+            
+            // 다른 드롭다운 닫기
+            if (colorMenuElement) colorMenuElement.setAttribute("hidden", "");
+            if (fontMenuElement) fontMenuElement.setAttribute("hidden", "");
+
+            if (isOpen) {
+                moreMenu.classList.add("hidden");
+                button.classList.remove("active");
+            } else {
+                const buttonRect = button.getBoundingClientRect();
+                moreMenu.style.top = `${buttonRect.bottom + 8}px`;
+                moreMenu.style.left = `${buttonRect.left - 80}px`; // 중앙 정렬 비슷하게 조정
+                moreMenu.classList.remove("hidden");
+                button.classList.add("active");
+            }
+            return;
+        }
+
         // 색상 선택
         if (command === "setColor" && colorValue) {
             editor.chain().focus().setColor(colorValue).run();
@@ -1727,6 +1894,14 @@ export function bindToolbar(editor) {
         }
 
         updateToolbarState(editor);
+
+        // 확장 메뉴 내부 버튼 클릭 시 확장 메뉴 닫기
+        const moreMenu = toolbar.querySelector(".toolbar-more-menu");
+        const moreBtn = toolbar.querySelector("[data-command='toggleMoreMenu']");
+        if (moreMenu && !moreMenu.classList.contains("hidden") && command !== "toggleMoreMenu") {
+            moreMenu.classList.add("hidden");
+            if (moreBtn) moreBtn.classList.remove("active");
+        }
     });
 }
 

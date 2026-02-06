@@ -313,16 +313,64 @@ body {
     background-color: var(--menu-hover-bg-color);
 }
 
-/* Context Menu (body에 직접 추가되는 공용 메뉴) */
-.context-menu {
+/* 확장 메뉴 (More Menu) */
+.toolbar-more-menu {
     position: fixed;
     background-color: var(--menu-bg-color);
     border: 1px solid var(--menu-border-color);
-    border-radius: 3px;
-    box-shadow: 0 4px 12px var(--box-shadow-color);
-    min-width: 140px;
-    z-index: 950;
-    padding: 4px 0;
+    border-radius: 8px;
+    box-shadow: 0 4px 15px var(--box-shadow-color);
+    padding: 8px;
+    z-index: 10001;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 120px;
+}
+
+.toolbar-more-menu.hidden {
+    display: none;
+}
+
+.more-menu-group {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.more-menu-group.horizontal {
+    flex-direction: row;
+    justify-content: space-between;
+}
+
+.more-menu-group button {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    font-size: 13px;
+    border-radius: 4px;
+    text-align: left;
+    color: var(--font-color);
+}
+
+.more-menu-group.horizontal button {
+    width: auto;
+    flex: 1;
+    justify-content: center;
+    padding: 8px 4px;
+}
+
+.more-menu-separator {
+    height: 1px;
+    background-color: var(--border-color);
+    margin: 4px 0;
+}
+
+.editor-toolbar button[data-command="toggleMoreMenu"].active {
+    background-color: var(--point-color);
+    color: white;
 }
 
 .context-menu.hidden {
@@ -488,14 +536,21 @@ body {
 
 .editor-toolbar {
     display: none;
+    position: fixed;
+    z-index: 1000;
     align-items: center;
     gap: 4px;
     padding: 6px 10px;
-    border-bottom: 1px solid var(--border-color);
+    border: 1px solid var(--border-color);
     background-color: var(--secondary-color);
+    border-radius: 8px;
+    box-shadow: 0 4px 12px var(--box-shadow-color);
     flex-wrap: nowrap;
     overflow-x: auto;
     overflow-y: visible;
+    pointer-events: auto;
+    max-width: calc(100vw - 20px);
+    transition: opacity 0.1s ease;
 }
 
 .editor-toolbar.visible {
