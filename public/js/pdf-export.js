@@ -187,9 +187,9 @@ function createPDFContainer(pageData) {
             #pdf-export-container table {
                 border-collapse: separate;
                 border-spacing: 0;
-                table-layout: auto; /* 기본값 auto로 변경하여 자연스러운 너비 확보 */
-                min-width: 100%;
-                margin: 0;
+                table-layout: fixed;
+                width: 100%;
+                margin: 24px 0;
                 border: 1px solid #e5e7eb;
                 border-radius: 8px;
             }
@@ -199,22 +199,29 @@ function createPDFContainer(pageData) {
             #pdf-export-container th, #pdf-export-container td {
                 border-right: 1px solid #e5e7eb !important;
                 border-bottom: 1px solid #e5e7eb !important;
-                padding: 12px 16px !important; /* 패딩 약간 상향 */
-                vertical-align: top;
+                padding: 10px 14px !important; /* 메인 CSS와 동일하게 수정 */
+                vertical-align: top !important;
                 word-wrap: break-word;
                 overflow-wrap: break-word;
-                word-break: normal; /* 단어 단위 줄바꿈 선호 */
+                word-break: normal;
                 background-color: #ffffff;
-                line-height: 1.6;
+                line-height: 1.7 !important; /* 메인 CSS와 동일하게 수정 */
             }
             #pdf-export-container th {
                 font-weight: 600 !important;
                 text-align: left;
                 background-color: #f8fafc !important;
                 color: #1e293b !important;
+                font-size: 0.95em !important; /* 메인 CSS와 동일하게 0.95em 적용 */
             }
             #pdf-export-container thead th {
-                border-bottom: 2px solid #e5e7eb !important;
+                border-bottom: 1px solid #e5e7eb !important; /* 2px에서 1px로 하향하여 바디와 맞춤 */
+            }
+            #pdf-export-container td > *:first-child, #pdf-export-container th > *:first-child {
+                margin-top: 0 !important;
+            }
+            #pdf-export-container td > *:last-child, #pdf-export-container th > *:last-child {
+                margin-bottom: 0 !important;
             }
             #pdf-export-container td:last-child,
             #pdf-export-container th:last-child {
@@ -241,6 +248,7 @@ function createPDFContainer(pageData) {
             }
             #pdf-export-container td p, #pdf-export-container th p {
                 margin: 0 !important;
+                min-height: 1.2em; /* 빈 행 높이 확보 */
             }
             #pdf-export-container p {
                 margin: 10px 0;
@@ -256,12 +264,12 @@ function createPDFContainer(pageData) {
         position: absolute;
         left: -9999px;
         top: 0;
-        width: 850px; /* 에디터 느낌을 위한 너비 상향 */
+        width: 850px;
         background: white;
         padding: 60px 80px;
         font-family: 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif;
-        font-size: 15px;
-        line-height: 1.6;
+        font-size: 16px; /* 메인 CSS와 동일하게 16px로 수정 */
+        line-height: 1.7; /* 메인 CSS와 동일하게 1.7로 수정 */
         color: #333;
         visibility: visible;
     `;
@@ -319,13 +327,20 @@ function createPDFContainer(pageData) {
         </div>
     `;
 
+    // 텍스트가 없는 빈 셀(<p></p>)이 collapsing되는 것을 방지하기 위해 강제로 공백 삽입
+    let processedContent = pageData.content || '<p>내용이 없습니다.</p>';
+    processedContent = processedContent.replace(/<td><p><\/p><\/td>/g, '<td><p>&nbsp;</p></td>')
+                                     .replace(/<th><p><\/p><\/th>/g, '<th><p>&nbsp;</p></th>')
+                                     .replace(/<td><\/td>/g, '<td><p>&nbsp;</p></td>')
+                                     .replace(/<th><\/th>/g, '<th><p>&nbsp;</p></th>');
+
     // 콘텐츠
     const content = `
         <div class="pdf-content" style="
-            font-size: 15px;
-            line-height: 1.8;
+            font-size: 16px;
+            line-height: 1.7;
         ">
-            ${pageData.content || '<p>내용이 없습니다.</p>'}
+            ${processedContent}
         </div>
     `;
 
@@ -455,28 +470,30 @@ async function renderCustomBlocks(container) {
         });
 
         // 사용자가 직접 너비를 지정한 경우에만 fixed 레이아웃 적용
-        if (hasCustomWidth) {
-            table.style.tableLayout = 'fixed';
-            table.style.width = `${totalCustomWidth}px`;
-        } else {
-            table.style.tableLayout = 'auto';
-            table.style.width = '100%';
-        }
-
-        const actualWidth = table.offsetWidth;
         const availableWidth = 850 - 160; // 850px (container) - 160px (padding) = 690px
 
-        if (actualWidth > availableWidth) {
-            const scale = availableWidth / actualWidth;
-            table.style.transform = `scale(${scale})`;
-            table.style.transformOrigin = 'top left';
-            
-            // 테이블 래퍼 높이 보정 (스케일링된 테이블이 차지하는 실제 높이 계산)
-            const wrapper = table.closest('.tableWrapper');
-            if (wrapper) {
-                wrapper.style.height = `${table.offsetHeight * scale}px`;
-                wrapper.style.marginBottom = '24px';
+        if (hasCustomWidth) {
+            table.style.tableLayout = 'fixed';
+            if (totalCustomWidth > availableWidth) {
+                // 너비가 가용 범위를 초과하면 비율에 맞춰 각 컬럼 너비 축소 (왜곡 방지)
+                const ratio = availableWidth / totalCustomWidth;
+                let adjustedTotal = 0;
+                cols.forEach((col, idx) => {
+                    const currentW = parseInt(col.style.width);
+                    if (currentW) {
+                        const newW = Math.floor(currentW * ratio);
+                        col.style.width = `${newW}px`;
+                        adjustedTotal += newW;
+                    }
+                });
+                table.style.width = `${adjustedTotal}px`;
+            } else {
+                table.style.width = `${totalCustomWidth}px`;
             }
+        } else {
+            // 커스텀 너비가 없는 경우에도 fixed 레이아웃으로 균등 배분 유도
+            table.style.tableLayout = 'fixed';
+            table.style.width = '100%';
         }
     });
 
