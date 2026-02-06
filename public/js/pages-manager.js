@@ -985,10 +985,7 @@ export async function toggleEditMode() {
         if (iconEl) {
             iconEl.className = "fa-solid fa-pencil";
         }
-        if (textEl) {
-            textEl.textContent = (state.translations && state.translations['mode_write']) || "쓰기모드";
-            textEl.setAttribute('data-i18n', 'mode_write');
-        }
+        modeToggleBtn.title = (state.translations && state.translations['mode_toggle_write']) || "쓰기 모드";
 
         onLocalEditModeChanged(state.isWriteMode);
         updateCoverButtonsVisibility();
@@ -1014,10 +1011,7 @@ export async function toggleEditMode() {
         if (iconEl) {
             iconEl.className = "fa-solid fa-book-open";
         }
-        if (textEl) {
-            textEl.textContent = (state.translations && state.translations['mode_read']) || "읽기모드";
-            textEl.setAttribute('data-i18n', 'mode_read');
-        }
+        modeToggleBtn.title = (state.translations && state.translations['mode_toggle_read']) || "읽기 모드";
 
 		onLocalEditModeChanged(state.isWriteMode);
         updateCoverButtonsVisibility();

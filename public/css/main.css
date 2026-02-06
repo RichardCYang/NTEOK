@@ -922,26 +922,32 @@ body {
     justify-content: center;
     gap: 6px;
     border: none;
-    border-radius: 3px;
-    padding: 6px 14px;
-    font-size: 13px;
+    border-radius: 6px;
+    padding: 8px;
+    font-size: 16px;
     cursor: pointer;
-    background-color: var(--point-color);
-    color: var(--button-text-color);
+    background-color: transparent;
+    color: var(--font-color);
     font-weight: 500;
-    min-width: 100px;
+    min-width: unset;
+    transition: all 0.2s ease;
 }
 
 .mode-toggle-btn:hover {
-    background-color: var(--point-hover-color);
+    background-color: var(--item-hover-bg-color);
 }
 
 .mode-toggle-btn.write-mode {
-    background-color: var(--danger-color);
+    background-color: transparent;
+    color: var(--point-color);
 }
 
 .mode-toggle-btn.write-mode:hover {
-    background-color: var(--danger-hover-color);
+    background-color: var(--item-hover-bg-color);
+}
+
+.mode-toggle-btn.published {
+    color: var(--point-color);
 }
 
 .danger-button {
@@ -1315,12 +1321,13 @@ body {
     }
 
     .editor-header {
-        padding-left: 60px; /* 로고 헤더와 동일하게 정렬하여 밀려보이는 느낌 해제 */
+        padding-left: 16px;
+        justify-content: space-between;
     }
 
     .page-title-input {
-        flex: 0 1 auto; /* 무조건 꽉 채우지 않고 내용에 맞게 조정 */
-        max-width: 60%; /* 너무 넓어지지 않게 제한 */
+        flex: 1;
+        min-width: 0;
     }
 
     .sidebar {
@@ -1370,22 +1377,20 @@ body {
 
 @media (max-width: 480px) {
     .editor-header {
-        padding: 10px 12px 10px 60px; /* 16px에서 60px로 변경하여 상단 로고와 정렬 */
+        padding: 10px 12px;
         gap: 6px;
-        justify-content: flex-end;
     }
 
     .page-title-input {
-        flex: 0 1 auto;
-        max-width: 50%;
+        flex: 1;
         min-width: 0;
     }
 
     .mode-toggle-btn {
         flex-shrink: 0;
-        padding: 6px 12px;
-        font-size: 12px;
-        min-width: 85px;
+        padding: 6px;
+        font-size: 14px;
+        min-width: unset;
     }
 
     .editor {
@@ -1429,8 +1434,7 @@ body {
     }
 
     .page-title-input {
-        flex: 0 1 auto;
-        max-width: 40%;
+        flex: 1;
         min-width: 0;
         font-size: 16px;
         padding: 5px 8px;
@@ -1438,9 +1442,9 @@ body {
 
     .mode-toggle-btn {
         flex-shrink: 0;
-        padding: 5px 10px;
-        font-size: 11px;
-        min-width: 80px;
+        padding: 5px;
+        font-size: 14px;
+        min-width: unset;
         gap: 4px;
     }
 }

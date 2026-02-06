@@ -52,11 +52,10 @@ export async function checkPublishStatus(pageId) {
 }
 
 /**
- * 발행 버튼 업데이트 (표시/숨김 및 텍스트 변경)
+ * 발행 버튼 업데이트 (표시/숨김 및 상태 변경)
  */
 export function updatePublishButton() {
     const publishBtn = document.getElementById('publish-btn');
-    const publishBtnText = document.getElementById('publish-btn-text');
 
     if (!publishBtn) return;
 
@@ -76,12 +75,12 @@ export function updatePublishButton() {
     // 평문 페이지는 표시
     publishBtn.style.display = 'flex';
 
-    // 발행 상태에 따라 버튼 텍스트 및 클래스 변경
+    // 발행 상태에 따라 버튼 타이틀 및 클래스 변경
     if (publishState.published) {
-        publishBtnText.textContent = '발행 취소';
+        publishBtn.title = '발행 취소';
         publishBtn.classList.add('published');
     } else {
-        publishBtnText.textContent = '발행';
+        publishBtn.title = '발행';
         publishBtn.classList.remove('published');
     }
 }
