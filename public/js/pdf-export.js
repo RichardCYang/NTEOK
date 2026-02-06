@@ -257,6 +257,79 @@ function createPDFContainer(pageData) {
                 max-width: 100%;
                 height: auto;
             }
+            #pdf-export-container .board-container {
+                margin: 20px 0;
+            }
+            #pdf-export-container .board-columns-wrapper {
+                display: flex;
+                gap: 12px;
+                align-items: flex-start;
+                flex-wrap: wrap;
+                width: 100%;
+            }
+            #pdf-export-container .board-column {
+                flex: 1 1 200px;
+                min-width: 200px;
+                background-color: #f8fafc;
+                border-radius: 6px;
+                display: flex;
+                flex-direction: column;
+                border: 1px solid #e2e8f0;
+            }
+            #pdf-export-container .board-column-header {
+                padding: 10px;
+                font-weight: 600;
+                font-size: 14px;
+                border-bottom: 1px solid #e2e8f0;
+                background-color: #f1f5f9;
+                border-top-left-radius: 6px;
+                border-top-right-radius: 6px;
+            }
+            #pdf-export-container .board-card-list {
+                padding: 10px;
+                display: flex;
+                flex-direction: column;
+                gap: 10px;
+            }
+            #pdf-export-container .board-card {
+                background-color: #ffffff;
+                border: 1px solid #e2e8f0;
+                border-radius: 4px;
+                padding: 12px;
+                box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+                display: flex;
+                flex-direction: column;
+                justify-content: center;
+                min-height: 40px;
+            }
+            #pdf-export-container .board-card.color-yellow { background-color: #fff9c4; border-color: #f0e68c; }
+            #pdf-export-container .board-card.color-blue { background-color: #e3f2fd; border-color: #add8e6; }
+            #pdf-export-container .board-card.color-green { background-color: #e8f5e9; border-color: #90ee90; }
+            #pdf-export-container .board-card.color-pink { background-color: #fce4ec; border-color: #ffb6c1; }
+            #pdf-export-container .board-card.color-purple { background-color: #f3e5f5; border-color: #d8bfd8; }
+            #pdf-export-container .board-card.color-orange { background-color: #fff3e0; border-color: #ffcc80; }
+            #pdf-export-container .board-card-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: flex-start;
+                margin-bottom: 6px;
+            }
+            #pdf-export-container .board-card-content {
+                font-size: 14px;
+                line-height: 1.5;
+                color: #333;
+                white-space: pre-wrap;
+                word-break: break-word;
+            }
+            #pdf-export-container .board-card-content p {
+                margin: 0 !important;
+            }
+            #pdf-export-container .board-card-content > *:first-child {
+                margin-top: 0 !important;
+            }
+            #pdf-export-container .board-card-content > *:last-child {
+                margin-bottom: 0 !important;
+            }
         </style>
     `;
 
@@ -415,6 +488,68 @@ async function renderCustomBlocks(container) {
             <div style="background: ${style.bg}; border: 1px solid ${style.border}; border-radius: 6px; padding: 16px; margin: 12px 0; display: flex; gap: 12px;">
                 <div style="font-size: 20px;">${style.icon}</div>
                 <div style="white-space: pre-wrap; font-size: 15px; color: #2d3748; flex: 1;">${escapeHtml(content)}</div>
+            </div>
+        `;
+    });
+
+    // Board (Kanban) 블록
+    const boards = container.querySelectorAll('[data-type="board-block"]');
+    boards.forEach((el) => {
+        const dataStr = el.getAttribute('data-columns');
+        let columns = [];
+        try {
+            columns = JSON.parse(dataStr || '[]');
+        } catch (e) {
+            console.error('[PDF Export] Board 데이터 파싱 실패:', e);
+            return;
+        }
+
+        let columnsHTML = '';
+        columns.forEach(column => {
+            let cardsHTML = '';
+            (column.cards || []).forEach(card => {
+                let cardHeaderHTML = '';
+                if (card.icon) {
+                    let cardIconHTML = '';
+                    if (card.icon.startsWith('fa-')) {
+                        cardIconHTML = `<i class="${escapeHtmlAttr(card.icon)}" style="font-size: 14px; color: #666; margin-right: 4px;"></i>`;
+                    } else {
+                        cardIconHTML = `<span style="font-size: 14px; margin-right: 4px;">${escapeHtml(card.icon)}</span>`;
+                    }
+                    cardHeaderHTML = `
+                        <div class="board-card-header">
+                            <div style="display: flex; align-items: center;">
+                                ${cardIconHTML}
+                            </div>
+                        </div>
+                    `;
+                }
+
+                cardsHTML += `
+                    <div class="board-card ${card.color ? 'color-' + card.color : ''}">
+                        ${cardHeaderHTML}
+                        <div class="board-card-content">${card.content || ''}</div>
+                    </div>
+                `;
+            });
+
+            columnsHTML += `
+                <div class="board-column">
+                    <div class="board-column-header">
+                        <div class="board-column-title">${escapeHtml(column.title)}</div>
+                    </div>
+                    <div class="board-card-list">
+                        ${cardsHTML}
+                    </div>
+                </div>
+            `;
+        });
+
+        el.innerHTML = `
+            <div class="board-container">
+                <div class="board-columns-wrapper">
+                    ${columnsHTML}
+                </div>
             </div>
         `;
     });
