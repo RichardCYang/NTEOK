@@ -85,16 +85,6 @@ const LIBRARIES = [
 		license: "https://raw.githubusercontent.com/parallax/jsPDF/master/LICENSE",
 	},
 	{
-		name: "html2pdf",
-		files: [
-			{
-				url: "https://cdn.jsdelivr.net/npm/html2pdf.js@0.10.2/dist/html2pdf.bundle.min.js",
-				path: "html2pdf.bundle.min.js",
-			},
-		],
-		license: "https://raw.githubusercontent.com/eKoopmans/html2pdf.js/master/LICENSE",
-	},
-	{
 		name: "sortablejs",
 		files: [
 			{
