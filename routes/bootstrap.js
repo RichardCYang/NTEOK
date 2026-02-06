@@ -25,7 +25,8 @@ module.exports = (dependencies) => {
                 ? {
 			        id: userRow.id,
 			        username: userRow.username,
-			        theme: userRow.theme || 'default'
+			        theme: userRow.theme || 'default',
+                    stickyHeader: userRow.sticky_header === 1
                 }
                 : null;
 

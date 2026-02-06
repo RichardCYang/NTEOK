@@ -496,7 +496,7 @@ module.exports = (dependencies) => {
     router.get("/me", authMiddleware, async (req, res) => {
         try {
             const [rows] = await pool.execute(
-                `SELECT id, username FROM users WHERE id = ?`,
+                `SELECT id, username, theme, sticky_header FROM users WHERE id = ?`,
                 [req.user.id]
             );
 
@@ -507,7 +507,9 @@ module.exports = (dependencies) => {
             const user = rows[0];
             res.json({
                 id: user.id,
-                username: user.username
+                username: user.username,
+                theme: user.theme,
+                stickyHeader: user.sticky_header === 1
             });
         } catch (error) {
             logError("GET /api/auth/me", error);
@@ -517,6 +519,45 @@ module.exports = (dependencies) => {
 
     // ==================== 마스터 키 시스템 제거됨 ====================
     // encryption-salt, master-key-salt, verify-password 엔드포인트 제거됨 (선택적 암호화 시스템으로 변경)
+
+    /**
+     * 사용자 일반 설정 업데이트
+     * PUT /api/auth/settings
+     * body: { stickyHeader: boolean }
+     */
+    router.put("/settings", authMiddleware, async (req, res) => {
+        const { stickyHeader } = req.body;
+
+        if (stickyHeader !== undefined && typeof stickyHeader !== "boolean") {
+            return res.status(400).json({ error: "올바른 설정 값이 아닙니다." });
+        }
+
+        try {
+            const updates = [];
+            const values = [];
+
+            if (stickyHeader !== undefined) {
+                updates.push('sticky_header = ?');
+                values.push(stickyHeader ? 1 : 0);
+            }
+
+            if (updates.length === 0) {
+                return res.status(400).json({ error: "업데이트할 설정이 없습니다." });
+            }
+
+            values.push(req.user.id);
+
+            await pool.execute(
+                `UPDATE users SET ${updates.join(', ')} WHERE id = ?`,
+                values
+            );
+
+            res.json({ ok: true });
+        } catch (error) {
+            logError("PUT /api/auth/settings", error);
+            res.status(500).json({ error: "설정 업데이트 중 오류가 발생했습니다." });
+        }
+    });
 
     /**
      * 보안 설정 조회

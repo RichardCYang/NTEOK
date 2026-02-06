@@ -8,6 +8,7 @@
     font-family: var(--font-family);
     color: var(--font-color);
     box-sizing: border-box;
+    flex-shrink: 0; /* 스크롤 시 축소 방지 */
 }
 
 /* Match .editor breakpoints */

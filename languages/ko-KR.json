@@ -8,6 +8,7 @@
     "settings_security_desc": "2단계 인증, 로그인 차단, 로그인 로그 등을 관리합니다.",
     "settings_editor": "편집기",
     "settings_default_mode": "기본 모드",
+    "settings_sticky_header": "상단 영역 고정",
     "mode_read": "읽기모드",
     "mode_write": "쓰기모드",
     "settings_theme": "테마",

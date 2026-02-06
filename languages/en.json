@@ -8,6 +8,7 @@
     "settings_security_desc": "Manage 2FA, login blocking, login logs, etc.",
     "settings_editor": "Editor",
     "settings_default_mode": "Default Mode",
+    "settings_sticky_header": "Sticky Header",
     "mode_read": "Read Mode",
     "mode_write": "Write Mode",
     "settings_theme": "Theme",

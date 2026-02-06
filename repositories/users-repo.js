@@ -12,7 +12,7 @@ module.exports = ({ pool }) => {
          */
         async getBootstrapUserById(userId) {
             const [rows] = await pool.execute(
-                `SELECT id, username, theme FROM users WHERE id = ?`,
+                `SELECT id, username, theme, sticky_header FROM users WHERE id = ?`,
                 [userId]
             );
             return rows?.[0] || null;

@@ -134,6 +134,11 @@ body {
     height: 64px;
     box-sizing: border-box;
     border-bottom: 1px solid var(--border-color);
+    flex-shrink: 0; /* 스크롤 시 축소 방지 */
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background-color: var(--primary-color); /* 스크롤 시 배경 불투명 유지 */
 }
 
 .user-profile {
@@ -495,6 +500,12 @@ body {
     display: flex;
     flex-direction: column;
     min-width: 0;
+    overflow-y: auto; /* 기본값: 전체 스크롤 */
+}
+
+/* 고정 헤더 설정 시 */
+.editor-area.sticky-header-enabled {
+    overflow-y: hidden;
 }
 
 .page-title-input {
@@ -513,6 +524,7 @@ body {
 .page-updated-at-container {
     padding: 12px 16px 8px;
     border-bottom: 1px solid #e5e7eb;
+    flex-shrink: 0; /* 스크롤 시 축소 방지 */
 }
 
 .page-updated-at {
@@ -829,8 +841,12 @@ body {
 	position: relative;
     flex: 1;
     min-height: 0;
-    overflow-y: auto;
+    overflow-y: visible; /* 기본값: 전체 스크롤을 위해 visible */
     padding: 32px 120px 32px 120px;
+}
+
+.sticky-header-enabled .editor {
+    overflow-y: auto; /* 고정 헤더 시 에디터만 스크롤 */
 }
 
 /* 에디터 여백 반응형 */
@@ -1298,6 +1314,15 @@ body {
         padding-left: 60px;
     }
 
+    .editor-header {
+        padding-left: 60px; /* 로고 헤더와 동일하게 정렬하여 밀려보이는 느낌 해제 */
+    }
+
+    .page-title-input {
+        flex: 0 1 auto; /* 무조건 꽉 채우지 않고 내용에 맞게 조정 */
+        max-width: 60%; /* 너무 넓어지지 않게 제한 */
+    }
+
     .sidebar {
         position: fixed;
         top: 0;
@@ -1345,7 +1370,7 @@ body {
 
 @media (max-width: 480px) {
     .editor-header {
-        padding: 10px 12px;
+        padding: 10px 12px 10px 60px; /* 16px에서 60px로 변경하여 상단 로고와 정렬 */
         gap: 6px;
         justify-content: flex-end;
     }
@@ -3200,6 +3225,7 @@ body {
     height: 250px;
     overflow: hidden;
     background-color: #e5e5e5;
+    flex-shrink: 0; /* 스크롤 시 축소 방지 */
 }
 
 .page-cover-image {
@@ -4079,11 +4105,15 @@ body {
    ============================================ */
 
 .page-content-wrapper {
-    flex: 1;
+    flex: none; /* 기본값: 전체 스크롤을 위해 자동 확장 */
     min-height: 0;
     width: 100%;
     display: flex;
     flex-direction: column;
+}
+
+.sticky-header-enabled .page-content-wrapper {
+    flex: 1; /* 고정 헤더 시 남은 공간 채움 */
 }
 
 .subpages-section {

@@ -1333,11 +1333,14 @@ export function initEditor() {
     }
 
     // 스크롤 시 버블 메뉴 위치 업데이트
-    document.querySelector(".editor")?.addEventListener("scroll", () => {
+    const scrollHandler = () => {
         if (editor && window.appState?.isWriteMode && !isMouseDown) {
             updateBubbleMenuPosition(editor);
         }
-    }, { passive: true });
+    };
+
+    document.querySelector(".editor")?.addEventListener("scroll", scrollHandler, { passive: true });
+    document.querySelector(".editor-area")?.addEventListener("scroll", scrollHandler, { passive: true });
 
     return editor;
 }

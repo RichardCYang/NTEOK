@@ -8,6 +8,7 @@
     "settings_security_desc": "2段階認証、ログインブロック、ログインログなどを管理します。",
     "settings_editor": "エディタ",
     "settings_default_mode": "デフォルトモード",
+    "settings_sticky_header": "ヘ더固定",
     "mode_read": "閲覧モード",
     "mode_write": "編集モード",
     "settings_theme": "テーマ",

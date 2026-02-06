@@ -23,7 +23,8 @@ let state = {
     userSettings: {
         defaultMode: 'read',
         theme: 'default',
-        language: 'ko-KR' // 기본 언어: 한국어
+        language: 'ko-KR', // 기본 언어: 한국어
+        stickyHeader: false // 기본값: 고정 없음 (스크롤됨)
     },
     translations: {}, // 로드된 번역 데이터
     availableCountries: [],
@@ -46,6 +47,23 @@ function applyTheme(themeName) {
         document.head.appendChild(newThemeLink);
     }
     state.userSettings.theme = themeName;
+    localStorage.setItem("userSettings", JSON.stringify(state.userSettings));
+}
+
+/**
+ * 고정 헤더 설정 적용
+ * @param {boolean} isEnabled - 고정 여부
+ */
+export function applyStickyHeader(isEnabled) {
+    const editorArea = document.querySelector('.editor-area');
+    if (!editorArea) return;
+
+    if (isEnabled) {
+        editorArea.classList.add('sticky-header-enabled');
+    } else {
+        editorArea.classList.remove('sticky-header-enabled');
+    }
+    state.userSettings.stickyHeader = isEnabled;
     localStorage.setItem("userSettings", JSON.stringify(state.userSettings));
 }
 
@@ -140,6 +158,7 @@ export function initSettingsManager(appState) {
 
     loadSettings();
     applyTheme(state.userSettings.theme);
+    applyStickyHeader(state.userSettings.stickyHeader || false);
 
     // 언어 로드
     const lang = state.userSettings.language || 'ko-KR';
@@ -171,6 +190,11 @@ export async function openSettingsModal() {
     // 현재 설정 값 표시
     if (defaultModeSelect) {
         defaultModeSelect.value = state.userSettings.defaultMode;
+    }
+
+    const stickyHeaderCheckbox = document.querySelector("#settings-sticky-header");
+    if (stickyHeaderCheckbox) {
+        stickyHeaderCheckbox.checked = state.userSettings.stickyHeader || false;
     }
 
     if (languageSelect) {
@@ -227,6 +251,20 @@ export async function saveSettings() {
     // 로컬 설정 저장
     if (defaultModeSelect) {
         newSettings.defaultMode = defaultModeSelect.value;
+    }
+
+    const stickyHeaderCheckbox = document.querySelector("#settings-sticky-header");
+    if (stickyHeaderCheckbox) {
+        newSettings.stickyHeader = stickyHeaderCheckbox.checked;
+        
+        // 서버에 일반 설정 저장 시도
+        try {
+            await api.put('/api/auth/settings', { stickyHeader: newSettings.stickyHeader });
+        } catch (error) {
+            console.error('서버 설정 저장 실패:', error);
+        }
+        
+        applyStickyHeader(newSettings.stickyHeader);
     }
 
     if (languageSelect) {
@@ -477,6 +515,12 @@ export function applyCurrentUser(user) {
     // 서버에서 받은 테마 적용
     if (user.theme) {
         applyTheme(user.theme);
+    }
+
+    // 서버에서 받은 고정 헤더 설정 적용
+    if (user.stickyHeader !== undefined) {
+        state.userSettings.stickyHeader = user.stickyHeader;
+        applyStickyHeader(user.stickyHeader);
     }
 }
 
