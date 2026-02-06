@@ -47,6 +47,240 @@ body {
     background-color: var(--secondary-color);
 }
 
+/* 저장소 선택 화면 (대시보드 그리드 스타일) */
+.storage-selection-screen {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: var(--secondary-color);
+    display: flex;
+    flex-direction: column;
+    z-index: 1000;
+    overflow-y: auto;
+}
+
+.storage-selection-screen.hidden {
+    display: none;
+}
+
+/* 대시보드 헤더 */
+.storage-selection-header {
+    width: 100%;
+    padding: 40px 60px;
+    background-color: var(--primary-color);
+    border-bottom: 1px solid var(--border-color);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+
+.storage-header-left {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+}
+
+.storage-header-left img {
+    width: 48px;
+    height: 48px;
+}
+
+.storage-header-text h1 {
+    font-size: 28px;
+    font-weight: 800;
+    color: var(--font-color);
+    margin: 0;
+    letter-spacing: -0.03em;
+}
+
+.storage-header-text p {
+    font-size: 14px;
+    color: var(--sub-font-color);
+    margin: 4px 0 0 0;
+}
+
+.storage-header-actions {
+    display: flex;
+    gap: 12px;
+}
+
+/* 메인 컨텐츠 그리드 영역 */
+.storage-selection-content {
+    flex: 1;
+    padding: 60px;
+    width: 100%;
+    max-width: 1400px;
+    margin: 0 auto;
+}
+
+.storage-grid-label {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--sub-font-color);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-bottom: 24px;
+    display: block;
+}
+
+.storage-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 24px;
+    margin-bottom: 60px;
+}
+
+/* 개별 저장소 카드 */
+.storage-item {
+    background-color: var(--primary-color);
+    border: 1px solid var(--border-color);
+    border-radius: 16px;
+    padding: 32px;
+    cursor: pointer;
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+}
+
+.storage-item:hover {
+    border-color: var(--point-color);
+    transform: translateY(-6px);
+    box-shadow: 0 12px 24px var(--box-shadow-color);
+}
+
+.storage-icon-wrapper {
+    width: 56px;
+    height: 56px;
+    background-color: var(--tertiary-color);
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 24px;
+    transition: background-color 0.2s ease;
+}
+
+.storage-item:hover .storage-icon-wrapper {
+    background-color: var(--point-color);
+}
+
+.storage-item i.fa-database {
+    font-size: 24px;
+    color: var(--point-color);
+}
+
+.storage-item:hover i.fa-database {
+    color: white;
+}
+
+.storage-item-info {
+    flex: 1;
+}
+
+.storage-item-name {
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--font-color);
+    margin-bottom: 8px;
+    word-break: break-all;
+}
+
+.storage-item-meta {
+    font-size: 13px;
+    color: var(--sub-font-color);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.storage-item-meta::before {
+    content: "\f017";
+    font-family: "Font Awesome 6 Free";
+    font-weight: 400;
+}
+
+/* 카드 내 삭제 버튼 */
+.storage-delete-btn {
+    position: absolute;
+    top: 20px;
+    right: 20px;
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    border: none;
+    background-color: transparent;
+    color: var(--sub-font-color);
+    opacity: 0;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.storage-item:hover .storage-delete-btn {
+    opacity: 1;
+}
+
+.storage-delete-btn:hover {
+    background-color: #fee2e2;
+    color: #ef4444;
+}
+
+/* 추가 버튼 커스텀 */
+.storage-selection-header .primary-button {
+    padding: 12px 24px;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.storage-selection-header .secondary-button {
+    padding: 12px 20px;
+}
+
+@media (max-width: 768px) {
+    .storage-selection-header {
+        padding: 24px 20px;
+        flex-direction: column;
+        gap: 20px;
+        align-items: flex-start;
+    }
+    
+    .storage-selection-content {
+        padding: 30px 20px;
+    }
+    
+    .storage-list {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* 사이드바 footer 조정 */
+.sidebar-footer {
+    padding: 12px 16px;
+    border-top: 1px solid var(--border-color);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.sidebar-new-collection-button,
+.sidebar-logout-button {
+    width: 100%;
+    justify-content: center;
+}
+
+.app.hidden {
+    display: none;
+}
+
+/* 기존 스타일 유지 */
 .app {
     display: flex;
     flex-direction: column;

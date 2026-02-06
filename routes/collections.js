@@ -33,18 +33,18 @@ module.exports = (dependencies) => {
     router.get("/", authMiddleware, async (req, res) => {
         try {
             const userId = req.user.id;
+            const storageId = req.query.storageId;
 
             // 성능 최적화: UNION ALL로 분리하여 인덱스 활용
             // 1. 본인 소유 컬렉션 (인덱스: idx_collections_user_sort)
             // 2. 공유받은 컬렉션 (인덱스: idx_shared_with_user)
-            const [rows] = await pool.execute(
-                `(
+            const query = `(
                     SELECT c.id, c.name, c.sort_order, c.created_at, c.updated_at,
                            c.user_id as owner_id, c.is_encrypted,
                            c.default_encryption, c.enforce_encryption,
                            'OWNER' as permission
                     FROM collections c
-                    WHERE c.user_id = ?
+                    WHERE c.user_id = ? ${storageId ? 'AND c.storage_id = ?' : ''}
                 )
                 UNION ALL
                 (
@@ -54,11 +54,15 @@ module.exports = (dependencies) => {
                            cs.permission as permission
                     FROM collections c
                     INNER JOIN collection_shares cs ON c.id = cs.collection_id
-                    WHERE cs.shared_with_user_id = ?
+                    WHERE cs.shared_with_user_id = ? ${storageId ? 'AND c.storage_id = ?' : ''}
                 )
-                ORDER BY sort_order ASC, updated_at DESC`,
-                [userId, userId]
-            );
+                ORDER BY sort_order ASC, updated_at DESC`;
+            
+            const params = storageId 
+                ? [userId, storageId, userId, storageId]
+                : [userId, userId];
+
+            const [rows] = await pool.execute(query, params);
 
             // share_count를 별도로 계산 (한 번의 쿼리로)
             const collectionIds = rows.map(row => row.id);
@@ -105,15 +109,20 @@ module.exports = (dependencies) => {
     /**
      * 새 컬렉션 생성
      * POST /api/collections
-     * body: { name?: string }
+     * body: { name?: string, storageId: string }
      */
     router.post("/", authMiddleware, async (req, res) => {
         const rawName = typeof req.body.name === "string" ? req.body.name.trim() : "";
         const name = sanitizeInput(rawName !== "" ? rawName : "새 컬렉션");
+        const storageId = req.body.storageId;
+
+        if (!storageId) {
+            return res.status(400).json({ error: "storageId가 필요합니다." });
+        }
 
         try {
             const userId = req.user.id;
-            const collection = await createCollection({ userId, name });
+            const collection = await createCollection({ userId, name, storageId });
             res.status(201).json(collection);
         } catch (error) {
             logError("POST /api/collections", error);

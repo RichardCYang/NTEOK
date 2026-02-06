@@ -8,6 +8,7 @@ module.exports = ({ pool, pageSqlPolicy }) => {
     if (!pageSqlPolicy) throw new Error("pageSqlPolicy 필요");
 
     const usersRepo = require('./users-repo')({ pool });
+    const storagesRepo = require('./storages-repo')({ pool });
     const collectionsRepo = require('./collections-repo')({ pool });
     const collectionSharesRepo = require('./collection-shares-repo')({ pool });
     const pagePublishLinksRepo = require('./page-publish-links-repo')({ pool });
@@ -16,6 +17,7 @@ module.exports = ({ pool, pageSqlPolicy }) => {
     // 조합자
     const bootstrapRepo = require('./bootstrap-repo')({
         usersRepo,
+        storagesRepo,
         collectionsRepo,
         collectionSharesRepo,
         pagesRepo
@@ -30,6 +32,7 @@ module.exports = ({ pool, pageSqlPolicy }) => {
 
     return {
         usersRepo,
+        storagesRepo,
         collectionsRepo,
         collectionSharesRepo,
         pagePublishLinksRepo,

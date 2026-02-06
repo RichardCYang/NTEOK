@@ -110,10 +110,15 @@ import {
     initCommentsManager,
     loadAndRenderComments
 } from './comments-manager.js';
+import {
+    initStoragesManager
+} from './storages-manager.js';
 
 // ==================== Global State ====================
 const appState = {
     editor: null,
+    storages: [],
+    currentStorageId: null,
     pages: [],
     collections: [],
     currentPageId: null,
@@ -926,14 +931,14 @@ function initToolbarElements() {
 async function init() {
     showLoadingOverlay();
     try {
-        // appState를 전역으로 노출 (에디터 등에서 접근 가능하도록)
+        // appState를 전역으로 노출
         window.appState = appState;
 
         // 설정 로드
         const loadedSettings = loadSettings();
         appState.userSettings = loadedSettings;
 
-        // 에디터 초기화 (Yjs 동기화 준비 전)
+        // 에디터 초기화
         appState.editor = await initEditor(null);
         const titleInput = document.querySelector("#page-title-input");
         if (titleInput) {
@@ -968,6 +973,27 @@ async function init() {
         // 댓글 관리자 초기화
         initCommentsManager(appState);
 
+        // 저장소 관리자 초기화
+        const storagesManager = initStoragesManager(appState, (data) => {
+            // 저장소 선택 시 실행될 로직
+            if (Array.isArray(data.collections)) {
+                applyCollectionsData(data.collections);
+            }
+            if (Array.isArray(data.pages)) {
+                applyPagesData(data.pages);
+            }
+            renderPageList();
+
+            // 첫 번째 페이지 자동 로드
+            if (appState.pages && appState.pages.length > 0) {
+                const rootPages = appState.pages.filter(p => !p.parentId);
+                const firstPage = rootPages.length > 0 ? rootPages[0] : appState.pages[0];
+                if (!firstPage.isEncrypted) {
+                    loadPage(firstPage.id);
+                }
+            }
+        });
+
         // 검색 기능 초기화
         initSearch();
 
@@ -994,6 +1020,14 @@ async function init() {
         bindAccountManagementButtons();
         bindLoginLogsModal();
 
+    const switchStorageBtn = document.getElementById('switch-storage-btn');
+    if (switchStorageBtn) {
+        switchStorageBtn.addEventListener('click', () => {
+            storagesManager.show();
+        });
+    }
+
+    // 초기 데이터 로드 (유저 정보 + 저장소 목록)
         try {
             const bootstrap = await api.get("/api/bootstrap");
 
@@ -1001,66 +1035,22 @@ async function init() {
                 applyCurrentUser(bootstrap.user);
             }
 
-            if (Array.isArray(bootstrap.collections)) {
-                applyCollectionsData(bootstrap.collections);
-            }
-
-            if (Array.isArray(bootstrap.pages)) {
-                applyPagesData(bootstrap.pages);
-            }
-
-            if (Array.isArray(bootstrap.collections) || Array.isArray(bootstrap.pages)) {
-                renderPageList();
+            if (Array.isArray(bootstrap.storages)) {
+                appState.storages = bootstrap.storages;
+                
+                // 저장소가 하나뿐이라면 자동으로 선택? 아니면 항상 선택 화면 보여줌?
+                // 사용자 요청은 "로그인하면 저장소 목록이 나오게 해줘!" 이므로 항상 보여줌.
+                storagesManager.show();
             }
 
         } catch (error) {
-            console.warn("Bootstrap load failed, falling back to legacy flow:", error);
+            console.warn("Bootstrap load failed:", error);
+            showErrorInEditor('데이터 로드에 실패했습니다.');
         }
 
-        // 데이터 로드 - 완전 병렬 처리로 최적화 (성능 개선)
-        try {
-            // 사용자 정보, 컬렉션, 페이지를 모두 병렬로 로드
-            const [userResult, collectionsResult, pagesResult] = await Promise.allSettled([
-                fetchAndDisplayCurrentUser(),
-                fetchCollections(),
-                fetchPageList()
-            ]);
-
-            // 에러 처리
-            if (userResult.status === 'rejected') {
-                console.error('사용자 정보 로드 실패:', userResult.reason);
-                // 사용자 정보는 UI에 표시되지만 치명적이지 않음
-            }
-
-            if (collectionsResult.status === 'rejected') {
-                console.error('컬렉션 로드 실패:', collectionsResult.reason);
-                showErrorInEditor('컬렉션을 불러오지 못했습니다.');
-            }
-
-            if (pagesResult.status === 'rejected') {
-                console.error('페이지 로드 실패:', pagesResult.reason);
-                showErrorInEditor('페이지 목록을 불러오지 못했습니다.');
-            }
-
-            // 모든 데이터 로드 완료 후 UI 한 번만 렌더링 (중복 호출 방지)
-            if (collectionsResult.status === 'fulfilled' || pagesResult.status === 'fulfilled') {
-                renderPageList();
-
-                // 첫 번째 페이지 자동 로드 (암호화되지 않은 경우만)
-                if (appState.pages && appState.pages.length > 0) {
-                    // 첫 번째 루트 페이지 찾기
-                    const rootPages = appState.pages.filter(p => !p.parentId);
-                    const firstPage = rootPages.length > 0 ? rootPages[0] : appState.pages[0];
-
-                    if (!firstPage.isEncrypted) {
-                        loadPage(firstPage.id);
-                    }
-                }
-            }
-        } catch (error) {
-            console.error('초기화 중 오류:', error);
-            showErrorInEditor('데이터 로드에 실패했습니다. 페이지를 새로고침하세요.');
-        }
+    } catch (error) {
+        console.error('초기화 중 오류:', error);
+        showErrorInEditor('초기화에 실패했습니다. 페이지를 새로고침하세요.');
     } finally {
         hideLoadingOverlay();
     }

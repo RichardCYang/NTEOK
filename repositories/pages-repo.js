@@ -11,9 +11,8 @@ module.exports = ({ pool, pageSqlPolicy }) => {
     return {
         /**
          * 페이지 목록 조회 (소유한 페이지 + 공유받은 컬렉션의 페이지)
-         * - routes/pages.js 및 routes/bootstrap.js 의 기존 UNION ALL 쿼리...
          */
-        async listPagesForUser({ userId, collectionId = null }) {
+        async listPagesForUser({ userId, collectionId = null, storageId = null }) {
             const visOwner = pageSqlPolicy.andVisible({ alias: "p", viewerUserId: userId });
             const visShared = pageSqlPolicy.andVisible({ alias: "p", viewerUserId: userId });
 
@@ -25,6 +24,7 @@ module.exports = ({ pool, pageSqlPolicy }) => {
                     FROM pages p
                     INNER JOIN collections c ON p.collection_id = c.id
                     WHERE c.user_id = ?
+                    ${storageId ? 'AND c.storage_id = ?' : ''}
                     ${visOwner.sql}
                     ${collectionId ? 'AND p.collection_id = ?' : ''}
                 )
@@ -35,28 +35,28 @@ module.exports = ({ pool, pageSqlPolicy }) => {
                            p.icon, p.cover_image, p.cover_position, p.horizontal_padding
                     FROM pages p
                     INNER JOIN collection_shares cs ON p.collection_id = cs.collection_id
+                    INNER JOIN collections c ON p.collection_id = c.id
                     WHERE cs.shared_with_user_id = ?
+                    ${storageId ? 'AND c.storage_id = ?' : ''}
                     ${visShared.sql}
                     ${collectionId ? 'AND p.collection_id = ?' : ''}
                 )
                 ORDER BY collection_id ASC, parent_id IS NULL DESC, sort_order ASC, updated_at DESC
             `;
 
-            const params = collectionId
-                ? [
-                    userId,
-                    ...visOwner.params,
-                    collectionId,
-                    userId,
-                    ...visShared.params,
-                    collectionId
-                ]
-                : [
-                    userId,
-                    ...visOwner.params,
-                    userId,
-                    ...visShared.params
-                ];
+            const params = [];
+            
+            // First part of UNION
+            params.push(userId);
+            if (storageId) params.push(storageId);
+            params.push(...visOwner.params);
+            if (collectionId) params.push(collectionId);
+
+            // Second part of UNION
+            params.push(userId);
+            if (storageId) params.push(storageId);
+            params.push(...visShared.params);
+            if (collectionId) params.push(collectionId);
 
             const [rows] = await pool.execute(query, params);
             return rows || [];

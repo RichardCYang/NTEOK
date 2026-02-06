@@ -410,9 +410,13 @@ module.exports = (dependencies) => {
                 typeof req.query.collectionId === "string" && req.query.collectionId.trim() !== ""
                     ? req.query.collectionId.trim()
                     : null;
+            const storageId =
+                typeof req.query.storageId === "string" && req.query.storageId.trim() !== ""
+                    ? req.query.storageId.trim()
+                    : null;
 
             // DB 접근은 repo에서만 수행 (접근제어 SQL 정책 중앙화 포함)
-            const rows = await pagesRepo.listPagesForUser({ userId, collectionId });
+            const rows = await pagesRepo.listPagesForUser({ userId, collectionId, storageId });
 
             const list = rows.map((row) => ({
                 id: row.id,

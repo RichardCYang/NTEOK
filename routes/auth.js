@@ -15,6 +15,7 @@ const router = express.Router();
 module.exports = (dependencies) => {
     const {
         pool,
+        storagesRepo,
         bcrypt,
         crypto,
         sessions,
@@ -444,9 +445,22 @@ module.exports = (dependencies) => {
                 blockDuplicateLogin: false // 신규 가입자는 기본값 false
             };
 
+            // 1. 기본 저장소 생성
+            const storageId = 'stg-' + now.getTime() + '-' + crypto.randomBytes(4).toString('hex');
+            await storagesRepo.createStorage({
+                userId: user.id,
+                id: storageId,
+                name: "기본 저장소",
+                sortOrder: 0,
+                createdAt: nowStr,
+                updatedAt: nowStr
+            });
+
+            // 2. 기본 컬렉션 생성 (방금 만든 storageId 사용)
             await createCollection({
                 userId: user.id,
-                name: "기본 컬렉션"
+                name: "기본 컬렉션",
+                storageId: storageId
             });
 
             const sessionResult = createSession(user);

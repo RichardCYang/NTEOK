@@ -18,8 +18,8 @@ module.exports = (dependencies) => {
         try {
             const userId = req.user.id;
 
-            // DB 접근은 repo에서만 수행 (접근제어 SQL 정책 중앙화 포함)
-            const { userRow, collectionsRaw, pageRows, shareCountMap } = await bootstrapRepo.getBootstrapRows(userId);
+            // DB 접근은 repo에서만 수행
+            const { userRow, storageRows } = await bootstrapRepo.getBootstrapRows(userId);
 
             const user = userRow
                 ? {
@@ -30,37 +30,15 @@ module.exports = (dependencies) => {
                 }
                 : null;
 
-            const collections = collectionsRaw.map((row) => ({
+            const storages = (storageRows || []).map((row) => ({
                 id: row.id,
                 name: row.name,
                 sortOrder: row.sort_order,
                 createdAt: toIsoString(row.created_at),
-                updatedAt: toIsoString(row.updated_at),
-                isOwner: row.owner_id === userId,
-                permission: row.permission,
-                isShared: (shareCountMap[row.id] || 0) > 0,
-                isEncrypted: Boolean(row.is_encrypted),
-                defaultEncryption: Boolean(row.default_encryption),
-                enforceEncryption: Boolean(row.enforce_encryption)
+                updatedAt: toIsoString(row.updated_at)
             }));
 
-            const pages = (pageRows || []).map((row) => ({
-                id: row.id,
-                title: row.title || "제목 없음",
-                updatedAt: toIsoString(row.updated_at),
-                parentId: row.parent_id,
-                sortOrder: row.sort_order,
-                collectionId: row.collection_id,
-                isEncrypted: row.is_encrypted ? true : false,
-                shareAllowed: row.share_allowed ? true : false,
-                userId: row.user_id,
-                icon: row.icon || null,
-                coverImage: row.cover_image || null,
-                coverPosition: row.cover_position || 50,
-                horizontalPadding: row.horizontal_padding || null
-            }));
-
-            res.json({ user, collections, pages });
+            res.json({ user, storages });
         } catch (error) {
             logError("GET /api/bootstrap", error);
             res.status(500).json({ error: "초기 데이터 로드에 실패했습니다." });

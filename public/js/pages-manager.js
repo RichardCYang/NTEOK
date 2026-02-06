@@ -37,8 +37,11 @@ export function initPagesManager(appState) {
  */
 export async function fetchCollections() {
     try {
-        console.log("컬렉션 목록 요청: GET /api/collections");
-        const data = await api.get("/api/collections");
+        const url = state.currentStorageId 
+            ? `/api/collections?storageId=${encodeURIComponent(state.currentStorageId)}`
+            : "/api/collections";
+        console.log(`컬렉션 목록 요청: GET ${url}`);
+        const data = await api.get(url);
         applyCollectionsData(data);
     } catch (error) {
         console.error("컬렉션 목록 요청 오류:", error);
@@ -51,8 +54,11 @@ export async function fetchCollections() {
  */
 export async function fetchPageList() {
     try {
-        console.log("페이지 목록 요청: GET /api/pages");
-        const data = await api.get("/api/pages");
+        const url = state.currentStorageId 
+            ? `/api/pages?storageId=${encodeURIComponent(state.currentStorageId)}`
+            : "/api/pages";
+        console.log(`페이지 목록 요청: GET ${url}`);
+        const data = await api.get(url);
         console.log("페이지 목록 응답:", data);
 
         // 제목은 평문으로 저장되므로 복호화 불필요
@@ -1048,7 +1054,10 @@ export function bindNewCollectionButton() {
         const plainName = name.trim() || defaultName;
 
         try {
-            const collection = await api.post("/api/collections", { name: plainName });
+            const collection = await api.post("/api/collections", { 
+                name: plainName,
+                storageId: state.currentStorageId
+            });
 
             collection.name = plainName;
             state.collections.push(collection);

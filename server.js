@@ -926,73 +926,10 @@ async function initDb() {
             block_duplicate_login TINYINT(1) NOT NULL DEFAULT 0,
             country_whitelist_enabled TINYINT(1) NOT NULL DEFAULT 0,
             allowed_login_countries TEXT NULL,
-            sticky_header TINYINT(1) NOT NULL DEFAULT 0
+            sticky_header TINYINT(1) NOT NULL DEFAULT 0,
+            theme VARCHAR(64) NOT NULL DEFAULT 'default'
         ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
     `);
-
-    // 기존 users 테이블에 국가 화이트리스트 컬럼 추가 (마이그레이션)
-    try {
-        await pool.execute(`
-            ALTER TABLE users
-            ADD COLUMN country_whitelist_enabled TINYINT(1) NOT NULL DEFAULT 0
-        `);
-        console.log('✓ country_whitelist_enabled 컬럼 추가됨');
-    } catch (error) {
-        // 컬럼이 이미 존재하면 무시
-        if (error.code !== 'ER_DUP_FIELDNAME') {
-            console.error('country_whitelist_enabled 컬럼 추가 오류:', error.message);
-        }
-    }
-
-    try {
-        await pool.execute(`
-            ALTER TABLE users
-            ADD COLUMN theme VARCHAR(64) NOT NULL DEFAULT 'default'
-        `);
-        console.log('✓ theme 컬럼 추가됨');
-    } catch (error) {
-        // 컬럼이 이미 존재하면 무시
-        if (error.code !== 'ER_DUP_FIELDNAME') {
-            console.error('theme 컬럼 추가 오류:', error.message);
-        }
-    }
-
-    try {
-        await pool.execute(`
-            ALTER TABLE users
-            ADD COLUMN allowed_login_countries TEXT NULL
-        `);
-        console.log('✓ allowed_login_countries 컬럼 추가됨');
-    } catch (error) {
-        // 컬럼이 이미 존재하면 무시
-        if (error.code !== 'ER_DUP_FIELDNAME') {
-            console.error('allowed_login_countries 컬럼 추가 오류:', error.message);
-        }
-    }
-
-    try {
-        await pool.execute(`
-            ALTER TABLE users
-            ADD COLUMN sticky_header TINYINT(1) NOT NULL DEFAULT 0
-        `);
-        console.log('✓ sticky_header 컬럼 추가됨');
-    } catch (error) {
-        // 컬럼이 이미 존재하면 무시
-        if (error.code !== 'ER_DUP_FIELDNAME') {
-            console.error('sticky_header 컬럼 추가 오류:', error.message);
-        }
-    }
-
-    // (TOTP 컬럼들은 이제 CREATE TABLE에 포함됨)
-    // 과거 VARCHAR(64) -> 암호문(v1:iv:tag:cipher) 저장을 위해 TEXT로 확장
-    try {
-        await pool.execute(`
-            ALTER TABLE users
-            MODIFY COLUMN totp_secret TEXT NULL
-        `);
-    } catch (error) {
-        console.warn("⚠️ totp_secret 컬럼 타입 변경을 건너뜁니다:", error.message);
-    }
 
     // users 가 하나도 없으면 기본 관리자 계정 생성
     const [userRows] = await pool.execute("SELECT COUNT(*) AS cnt FROM users");
@@ -1019,11 +956,28 @@ async function initDb() {
         console.log("기본 관리자 계정 생성 완료. username:", username);
     }
 
+    // storages 테이블 생성
+    await pool.execute(`
+        CREATE TABLE IF NOT EXISTS storages (
+            id          VARCHAR(64)  NOT NULL PRIMARY KEY,
+            user_id     INT          NOT NULL,
+            name        VARCHAR(255) NOT NULL,
+            sort_order  INT          NOT NULL DEFAULT 0,
+            created_at  DATETIME     NOT NULL,
+            updated_at  DATETIME     NOT NULL,
+            CONSTRAINT fk_storages_user
+                FOREIGN KEY (user_id)
+                REFERENCES users(id)
+                ON DELETE CASCADE
+        ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
+    `);
+
     // collections 테이블 생성 (users 테이블 생성 후)
     await pool.execute(`
         CREATE TABLE IF NOT EXISTS collections (
             id          VARCHAR(64)  NOT NULL PRIMARY KEY,
             user_id     INT          NOT NULL,
+            storage_id  VARCHAR(64)  NOT NULL,
             name        VARCHAR(255) NOT NULL,
             sort_order  INT          NOT NULL DEFAULT 0,
             created_at  DATETIME     NOT NULL,
@@ -1034,6 +988,10 @@ async function initDb() {
             CONSTRAINT fk_collections_user
                 FOREIGN KEY (user_id)
                 REFERENCES users(id)
+                ON DELETE CASCADE,
+            CONSTRAINT fk_collections_storage
+                FOREIGN KEY (storage_id)
+                REFERENCES storages(id)
                 ON DELETE CASCADE
         ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
     `);
@@ -1049,6 +1007,7 @@ async function initDb() {
             created_at  DATETIME     NOT NULL,
             updated_at  DATETIME     NOT NULL,
             parent_id   VARCHAR(64)  NULL,
+            collection_id VARCHAR(64) NOT NULL,
             is_encrypted TINYINT(1) NOT NULL DEFAULT 0,
             encryption_salt VARCHAR(255) NULL,
             encrypted_content MEDIUMTEXT NULL,
@@ -1057,6 +1016,7 @@ async function initDb() {
             icon VARCHAR(100) NULL,
             cover_image VARCHAR(255) NULL,
             cover_position INT NOT NULL DEFAULT 50,
+            horizontal_padding INT NULL,
             CONSTRAINT fk_pages_user
                 FOREIGN KEY (user_id)
                 REFERENCES users(id)
@@ -1064,59 +1024,13 @@ async function initDb() {
             CONSTRAINT fk_pages_parent
                 FOREIGN KEY (parent_id)
                 REFERENCES pages(id)
-                ON DELETE CASCADE
-        ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
-    `);
-
-    // 기존 테이블의 charset을 utf8mb4로 변경 (이모지 지원)
-    try {
-        await pool.execute(`
-            ALTER TABLE pages
-            CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
-        `);
-
-        // pages 테이블에 yjs_state 컬럼 추가 (기존 컬럼 없을 경우만) - 실시간 동시 편집(Yjs) 상태 저장
-        await pool.execute(`
-            ALTER TABLE pages
-            ADD COLUMN IF NOT EXISTS yjs_state LONGBLOB NULL
-        `);
-    } catch (error) {
-        // 이미 utf8mb4인 경우 무시
-        if (error && error.code !== 'ER_BAD_FIELD_ERROR') {
-            console.warn("pages 테이블 charset 변경 중 경고:", error.message);
-        }
-    }
-
-    // pages 테이블에 collection_id 컬럼 추가 (없을 경우만)
-    await pool.execute(`
-        ALTER TABLE pages
-        ADD COLUMN IF NOT EXISTS collection_id VARCHAR(64) NULL
-    `);
-
-    // pages.collection_id 외래키 추가 (이미 있는 경우 무시)
-    try {
-        await pool.execute(`
-            ALTER TABLE pages
-            ADD CONSTRAINT fk_pages_collection
+                ON DELETE CASCADE,
+            CONSTRAINT fk_pages_collection
                 FOREIGN KEY (collection_id)
                 REFERENCES collections(id)
                 ON DELETE CASCADE
-        `);
-    } catch (error) {
-        // 이미 존재하는 경우 무시
-        if (error && error.code !== "ER_DUP_KEY" && error.code !== "ER_CANNOT_ADD_FOREIGN") {
-            console.warn("pages.collection_id FK 추가 중 경고:", error.message);
-        }
-    }
-
-    // pages 테이블에 horizontal_padding 컬럼 추가 (없을 경우만)
-    await pool.execute(`
-        ALTER TABLE pages
-        ADD COLUMN IF NOT EXISTS horizontal_padding INT NULL
+        ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
     `);
-    console.log('✓ horizontal_padding 컬럼 추가 확인');
-
-    // (페이지 관련 컬럼들은 이제 CREATE TABLE에 포함됨)
 
     // collection_shares 테이블 생성 (사용자 간 직접 공유)
     await pool.execute(`
@@ -1190,8 +1104,6 @@ async function initDb() {
         ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
     `);
 
-    // (passkey_enabled, block_duplicate_login은 이제 CREATE TABLE에 포함됨)
-
     // passkeys 테이블 생성 (WebAuthn 크레덴셜 저장)
     await pool.execute(`
         CREATE TABLE IF NOT EXISTS passkeys (
@@ -1237,6 +1149,7 @@ async function initDb() {
             page_id VARCHAR(64) NOT NULL,
             owner_user_id INT NOT NULL,
             is_active TINYINT(1) NOT NULL DEFAULT 1,
+            allow_comments TINYINT(1) NOT NULL DEFAULT 0,
             created_at DATETIME NOT NULL,
             updated_at DATETIME NOT NULL,
             CONSTRAINT fk_page_publish_links_page
@@ -1293,29 +1206,6 @@ async function initDb() {
         ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
     `);
 
-    // page_publish_links 테이블에 allow_comments 컬럼 추가
-    try {
-        await pool.execute(`
-            ALTER TABLE page_publish_links
-            ADD COLUMN allow_comments TINYINT(1) NOT NULL DEFAULT 0
-        `);
-        console.log('✓ allow_comments 컬럼 추가됨');
-    } catch (error) {
-        if (error.code !== 'ER_DUP_FIELDNAME') {
-            console.error('allow_comments 컬럼 추가 오류:', error.message);
-        }
-    }
-
-    // ============================================================
-    // E2EE 시스템 재설계: 선택적 암호화 (마스터 키 시스템 제거)
-    // ============================================================
-    // - 모든 E2EE 관련 컬럼들은 CREATE TABLE에 포함됨
-    // - 마스터 키 시스템 제거로 더 이상 필요 없음
-    // ============================================================
-
-    // 컬렉션이 없는 기존 사용자 데이터 마이그레이션
-    await backfillCollections();
-
     // ============================================================
     // 성능 최적화: 데이터베이스 인덱스 추가
     // ============================================================
@@ -1370,50 +1260,6 @@ async function initDb() {
         if (error.code !== 'ER_DUP_KEYNAME') {
             console.warn('collections 인덱스 생성 중 경고:', error.message);
         }
-    }
-}
-
-/**
- * 사용자별 기본 컬렉션을 생성하고, collection_id 가 비어있는 페이지에 할당
- */
-async function backfillCollections() {
-    const [users] = await pool.execute(`SELECT id, username FROM users`);
-
-    for (const user of users) {
-        const userId = user.id;
-
-        // 사용자 컬렉션 존재 여부 확인
-        const [existingCols] = await pool.execute(
-            `SELECT id FROM collections WHERE user_id = ? ORDER BY sort_order ASC, updated_at DESC LIMIT 1`,
-            [userId]
-        );
-
-        let collectionId = existingCols.length ? existingCols[0].id : null;
-
-        // 없으면 기본 컬렉션 생성
-        if (!collectionId) {
-            const now = new Date();
-            const nowStr = formatDateForDb(now);
-            collectionId = generateCollectionId(now);
-
-            await pool.execute(
-                `
-                INSERT INTO collections (id, user_id, name, sort_order, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-                `,
-                [collectionId, userId, "기본 컬렉션", 0, nowStr, nowStr]
-            );
-        }
-
-        // collection_id 가 비어있는 페이지에 기본 컬렉션 할당
-        await pool.execute(
-            `
-            UPDATE pages
-            SET collection_id = ?
-            WHERE user_id = ? AND (collection_id IS NULL OR collection_id = '')
-            `,
-            [collectionId, userId]
-        );
     }
 }
 
@@ -1491,7 +1337,7 @@ function generatePublishToken() {
 /**
  * 새 컬렉션 생성
  */
-async function createCollection({ userId, name }) {
+async function createCollection({ userId, name, storageId }) {
     const now = new Date();
     const nowStr = formatDateForDb(now);
     const id = generateCollectionId(now);
@@ -1499,16 +1345,17 @@ async function createCollection({ userId, name }) {
 
     await pool.execute(
         `
-        INSERT INTO collections (id, user_id, name, sort_order, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO collections (id, user_id, name, sort_order, created_at, updated_at, storage_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         `,
-        [id, userId, name, sortOrder, nowStr, nowStr]
+        [id, userId, name, sortOrder, nowStr, nowStr, storageId]
     );
 
     return {
         id,
         name,
         sortOrder,
+        storageId,
         createdAt: now.toISOString(),
         updatedAt: now.toISOString(),
         isOwner: true,
@@ -2186,6 +2033,7 @@ function getSessionFromId(sessionId) {
         // 라우트 파일 Import
         const indexRoutes = require('./routes/index')(routeDependencies);
         const authRoutes = require('./routes/auth')(routeDependencies);
+        const storagesRoutes = require('./routes/storages')(routeDependencies);
         const collectionsRoutes = require('./routes/collections')(routeDependencies);
         const pagesRoutes = require('./routes/pages')(routeDependencies);
         const bootstrapRoutes = require('./routes/bootstrap')(routeDependencies);
@@ -2199,6 +2047,7 @@ function getSessionFromId(sessionId) {
         // 라우트 등록
         app.use('/', indexRoutes);
         app.use('/api/auth', authRoutes);
+        app.use('/api/storages', storagesRoutes);
         app.use('/api/collections', collectionsRoutes);
         app.use('/api/pages', pagesRoutes);
         app.use('/api/bootstrap', bootstrapRoutes);

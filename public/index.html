@@ -58,7 +58,36 @@
         <div class="loading-overlay">
             <div class="loading-spinner"></div>
         </div>
-        <div class="app">
+        
+        <!-- 저장소 선택 화면 (대시보드 스타일) -->
+        <div id="storage-selection-screen" class="storage-selection-screen hidden">
+            <header class="storage-selection-header">
+                <div class="storage-header-left">
+                    <img src="/icon.png" class="storage-logo" alt="NTEOK">
+                    <div class="storage-header-text">
+                        <h1 data-i18n="select_workspace">작업 공간 선택</h1>
+                        <p data-i18n="select_storage_desc">노트와 컬렉션이 저장된 저장소를 선택하세요.</p>
+                    </div>
+                </div>
+                <div class="storage-header-actions">
+                    <button id="add-storage-btn" class="primary-button">
+                        <i class="fa-solid fa-plus"></i>
+                        <span data-i18n="new_storage">새 저장소 만들기</span>
+                    </button>
+                    <button id="storage-logout-btn" class="secondary-button" title="로그아웃">
+                        <i class="fa-solid fa-right-from-bracket"></i>
+                    </button>
+                </div>
+            </header>
+            <main class="storage-selection-content">
+                <span class="storage-grid-label" data-i18n="your_storages">나의 저장소</span>
+                <div id="storage-list" class="storage-list">
+                    <!-- 저장소 카드들이 여기에 동적으로 생성됩니다 -->
+                </div>
+            </main>
+        </div>
+
+        <div class="app hidden">
             <header class="app-header">
                 <button id="mobile-menu-btn" class="mobile-menu-btn">
                     <i class="fa-solid fa-bars"></i>
@@ -76,9 +105,14 @@
                             <div class="user-avatar" id="user-avatar"></div>
                             <span class="user-name" id="user-name">사용자</span>
                         </div>
-                        <button id="settings-btn" class="settings-btn" title="설정">
-                            <i class="fa-solid fa-gear"></i>
-                        </button>
+                        <div class="sidebar-actions">
+                            <button id="switch-storage-btn" class="settings-btn" title="저장소 전환">
+                                <i class="fa-solid fa-database"></i>
+                            </button>
+                            <button id="settings-btn" class="settings-btn" title="설정">
+                                <i class="fa-solid fa-gear"></i>
+                            </button>
+                        </div>
                     </div>
                     <div class="sidebar-search">
                         <div style="position: relative; padding: 12px;">
