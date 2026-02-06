@@ -9,8 +9,6 @@ module.exports = ({ pool, pageSqlPolicy }) => {
 
     const usersRepo = require('./users-repo')({ pool });
     const storagesRepo = require('./storages-repo')({ pool });
-    const collectionsRepo = require('./collections-repo')({ pool });
-    const collectionSharesRepo = require('./collection-shares-repo')({ pool });
     const pagePublishLinksRepo = require('./page-publish-links-repo')({ pool });
     const pagesRepo = require('./pages-repo')({ pool, pageSqlPolicy });
 
@@ -18,14 +16,11 @@ module.exports = ({ pool, pageSqlPolicy }) => {
     const bootstrapRepo = require('./bootstrap-repo')({
         usersRepo,
         storagesRepo,
-        collectionsRepo,
-        collectionSharesRepo,
         pagesRepo
     });
 
     const backupRepo = require('./backup-repo')({
-        collectionsRepo,
-        collectionSharesRepo,
+        storagesRepo,
         pagesRepo,
         pagePublishLinksRepo
     });
@@ -33,8 +28,6 @@ module.exports = ({ pool, pageSqlPolicy }) => {
     return {
         usersRepo,
         storagesRepo,
-        collectionsRepo,
-        collectionSharesRepo,
         pagePublishLinksRepo,
         pagesRepo,
         bootstrapRepo,

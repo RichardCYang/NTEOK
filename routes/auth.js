@@ -456,13 +456,6 @@ module.exports = (dependencies) => {
                 updatedAt: nowStr
             });
 
-            // 2. 기본 컬렉션 생성 (방금 만든 storageId 사용)
-            await createCollection({
-                userId: user.id,
-                name: "기본 컬렉션",
-                storageId: storageId
-            });
-
             const sessionResult = createSession(user);
 
             // 회원가입 시에는 중복 로그인이 발생할 수 없지만 방어적 코딩

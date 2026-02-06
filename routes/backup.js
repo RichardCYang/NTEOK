@@ -461,9 +461,9 @@ ${JSON.stringify(pageMetadata, null, 2)}
 
         try {
 			// DB 접근은 repo에서만 수행 (접근제어 SQL 정책 중앙화 포함)
-			const { collections, shares, pages, publishes } = await backupRepo.getExportRows(userId);
+			const { storages, pages, publishes } = await backupRepo.getExportRows(userId);
 
-            if (!collections || collections.length === 0)
+            if (!storages || storages.length === 0)
                 return res.status(404).json({ error: '내보낼 데이터가 없습니다.' });
 
             // 페이지별 발행 상태 조회
@@ -482,7 +482,7 @@ ${JSON.stringify(pageMetadata, null, 2)}
             });
 
             // 응답 헤더 설정
-            res.attachment('backup.zip');
+            res.attachment('nteok-backup.zip');
             res.type('application/zip');
 
             // 에러 핸들링
@@ -500,122 +500,69 @@ ${JSON.stringify(pageMetadata, null, 2)}
             // 커버 이미지 수집
             for (const page of pages) {
 				if (!page.cover_image) continue;
-
-				// 기본 커버는 포함하지 않음
 				if (DEFAULT_COVERS.includes(page.cover_image)) continue;
 
 				const normalized = normalizeUserImageRefForExport(page.cover_image, userId);
-				if (!normalized) {
-				    // 커버 이미지 경로가 유효하지 않으면 제외
-				    continue;
-				}
-
-				imagesToInclude.add(normalized);
-				console.log(`[커버 이미지 수집] ${page.title} -> ${normalized}`);
+				if (normalized) imagesToInclude.add(normalized);
             }
 
             // 페이지 내용에서 이미지 수집
-            // - 정상 포맷: /imgs/<userId>/<filename.ext>
-            // - 쿼리스트링은 무시 (?:\?...) 허용
             const imgRegex = /\/imgs\/(\d+)\/([A-Za-z0-9._-]{1,200}\.(?:png|jpe?g|gif|webp))(?:\?[^"'\s]*)?/gi;
-
             for (const page of pages) {
                 const content = page.content || '';
                 let match;
                 while ((match = imgRegex.exec(content)) !== null) {
                     const normalized = normalizeUserImageRefForExport(`${match[1]}/${match[2]}`, userId);
-                    // 유효한 이미지 참조만 포함
-                    if (normalized)
-                        imagesToInclude.add(normalized);
+                    if (normalized) imagesToInclude.add(normalized);
                 }
             }
 
-            // 컬렉션 메타데이터 생성
-            const collectionMap = new Map();
-            const sharesByCollection = new Map();
+            // 저장소 메타데이터 생성
+            const storageMap = new Map();
+            storages.forEach(stg => storageMap.set(stg.id, stg));
 
-            collections.forEach(col => {
-                collectionMap.set(col.id, col);
-                sharesByCollection.set(col.id, []);
-            });
-
-            // 공유 정보 그룹화
-            shares.forEach(share => {
-                const list = sharesByCollection.get(share.collection_id);
-                if (list) {
-                    list.push({
-                        username: share.shared_with_username,
-                        permission: share.permission
-                    });
-                }
-            });
-
-            // 각 컬렉션의 메타데이터 파일 추가
-            for (const collection of collections) {
-                const collectionFolderName = sanitizeFilename(collection.name);
-                const collectionMetadata = {
-                    id: collection.id,
-                    name: collection.name,
-                    sortOrder: collection.sort_order,
-                    createdAt: toIsoString(collection.created_at),
-                    updatedAt: toIsoString(collection.updated_at),
-                    isEncrypted: Boolean(collection.is_encrypted),
-                    defaultEncryption: Boolean(collection.default_encryption),
-                    enforceEncryption: Boolean(collection.enforce_encryption),
-                    shares: sharesByCollection.get(collection.id) || []
+            // 각 저장소의 메타데이터 파일 추가
+            for (const storage of storages) {
+                const storageFolderName = sanitizeFilename(storage.name);
+                const storageMetadata = {
+                    id: storage.id,
+                    name: storage.name,
+                    sortOrder: storage.sort_order,
+                    createdAt: toIsoString(storage.created_at),
+                    updatedAt: toIsoString(storage.updated_at)
                 };
 
                 archive.append(
-                    JSON.stringify(collectionMetadata, null, 2),
-                    { name: `collections/${collectionFolderName}.json` }
+                    JSON.stringify(storageMetadata, null, 2),
+                    { name: `workspaces/${storageFolderName}.json` }
                 );
             }
 
             // 페이지 추가
             for (const page of pages) {
-                const collection = collectionMap.get(page.collection_id);
-                if (!collection) continue;
+                const storage = storageMap.get(page.storage_id);
+                if (!storage) continue;
 
-                const collectionFolderName = sanitizeFilename(collection.name);
-                const pageFolderName = sanitizeFilename(page.title || 'untitled');
+                const storageFolderName = sanitizeFilename(storage.name);
+                const pageFileName = sanitizeFilename(page.title || 'untitled');
 
                 const publishInfo = publishMap.get(page.id);
                 const pageData = {
-                    id: page.id,
-                    title: page.title || '제목 없음',
-                    content: page.content || '<p></p>',
-                    createdAt: toIsoString(page.created_at),
-                    updatedAt: toIsoString(page.updated_at),
-                    parentId: page.parent_id,
-                    sortOrder: page.sort_order,
-                    isEncrypted: page.is_encrypted ? true : false,
-                    encryptionSalt: page.encryption_salt || null,
-                    encryptedContent: page.encrypted_content || null,
-                    shareAllowed: page.share_allowed ? true : false,
-                    icon: page.icon || null,
-                    coverImage: page.cover_image || null,
-                    coverPosition: page.cover_position || 50,
+                    ...page,
                     publishToken: publishInfo?.token || null,
                     publishedAt: publishInfo?.createdAt || null
                 };
 
                 const html = convertPageToHTML(pageData);
-                archive.append(html, { name: `pages/${collectionFolderName}/${pageFolderName}.html` });
+                archive.append(html, { name: `pages/${storageFolderName}/${pageFileName}.html` });
             }
 
             // 이미지 추가
             for (const imageRef of imagesToInclude) {
-                const normalized = normalizeUserImageRefForExport(imageRef, userId);
-
-                // 유효하지 않은 경로 제외
-                if (!normalized)
-                    continue;
-
-                const parts = normalized.split('/');
+                const parts = imageRef.split('/');
                 const ownerId = Number(parts[0]);
                 const filename = parts[1];
 
-                // covers 또는 imgs 아래의 해당 사용자 폴더만 허용
                 const coversRoot = path.join(__dirname, '..', 'covers');
                 const imgsRoot = path.join(__dirname, '..', 'imgs');
 
@@ -623,34 +570,26 @@ ${JSON.stringify(pageMetadata, null, 2)}
                 const imgPath = resolveSafeUserFilePath(imgsRoot, ownerId, filename);
 
                 const finalPath = coverPath || imgPath;
-
-                // 파일이 없으면 조용히 스킵
-                if (!finalPath)
-                    continue;
-
-                // ZIP 내부 경로도 안전한 값(정규화된 normalized)만 사용 (Zip Slip 방지)
-                archive.file(finalPath, { name: `images/${normalized}` });
+                if (finalPath) {
+                    archive.file(finalPath, { name: `images/${imageRef}` });
+                }
             }
 
             // 백업 정보 파일 추가
             const backupInfo = {
-                version: '1.0',
+                version: '2.0 (storages based)',
                 exportDate: new Date().toISOString(),
-                collectionsCount: collections.length,
+                storagesCount: storages.length,
                 pagesCount: pages.length,
                 imagesCount: imagesToInclude.size
             };
             archive.append(JSON.stringify(backupInfo, null, 2), { name: 'backup-info.json' });
 
-            // ZIP 완료
             await archive.finalize();
-
-            console.log(`[백업 내보내기] 사용자 ${userId} - 컬렉션: ${collections.length}, 페이지: ${pages.length}, 이미지: ${imagesToInclude.size}`);
+            console.log(`[백업 내보내기] 사용자 ${userId} 완료`);
         } catch (error) {
             logError('GET /api/backup/export', error);
-            if (!res.headersSent) {
-                res.status(500).json({ error: '백업 내보내기 실패' });
-            }
+            if (!res.headersSent) res.status(500).json({ error: '백업 내보내기 실패' });
         }
     });
 
@@ -662,376 +601,123 @@ ${JSON.stringify(pageMetadata, null, 2)}
         const userId = req.user.id;
         const uploadedFile = req.file;
 
-        if (!uploadedFile) {
-            return res.status(400).json({ error: '백업 파일이 업로드되지 않았습니다.' });
-        }
+        if (!uploadedFile) return res.status(400).json({ error: '파일이 없습니다.' });
 
         let connection;
-
         try {
-            // ZIP 파일 열기
             const zip = new AdmZip(uploadedFile.path);
             const zipEntries = zip.getEntries();
-
-            // 보안: ZIP Bomb 사전 검증
-            if (zipEntries.length > MAX_ZIP_ENTRIES)
-                throw new Error(`유효하지 않은 백업 파일: ZIP 엔트리 개수 초과(${zipEntries.length})`);
-
-            let totalUncompressed = 0;
-            for (const entry of zipEntries) {
-                if (entry.isDirectory) continue;
-
-                // ZipSlip 계열 우회 방지: entryName 기본 sanity check
-                // (기존 코드의 isSafePath와 별개로 사전 차단)
-                const name = String(entry.entryName || '');
-                if (!name || name.length > 512)
-                    throw new Error(`유효하지 않은 백업 파일: 엔트리 이름이 비정상`);
-
-                if (name.includes('..') || name.startsWith('/') || /^[A-Za-z]:/.test(name) || name.includes('\\'))
-                    throw new Error(`유효하지 않은 백업 파일: 위험한 경로 엔트리 감지`);
-
-                const { uncompressed, compressed } = getEntrySizes(entry);
-                if (uncompressed <= 0) continue;
-
-                // 엔트리 단일 크기 제한
-                if (uncompressed > MAX_ENTRY_UNCOMPRESSED_BYTES)
-                    throw new Error(`유효하지 않은 백업 파일: 엔트리 압축해제 크기 초과(${name})`);
-
-                totalUncompressed += uncompressed;
-                if (totalUncompressed > MAX_TOTAL_UNCOMPRESSED_BYTES)
-                    throw new Error(`유효하지 않은 백업 파일: 전체 압축해제 크기 초과`);
-
-                // (선택) 고압축 ratio 탐지: ratio 단독 사용은 false positive 가능 → 크기 조건과 조합
-                if (compressed > 0 && uncompressed >= MIN_RATIO_ENTRY_BYTES) {
-                    const ratio = uncompressed / compressed;
-                    if (ratio > MAX_SUSPICIOUS_RATIO)
-                        throw new Error(`유효하지 않은 백업 파일: 비정상적 압축 비율 감지(${name})`);
-                }
-            }
-
-			console.log(`[백업 불러오기] 사용자 ${userId} - 파일 개수: ${zipEntries.length}`);
-
-			// ZIP Bomb / 리소스 고갈 방지: 엔트리 수/해제 용량 검증
 			validateZipEntriesForImport(zipEntries);
 
-			// 백업 정보 확인
-            const backupInfoEntry = zipEntries.find(entry => entry.entryName === 'backup-info.json');
-            if (backupInfoEntry) {
-                const backupInfo = JSON.parse(backupInfoEntry.getData().toString('utf8'));
-                console.log('[백업 정보]', backupInfo);
-            }
-
-            // 컬렉션 메타데이터 파일 읽기
-            const collectionMetadataEntries = zipEntries.filter(entry =>
-                entry.entryName.startsWith('collections/') && entry.entryName.endsWith('.json')
-            );
-
-            // 트랜잭션 시작
             connection = await pool.getConnection();
             await connection.beginTransaction();
 
-            const collectionMap = new Map(); // 폴더명 -> 컬렉션 ID
-            const pageDataMap = new Map(); // 페이지 ID -> pageData (이미지 처리를 위해)
+            const workspaceMap = new Map(); // 폴더명 -> 저장소 ID
+            const pageDataMap = new Map();
             let totalPages = 0;
             let totalImages = 0;
 
-            // 컬렉션 생성 (메타데이터 포함)
-            for (const entry of collectionMetadataEntries) {
-                const metadataJson = entry.getData().toString('utf8');
-                const metadata = JSON.parse(metadataJson);
-
-                const now = new Date();
-                const collectionId = generateCollectionId(now);
-                const nowStr = formatDateForDb(now);
-
-                // 컬렉션 이름 추출 (파일명에서)
-                const filename = entry.entryName.split('/').pop().replace('.json', '');
+            // 1. 저장소(구 컬렉션) 생성
+            const workspaceEntries = zipEntries.filter(e => e.entryName.startsWith('workspaces/') || e.entryName.startsWith('collections/'));
+            
+            for (const entry of workspaceEntries) {
+                if (entry.isDirectory || !entry.entryName.endsWith('.json')) continue;
+                const metadata = JSON.parse(entry.getData().toString('utf8'));
+                const nowStr = formatDateForDb(new Date());
+                const storageId = 'stg-' + Date.now() + '-' + crypto.randomBytes(4).toString('hex');
 
                 await connection.execute(
-                    `INSERT INTO collections (id, user_id, name, sort_order, created_at, updated_at,
-                                             is_encrypted, default_encryption, enforce_encryption)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                    [
-                        collectionId,
-                        userId,
-                        metadata.name,
-                        metadata.sortOrder || 0,
-                        nowStr,
-                        nowStr,
-                        metadata.isEncrypted ? 1 : 0,
-                        metadata.defaultEncryption ? 1 : 0,
-                        metadata.enforceEncryption ? 1 : 0
-                    ]
+                    `INSERT INTO storages (id, user_id, name, sort_order, created_at, updated_at)
+                     VALUES (?, ?, ?, ?, ?, ?)`,
+                    [storageId, userId, metadata.name, metadata.sortOrder || 0, nowStr, nowStr]
                 );
-
-                collectionMap.set(filename, collectionId);
-                console.log(`[컬렉션 생성] ${metadata.name} (${filename}) -> ID ${collectionId}`);
-
-                // 공유 정보는 복원하지 않음 (사용자명이 시스템에 없을 수 있음)
-                // 필요하다면 별도 로직 추가 가능
+                
+                const folderName = entry.entryName.split('/').pop().replace('.json', '');
+                workspaceMap.set(folderName, storageId);
             }
 
-            // 기존 방식 호환성: collections 폴더가 없는 경우 pages 폴더에서 컬렉션 추출
-            if (collectionMetadataEntries.length === 0) {
-                const collectionFolders = new Set();
-                for (const entry of zipEntries) {
-                    if (!entry.isDirectory && entry.entryName.endsWith('.html') && entry.entryName.startsWith('pages/')) {
-                        const parts = entry.entryName.split('/');
-                        if (parts.length >= 3) {
-                            collectionFolders.add(parts[1]);
-                        }
+            // 하위 호환성 (폴더 기반)
+            if (workspaceMap.size === 0) {
+                const folders = new Set();
+                zipEntries.forEach(e => {
+                    if (e.entryName.startsWith('pages/')) {
+                        const parts = e.entryName.split('/');
+                        if (parts.length >= 3) folders.add(parts[1]);
                     }
-                }
-
-                for (const folderName of collectionFolders) {
-                    const now = new Date();
-                    const collectionId = generateCollectionId(now);
-                    const nowStr = formatDateForDb(now);
-
-                    await connection.execute(
-                        `INSERT INTO collections (id, user_id, name, sort_order, created_at, updated_at)
-                         VALUES (?, ?, ?, 0, ?, ?)`,
-                        [collectionId, userId, folderName, nowStr, nowStr]
-                    );
-                    collectionMap.set(folderName, collectionId);
-                    console.log(`[컬렉션 생성 (호환)] ${folderName} -> ID ${collectionId}`);
+                });
+                for (const f of folders) {
+                    const storageId = 'stg-' + Date.now() + '-' + crypto.randomBytes(4).toString('hex');
+                    await connection.execute(`INSERT INTO storages (id, user_id, name, created_at, updated_at) VALUES (?, ?, ?, NOW(), NOW())`, [storageId, userId, f]);
+                    workspaceMap.set(f, storageId);
                 }
             }
 
-            // 페이지 및 이미지 복원
+            // 2. 페이지 복원
             for (const entry of zipEntries) {
-                if (entry.isDirectory) continue;
+                if (entry.isDirectory || !entry.entryName.startsWith('pages/') || !entry.entryName.endsWith('.html')) continue;
 
-                const entryName = entry.entryName;
+                const parts = entry.entryName.split('/');
+                const folderName = parts[1];
+                const storageId = workspaceMap.get(folderName);
+                if (!storageId) continue;
 
-                // ZIP Slip 방지: 경로 검증
-                const baseExtractDir = path.join(__dirname, '..');
-                if (!isSafePath(entryName, baseExtractDir)) {
-                    console.warn(`[보안] 위험한 ZIP 엔트리 건너뜀: ${entryName}`);
-                    continue;
+                const pageData = extractPageFromHTML(entry.getData().toString('utf8'));
+                const pageId = generatePageId(new Date());
+                const nowStr = formatDateForDb(new Date());
+
+                pageDataMap.set(pageId, pageData);
+
+                let coverImage = pageData.coverImage;
+                if (coverImage && !DEFAULT_COVERS.includes(coverImage)) {
+                    const cParts = coverImage.split('/');
+                    if (cParts.length === 2) coverImage = `${userId}/${cParts[1]}`;
                 }
 
-                // HTML 페이지 처리 (pages/ 폴더)
-                if (entryName.endsWith('.html') && entryName.startsWith('pages/')) {
-                    const parts = entryName.split('/');
-                    if (parts.length < 3) continue; // pages/collectionName/pageName.html
+                await connection.execute(
+                    `INSERT INTO pages (id, user_id, storage_id, title, content, encryption_salt, encrypted_content,
+                                       sort_order, created_at, updated_at, is_encrypted, share_allowed, icon, cover_image, cover_position)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                    [pageId, userId, storageId, pageData.title, pageData.content, pageData.encryptionSalt, pageData.encryptedContent,
+                     pageData.sortOrder || 0, nowStr, nowStr, pageData.isEncrypted ? 1 : 0, pageData.shareAllowed ? 1 : 0, pageData.icon, coverImage, pageData.coverPosition || 50]
+                );
+                totalPages++;
+            }
 
-                    const collectionFolder = parts[1];
-                    const collectionId = collectionMap.get(collectionFolder);
-                    if (!collectionId) continue;
+            // 3. 이미지 복원
+            for (const entry of zipEntries) {
+                if (!entry.entryName.startsWith('images/') || entry.isDirectory) continue;
+                const imagePath = entry.entryName.substring(7);
+                if (DEFAULT_COVERS.includes(imagePath)) continue;
 
-                    const html = entry.getData().toString('utf8');
-                    const pageData = extractPageFromHTML(html);
+                const parts = imagePath.split('/');
+                const filename = parts[parts.length - 1];
+                if (!isAllowedImageFilename(filename)) continue;
 
-                    // 페이지 생성
-                    const now = new Date();
-                    const pageId = generatePageId(now);
-                    const nowStr = formatDateForDb(now);
-
-                    // 디버그: coverImage 정보 출력
-                    if (pageData.coverImage) {
-                        console.log(`[페이지 복원 메타] ${pageData.title} - 커버: ${pageData.coverImage}, isCover: ${pageData.isCoverImage}`);
-                    }
-
-                    // pageData를 맵에 저장 (이미지 처리 시 참조용)
-                    pageDataMap.set(pageId, pageData);
-
-                    // 커버 이미지 처리
-                    let coverImage = pageData.coverImage;
-                    if (coverImage) {
-                        if (DEFAULT_COVERS.includes(coverImage)) {
-                            // 기본 커버인 경우: 그대로 유지
-                            console.log(`[기본 커버 복원] ${coverImage}`);
-                        } else {
-                            // 커스텀 커버 이미지인 경우 경로의 userId 부분을 새 userId로 업데이트
-                            const parts = coverImage.split('/');
-                            if (parts.length === 2) {
-                                // 원본 형식: oldUserId/filename -> 새 형식: newUserId/filename
-                                coverImage = `${userId}/${parts[1]}`;
-                                console.log(`[커버 경로 업데이트] ${pageData.coverImage} -> ${coverImage}`);
-                            } else {
-                                // 경로 형식이 맞지 않으면 무시
-                                console.log(`[커버 경로 형식 오류] ${coverImage} (parts.length: ${parts.length})`);
-                                coverImage = null;
-                            }
-                        }
-                    }
-
-                    await connection.execute(
-                        `INSERT INTO pages (id, user_id, parent_id, title, content, encryption_salt, encrypted_content,
-                                           sort_order, created_at, updated_at, collection_id,
-                                           is_encrypted, share_allowed, icon, cover_image, cover_position)
-                         VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                        [
-                            pageId,
-                            userId,
-                            sanitizeInput(pageData.title),
-                            sanitizeHtmlContent(pageData.content),
-                            pageData.encryptionSalt,
-                            pageData.encryptedContent,
-                            pageData.sortOrder || 0,
-                            nowStr,
-                            nowStr,
-                            collectionId,
-                            pageData.isEncrypted ? 1 : 0,
-                            pageData.shareAllowed ? 1 : 0,
-                            pageData.icon,
-                            coverImage,
-                            pageData.coverPosition || 50
-                        ]
-                    );
-
-                    // 발행 정보 복원
-                    // 보안: import는 신뢰할 수 없는 입력일 수 있으므로,
-                    // - 기본값: 백업에 포함된 publishToken을 그대로 사용하지 않고 새 토큰을 재발급
-                    // - opt-in(KEEP_IMPORT_PUBLISH_TOKENS=true) 시에만 검증된 토큰을 유지
-                    if (pageData.publishToken) {
-                    	const keepToken = KEEP_IMPORT_PUBLISH_TOKENS && isValidPublishToken(pageData.publishToken);
-                        const requestedToken = keepToken ? pageData.publishToken : generatePublishToken();
-
-                        const createdAt = pageData.publishedAt ? formatDateForDb(new Date(pageData.publishedAt)) : nowStr;
-
-                        const finalToken = await insertPublishLinkWithRetry(connection, {
-                            token: requestedToken,
-                            pageId,
-                            ownerUserId: userId,
-                            createdAt,
-                            updatedAt: nowStr,
-                            // 안전 기본값: import로는 공개 댓글을 자동 활성화하지 않음
-                            allowComments: 0
-                        });
-
-						// 보안: 토큰 일부만 표시
-						const maskedToken = String(finalToken).substring(0, 8) + '...';
-                        const note = keepToken ? '' : ' (import 보안: 토큰 재발급)';
-                        console.log(`[발행 정보 복원] ${pageData.title} - 토큰: ${maskedToken}${note}`);
-                    }
-
-                    totalPages++;
-                    console.log(`[페이지 복원] ${pageData.title} (암호화: ${pageData.isEncrypted})`);
+                let isCover = false;
+                for (const pd of pageDataMap.values()) {
+                    if (pd.coverImage && pd.coverImage.includes(filename)) { isCover = true; break; }
                 }
 
-                // 이미지 처리
-                if (entryName.startsWith('images/')) {
-                    const imagePath = entryName.substring('images/'.length);
+                const targetDir = path.join(__dirname, '..', isCover ? 'covers' : 'imgs', String(userId));
+                if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
 
-                    console.log(`[이미지 처리 시작] ${imagePath}`);
-
-                    // 기본 커버 이미지는 건너뛰기
-                    if (DEFAULT_COVERS.includes(imagePath)) {
-                        console.log(`[이미지 건너뛰기] 기본 커버: ${imagePath}`);
-                        continue;
-                    }
-
-                    const parts = imagePath.split('/');
-                    if (parts.length < 2) {
-                        console.log(`[이미지 경로 오류] ${imagePath} (parts.length: ${parts.length})`);
-                        continue;
-                    }
-
-                    // 이미지 타입 판별: userId/filename 형식이므로 첫 번째 부분을 제거하고 나머지는 filename
-					const filename = parts[parts.length - 1];
-
-					// 허용된 이미지 확장자만 복원
-					if (!isAllowedImageFilename(filename)) {
-					    console.warn(`[보안] 허용되지 않은 이미지 확장자: ${filename}`);
-					    continue;
-					}
-
-					// 파일명 추가 검증 (경로 조작 방지)
-                    if (filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
-                        console.warn(`[보안] 위험한 파일명 감지: ${filename}`);
-                        continue;
-                    }
-
-                    // 백업에서 원래 어느 폴더에 있었는지 판별
-                    // pageDataMap에서 이 이미지가 커버인지 확인
-                    let isCoverImage = false;
-
-                    for (const pageData of pageDataMap.values()) {
-                        if (pageData && pageData.coverImage && pageData.coverImage.includes(filename) && pageData.isCoverImage) {
-                            isCoverImage = true;
-                            console.log(`[커버 이미지 감지] ${filename} (${pageData.title})`);
-                            break;
-                        }
-                    }
-
-                    // 디렉토리 설정
-                    let targetDir;
-                    if (isCoverImage) {
-                        targetDir = path.join(__dirname, '..', 'covers', String(userId));
-                    } else {
-                        targetDir = path.join(__dirname, '..', 'imgs', String(userId));
-                    }
-
-                    console.log(`[이미지 저장 위치] ${imagePath} -> ${targetDir}`);
-
-                    // 디렉토리 생성
-                    if (!fs.existsSync(targetDir)) {
-                        fs.mkdirSync(targetDir, { recursive: true });
-                        console.log(`[디렉토리 생성] ${targetDir}`);
-                    }
-
-                    const targetPath = path.join(targetDir, filename);
-
-                    // 최종 경로 검증 (디렉토리 탈출 방지)
-                    const resolvedTargetPath = path.resolve(targetPath);
-                    const resolvedTargetDir = path.resolve(targetDir);
-                    if (!resolvedTargetPath.startsWith(resolvedTargetDir + path.sep)) {
-                        console.warn(`[보안] 디렉토리 탈출 시도 차단: ${targetPath}`);
-                        continue;
-                    }
-
-                    // 이미지 저장 (매직바이트 확인)
-					const imageData = entry.getData();
-					if (!isSupportedImageBuffer(imageData, filename)) {
-						console.warn(`[보안] 이미지 시그니처 불일치(스푸핑 가능): ${filename}`);
-						continue;
-					}
-
-					// 최종 필터 통과된 데이터 쓰기
-					fs.writeFileSync(targetPath, imageData);
-
+                const imageData = entry.getData();
+                if (isSupportedImageBuffer(imageData, filename)) {
+                    fs.writeFileSync(path.join(targetDir, filename), imageData);
                     totalImages++;
-                    console.log(`[이미지 복원 완료] ${imagePath} -> ${filename}`);
                 }
             }
 
-            // 트랜잭션 커밋
             await connection.commit();
-
-            // 임시 파일 삭제
             fs.unlinkSync(uploadedFile.path);
-
-            console.log(`[백업 불러오기 완료] 컬렉션: ${collectionMap.size}, 페이지: ${totalPages}, 이미지: ${totalImages}`);
-
-            res.json({
-                ok: true,
-                collectionsCount: collectionMap.size,
-                pagesCount: totalPages,
-                imagesCount: totalImages
-            });
+            res.json({ ok: true, storagesCount: workspaceMap.size, pagesCount: totalPages, imagesCount: totalImages });
         } catch (error) {
-            // 트랜잭션 롤백
-            if (connection) {
-                await connection.rollback();
-            }
-
-            // 임시 파일 삭제
-            if (uploadedFile && fs.existsSync(uploadedFile.path)) {
-                fs.unlinkSync(uploadedFile.path);
-            }
-
-			logError('POST /api/backup/import', error);
-
-			// 입력(백업 파일) 문제는 400으로 반환
-			const msg = String(error?.message || '백업 불러오기 실패');
-			const isBadRequest = /백업 파일|유효하지 않은|허용되지 않은|경로 형식|시그니처/.test(msg);
-			res.status(isBadRequest ? 400 : 500).json({ error: '백업 불러오기 실패: ' + msg });
+            if (connection) await connection.rollback();
+            if (uploadedFile && fs.existsSync(uploadedFile.path)) fs.unlinkSync(uploadedFile.path);
+            logError('POST /api/backup/import', error);
+            res.status(500).json({ error: error.message });
         } finally {
-            if (connection) {
-                connection.release();
-            }
+            if (connection) connection.release();
         }
     });
 

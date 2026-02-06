@@ -18,7 +18,6 @@ module.exports = (dependencies) => {
         try {
             const userId = req.user.id;
 
-            // DB 접근은 repo에서만 수행
             const { userRow, storageRows } = await bootstrapRepo.getBootstrapRows(userId);
 
             const user = userRow

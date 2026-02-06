@@ -23,7 +23,7 @@ module.exports = (dependencies) => {
     });
 
     /**
-     * 특정 저장소의 데이터(컬렉션, 페이지) 조회
+     * 특정 저장소의 데이터(페이지) 조회
      */
     router.get('/:id/data', authMiddleware, async (req, res) => {
         try {
@@ -36,21 +36,7 @@ module.exports = (dependencies) => {
                 return res.status(404).json({ error: '저장소를 찾을 수 없거나 권한이 없습니다.' });
             }
 
-            const { collectionsRaw, pageRows, shareCountMap } = await bootstrapRepo.getStorageData(userId, storageId);
-
-            const collections = collectionsRaw.map((row) => ({
-                id: row.id,
-                name: row.name,
-                sortOrder: row.sort_order,
-                createdAt: toIsoString(row.created_at),
-                updatedAt: toIsoString(row.updated_at),
-                isOwner: row.owner_id === userId,
-                permission: row.permission,
-                isShared: (shareCountMap[row.id] || 0) > 0,
-                isEncrypted: Boolean(row.is_encrypted),
-                defaultEncryption: Boolean(row.default_encryption),
-                enforceEncryption: Boolean(row.enforce_encryption)
-            }));
+            const { pageRows } = await bootstrapRepo.getStorageData(userId, storageId);
 
             const pages = (pageRows || []).map((row) => ({
                 id: row.id,
@@ -58,7 +44,7 @@ module.exports = (dependencies) => {
                 updatedAt: toIsoString(row.updated_at),
                 parentId: row.parent_id,
                 sortOrder: row.sort_order,
-                collectionId: row.collection_id,
+                storageId: row.storage_id,
                 isEncrypted: row.is_encrypted ? true : false,
                 shareAllowed: row.share_allowed ? true : false,
                 userId: row.user_id,
@@ -68,7 +54,7 @@ module.exports = (dependencies) => {
                 horizontalPadding: row.horizontal_padding || null
             }));
 
-            res.json({ collections, pages });
+            res.json({ pages });
         } catch (error) {
             logError('GET /api/storages/:id/data', error);
             res.status(500).json({ error: '저장소 데이터를 불러오지 못했습니다.' });

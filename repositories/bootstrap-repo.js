@@ -7,14 +7,10 @@
 module.exports = ({
     usersRepo,
     storagesRepo,
-    collectionsRepo,
-    collectionSharesRepo,
     pagesRepo
 }) => {
     if (!usersRepo) throw new Error("usersRepo 필요");
     if (!storagesRepo) throw new Error("storagesRepo 필요");
-    if (!collectionsRepo) throw new Error("collectionsRepo 필요");
-    if (!collectionSharesRepo) throw new Error("collectionSharesRepo 필요");
     if (!pagesRepo) throw new Error("pagesRepo 필요");
 
     return {
@@ -31,18 +27,10 @@ module.exports = ({
         },
 
         async getStorageData(userId, storageId) {
-            const [collectionsRaw, pageRows] = await Promise.all([
-                collectionsRepo.listCollectionsForStorage(userId, storageId),
-                pagesRepo.listPagesForUser({ userId, storageId })
-            ]);
-
-            const collectionIds = (collectionsRaw || []).map(row => row.id);
-            const shareCountMap = await collectionSharesRepo.getShareCountMapForCollectionIds(collectionIds);
+            const pageRows = await pagesRepo.listPagesForUser({ userId, storageId });
 
             return {
-                collectionsRaw,
-                pageRows,
-                shareCountMap
+                pageRows
             };
         }
     };

@@ -175,7 +175,7 @@ const {
 const {
     initWebSocketServer,
     wsBroadcastToPage,
-    wsBroadcastToCollection,
+    wsBroadcastToStorage,
 	wsBroadcastToUser,
 	wsRevokeUserAccessFromCollection,
     startRateLimitCleanup,
@@ -956,136 +956,221 @@ async function initDb() {
         console.log("기본 관리자 계정 생성 완료. username:", username);
     }
 
-    // storages 테이블 생성
-    await pool.execute(`
-        CREATE TABLE IF NOT EXISTS storages (
-            id          VARCHAR(64)  NOT NULL PRIMARY KEY,
-            user_id     INT          NOT NULL,
-            name        VARCHAR(255) NOT NULL,
-            sort_order  INT          NOT NULL DEFAULT 0,
-            created_at  DATETIME     NOT NULL,
-            updated_at  DATETIME     NOT NULL,
-            CONSTRAINT fk_storages_user
-                FOREIGN KEY (user_id)
-                REFERENCES users(id)
-                ON DELETE CASCADE
-        ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
-    `);
+        // storages 테이블 생성
 
-    // collections 테이블 생성 (users 테이블 생성 후)
-    await pool.execute(`
-        CREATE TABLE IF NOT EXISTS collections (
-            id          VARCHAR(64)  NOT NULL PRIMARY KEY,
-            user_id     INT          NOT NULL,
-            storage_id  VARCHAR(64)  NOT NULL,
-            name        VARCHAR(255) NOT NULL,
-            sort_order  INT          NOT NULL DEFAULT 0,
-            created_at  DATETIME     NOT NULL,
-            updated_at  DATETIME     NOT NULL,
-            is_encrypted TINYINT(1) NOT NULL DEFAULT 0,
-            default_encryption TINYINT(1) NOT NULL DEFAULT 0,
-            enforce_encryption TINYINT(1) NOT NULL DEFAULT 0,
-            CONSTRAINT fk_collections_user
-                FOREIGN KEY (user_id)
-                REFERENCES users(id)
-                ON DELETE CASCADE,
-            CONSTRAINT fk_collections_storage
-                FOREIGN KEY (storage_id)
-                REFERENCES storages(id)
-                ON DELETE CASCADE
-        ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
-    `);
+        await pool.execute(`
 
-    // pages 테이블 생성
-    await pool.execute(`
-    	CREATE TABLE IF NOT EXISTS pages (
-            id          VARCHAR(64)  NOT NULL PRIMARY KEY,
-            sort_order  INT          NOT NULL DEFAULT 0,
-            user_id     INT          NOT NULL,
-            title       VARCHAR(255) NOT NULL,
-            content     MEDIUMTEXT   NOT NULL,
-            created_at  DATETIME     NOT NULL,
-            updated_at  DATETIME     NOT NULL,
-            parent_id   VARCHAR(64)  NULL,
-            collection_id VARCHAR(64) NOT NULL,
-            is_encrypted TINYINT(1) NOT NULL DEFAULT 0,
-            encryption_salt VARCHAR(255) NULL,
-            encrypted_content MEDIUMTEXT NULL,
-            yjs_state	LONGBLOB NULL,
-            share_allowed TINYINT(1) NOT NULL DEFAULT 0,
-            icon VARCHAR(100) NULL,
-            cover_image VARCHAR(255) NULL,
-            cover_position INT NOT NULL DEFAULT 50,
-            horizontal_padding INT NULL,
-            CONSTRAINT fk_pages_user
-                FOREIGN KEY (user_id)
-                REFERENCES users(id)
-                ON DELETE CASCADE,
-            CONSTRAINT fk_pages_parent
-                FOREIGN KEY (parent_id)
-                REFERENCES pages(id)
-                ON DELETE CASCADE,
-            CONSTRAINT fk_pages_collection
-                FOREIGN KEY (collection_id)
-                REFERENCES collections(id)
-                ON DELETE CASCADE
-        ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
-    `);
+            CREATE TABLE IF NOT EXISTS storages (
 
-    // collection_shares 테이블 생성 (사용자 간 직접 공유)
-    await pool.execute(`
-        CREATE TABLE IF NOT EXISTS collection_shares (
-            id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
-            collection_id VARCHAR(64) NOT NULL,
-            owner_user_id INT NOT NULL,
-            shared_with_user_id INT NOT NULL,
-            permission VARCHAR(20) NOT NULL DEFAULT 'READ',
-            created_at DATETIME NOT NULL,
-            updated_at DATETIME NOT NULL,
-            CONSTRAINT fk_collection_shares_collection
-                FOREIGN KEY (collection_id)
-                REFERENCES collections(id)
-                ON DELETE CASCADE,
-            CONSTRAINT fk_collection_shares_owner
-                FOREIGN KEY (owner_user_id)
-                REFERENCES users(id)
-                ON DELETE CASCADE,
-            CONSTRAINT fk_collection_shares_shared_with
-                FOREIGN KEY (shared_with_user_id)
-                REFERENCES users(id)
-                ON DELETE CASCADE,
-            CONSTRAINT uc_collection_shares_unique
-                UNIQUE (collection_id, shared_with_user_id),
-            INDEX idx_shared_with_user (shared_with_user_id),
-            INDEX idx_collection_permission (collection_id, permission)
-        ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
-    `);
+                id          VARCHAR(64)  NOT NULL PRIMARY KEY,
 
-    // share_links 테이블 생성 (링크 기반 공유)
-    await pool.execute(`
-        CREATE TABLE IF NOT EXISTS share_links (
-            id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
-            token VARCHAR(64) NOT NULL UNIQUE,
-            collection_id VARCHAR(64) NOT NULL,
-            owner_user_id INT NOT NULL,
-            permission VARCHAR(20) NOT NULL DEFAULT 'READ',
-            expires_at DATETIME NULL,
-            is_active TINYINT(1) NOT NULL DEFAULT 1,
-            created_at DATETIME NOT NULL,
-            updated_at DATETIME NOT NULL,
-            CONSTRAINT fk_share_links_collection
-                FOREIGN KEY (collection_id)
-                REFERENCES collections(id)
-                ON DELETE CASCADE,
-            CONSTRAINT fk_share_links_owner
-                FOREIGN KEY (owner_user_id)
-                REFERENCES users(id)
-                ON DELETE CASCADE,
-            INDEX idx_token_active (token, is_active),
-            INDEX idx_collection_links (collection_id),
-            INDEX idx_expires_at (expires_at)
-        ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
-    `);
+                user_id     INT          NOT NULL,
+
+                name        VARCHAR(255) NOT NULL,
+
+                sort_order  INT          NOT NULL DEFAULT 0,
+
+                created_at  DATETIME     NOT NULL,
+
+                updated_at  DATETIME     NOT NULL,
+
+                CONSTRAINT fk_storages_user
+
+                    FOREIGN KEY (user_id)
+
+                    REFERENCES users(id)
+
+                    ON DELETE CASCADE
+
+            ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
+
+        `);
+
+    
+
+        // pages 테이블 생성 (이제 storage_id에 직접 속함)
+
+        await pool.execute(`
+
+        	CREATE TABLE IF NOT EXISTS pages (
+
+                id          VARCHAR(64)  NOT NULL PRIMARY KEY,
+
+                sort_order  INT          NOT NULL DEFAULT 0,
+
+                user_id     INT          NOT NULL,
+
+                storage_id  VARCHAR(64)  NOT NULL,
+
+                title       VARCHAR(255) NOT NULL,
+
+                content     MEDIUMTEXT   NOT NULL,
+
+                created_at  DATETIME     NOT NULL,
+
+                updated_at  DATETIME     NOT NULL,
+
+                parent_id   VARCHAR(64)  NULL,
+
+                is_encrypted TINYINT(1) NOT NULL DEFAULT 0,
+
+                encryption_salt VARCHAR(255) NULL,
+
+                encrypted_content MEDIUMTEXT NULL,
+
+                yjs_state	LONGBLOB NULL,
+
+                share_allowed TINYINT(1) NOT NULL DEFAULT 0,
+
+                icon VARCHAR(100) NULL,
+
+                cover_image VARCHAR(255) NULL,
+
+                cover_position INT NOT NULL DEFAULT 50,
+
+                horizontal_padding INT NULL,
+
+                CONSTRAINT fk_pages_user
+
+                    FOREIGN KEY (user_id)
+
+                    REFERENCES users(id)
+
+                    ON DELETE CASCADE,
+
+                CONSTRAINT fk_pages_parent
+
+                    FOREIGN KEY (parent_id)
+
+                    REFERENCES pages(id)
+
+                    ON DELETE CASCADE,
+
+                CONSTRAINT fk_pages_storage
+
+                    FOREIGN KEY (storage_id)
+
+                    REFERENCES storages(id)
+
+                    ON DELETE CASCADE
+
+            ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
+
+        `);
+
+    
+
+        // storage_shares 테이블 생성 (구 collection_shares)
+
+        await pool.execute(`
+
+            CREATE TABLE IF NOT EXISTS storage_shares (
+
+                id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+
+                storage_id VARCHAR(64) NOT NULL,
+
+                owner_user_id INT NOT NULL,
+
+                shared_with_user_id INT NOT NULL,
+
+                permission VARCHAR(20) NOT NULL DEFAULT 'READ',
+
+                created_at DATETIME NOT NULL,
+
+                updated_at DATETIME NOT NULL,
+
+                CONSTRAINT fk_storage_shares_storage
+
+                    FOREIGN KEY (storage_id)
+
+                    REFERENCES storages(id)
+
+                    ON DELETE CASCADE,
+
+                CONSTRAINT fk_storage_shares_owner
+
+                    FOREIGN KEY (owner_user_id)
+
+                    REFERENCES users(id)
+
+                    ON DELETE CASCADE,
+
+                CONSTRAINT fk_storage_shares_shared_with
+
+                    FOREIGN KEY (shared_with_user_id)
+
+                    REFERENCES users(id)
+
+                    ON DELETE CASCADE,
+
+                CONSTRAINT uc_storage_shares_unique
+
+                    UNIQUE (storage_id, shared_with_user_id),
+
+                INDEX idx_shared_with_user (shared_with_user_id)
+
+            ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
+
+        `);
+
+    
+
+        // share_links 테이블 생성 (이제 저장소 단위로 작동)
+
+        await pool.execute(`
+
+            CREATE TABLE IF NOT EXISTS share_links (
+
+                id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+
+                token VARCHAR(64) NOT NULL UNIQUE,
+
+                storage_id VARCHAR(64) NOT NULL,
+
+                owner_user_id INT NOT NULL,
+
+                permission VARCHAR(20) NOT NULL DEFAULT 'READ',
+
+                expires_at DATETIME NULL,
+
+                is_active TINYINT(1) NOT NULL DEFAULT 1,
+
+                created_at DATETIME NOT NULL,
+
+                updated_at DATETIME NOT NULL,
+
+                CONSTRAINT fk_share_links_storage
+
+                    FOREIGN KEY (storage_id)
+
+                    REFERENCES storages(id)
+
+                    ON DELETE CASCADE,
+
+                CONSTRAINT fk_share_links_owner
+
+                    FOREIGN KEY (owner_user_id)
+
+                    REFERENCES users(id)
+
+                    ON DELETE CASCADE,
+
+                INDEX idx_token_active (token, is_active),
+
+                INDEX idx_expires_at (expires_at)
+
+            ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
+
+        `);
+
+    
+
+        // backup_codes, passkeys, webauthn_challenges, page_publish_links, login_logs, comments 등은 그대로 유지 (생략)
+
+        // ... 기존 코드의 해당 테이블 생성 부분으로 이어짐 ...
+
+    
 
     // backup_codes 테이블 생성 (TOTP 백업 코드)
     await pool.execute(`
@@ -1141,7 +1226,7 @@ async function initDb() {
         ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
     `);
 
-    // 페이지 발행 링크 테이블
+    // 페이지 발행 링크 테이블 (페이지 단위이므로 유지)
     await pool.execute(`
         CREATE TABLE IF NOT EXISTS page_publish_links (
             id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -1210,13 +1295,13 @@ async function initDb() {
     // 성능 최적화: 데이터베이스 인덱스 추가
     // ============================================================
 
-    // pages 테이블 인덱스 (컬렉션별 페이지 조회 최적화)
+    // pages 테이블 인덱스 (저장소별 페이지 조회 최적화)
     try {
         await pool.execute(`
-            CREATE INDEX IF NOT EXISTS idx_pages_collection_user
-            ON pages(collection_id, user_id)
+            CREATE INDEX IF NOT EXISTS idx_pages_storage_user
+            ON pages(storage_id, user_id)
         `);
-        console.log('✓ pages.collection_id, user_id 인덱스 생성 완료');
+        console.log('✓ pages.storage_id, user_id 인덱스 생성 완료');
     } catch (error) {
         if (error.code !== 'ER_DUP_KEYNAME') {
             console.warn('pages 인덱스 생성 중 경고:', error.message);
@@ -1246,19 +1331,6 @@ async function initDb() {
     } catch (error) {
         if (error.code !== 'ER_DUP_KEYNAME') {
             console.warn('pages 인덱스 생성 중 경고:', error.message);
-        }
-    }
-
-    // collections 테이블 인덱스 (사용자별 컬렉션 조회 최적화)
-    try {
-        await pool.execute(`
-            CREATE INDEX IF NOT EXISTS idx_collections_user_sort
-            ON collections(user_id, sort_order, updated_at DESC)
-        `);
-        console.log('✓ collections.user_id, sort_order 인덱스 생성 완료');
-    } catch (error) {
-        if (error.code !== 'ER_DUP_KEYNAME') {
-            console.warn('collections 인덱스 생성 중 경고:', error.message);
         }
     }
 }
@@ -1998,7 +2070,7 @@ function getSessionFromId(sessionId) {
             // WebSocket 관련 (websocket-server.js 모듈에서 import)
             wsConnections,
             wsBroadcastToPage,
-            wsBroadcastToCollection,
+            wsBroadcastToStorage,
 			wsBroadcastToUser,
 			wsRevokeUserAccessFromCollection,
 			wsCloseConnectionsForSession,
@@ -2034,7 +2106,6 @@ function getSessionFromId(sessionId) {
         const indexRoutes = require('./routes/index')(routeDependencies);
         const authRoutes = require('./routes/auth')(routeDependencies);
         const storagesRoutes = require('./routes/storages')(routeDependencies);
-        const collectionsRoutes = require('./routes/collections')(routeDependencies);
         const pagesRoutes = require('./routes/pages')(routeDependencies);
         const bootstrapRoutes = require('./routes/bootstrap')(routeDependencies);
         const sharesRoutes = require('./routes/shares')(routeDependencies);
@@ -2048,7 +2119,6 @@ function getSessionFromId(sessionId) {
         app.use('/', indexRoutes);
         app.use('/api/auth', authRoutes);
         app.use('/api/storages', storagesRoutes);
-        app.use('/api/collections', collectionsRoutes);
         app.use('/api/pages', pagesRoutes);
         app.use('/api/bootstrap', bootstrapRoutes);
         app.use('/api', sharesRoutes);
@@ -2094,7 +2164,7 @@ function getSessionFromId(sessionId) {
                 });
 
                 // WebSocket 서버 초기화
-                initWebSocketServer(httpsServer, sessions, getCollectionPermission, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, SESSION_COOKIE_NAME, getSessionFromId);
+                initWebSocketServer(httpsServer, sessions, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, SESSION_COOKIE_NAME, getSessionFromId);
 
                 // WebSocket Rate Limit 정리 작업 시작
                 startRateLimitCleanup();
@@ -2151,7 +2221,7 @@ function getSessionFromId(sessionId) {
                 // WebSocket 서버 초기화
                 // HTTP 모드에서도 WebSocket 메시지 처리 시 세션 검증 로직(getSessionFromId)을 사용해야
                 // 동기화 메시지가 "Session expired"로 오판되어 연결이 반복 종료되는 문제를 방지할 수 있습니다.
-                initWebSocketServer(httpServer, sessions, getCollectionPermission, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, SESSION_COOKIE_NAME, getSessionFromId);
+                initWebSocketServer(httpServer, sessions, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, SESSION_COOKIE_NAME, getSessionFromId);
 
                 // WebSocket Rate Limit 정리 작업 시작
                 startRateLimitCleanup();
@@ -2175,7 +2245,7 @@ function getSessionFromId(sessionId) {
             // WebSocket 서버 초기화
             // HTTP 모드에서도 WebSocket 메시지 처리 시 세션 검증 로직(getSessionFromId)을 사용해야
             // 동기화 메시지가 "Session expired"로 오판되어 연결이 반복 종료되는 문제를 방지할 수 있습니다.
-            initWebSocketServer(httpServer, sessions, getCollectionPermission, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, SESSION_COOKIE_NAME, getSessionFromId);
+            initWebSocketServer(httpServer, sessions, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, SESSION_COOKIE_NAME, getSessionFromId);
 
             // WebSocket Rate Limit 정리 작업 시작
             startRateLimitCleanup();

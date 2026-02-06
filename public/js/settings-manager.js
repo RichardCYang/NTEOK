@@ -130,13 +130,27 @@ function applyTranslations() {
  */
 function updateModeToggleText() {
     const modeBtn = document.querySelector('#mode-toggle-btn');
-    if (modeBtn) {
-        const isReadMode = modeBtn.querySelector('span').textContent.includes(state.translations['mode_read'] || '읽기모드') ||
-                           modeBtn.querySelector('span').textContent.includes('읽기모드'); // 현재 텍스트 확인이 좀 애매하므로 상태 기반이 좋음.
+    if (!modeBtn) return;
 
-        // 하지만 app.js에서 상태를 관리하므로 여기서는 단순 번역 적용이 어려울 수 있음.
-        // data-i18n을 동적으로 바꾸거나, app.js에서 모드 변경 시 data-i18n을 다시 적용해야 함.
-        // 여기서는 일단 넘어감. app.js에서 모드 변경 로직을 수정하는 것이 좋음.
+    const span = modeBtn.querySelector('span');
+    const translations = state.translations || {};
+    
+    // index.html 디자인에 따라 span이 없을 수 있음 (아이콘만 있는 경우)
+    if (span) {
+        const isReadMode = span.textContent.includes(translations['mode_read'] || '읽기모드') ||
+                           span.textContent.includes('읽기모드');
+        // 필요한 경우 여기서 span 텍스트 업데이트 로직 추가
+    }
+
+    // title 속성 번역 (항상 존재함)
+    const currentTitle = modeBtn.getAttribute('title');
+    if (currentTitle) {
+        const isWriteModeIcon = modeBtn.querySelector('i')?.classList.contains('fa-pencil');
+        if (isWriteModeIcon) {
+            modeBtn.setAttribute('title', translations['mode_toggle_write'] || '쓰기 모드');
+        } else {
+            modeBtn.setAttribute('title', translations['mode_toggle_read'] || '읽기 모드');
+        }
     }
 }
 
