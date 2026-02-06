@@ -135,8 +135,9 @@
                         </button>
                     </div>
 
-                    <!-- 커버 이미지 영역 -->
-                    <div class="page-cover-container" id="page-cover-container" style="display: none;">
+                    <div class="editor-scroll-container" id="editor-scroll-container">
+                        <!-- 커버 이미지 영역 -->
+                        <div class="page-cover-container" id="page-cover-container" style="display: none;">
                         <div class="page-cover-image" id="page-cover-image"></div>
                         <div class="page-cover-overlay">
                             <button class="page-cover-btn" id="change-cover-btn" title="커버 변경">
@@ -242,9 +243,10 @@
                             <div id="subpages-grid" class="subpages-grid"></div>
                         </div>
                     </div>
-                </main>
-            </div>
+                </div> <!-- .editor-scroll-container -->
+            </main>
         </div>
+    </div>
         <!-- Tiptap 브라우저 번들 -->
         <script src="/lib/tiptap/tiptap-for-browser.min.js"></script>
 

@@ -10,6 +10,37 @@ body {
     padding: 0;
     height: 100%;
     font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Malgun Gothic", sans-serif;
+    overflow: hidden; /* Prevent body scrollbar */
+}
+
+/* Global Scrollbar Style */
+* {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb-color) transparent;
+}
+
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background-color: var(--scrollbar-thumb-color);
+    border-radius: 20px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background-color: var(--scrollbar-thumb-hover-color);
+}
+
+::-webkit-scrollbar-corner {
+    background: transparent;
 }
 
 body {
@@ -20,6 +51,7 @@ body {
     display: flex;
     flex-direction: column;
     height: 100vh;
+    overflow: hidden;
 }
 
 .app-header {
@@ -87,6 +119,7 @@ body {
     flex: 1;
     display: flex;
     min-height: 0;
+    overflow: hidden; /* Prevent child scrollbars from reaching the app-header level */
 }
 
 /* 사이드바 */
@@ -500,12 +533,25 @@ body {
     display: flex;
     flex-direction: column;
     min-width: 0;
-    overflow-y: auto; /* 기본값: 전체 스크롤 */
+    overflow: hidden; /* Prevent editor-area from having its own scrollbar */
+}
+
+/* 스크롤 가능한 본문 래퍼 */
+.editor-scroll-container {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
 }
 
 /* 고정 헤더 설정 시 */
 .editor-area.sticky-header-enabled {
-    overflow-y: hidden;
+    overflow: hidden;
+}
+
+.editor-area.sticky-header-enabled .editor-scroll-container {
+    overflow-y: hidden; /* 상단 고정 시에는 내부 에디터가 스크롤을 담당 */
 }
 
 .page-title-input {
@@ -599,24 +645,6 @@ body {
 .editor-toolbar button:disabled:hover {
     background-color: transparent;
     color: #4a545e;
-}
-
-/* 에디터 스크롤바 스타일 */
-.editor-toolbar::-webkit-scrollbar {
-    height: 4px;
-}
-
-.editor-toolbar::-webkit-scrollbar-track {
-    background: var(--scrollbar-track-color);
-}
-
-.editor-toolbar::-webkit-scrollbar-thumb {
-    background: var(--scrollbar-thumb-color);
-    border-radius: 2px;
-}
-
-.editor-toolbar::-webkit-scrollbar-thumb:hover {
-    background: var(--scrollbar-thumb-hover-color);
 }
 
 /* 색상 드롭다운 전체 래퍼 */
@@ -2607,25 +2635,6 @@ body {
     line-height: 1.5;
 }
 
-/* 스크롤바 스타일 */
-.settings-modal-body::-webkit-scrollbar {
-    width: 8px;
-}
-
-.settings-modal-body::-webkit-scrollbar-track {
-    background: #f9f8f6;
-    border-radius: 4px;
-}
-
-.settings-modal-body::-webkit-scrollbar-thumb {
-    background: #d4cfc4;
-    border-radius: 4px;
-}
-
-.settings-modal-body::-webkit-scrollbar-thumb:hover {
-    background: #2d5f5d;
-}
-
 /* ==================== Settings Modal - Responsive ==================== */
 
 /* 태블릿 이하 */
@@ -2876,7 +2885,7 @@ body {
 
 /* ?ㅽ겕濡ㅻ컮 ?ㅽ???*/
 .icon-picker-grid::-webkit-scrollbar {
-    width: 8px;
+    display: none;
 }
 
 .icon-picker-grid::-webkit-scrollbar-track {

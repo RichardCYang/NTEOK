@@ -1399,7 +1399,7 @@ export function initEditor() {
     };
 
     document.querySelector(".editor")?.addEventListener("scroll", scrollHandler, { passive: true });
-    document.querySelector(".editor-area")?.addEventListener("scroll", scrollHandler, { passive: true });
+    document.getElementById("editor-scroll-container")?.addEventListener("scroll", scrollHandler, { passive: true });
 
     return editor;
 }
