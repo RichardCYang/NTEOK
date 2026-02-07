@@ -8,30 +8,85 @@ module.exports = ({ pool }) => {
 
     return {
         /**
-         * 사용자가 소유한 저장소 목록 조회
+         * 사용자가 소유하거나 공유받은 저장소 목록 조회
          */
         async listStoragesForUser(userId) {
             const [rows] = await pool.execute(
-                `SELECT id, name, sort_order, created_at, updated_at
-                 FROM storages
-                 WHERE user_id = ?
-                 ORDER BY sort_order ASC, updated_at DESC`,
-                [userId]
+                `SELECT s.id, s.name, s.sort_order, s.created_at, s.updated_at, s.user_id as owner_id,
+                        u.username as owner_name,
+                        CASE WHEN s.user_id = ? THEN 1 ELSE 0 END as is_owner,
+                        ss.permission
+                 FROM storages s
+                 LEFT JOIN users u ON s.user_id = u.id
+                 LEFT JOIN storage_shares ss ON s.id = ss.storage_id AND ss.shared_with_user_id = ?
+                 WHERE s.user_id = ? OR ss.shared_with_user_id = ?
+                 ORDER BY is_owner DESC, s.sort_order ASC, s.updated_at DESC`,
+                [userId, userId, userId, userId]
             );
             return rows || [];
         },
 
         /**
-         * 단일 저장소 조회
+         * 단일 저장소 조회 (소유 또는 공유 권한 확인)
          */
         async getStorageByIdForUser(userId, storageId) {
             const [rows] = await pool.execute(
-                `SELECT id, name, sort_order, created_at, updated_at
-                 FROM storages
-                 WHERE id = ? AND user_id = ?`,
-                [storageId, userId]
+                `SELECT s.id, s.name, s.sort_order, s.created_at, s.updated_at, s.user_id as owner_id,
+                        CASE WHEN s.user_id = ? THEN 1 ELSE 0 END as is_owner,
+                        ss.permission
+                 FROM storages s
+                 LEFT JOIN storage_shares ss ON s.id = ss.storage_id AND ss.shared_with_user_id = ?
+                 WHERE s.id = ? AND (s.user_id = ? OR ss.shared_with_user_id = ?)`,
+                [userId, userId, storageId, userId, userId]
             );
             return rows?.[0] || null;
+        },
+
+        /**
+         * 저장소 참여자 목록 조회
+         */
+        async listCollaborators(storageId) {
+            const [rows] = await pool.execute(
+                `SELECT ss.shared_with_user_id as id, u.username, ss.permission, ss.created_at
+                 FROM storage_shares ss
+                 JOIN users u ON ss.shared_with_user_id = u.id
+                 WHERE ss.storage_id = ?
+                 ORDER BY ss.created_at ASC`,
+                [storageId]
+            );
+            return rows;
+        },
+
+        /**
+         * 저장소 참여자 추가
+         */
+        async addCollaborator({ storageId, ownerUserId, sharedWithUserId, permission, createdAt, updatedAt }) {
+            await pool.execute(
+                `INSERT INTO storage_shares (storage_id, owner_user_id, shared_with_user_id, permission, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?)
+                 ON DUPLICATE KEY UPDATE permission = ?, updated_at = ?`,
+                [storageId, ownerUserId, sharedWithUserId, permission, createdAt, updatedAt, permission, updatedAt]
+            );
+        },
+
+        /**
+         * 저장소 참여자 삭제
+         */
+        async removeCollaborator(storageId, userId) {
+            await pool.execute(
+                `DELETE FROM storage_shares WHERE storage_id = ? AND shared_with_user_id = ?`,
+                [storageId, userId]
+            );
+        },
+
+        /**
+         * 사용자의 저장소 권한 조회
+         */
+        async getPermission(userId, storageId) {
+            const storage = await this.getStorageByIdForUser(userId, storageId);
+            if (!storage) return null;
+            if (storage.is_owner) return 'ADMIN';
+            return storage.permission || null;
         },
 
         /**

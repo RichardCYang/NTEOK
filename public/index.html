@@ -1177,6 +1177,57 @@
             </div>
         </div>
 
+        <!-- 저장소 참여자 관리 모달 -->
+        <div id="storage-collaborators-modal" class="modal hidden">
+            <div class="modal-overlay"></div>
+            <div class="modal-content" style="max-width: 500px;">
+                <div class="modal-header">
+                    <h2>저장소 참여자 관리</h2>
+                    <button id="close-storage-collaborators-btn" class="modal-close-btn">
+                        <i class="fa-solid fa-xmark"></i>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <p style="margin-bottom: 16px; color: #6b7280; font-size: 14px;">
+                        이 저장소를 다른 사용자와 공유하여 공동으로 작업할 수 있습니다.
+                    </p>
+                    
+                    <!-- 참여자 추가 -->
+                    <div class="collaborator-add-section">
+                        <h3 class="modal-section-title">참여자 추가</h3>
+                        <div class="collaborator-search-wrapper">
+                            <div class="search-input-container">
+                                <input
+                                    type="text"
+                                    id="collaborator-search-input"
+                                    placeholder="사용자명 검색 (2자 이상)..."
+                                    class="settings-select search-field"
+                                    autocomplete="off"
+                                />
+                                <div id="collaborator-search-results" class="search-dropdown hidden"></div>
+                            </div>
+                            <select id="collaborator-permission" class="settings-select permission-select">
+                                <option value="READ">읽기</option>
+                                <option value="EDIT">편집</option>
+                                <option value="ADMIN">관리</option>
+                            </select>
+                            <button id="add-collaborator-btn" class="primary-button add-btn">
+                                <i class="fa-solid fa-plus"></i> 추가
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- 참여자 목록 -->
+                    <div class="collaborator-list-section">
+                        <h3 class="modal-section-title">현재 참여자</h3>
+                        <div id="storage-collaborator-list" class="collaborator-list">
+                            <!-- 동적 생성 -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- 공용 Context Menu -->
         <div id="context-menu" class="context-menu hidden">
             <div id="context-menu-content"></div>

@@ -297,6 +297,9 @@ async function init() {
         initCommentsManager(appState);
 
         const storagesManager = initStoragesManager(appState, (data) => {
+            if (data.permission) {
+                appState.currentStoragePermission = data.permission;
+            }
             if (Array.isArray(data.pages)) {
                 applyPagesData(data.pages);
             }

@@ -17,7 +17,7 @@ let state = {
     editor: null,
     pages: [],
     currentStorageId: null,
-    currentPageId: null,
+    currentStoragePermission: null,
     expandedPages: new Set(),
     isWriteMode: false,
     currentPageIsEncrypted: false
@@ -188,19 +188,23 @@ export function renderPageList() {
         right.className = "page-menu-wrapper";
         right.style.cssText = "display:flex; align-items:center; gap:4px;";
 
-        const addSubBtn = document.createElement("button");
-        addSubBtn.className = "page-add-subpage-btn";
-        addSubBtn.dataset.pageId = node.id;
-        addSubBtn.innerHTML = '<i class="fa-solid fa-plus"></i>';
+        const canEdit = state.currentStoragePermission === 'EDIT' || state.currentStoragePermission === 'ADMIN';
 
-        const menuBtn = document.createElement("button");
-        menuBtn.className = "page-menu-btn";
-        menuBtn.dataset.pageId = node.id;
-        menuBtn.dataset.isEncrypted = node.isEncrypted;
-        menuBtn.innerHTML = '<i class="fa-solid fa-ellipsis-vertical"></i>';
+        if (canEdit) {
+            const addSubBtn = document.createElement("button");
+            addSubBtn.className = "page-add-subpage-btn";
+            addSubBtn.dataset.pageId = node.id;
+            addSubBtn.innerHTML = '<i class="fa-solid fa-plus"></i>';
 
-        right.appendChild(addSubBtn);
-        right.appendChild(menuBtn);
+            const menuBtn = document.createElement("button");
+            menuBtn.className = "page-menu-btn";
+            menuBtn.dataset.pageId = node.id;
+            menuBtn.dataset.isEncrypted = node.isEncrypted;
+            menuBtn.innerHTML = '<i class="fa-solid fa-ellipsis-vertical"></i>';
+
+            right.appendChild(addSubBtn);
+            right.appendChild(menuBtn);
+        }
 
         row.appendChild(titleWrap);
         row.appendChild(right);
@@ -255,6 +259,14 @@ export async function loadPage(id) {
 
         const titleInput = document.querySelector("#page-title-input");
         if (titleInput) titleInput.value = title;
+
+        // 권한에 따른 UI 처리
+        const canEdit = state.currentStoragePermission === 'EDIT' || state.currentStoragePermission === 'ADMIN';
+        const modeToggleBtn = document.querySelector("#mode-toggle-btn");
+        const newPageBtn = document.querySelector("#new-page-btn");
+        
+        if (modeToggleBtn) modeToggleBtn.style.display = canEdit ? 'flex' : 'none';
+        if (newPageBtn) newPageBtn.style.display = canEdit ? 'flex' : 'none';
 
         const updatedAtEl = document.querySelector("#page-updated-at");
         if (updatedAtEl) updatedAtEl.textContent = new Date(page.updatedAt).toLocaleString();
@@ -311,6 +323,12 @@ export async function saveCurrentPage() {
  * 편집 모드 토글
  */
 export async function toggleEditMode() {
+    const canEdit = state.currentStoragePermission === 'EDIT' || state.currentStoragePermission === 'ADMIN';
+    if (!canEdit) {
+        alert('이 저장소에 대한 편집 권한이 없습니다.');
+        return;
+    }
+
     const btn = document.querySelector("#mode-toggle-btn");
     if (!state.editor || !btn) return;
 
@@ -331,7 +349,10 @@ export async function toggleEditMode() {
 }
 
 export function bindModeToggle() {
-    document.querySelector("#mode-toggle-btn")?.addEventListener("click", toggleEditMode);
+    const btn = document.querySelector("#mode-toggle-btn");
+    if (!btn) return;
+
+    btn.addEventListener("click", toggleEditMode);
 }
 
 /**
@@ -342,6 +363,12 @@ export function bindNewPageButton() {
     if (!btn) return;
 
     btn.addEventListener("click", async () => {
+        const canEdit = state.currentStoragePermission === 'EDIT' || state.currentStoragePermission === 'ADMIN';
+        if (!canEdit) {
+            alert('이 저장소에 대한 편집 권한이 없습니다.');
+            return;
+        }
+
         let title = prompt("새 페이지 제목을 입력하세요:", "새 페이지");
         if (title === null) return;
 

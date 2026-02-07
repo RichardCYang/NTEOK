@@ -34,7 +34,10 @@ module.exports = (dependencies) => {
                 name: row.name,
                 sortOrder: row.sort_order,
                 createdAt: toIsoString(row.created_at),
-                updatedAt: toIsoString(row.updated_at)
+                updatedAt: toIsoString(row.updated_at),
+                is_owner: row.is_owner,
+                permission: row.permission,
+                owner_name: row.owner_name
             }));
 
             res.json({ user, storages });

@@ -1,0 +1,1148 @@
+﻿*,
+*::before,
+*::after {
+    box-sizing: border-box;
+}
+
+html,
+body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Malgun Gothic", sans-serif;
+    overflow: hidden; /* Prevent body scrollbar */
+}
+
+/* Global Scrollbar Style */
+* {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb-color) transparent;
+}
+
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background-color: var(--scrollbar-thumb-color);
+    border-radius: 20px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background-color: var(--scrollbar-thumb-hover-color);
+}
+
+::-webkit-scrollbar-corner {
+    background: transparent;
+}
+
+body {
+    background-color: var(--secondary-color);
+}
+
+/* 저장소 선택 화면 (대시보드 그리드 스타일) */
+.storage-selection-screen {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: var(--secondary-color);
+    display: flex;
+    flex-direction: column;
+    z-index: 1000;
+    overflow-y: auto;
+}
+
+.storage-selection-screen.hidden {
+    display: none;
+}
+
+/* 대시보드 헤더 */
+.storage-selection-header {
+    width: 100%;
+    padding: 40px 60px;
+    background-color: var(--primary-color);
+    border-bottom: 1px solid var(--border-color);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+
+.storage-header-left {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+}
+
+.storage-header-left img {
+    width: 48px;
+    height: 48px;
+}
+
+.storage-header-text h1 {
+    font-size: 28px;
+    font-weight: 800;
+    color: var(--font-color);
+    margin: 0;
+    letter-spacing: -0.03em;
+}
+
+.storage-header-text p {
+    font-size: 14px;
+    color: var(--sub-font-color);
+    margin: 4px 0 0 0;
+}
+
+.storage-header-actions {
+    display: flex;
+    gap: 12px;
+}
+
+/* 메인 컨텐츠 그리드 영역 */
+.storage-selection-content {
+    flex: 1;
+    padding: 60px;
+    width: 100%;
+    max-width: 1400px;
+    margin: 0 auto;
+}
+
+.storage-grid-label {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--sub-font-color);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-bottom: 24px;
+    display: block;
+}
+
+.storage-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 24px;
+    margin-bottom: 60px;
+}
+
+/* 개별 저장소 카드 */
+.storage-item {
+    background-color: var(--primary-color);
+    border: 1px solid var(--border-color);
+    border-radius: 16px;
+    padding: 32px;
+    cursor: pointer;
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+}
+
+.storage-item:hover {
+    border-color: var(--point-color);
+    transform: translateY(-6px);
+    box-shadow: 0 12px 24px var(--box-shadow-color);
+}
+
+.storage-icon-wrapper {
+    width: 56px;
+    height: 56px;
+    background-color: var(--tertiary-color);
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 24px;
+    transition: background-color 0.2s ease;
+}
+
+.storage-item:hover .storage-icon-wrapper {
+    background-color: var(--point-color);
+}
+
+.storage-item i.fa-database {
+    font-size: 24px;
+    color: var(--point-color);
+}
+
+.storage-item:hover i.fa-database {
+    color: white;
+}
+
+.storage-item-info {
+    flex: 1;
+}
+
+.storage-item-name {
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--font-color);
+    margin-bottom: 8px;
+    word-break: break-all;
+}
+
+.storage-item-meta {
+    font-size: 13px;
+    color: var(--sub-font-color);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.storage-item-meta::before {
+    content: "\f017";
+    font-family: "Font Awesome 6 Free";
+    font-weight: 400;
+}
+
+/* 카드 내 삭제 버튼 */
+.storage-delete-btn {
+    position: absolute;
+    top: 20px;
+    right: 20px;
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    border: none;
+    background-color: transparent;
+    color: var(--sub-font-color);
+    opacity: 0;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.storage-item:hover .storage-delete-btn {
+    opacity: 1;
+}
+
+.storage-delete-btn:hover {
+    background-color: #fee2e2;
+    color: #ef4444;
+}
+
+/* 추가 버튼 커스텀 */
+.storage-selection-header .primary-button {
+    padding: 12px 24px;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.storage-selection-header .secondary-button {
+    padding: 12px 20px;
+}
+
+@media (max-width: 768px) {
+    .storage-selection-header {
+        padding: 24px 20px;
+        flex-direction: column;
+        gap: 20px;
+        align-items: flex-start;
+    }
+    
+    .storage-selection-content {
+        padding: 30px 20px;
+    }
+    
+    .storage-list {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* 사이드바 footer 조정 */
+.sidebar-footer {
+    padding: 12px 16px;
+    border-top: 1px solid var(--border-color);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.sidebar-new-collection-button,
+.sidebar-logout-button {
+    width: 100%;
+    justify-content: center;
+}
+
+.app.hidden {
+    display: none;
+}
+
+/* 기존 스타일 유지 */
+.app {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    overflow: hidden;
+}
+
+.app-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 20px 10px 28px;
+    border-bottom: 1px solid var(--border-color);
+    background-color: var(--primary-color);
+    box-shadow: 0 1px 3px var(--box-shadow-color);
+    position: relative;
+}
+
+.mobile-menu-btn {
+    display: none;
+    width: 40px;
+    height: 40px;
+    border: none;
+    border-radius: 3px;
+    background-color: transparent;
+    color: var(--sub-font-color);
+    cursor: pointer;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    transition: background-color 0.1s ease;
+    position: absolute;
+    left: 12px;
+}
+
+.mobile-menu-btn:hover {
+    background-color: var(--tertiary-color);
+    color: var(--font-color);
+}
+
+.app-header-left {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.app-logo {
+    width: 28px;
+    height: 28px;
+    object-fit: contain;
+}
+
+.app-title {
+    font-family: "Malgun Gothic", "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+    font-weight: 700;
+    font-size: 17px;
+    color: var(--sub-font-color);
+    letter-spacing: 0.02em;
+}
+
+.app-header-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: #6b7280;
+}
+
+.app-body {
+    flex: 1;
+    display: flex;
+    min-height: 0;
+    overflow: hidden; /* Prevent child scrollbars from reaching the app-header level */
+}
+
+/* 사이드바 */
+.sidebar {
+    width: 260px;
+    border-right: 1px solid var(--border-color);
+    background-color: var(--tertiary-color);
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    transition: transform 0.3s ease;
+    position: relative;
+    z-index: 100;
+}
+
+.sidebar-overlay {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: var(--modal-backdrop-color);
+    z-index: 998;
+}
+
+.sidebar-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    border-bottom: 1px solid var(--border-color);
+    padding: 12px 16px;
+    box-sizing: border-box;
+    height: 64px;
+    background-color: var(--quaternary-color);
+}
+
+.editor-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 12px 16px;
+    height: 64px;
+    box-sizing: border-box;
+    border-bottom: 1px solid var(--border-color);
+    flex-shrink: 0; /* 스크롤 시 축소 방지 */
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background-color: var(--primary-color); /* 스크롤 시 배경 불투명 유지 */
+}
+
+.user-profile {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 6px 12px;
+}
+
+.user-avatar {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background-color: var(--point-color);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--button-text-color);
+    font-size: 16px;
+    font-weight: 600;
+    flex-shrink: 0;
+}
+
+.user-name {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--font-color);
+    line-height: 1.4;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.settings-btn {
+    width: 32px;
+    height: 32px;
+    border: none;
+    border-radius: 3px;
+    background-color: transparent;
+    color: var(--sub-font-color);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    transition: background-color 0.1s ease;
+}
+
+.settings-btn:hover {
+    background-color: var(--item-hover-bg-color);
+    color: var(--font-color);
+}
+
+.sidebar-actions {
+    display: flex;
+    gap: 6px;
+}
+
+.sidebar-main {
+    flex: 1;
+    overflow-y: auto;
+    padding: 6px 8px 12px 8px;
+}
+
+.page-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.collection-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+/* 컬렉션 카드 스타일: 한국적 미니멀 */
+.collection-item {
+    margin: 3px 0;
+    border-radius: 3px;
+    border: none;
+    background-color: transparent;
+    box-shadow: none;
+    transition: background-color 0.1s ease;
+}
+
+.collection-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 10px;
+    cursor: pointer;
+    border-radius: 3px;
+    gap: 8px;
+    background: transparent;
+}
+
+.collection-header:hover {
+    background-color: var(--item-hover-bg-color);
+}
+
+.collection-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    position: relative;
+}
+
+.collection-menu-btn,
+.page-menu-btn {
+    border: none;
+    background: none;
+    padding: 4px 6px;
+    border-radius: 3px;
+    cursor: pointer;
+    color: #a0a0a0; /* 채도를 낮추고 더 연하게 변경 */
+}
+
+.collection-menu-btn:hover,
+.page-menu-btn:hover {
+    background-color: var(--border-color);
+    color: #1a1a1a;
+}
+
+.collection-add-page-btn {
+    border: none;
+    background: none;
+    padding: 4px 6px;
+    border-radius: 3px;
+    cursor: pointer;
+    color: #a0a0a0; /* 채도를 낮추고 더 연하게 변경 */
+}
+
+.collection-add-page-btn:hover {
+    background-color: var(--border-color);
+    color: #1a1a1a;
+}
+
+.dropdown-menu {
+    position: absolute;
+    left: calc(100% + 6px);
+    top: 0;
+    background-color: var(--menu-bg-color);
+    border: 1px solid var(--menu-border-color);
+    border-radius: 3px;
+    box-shadow: 0 4px 12px var(--box-shadow-color);
+    min-width: 140px;
+    z-index: 900;
+    padding: 4px 0;
+}
+
+.page-menu-wrapper {
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+
+.dropdown-menu.hidden {
+    display: none;
+}
+
+.dropdown-menu button {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border: none;
+    background: none;
+    padding: 8px 12px;
+    font-size: 13px;
+    color: var(--menu-item-text-color);
+    cursor: pointer;
+}
+
+.dropdown-menu button:hover {
+    background-color: var(--menu-hover-bg-color);
+}
+
+/* 확장 메뉴 (More Menu) */
+.toolbar-more-menu {
+    position: fixed;
+    background-color: var(--menu-bg-color);
+    border: 1px solid var(--menu-border-color);
+    border-radius: 8px;
+    box-shadow: 0 4px 15px var(--box-shadow-color);
+    padding: 8px;
+    z-index: 10001;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 120px;
+}
+
+.toolbar-more-menu.hidden {
+    display: none;
+}
+
+.more-menu-group {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.more-menu-group.horizontal {
+    flex-direction: row;
+    justify-content: space-between;
+}
+
+.more-menu-group button {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    font-size: 13px;
+    border-radius: 4px;
+    text-align: left;
+    color: var(--font-color);
+}
+
+.more-menu-group.horizontal button {
+    width: auto;
+    flex: 1;
+    justify-content: center;
+    padding: 8px 4px;
+}
+
+.more-menu-separator {
+    height: 1px;
+    background-color: var(--border-color);
+    margin: 4px 0;
+}
+
+.editor-toolbar button[data-command="toggleMoreMenu"].active {
+    background-color: var(--point-color);
+    color: white;
+}
+
+.context-menu.hidden {
+    display: none;
+}
+
+.context-menu button {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border: none;
+    background: none;
+    padding: 8px 12px;
+    font-size: 13px;
+    color: var(--menu-item-text-color);
+    cursor: pointer;
+}
+
+.context-menu button:hover {
+    background-color: var(--menu-hover-bg-color);
+}
+
+.collection-title {
+    font-weight: 500;
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--font-color);
+}
+
+.collection-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    transition: transform 0.12s ease;
+    color: var(--sub-font-color);
+}
+
+.collection-toggle.expanded {
+    transform: rotate(90deg);
+}
+
+.collection-meta {
+    font-size: 12px;
+    color: #6b7280;
+}
+
+.collection-empty {
+    padding: 8px 12px 10px 32px;
+    color: #94a3b8;
+    font-size: 12px;
+    border-top: 1px solid transparent;
+}
+
+/* 페이지 제목: 한국적 미니멀 */
+.page-list-item {
+    padding: 7px 10px 7px 32px;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    font-size: 13px;
+    border-radius: 3px;
+    margin: 2px 0;
+    transition: background-color 0.1s ease;
+    background: transparent;
+}
+
+.page-list-item:hover {
+    background-color: transparent;
+}
+
+.page-list-item.active {
+    background-color: transparent;
+}
+
+.page-list-item-title {
+    font-weight: 500;
+    color: var(--font-color);
+}
+
+/* 페이지 리스트 항목에 + 버튼 추가 */
+.page-add-subpage-btn {
+    border: none;
+    background: none;
+    padding: 4px 6px;
+    border-radius: 3px;
+    cursor: pointer;
+    color: #a0a0a0; /* 채도를 낮추고 더 연하게 변경 */
+    transition: opacity 0.15s ease;
+}
+
+/* 데스크탑에서는 컬렉션/페이지 메뉴 버튼을 호버 시에만 표시 */
+@media (min-width: 769px) {
+    .collection-menu-btn,
+    .collection-add-page-btn,
+    .page-menu-btn,
+    .page-add-subpage-btn {
+        opacity: 0;
+        transition: opacity 0.15s ease;
+    }
+
+    .collection-header:hover .collection-menu-btn,
+    .collection-header:hover .collection-add-page-btn,
+    .page-list-item:hover .page-menu-btn,
+    .page-list-item:hover .page-add-subpage-btn {
+        opacity: 1;
+    }
+}
+
+.page-add-subpage-btn:hover {
+    background-color: var(--border-color);
+    color: #1a1a1a;
+}
+
+/* 에디터 영역 */
+.editor-area {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    overflow: hidden; /* Prevent editor-area from having its own scrollbar */
+}
+
+/* 스크롤 가능한 본문 래퍼 */
+.editor-scroll-container {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+/* 고정 헤더 설정 시 */
+.editor-area.sticky-header-enabled {
+    overflow: hidden;
+}
+
+.editor-area.sticky-header-enabled .editor-scroll-container {
+    overflow-y: hidden; /* 상단 고정 시에는 내부 에디터가 스크롤을 담당 */
+}
+
+.page-title-input {
+    flex: 1;
+    font-size: 20px;
+    padding: 6px 12px;
+    border: none;
+    outline: none;
+    background-color: transparent;
+    line-height: 1.5;
+    box-sizing: border-box;
+    color: var(--font-color);
+}
+
+/* 페이지 업데이트 시간 표시 (문서 메인 영역 상단) */
+.page-updated-at-container {
+    padding: 12px 16px 8px;
+    border-bottom: 1px solid #e5e7eb;
+    flex-shrink: 0; /* 스크롤 시 축소 방지 */
+}
+
+.page-updated-at {
+    font-size: 12px;
+    color: #6b7280;
+    line-height: 1.4;
+}
+
+.editor-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.editor-main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    background-color: var(--editor-bg-color);
+}
+
+.editor-toolbar {
+    display: none;
+    position: fixed;
+    z-index: 1000;
+    align-items: center;
+    gap: 4px;
+    padding: 6px 10px;
+    border: 1px solid var(--border-color);
+    background-color: var(--secondary-color);
+    border-radius: 8px;
+    box-shadow: 0 4px 12px var(--box-shadow-color);
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: visible;
+    pointer-events: auto;
+    max-width: calc(100vw - 20px);
+    transition: opacity 0.1s ease;
+}
+
+.editor-toolbar.visible {
+    display: flex;
+}
+
+.editor-toolbar button {
+    border: none;
+    background: none;
+    padding: 5px 7px;
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 13px;
+    color: #4a545e;
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+
+.editor-toolbar button:hover {
+    background-color: var(--quaternary-color);
+    color: #1a1a1a;
+}
+
+.editor-toolbar button.active {
+    background-color: var(--point-color);
+    color: var(--button-text-color);
+}
+
+.editor-toolbar button:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.editor-toolbar button:disabled:hover {
+    background-color: transparent;
+    color: #4a545e;
+}
+
+/* 색상 드롭다운 전체 래퍼 */
+.toolbar-color-dropdown {
+    position: relative;
+    display: inline-block;
+}
+
+.toolbar-color-dropdown > .toolbar-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.toolbar-color-dropdown .caret-icon {
+    transition: transform 0.12s ease-out;
+}
+
+.toolbar-color-dropdown.open .caret-icon {
+    transform: rotate(180deg);
+}
+
+/* 색상 선택 메뉴 */
+.toolbar-color-menu {
+    position: fixed;
+    padding: 4px;
+    background-color: var(--menu-bg-color);
+    border: 1px solid var(--menu-border-color);
+    border-radius: 3px;
+    box-shadow: 0 4px 12px var(--box-shadow-color);
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    z-index: 10000;
+    min-width: 150px;
+    max-height: 320px;
+    overflow-y: auto;
+}
+
+.toolbar-color-menu[hidden] {
+    display: none;
+}
+
+.toolbar-color-menu .color-option {
+    padding: 8px 12px;
+    border-radius: 2px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.toolbar-color-menu .color-swatch {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    border-radius: 2px;
+    border: 1px solid var(--border-color);
+    flex-shrink: 0;
+}
+
+.toolbar-color-menu .color-option--clear {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.toolbar-color-menu .color-option--clear i {
+    font-size: 14px;
+}
+
+/* 폰트 선택 메뉴 */
+.toolbar-font-menu {
+    position: fixed;
+    padding: 4px;
+    background-color: var(--menu-bg-color);
+    border: 1px solid var(--menu-border-color);
+    border-radius: 3px;
+    box-shadow: 0 4px 12px var(--box-shadow-color);
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    z-index: 10000;
+    min-width: 160px;
+    max-height: 320px;
+    overflow-y: auto;
+}
+
+.toolbar-font-menu[hidden] {
+    display: none;
+}
+
+.toolbar-font-menu .color-option {
+    padding: 6px 10px;
+    border-radius: 2px;
+    text-align: left;
+    white-space: nowrap;
+    font-size: 13px;
+}
+
+.toolbar-separator {
+    width: 1px;
+    height: 18px;
+    background-color: var(--border-color);
+    flex-shrink: 0;
+}
+
+/* 여백 조절 드롭다운 */
+.toolbar-padding-dropdown {
+    position: relative;
+    display: inline-block;
+}
+
+.toolbar-padding-dropdown .caret-icon {
+    transition: transform 0.12s ease-out;
+}
+
+.toolbar-padding-dropdown.open .caret-icon {
+    transform: rotate(180deg);
+}
+
+/* 여백 선택 메뉴 */
+.toolbar-padding-menu {
+    position: fixed;
+    padding: 8px;
+    background-color: var(--menu-bg-color);
+    border: 1px solid var(--menu-border-color);
+    border-radius: 4px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    z-index: 1000;
+    min-width: 200px;
+}
+
+.toolbar-padding-menu[hidden] {
+    display: none;
+}
+
+.toolbar-padding-menu .padding-option {
+    width: 100%;
+    padding: 8px 12px;
+    border: none;
+    background: transparent;
+    text-align: left;
+    cursor: pointer;
+    border-radius: 3px;
+    transition: background-color 0.1s;
+    font-size: 13px;
+    color: var(--font-color);
+}
+
+.toolbar-padding-menu .padding-option:hover {
+    background-color: rgba(45, 95, 93, 0.1);
+}
+
+.toolbar-padding-menu .padding-option.active {
+    background-color: rgba(45, 95, 93, 0.15);
+    font-weight: 500;
+}
+
+.padding-divider {
+    height: 1px;
+    background-color: var(--border-color);
+    margin: 6px 0;
+}
+
+/* 커스텀 입력 */
+.padding-custom {
+    padding: 8px 12px;
+}
+
+.padding-custom label {
+    display: block;
+    font-size: 11px;
+    color: #6b7280;
+    margin-bottom: 6px;
+    font-weight: 500;
+}
+
+.padding-custom-controls {
+    display: flex;
+    gap: 6px;
+}
+
+.padding-custom-controls input {
+    flex: 1;
+    padding: 6px 8px;
+    border: 1px solid var(--input-border-color);
+    border-radius: 3px;
+    font-size: 13px;
+    background-color: var(--input-bg-color);
+}
+
+.padding-custom-controls input:focus {
+    outline: none;
+    border-color: var(--point-color);
+}
+
+.padding-custom-controls button {
+    padding: 6px 10px;
+    border: none;
+    background-color: var(--point-color);
+    color: var(--primary-color);
+    border-radius: 3px;
+    cursor: pointer;
+}
+
+.padding-custom-controls button:hover {
+    background-color: var(--point-hover-color);
+}
+
+/* 모바일에서는 여백 조절 버튼 숨김 및 헤더 레이아웃 조정 */
+@media (max-width: 900px) {
+    .toolbar-padding-dropdown {
+        display: none;
+    }
+
+    .editor-header {
+        justify-content: flex-end;
+    }
+}
+
+.editor {
+	position: relative;
+    flex: 1;
+    min-height: 0;
+    overflow-y: visible; /* 기본값: 전체 스크롤을 위해 visible */
+    padding: 32px 120px 32px 120px;
+}
+
+.sticky-header-enabled .editor {
+    overflow-y: auto; /* 고정 헤더 시 에디터만 스크롤 */
+}
+
+/* 에디터 여백 반응형 */
+@media (max-width: 1200px) {
+    .editor {
+        padding: 28px 80px 28px 80px;
+    }
+}
+
+@media (max-width: 900px) {
+    .editor {
+        padding: 24px 60px 24px 60px;
+    }
+}
+
+/* 에디터 블록: 한지 느낌 */
+.editor .ProseMirror {
+    outline: none;
+    padding: 16px 18px;
+    min-height: 300px;
+    color: var(--font-color);
+    line-height: 1.7;
+}
+
+.editor .ProseMirror p {
+    margin: 0 0 0 0;
+    padding: 3px 0;
+    border-radius: 2px;
+    transition: background-color 0.1s ease;
+}
+
+/* Tiptap Placeholder extension 스타일 */
+.editor .ProseMirror .is-empty::before {
+    content: attr(data-placeholder);
+    float: left;
+    color: var(--placeholder-color);
+    pointer-events: none;

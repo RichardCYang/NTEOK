@@ -261,7 +261,26 @@ function checkWebSocketRateLimit(clientIp) {
     return true;
 }
 
-function initWebSocketServer(server, sessions, getCollectionPermission, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, SESSION_COOKIE_NAME, getSessionFromId) {
+async function getStoragePermission(pool, userId, storageId) {
+    // 1. 소유자 확인
+    const [ownerRows] = await pool.execute(
+        `SELECT id FROM storages WHERE id = ? AND user_id = ?`,
+        [storageId, userId]
+    );
+    if (ownerRows.length > 0) return 'ADMIN';
+
+    // 2. 공유 확인
+    const [shareRows] = await pool.execute(
+        `SELECT permission FROM storage_shares 
+         WHERE storage_id = ? AND shared_with_user_id = ?`,
+        [storageId, userId]
+    );
+    if (shareRows.length > 0) return shareRows[0].permission;
+
+    return null;
+}
+
+function initWebSocketServer(server, sessions, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, SESSION_COOKIE_NAME, getSessionFromId) {
     const wss = new WebSocket.Server({ server, path: '/ws', maxPayload: WS_MAX_MESSAGE_BYTES });
     wss.on('connection', async (ws, req) => {
     	try {
@@ -310,16 +329,28 @@ async function handleSubscribePage(ws, payload, pool) {
     const { pageId } = payload;
     const userId = ws.userId;
     try {
-        const [rows] = await pool.execute(`SELECT p.id, p.is_encrypted, p.storage_id, s.user_id as storage_owner FROM pages p LEFT JOIN storages s ON p.storage_id = s.id WHERE p.id = ? AND p.is_encrypted = 0 AND (s.user_id = ?)`, [pageId, userId]);
-        if (!rows.length) { ws.send(JSON.stringify({ event: 'error', data: { message: 'Unauthorized' } })); return; }
+        const [rows] = await pool.execute(`SELECT p.id, p.is_encrypted, p.storage_id FROM pages p WHERE p.id = ?`, [pageId]);
+        if (!rows.length) { ws.send(JSON.stringify({ event: 'error', data: { message: 'Page not found' } })); return; }
+        
+        const page = rows[0];
+        const permission = await getStoragePermission(pool, userId, page.storage_id);
+        
+        if (!permission) { ws.send(JSON.stringify({ event: 'error', data: { message: 'Unauthorized' } })); return; }
+        
+        if (page.is_encrypted === 1) {
+            // 암호화된 페이지는 실시간 편집 지원 안 함 (단순 동기화만 하거나 제외)
+            ws.send(JSON.stringify({ event: 'error', data: { message: 'Encrypted pages do not support real-time collaboration yet' } }));
+            return;
+        }
+
         if (!wsConnections.pages.has(pageId)) wsConnections.pages.set(pageId, new Set());
         const conns = wsConnections.pages.get(pageId);
         for (const c of Array.from(conns)) { if (c.userId === userId && c.ws !== ws) { conns.delete(c); try { c.ws.close(1008, 'Duplicate'); } catch (e) {} } }
         const color = getUserColor(userId);
-        conns.add({ ws, userId, username: ws.username, color });
+        conns.add({ ws, userId, username: ws.username, color, permission });
         const ydoc = await loadOrCreateYjsDoc(pool, pageId);
-        ws.send(JSON.stringify({ event: 'init', data: { state: Buffer.from(Y.encodeStateAsUpdate(ydoc)).toString('base64'), userId, username: ws.username, color } }));
-        wsBroadcastToPage(pageId, 'user-joined', { userId, username: ws.username, color }, userId);
+        ws.send(JSON.stringify({ event: 'init', data: { state: Buffer.from(Y.encodeStateAsUpdate(ydoc)).toString('base64'), userId, username: ws.username, color, permission } }));
+        wsBroadcastToPage(pageId, 'user-joined', { userId, username: ws.username, color, permission }, userId);
     } catch (e) { ws.send(JSON.stringify({ event: 'error', data: { message: 'Failed' } })); }
 }
 
@@ -337,10 +368,10 @@ async function handleSubscribeStorage(ws, payload, pool) {
     const { storageId } = payload;
     const userId = ws.userId;
     try {
-        const [rows] = await pool.execute(`SELECT id FROM storages WHERE id = ? AND user_id = ?`, [storageId, userId]);
-        if (!rows.length) { ws.send(JSON.stringify({ event: 'error', data: { message: 'Unauthorized' } })); return; }
+        const permission = await getStoragePermission(pool, userId, storageId);
+        if (!permission) { ws.send(JSON.stringify({ event: 'error', data: { message: 'Unauthorized' } })); return; }
         if (!wsConnections.storages.has(storageId)) wsConnections.storages.set(storageId, new Set());
-        wsConnections.storages.get(storageId).add({ ws, userId, permission: 'ADMIN' });
+        wsConnections.storages.get(storageId).add({ ws, userId, permission });
     } catch (e) {}
 }
 
@@ -359,8 +390,12 @@ async function handleYjsUpdate(ws, payload, pool, sanitizeHtmlContent) {
 	const { pageId, update } = payload || {};
 	try {
         if (!pageId || typeof update !== 'string' || !isSubscribedToPage(ws, pageId)) return;
-        const [rows] = await pool.execute(`SELECT p.id FROM pages p LEFT JOIN storages s ON p.storage_id = s.id WHERE p.id = ? AND p.is_encrypted = 0 AND s.user_id = ?`, [pageId, ws.userId]);
-        if (!rows.length) return;
+        
+        // 권한 확인 (EDIT 또는 ADMIN)
+        const conns = wsConnections.pages.get(pageId);
+        const myConn = Array.from(conns).find(c => c.ws === ws);
+        if (!myConn || !['EDIT', 'ADMIN'].includes(myConn.permission)) return;
+
         const ydoc = await loadOrCreateYjsDoc(pool, pageId);
         Y.applyUpdate(ydoc, Buffer.from(update, 'base64'));
         wsBroadcastToPage(pageId, 'yjs-update', { update }, ws.userId);

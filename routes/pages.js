@@ -16,6 +16,7 @@ module.exports = (dependencies) => {
     const {
 		pool,
 		pagesRepo,
+        storagesRepo,
         pageSqlPolicy,
         authMiddleware,
         toIsoString,
@@ -137,8 +138,10 @@ module.exports = (dependencies) => {
         const id = generatePageId(now);
         const nowStr = formatDateForDb(now);
         try {
-            const [stg] = await pool.execute(`SELECT id FROM storages WHERE id = ? AND user_id = ?`, [storageId, userId]);
-            if (!stg.length) return res.status(403).json({ error: "Forbidden" });
+            const permission = await storagesRepo.getPermission(userId, storageId);
+            if (!permission || !['EDIT', 'ADMIN'].includes(permission)) {
+                return res.status(403).json({ error: "이 저장소에 페이지를 생성할 권한이 없습니다." });
+            }
             const parentId = req.body.parentId || null;
             const sortOrder = req.body.sortOrder || 0;
             const isEncrypted = req.body.isEncrypted === true ? 1 : 0;
@@ -159,7 +162,12 @@ module.exports = (dependencies) => {
             const [rows] = await pool.execute(`SELECT * FROM pages WHERE id = ?`, [id]);
             if (!rows.length) return res.status(404).json({ error: "Not found" });
             const existing = rows[0];
-            if (existing.user_id !== userId) return res.status(403).json({ error: "Forbidden" });
+            
+            const permission = await storagesRepo.getPermission(userId, existing.storage_id);
+            if (!permission || !['EDIT', 'ADMIN'].includes(permission)) {
+                return res.status(403).json({ error: "이 페이지를 수정할 권한이 없습니다." });
+            }
+
             const title = req.body.title !== undefined ? sanitizeInput(req.body.title) : existing.title;
             const isEncrypted = req.body.isEncrypted !== undefined ? (req.body.isEncrypted ? 1 : 0) : existing.is_encrypted;
             const salt = req.body.encryptionSalt || existing.encryption_salt;
@@ -182,8 +190,10 @@ module.exports = (dependencies) => {
         const { storageId, pageIds, parentId } = req.body;
         const userId = req.user.id;
         try {
-            const [stg] = await pool.execute(`SELECT id FROM storages WHERE id=? AND user_id=?`, [storageId, userId]);
-            if (!stg.length) return res.status(403).json({ error: "Forbidden" });
+            const permission = await storagesRepo.getPermission(userId, storageId);
+            if (!permission || !['EDIT', 'ADMIN'].includes(permission)) {
+                return res.status(403).json({ error: "이 저장소의 페이지 순서를 변경할 권한이 없습니다." });
+            }
             for (let i = 0; i < pageIds.length; i++) { await pool.execute(`UPDATE pages SET sort_order=?, updated_at=NOW() WHERE id=? AND storage_id=?`, [i * 10, pageIds[i], storageId]); }
             wsBroadcastToStorage(storageId, 'pages-reordered', { parentId, pageIds }, userId);
             res.json({ ok: true });
@@ -196,7 +206,13 @@ module.exports = (dependencies) => {
         try {
             const [rows] = await pool.execute(`SELECT * FROM pages WHERE id=?`, [id]);
             if (!rows.length) return res.status(404).json({ error: "Not found" });
-            if (rows[0].user_id !== userId) return res.status(403).json({ error: "Forbidden" });
+            const existing = rows[0];
+
+            const permission = await storagesRepo.getPermission(userId, existing.storage_id);
+            if (!permission || !['EDIT', 'ADMIN'].includes(permission)) {
+                return res.status(403).json({ error: "이 페이지를 삭제할 권한이 없습니다." });
+            }
+
             await pool.execute(`DELETE FROM pages WHERE id=?`, [id]);
             res.json({ ok: true });
         } catch (e) { logError("DELETE /api/pages/:id", e); res.status(500).json({ error: "Failed" }); }
@@ -208,7 +224,13 @@ module.exports = (dependencies) => {
         try {
             const [rows] = await pool.execute(`SELECT p.id, p.user_id, p.storage_id, p.is_encrypted FROM pages p WHERE p.id=?`, [id]);
             if (!rows.length) return res.status(404).json({ error: "Not found" });
-            if (rows[0].user_id !== userId) return res.status(403).json({ error: "Forbidden" });
+            const existing = rows[0];
+
+            const permission = await storagesRepo.getPermission(userId, existing.storage_id);
+            if (!permission || permission !== 'ADMIN') {
+                return res.status(403).json({ error: "발행 권한이 없습니다. (저장소 관리자만 가능)" });
+            }
+            
             const [pub] = await pool.execute(`SELECT token, created_at, allow_comments FROM page_publish_links WHERE page_id=? AND is_active=1`, [id]);
             if (!pub.length) return res.json({ published: false });
             res.json({ published: true, token: pub[0].token, url: `${process.env.BASE_URL}/shared/page/${pub[0].token}`, createdAt: toIsoString(pub[0].created_at), allowComments: pub[0].allow_comments === 1 });

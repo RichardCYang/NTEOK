@@ -134,15 +134,124 @@ module.exports = (dependencies) => {
 
             // 최소 하나는 남겨둬야 함 (선택사항이지만 안전을 위해)
             const storages = await storagesRepo.listStoragesForUser(userId);
-            if (storages.length <= 1) {
-                return res.status(400).json({ error: '최소 하나의 저장소는 유지해야 합니다.' });
+            // 소유한 저장소만 카운트
+            const ownedStorages = storages.filter(s => s.is_owner);
+            
+            // 삭제하려는 저장소가 소유한 것이고, 소유한 게 하나뿐이라면 삭제 방지
+            const storageToDelete = storages.find(s => s.id === storageId);
+            if (storageToDelete && storageToDelete.is_owner && ownedStorages.length <= 1) {
+                return res.status(400).json({ error: '최소 하나의 소유한 저장소는 유지해야 합니다.' });
             }
 
-            await storagesRepo.deleteStorage(userId, storageId);
+            // 만약 공유받은 저장소라면 참여자 목록에서 삭제
+            if (storageToDelete && !storageToDelete.is_owner) {
+                await storagesRepo.removeCollaborator(storageId, userId);
+            } else {
+                await storagesRepo.deleteStorage(userId, storageId);
+            }
+
             res.json({ success: true });
         } catch (error) {
             logError('DELETE /api/storages/:id', error);
             res.status(500).json({ error: '저장소 삭제에 실패했습니다.' });
+        }
+    });
+
+    /**
+     * 참여자 추가를 위한 사용자 검색
+     */
+    router.get('/users/search', authMiddleware, async (req, res) => {
+        try {
+            const query = req.query.q;
+            if (!query || query.trim().length < 2) {
+                return res.json([]);
+            }
+
+            const users = await dependencies.usersRepo.searchUsers(query.trim(), req.user.id);
+            res.json(users);
+        } catch (error) {
+            logError('GET /api/storages/users/search', error);
+            res.status(500).json({ error: '사용자 검색 중 오류가 발생했습니다.' });
+        }
+    });
+
+    /**
+     * 저장소 참여자 목록 조회
+     */
+    router.get('/:id/collaborators', authMiddleware, async (req, res) => {
+        try {
+            const userId = req.user.id;
+            const storageId = req.params.id;
+
+            const storage = await storagesRepo.getStorageByIdForUser(userId, storageId);
+            if (!storage) {
+                return res.status(404).json({ error: '저장소를 찾을 수 없습니다.' });
+            }
+
+            const collaborators = await storagesRepo.listCollaborators(storageId);
+            res.json(collaborators);
+        } catch (error) {
+            logError('GET /api/storages/:id/collaborators', error);
+            res.status(500).json({ error: '참여자 목록을 불러오지 못했습니다.' });
+        }
+    });
+
+    /**
+     * 저장소 참여자 추가
+     */
+    router.post('/:id/collaborators', authMiddleware, async (req, res) => {
+        try {
+            const userId = req.user.id;
+            const storageId = req.params.id;
+            const { targetUserId, permission } = req.body;
+
+            if (!targetUserId) {
+                return res.status(400).json({ error: '참여할 사용자를 지정해주세요.' });
+            }
+
+            const storage = await storagesRepo.getStorageByIdForUser(userId, storageId);
+            if (!storage || !storage.is_owner) {
+                return res.status(403).json({ error: '참여자를 관리할 권한이 없습니다.' });
+            }
+
+            const now = new Date();
+            const nowStr = formatDateForDb(now);
+
+            await storagesRepo.addCollaborator({
+                storageId,
+                ownerUserId: userId,
+                sharedWithUserId: targetUserId,
+                permission: permission || 'READ',
+                createdAt: nowStr,
+                updatedAt: nowStr
+            });
+
+            res.json({ success: true });
+        } catch (error) {
+            logError('POST /api/storages/:id/collaborators', error);
+            res.status(500).json({ error: '참여자 추가에 실패했습니다.' });
+        }
+    });
+
+    /**
+     * 저장소 참여자 삭제
+     */
+    router.delete('/:id/collaborators/:targetUserId', authMiddleware, async (req, res) => {
+        try {
+            const userId = req.user.id;
+            const storageId = req.params.id;
+            const targetUserId = req.params.targetUserId;
+
+            const storage = await storagesRepo.getStorageByIdForUser(userId, storageId);
+            if (!storage || !storage.is_owner) {
+                return res.status(403).json({ error: '참여자를 관리할 권한이 없습니다.' });
+            }
+
+            await storagesRepo.removeCollaborator(storageId, targetUserId);
+            res.json({ success: true });
+        } catch (error) {
+            logError('DELETE /api/storages/:id/collaborators/:targetUserId', error);
+            res.status(500).json({ error: '참여자 삭제에 실패했습니다.' });
         }
     });
 
