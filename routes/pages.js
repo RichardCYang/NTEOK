@@ -323,6 +323,111 @@ module.exports = (dependencies) => {
         }
     });
 
+    router.post("/:id/file", authMiddleware, fileUpload.single('file'), async (req, res) => {
+        const id = req.params.id;
+        const userId = req.user.id;
+        if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+
+        try {
+            const [rows] = await pool.execute(`SELECT storage_id FROM pages WHERE id = ?`, [id]);
+            if (!rows.length) {
+                if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+                return res.status(404).json({ error: "Not found" });
+            }
+            const existing = rows[0];
+
+            const permission = await storagesRepo.getPermission(userId, existing.storage_id);
+            if (!permission || !['EDIT', 'ADMIN'].includes(permission)) {
+                if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+                return res.status(403).json({ error: "Forbidden" });
+            }
+
+            const fileUrl = `/paperclip/${userId}/${req.file.filename}`;
+            
+            res.json({
+                url: fileUrl,
+                filename: req.file.originalname,
+                size: req.file.size
+            });
+        } catch (error) {
+            if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+            logError("POST /api/pages/:id/file", error);
+            res.status(500).json({ error: "Failed" });
+        }
+    });
+
+    router.delete("/:id/file-cleanup", authMiddleware, async (req, res) => {
+        const id = req.params.id;
+        const userId = req.user.id;
+        const { fileUrl } = req.body;
+
+        if (!fileUrl) return res.status(400).json({ error: "fileUrl required" });
+
+        try {
+            const [rows] = await pool.execute(`SELECT storage_id FROM pages WHERE id = ?`, [id]);
+            if (!rows.length) return res.status(404).json({ error: "Not found" });
+            const existing = rows[0];
+
+            const permission = await storagesRepo.getPermission(userId, existing.storage_id);
+            if (!permission || !['EDIT', 'ADMIN'].includes(permission)) {
+                return res.status(403).json({ error: "Forbidden" });
+            }
+
+            const parts = fileUrl.split('/');
+            if (parts.length < 4 || parts[1] !== 'paperclip') {
+                return res.status(400).json({ error: "Invalid fileUrl" });
+            }
+
+            const urlUserId = parts[2];
+            const filename = parts[3];
+
+            if (String(urlUserId) !== String(userId)) {
+                return res.status(403).json({ error: "자신의 파일만 삭제할 수 있습니다." });
+            }
+
+            const filePath = path.join(__dirname, '..', 'paperclip', String(userId), filename);
+            if (fs.existsSync(filePath)) {
+                fs.unlinkSync(filePath);
+            }
+
+            res.json({ ok: true });
+        } catch (error) {
+            logError("DELETE /api/pages/:id/file-cleanup", error);
+            res.status(500).json({ error: "Failed" });
+        }
+    });
+
+    router.post("/:id/editor-image", authMiddleware, editorImageUpload.single('image'), async (req, res) => {
+        const id = req.params.id;
+        const userId = req.user.id;
+        if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+
+        try {
+            const [rows] = await pool.execute(`SELECT storage_id FROM pages WHERE id = ?`, [id]);
+            if (!rows.length) {
+                if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+                return res.status(404).json({ error: "Not found" });
+            }
+            const existing = rows[0];
+
+            const permission = await storagesRepo.getPermission(userId, existing.storage_id);
+            if (!permission || !['EDIT', 'ADMIN'].includes(permission)) {
+                if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+                return res.status(403).json({ error: "Forbidden" });
+            }
+
+            const sig = await assertImageFileSignature(req.file.path);
+            normalizeUploadedImageFile(req.file, sig.ext);
+
+            const imageUrl = `/imgs/${userId}/${req.file.filename}`;
+            res.json({ url: imageUrl });
+        } catch (error) {
+            if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+            logError("POST /api/pages/:id/editor-image", error);
+            res.status(500).json({ error: "Failed" });
+        }
+    });
+
     router.get("/:id/publish", authMiddleware, async (req, res) => {
         const id = req.params.id;
         const userId = req.user.id;
