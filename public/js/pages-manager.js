@@ -34,10 +34,15 @@ export function initPagesManager(appState) {
  * 페이지 목록 가져오기
  */
 export async function fetchPageList() {
+    if (!state.currentStorageId) {
+        console.warn("페이지 목록 요청 중단: 선택된 저장소가 없습니다.");
+        applyPagesData([]);
+        renderPageList();
+        return;
+    }
+
     try {
-        const url = state.currentStorageId 
-            ? `/api/pages?storageId=${encodeURIComponent(state.currentStorageId)}`
-            : "/api/pages";
+        const url = `/api/pages?storageId=${encodeURIComponent(state.currentStorageId)}`;
         console.log(`페이지 목록 요청: GET ${url}`);
         const data = await api.get(url);
         
@@ -223,10 +228,58 @@ export function renderPageList() {
 }
 
 /**
+ * 현재 페이지 상태 초기화 (저장소 전환 시 등)
+ */
+export function clearCurrentPage() {
+    state.currentPageId = null;
+    state.currentPageIsEncrypted = false;
+    state.isWriteMode = false;
+
+    stopPageSync();
+    hideCover();
+
+    if (state.editor) {
+        state.editor.commands.setContent(EXAMPLE_CONTENT, { emitUpdate: false });
+        state.editor.setEditable(false);
+    }
+
+    const titleInput = document.querySelector("#page-title-input");
+    if (titleInput) titleInput.value = "시작하기 👋";
+
+    const updatedAtEl = document.querySelector("#page-updated-at");
+    if (updatedAtEl) updatedAtEl.textContent = "-";
+
+    const modeToggleBtn = document.querySelector("#mode-toggle-btn");
+    if (modeToggleBtn) {
+        modeToggleBtn.classList.remove("write-mode");
+        modeToggleBtn.style.display = 'none';
+    }
+
+    // 저장소 권한에 따라 새 페이지 버튼 표시 여부 결정
+    const canEdit = state.currentStoragePermission === 'EDIT' || state.currentStoragePermission === 'ADMIN';
+    const newPageBtn = document.querySelector("#new-page-btn");
+    if (newPageBtn) {
+        newPageBtn.style.display = canEdit ? 'flex' : 'none';
+    }
+
+    // 서브페이지 및 댓글 영역 초기화
+    const subpagesContainer = document.querySelector("#subpages-container");
+    if (subpagesContainer) subpagesContainer.innerHTML = "";
+    
+    const commentsContainer = document.querySelector("#comments-list");
+    if (commentsContainer) commentsContainer.innerHTML = "";
+    
+    updatePublishButton();
+}
+
+/**
  * 페이지 로드
  */
 export async function loadPage(id) {
-    if (!id) return;
+    if (!id) {
+        clearCurrentPage();
+        return;
+    }
 
     if (state.isWriteMode && state.currentPageId) {
         await saveCurrentPage();

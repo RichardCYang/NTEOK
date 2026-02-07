@@ -945,7 +945,7 @@ async function initDb() {
         // bcrypt 가 내부적으로 랜덤 SALT 를 포함한 해시를 생성함
         const passwordHash = await bcrypt.hash(rawPassword, BCRYPT_SALT_ROUNDS);
 
-        await pool.execute(
+        const [result] = await pool.execute(
             `
             INSERT INTO users (username, password_hash, created_at, updated_at)
             VALUES (?, ?, ?, ?)
@@ -953,7 +953,37 @@ async function initDb() {
             [username, passwordHash, nowStr, nowStr]
         );
 
-        console.log("기본 관리자 계정 생성 완료. username:", username);
+        const adminUserId = result.insertId;
+
+        // 기본 저장소 생성
+        const storageId = 'stg-' + now.getTime() + '-' + crypto.randomBytes(4).toString('hex');
+        await pool.execute(
+            `
+            INSERT INTO storages (id, user_id, name, sort_order, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            `,
+            [storageId, adminUserId, "기본 저장소", 0, nowStr, nowStr]
+        );
+
+        // 초기 시작 페이지 생성
+        const pageId = generatePageId(now);
+        const welcomeTitle = "넋(NTEOK)에 오신 것을 환영합니다! 👋";
+        const welcomeContent = `
+            <h1>반가워요!</h1>
+            <p>이곳은 당신의 생각과 기록을 담는 소중한 공간입니다.</p>
+            <p>왼쪽 사이드바에서 <strong>새 페이지</strong>를 추가하거나, 상단의 <strong>저장소 전환</strong> 버튼을 통해 다른 저장소를 관리할 수 있습니다.</p>
+            <p>저장소마다 서로 다른 페이지 목록을 가지며, 다른 사용자와 저장소 단위로 협업할 수도 있습니다.</p>
+        `;
+
+        await pool.execute(
+            `
+            INSERT INTO pages (id, user_id, storage_id, title, content, sort_order, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            `,
+            [pageId, adminUserId, storageId, welcomeTitle, welcomeContent, 0, nowStr, nowStr]
+        );
+
+        console.log("기본 관리자 계정, 저장소 및 시작 페이지 생성 완료. username:", username);
     }
 
         // storages 테이블 생성

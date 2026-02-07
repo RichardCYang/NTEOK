@@ -29,6 +29,7 @@ import {
     fetchPageList,
     renderPageList,
     loadPage,
+    clearCurrentPage,
     saveCurrentPage,
     toggleEditMode,
     bindModeToggle,
@@ -303,9 +304,13 @@ async function init() {
             if (Array.isArray(data.pages)) {
                 applyPagesData(data.pages);
             }
+            
+            // 저장소 전환 시 UI 초기화 및 권한 적용
+            clearCurrentPage();
             renderPageList();
-            if (appState.pages.length > 0) {
-                const first = appState.pages.find(p => !p.parentId) || appState.pages[0];
+
+            const first = appState.pages.find(p => !p.parentId) || appState.pages[0];
+            if (first) {
                 loadPage(first.id);
             }
         });

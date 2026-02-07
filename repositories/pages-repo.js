@@ -10,9 +10,12 @@ module.exports = ({ pool, pageSqlPolicy }) => {
 
     return {
         /**
-         * 페이지 목록 조회 (소유한 페이지 + 공유받은 저장소의 페이지)
+         * 페이지 목록 조회 (특정 저장소의 페이지: 소유한 페이지 + 공유받은 페이지)
          */
         async listPagesForUser({ userId, storageId = null }) {
+            // storageId가 없으면 빈 목록 반환 (저장소별 격리 강제)
+            if (!storageId) return [];
+
             const visOwner = pageSqlPolicy.andVisible({ alias: "p", viewerUserId: userId });
             const visShared = pageSqlPolicy.andVisible({ alias: "p", viewerUserId: userId });
 
@@ -23,7 +26,7 @@ module.exports = ({ pool, pageSqlPolicy }) => {
                            p.icon, p.cover_image, p.cover_position, p.horizontal_padding
                     FROM pages p
                     WHERE p.user_id = ?
-                    ${storageId ? 'AND p.storage_id = ?' : ''}
+                    AND p.storage_id = ?
                     ${visOwner.sql}
                 )
                 UNION ALL
@@ -34,23 +37,16 @@ module.exports = ({ pool, pageSqlPolicy }) => {
                     FROM pages p
                     INNER JOIN storage_shares ss ON p.storage_id = ss.storage_id
                     WHERE ss.shared_with_user_id = ?
-                    ${storageId ? 'AND p.storage_id = ?' : ''}
+                    AND p.storage_id = ?
                     ${visShared.sql}
                 )
                 ORDER BY parent_id IS NULL DESC, sort_order ASC, updated_at DESC
             `;
 
-            const params = [];
-            
-            // First part of UNION
-            params.push(userId);
-            if (storageId) params.push(storageId);
-            params.push(...visOwner.params);
-
-            // Second part of UNION
-            params.push(userId);
-            if (storageId) params.push(storageId);
-            params.push(...visShared.params);
+            const params = [
+                userId, storageId, ...visOwner.params,
+                userId, storageId, ...visShared.params
+            ];
 
             const [rows] = await pool.execute(query, params);
             return rows || [];
