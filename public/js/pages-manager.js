@@ -5,7 +5,7 @@
 import { escapeHtml, showErrorInEditor, syncPageUpdatedAtPadding, closeSidebar } from './ui-utils.js';
 import * as api from './api-utils.js';
 import { loadAndRenderComments } from './comments-manager.js';
-import { startPageSync, stopPageSync, startCollectionSync, stopCollectionSync, flushPendingUpdates, syncEditorFromMetadata, onLocalEditModeChanged, updateAwarenessMode } from './sync-manager.js';
+import { startPageSync, stopPageSync, startStorageSync, stopStorageSync, flushPendingUpdates, syncEditorFromMetadata, onLocalEditModeChanged, updateAwarenessMode } from './sync-manager.js';
 import { showCover, hideCover, updateCoverButtonsVisibility } from './cover-manager.js';
 import { checkPublishStatus, updatePublishButton } from './publish-manager.js';
 import { loadAndRenderSubpages, onEditModeChange } from './subpages-manager.js';

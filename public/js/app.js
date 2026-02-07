@@ -77,8 +77,8 @@ import {
     initSyncManager,
     startPageSync,
     stopPageSync,
-    startCollectionSync,
-    stopCollectionSync
+    startStorageSync,
+    stopStorageSync
 } from './sync-manager.js';
 import {
     initCoverManager,
@@ -308,6 +308,7 @@ async function init() {
             // 저장소 전환 시 UI 초기화 및 권한 적용
             clearCurrentPage();
             renderPageList();
+            startStorageSync(appState.currentStorageId);
 
             const first = appState.pages.find(p => !p.parentId) || appState.pages[0];
             if (first) {
@@ -342,6 +343,11 @@ async function init() {
         if (Array.isArray(bootstrap.storages)) {
             appState.storages = bootstrap.storages;
             storagesManager.show();
+        }
+        
+        // 초기 저장소 동기화 시작 (이미 선택된 경우 대비)
+        if (appState.currentStorageId) {
+            startStorageSync(appState.currentStorageId);
         }
     } catch (error) {
         console.error('Init error:', error);

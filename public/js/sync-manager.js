@@ -21,7 +21,7 @@ let ydoc = null;
 let yXmlFragment = null;
 let yMetadata = null;
 let currentPageId = null;
-let currentCollectionId = null;
+let currentStorageId = null;
 let lastLocalUpdateTime = 0;
 let updateTimeout = null;
 let yjsPmPlugins = [];				// y-prosemirror(동시편집) 플러그인 추적/해제용
@@ -44,7 +44,7 @@ const cursorState = {
 const state = {
     editor: null,
     currentPageId: null,
-    currentCollectionId: null,
+    currentStorageId: null,
     fetchPageList: null,
     pages: []
 };
@@ -155,9 +155,9 @@ function connectWebSocket() {
             subscribePage(currentPageId);
         }
 
-        // 컬렉션 재구독
-        if (currentCollectionId) {
-            subscribeCollection(currentCollectionId);
+        // 저장소 재구독
+        if (currentStorageId) {
+            subscribeStorage(currentStorageId);
         }
 
         // 사용자 알림 구독
@@ -521,49 +521,49 @@ function handleUserLeft(data) {
 }
 
 /**
- * 컬렉션 메타데이터 동기화 시작
+ * 저장소 메타데이터 동기화 시작
  */
-export function startCollectionSync(collectionId) {
-    stopCollectionSync();
+export function startStorageSync(storageId) {
+    stopStorageSync();
 
-    currentCollectionId = collectionId;
-    state.currentCollectionId = collectionId;
+    currentStorageId = storageId;
+    state.currentStorageId = storageId;
 
     if (ws && ws.readyState === WebSocket.OPEN) {
-        subscribeCollection(collectionId);
+        subscribeStorage(storageId);
     }
 }
 
 /**
- * 컬렉션 구독
+ * 저장소 구독
  */
-function subscribeCollection(collectionId) {
+function subscribeStorage(storageId) {
     if (!ws || ws.readyState !== WebSocket.OPEN) {
         console.warn('[WS] WebSocket이 연결되지 않았습니다.');
         return;
     }
 
     ws.send(JSON.stringify({
-        type: 'subscribe-collection',
-        payload: { collectionId }
+        type: 'subscribe-storage',
+        payload: { storageId }
     }));
 
-    console.log('[WS] 컬렉션 구독:', collectionId);
+    console.log('[WS] 저장소 구독:', storageId);
 }
 
 /**
- * 컬렉션 동기화 중지
+ * 저장소 동기화 중지
  */
-export function stopCollectionSync() {
-    if (currentCollectionId && ws && ws.readyState === WebSocket.OPEN) {
+export function stopStorageSync() {
+    if (currentStorageId && ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({
-            type: 'unsubscribe-collection',
-            payload: { collectionId: currentCollectionId }
+            type: 'unsubscribe-storage',
+            payload: { storageId: currentStorageId }
         }));
     }
 
-    currentCollectionId = null;
-    state.currentCollectionId = null;
+    currentStorageId = null;
+    state.currentStorageId = null;
 }
 
 /**
@@ -587,6 +587,14 @@ function subscribeUser() {
  */
 function handleMetadataChange(data) {
     try {
+        // 로컬 상태(pages 배열) 업데이트
+        if (state.pages) {
+            const page = state.pages.find(p => p.id === data.pageId);
+            if (page) {
+                page[data.field] = data.value;
+            }
+        }
+
         // 현재 페이지의 메타데이터 변경인 경우 Yjs 메타데이터도 업데이트
         if (data.pageId === state.currentPageId && yMetadata) {
             // Yjs 메타데이터에서 지원하는 필드만 업데이트
@@ -600,7 +608,9 @@ function handleMetadataChange(data) {
         // 커버 이미지 동기화
         if (data.field === 'coverImage' && data.pageId === state.currentPageId) {
             if (data.value) {
-                showCover(data.value, 50);
+                const page = state.pages.find(p => p.id === data.pageId);
+                const pos = page ? (page.coverPosition || 50) : 50;
+                showCover(data.value, pos);
             } else {
                 hideCover();
             }
@@ -608,6 +618,9 @@ function handleMetadataChange(data) {
 
         // 커버 위치 동기화
         if (data.field === 'coverPosition' && data.pageId === state.currentPageId) {
+            const page = state.pages.find(p => p.id === data.pageId);
+            if (page) page.coverPosition = data.value;
+            
             const imageEl = document.getElementById('page-cover-image');
             if (imageEl) {
                 imageEl.style.backgroundPositionY = `${data.value}%`;
@@ -733,7 +746,7 @@ function handleDuplicateLogin(data) {
  */
 function handleAccessRevoked(data) {
     try {
-        const collectionId = data?.collectionId;
+        const storageId = data?.storageId;
         const revokedPageIds = Array.isArray(data?.pageIds) ? data.pageIds : [];
         const message = data?.message || '접근 권한이 회수되었습니다.';
 
@@ -745,10 +758,10 @@ function handleAccessRevoked(data) {
             state.currentPageId = null;
         }
 
-        // 현재 구독 중인 컬렉션이 권한 회수 대상이면 구독 종료
-        if (collectionId && state.currentCollectionId === collectionId) {
-            stopCollectionSync();
-            state.currentCollectionId = null;
+        // 현재 구독 중인 저장소가 권한 회수 대상이면 구독 종료
+        if (storageId && state.currentStorageId === storageId) {
+            stopStorageSync();
+            state.currentStorageId = null;
         }
 
         showInfo(message);
