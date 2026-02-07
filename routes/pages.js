@@ -218,6 +218,111 @@ module.exports = (dependencies) => {
         } catch (e) { logError("DELETE /api/pages/:id", e); res.status(500).json({ error: "Failed" }); }
     });
 
+    router.delete("/covers/:filename", authMiddleware, async (req, res) => {
+        const userId = req.user.id;
+        const filename = path.basename(req.params.filename);
+        try {
+            const filePath = path.join(__dirname, '..', 'covers', String(userId), filename);
+            if (fs.existsSync(filePath)) {
+                fs.unlinkSync(filePath);
+            }
+            res.json({ ok: true });
+        } catch (error) {
+            logError("DELETE /api/pages/covers/:filename", error);
+            res.status(500).json({ error: "Failed" });
+        }
+    });
+
+    router.put("/:id/cover", authMiddleware, async (req, res) => {
+        const id = req.params.id;
+        const userId = req.user.id;
+        try {
+            const [rows] = await pool.execute(`SELECT * FROM pages WHERE id = ?`, [id]);
+            if (!rows.length) return res.status(404).json({ error: "Not found" });
+            const existing = rows[0];
+
+            const permission = await storagesRepo.getPermission(userId, existing.storage_id);
+            if (!permission || !['EDIT', 'ADMIN'].includes(permission)) {
+                return res.status(403).json({ error: "Forbidden" });
+            }
+
+            const coverImage = req.body.coverImage !== undefined ? req.body.coverImage : existing.cover_image;
+            const coverPosition = req.body.coverPosition !== undefined ? req.body.coverPosition : existing.cover_position;
+
+            await pool.execute(`UPDATE pages SET cover_image=?, cover_position=?, updated_at=NOW() WHERE id=?`, [coverImage, coverPosition, id]);
+
+            if (req.body.coverImage !== undefined) {
+                wsBroadcastToStorage(existing.storage_id, 'metadata-change', { pageId: id, field: 'coverImage', value: coverImage }, null, { pageVisibility: wsPageVisibilityFromRow(existing) });
+            }
+            if (req.body.coverPosition !== undefined) {
+                wsBroadcastToStorage(existing.storage_id, 'metadata-change', { pageId: id, field: 'coverPosition', value: coverPosition }, null, { pageVisibility: wsPageVisibilityFromRow(existing) });
+            }
+
+            res.json({ ok: true });
+        } catch (error) {
+            logError("PUT /api/pages/:id/cover", error);
+            res.status(500).json({ error: "Failed" });
+        }
+    });
+
+    router.post("/:id/cover", authMiddleware, coverUpload.single('cover'), async (req, res) => {
+        const id = req.params.id;
+        const userId = req.user.id;
+        if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+
+        try {
+            const [rows] = await pool.execute(`SELECT * FROM pages WHERE id = ?`, [id]);
+            if (!rows.length) {
+                if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+                return res.status(404).json({ error: "Not found" });
+            }
+            const existing = rows[0];
+
+            const permission = await storagesRepo.getPermission(userId, existing.storage_id);
+            if (!permission || !['EDIT', 'ADMIN'].includes(permission)) {
+                if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+                return res.status(403).json({ error: "Forbidden" });
+            }
+
+            const sig = await assertImageFileSignature(req.file.path);
+            normalizeUploadedImageFile(req.file, sig.ext);
+
+            const coverPath = `${userId}/${req.file.filename}`;
+            await pool.execute(`UPDATE pages SET cover_image=?, cover_position=50, updated_at=NOW() WHERE id=?`, [coverPath, id]);
+
+            wsBroadcastToStorage(existing.storage_id, 'metadata-change', { pageId: id, field: 'coverImage', value: coverPath }, null, { pageVisibility: wsPageVisibilityFromRow(existing) });
+
+            res.json({ coverImage: coverPath });
+        } catch (error) {
+            if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+            logError("POST /api/pages/:id/cover", error);
+            res.status(500).json({ error: "Failed" });
+        }
+    });
+
+    router.delete("/:id/cover", authMiddleware, async (req, res) => {
+        const id = req.params.id;
+        const userId = req.user.id;
+        try {
+            const [rows] = await pool.execute(`SELECT * FROM pages WHERE id = ?`, [id]);
+            if (!rows.length) return res.status(404).json({ error: "Not found" });
+            const existing = rows[0];
+
+            const permission = await storagesRepo.getPermission(userId, existing.storage_id);
+            if (!permission || !['EDIT', 'ADMIN'].includes(permission)) {
+                return res.status(403).json({ error: "Forbidden" });
+            }
+
+            await pool.execute(`UPDATE pages SET cover_image=NULL, updated_at=NOW() WHERE id=?`, [id]);
+            wsBroadcastToStorage(existing.storage_id, 'metadata-change', { pageId: id, field: 'coverImage', value: null }, null, { pageVisibility: wsPageVisibilityFromRow(existing) });
+
+            res.json({ ok: true });
+        } catch (error) {
+            logError("DELETE /api/pages/:id/cover", error);
+            res.status(500).json({ error: "Failed" });
+        }
+    });
+
     router.get("/:id/publish", authMiddleware, async (req, res) => {
         const id = req.params.id;
         const userId = req.user.id;
