@@ -71,14 +71,6 @@ function base64ToUint8(b64) {
 
 
 export function onLocalEditModeChanged(isWriteMode) {
-	// 로컬 커서 정리
-	if (cursorState.awareness) {
-		if (!isWriteMode) {
-		    cursorState.awareness.setLocalStateField('cursor', null);
-		    cursorState.lastSentPosition = null;
-		}
-	}
-
 	// 원격 커서 DOM 정리(내가 쓰기모드면 숨김 정책)
 	if (isWriteMode) {
 		cursorState.remoteCursors.forEach(el => el.remove());
@@ -91,11 +83,6 @@ export function updateAwarenessMode(isWrite) {
 
 	cursorState.awareness.setLocalStateField('mode', isWrite ? 'write' : 'read');
 	cursorState.awareness.setLocalStateField('modeSince', Date.now());
-
-	if (!isWrite) {
-		cursorState.awareness.setLocalStateField('cursor', null);
-		cursorState.lastSentPosition = null;
-	}
 }
 
 function getPrimaryWriterClientId() {
@@ -325,9 +312,6 @@ export function stopPageSync() {
 		state.editor.off?.('update', state.editor._snapshotHandler);
 		state.editor._snapshotHandler = null;
 	}
-
-	// 커서 추적 리스너 정리(재연결 시 중복 설치 방지)
-	teardownCursorTracking();
 
 	if (updateTimeout) {
 		clearTimeout(updateTimeout);
@@ -600,7 +584,10 @@ function handleMetadataChange(data) {
             // Yjs 메타데이터에서 지원하는 필드만 업데이트
             const supportedFields = ['title', 'icon', 'sortOrder', 'parentId'];
             if (supportedFields.includes(data.field)) {
-                yMetadata.set(data.field, data.value);
+                // 'remote' origin을 지정하여 이 변경사항이 다시 서버로 전송되지 않도록 함 (루프 방지)
+                ydoc.transact(() => {
+                    yMetadata.set(data.field, data.value);
+                }, 'remote');
                 console.log(`[Sync] Yjs 메타데이터 업데이트: ${data.field} = ${data.value}`);
             }
         }
@@ -954,6 +941,7 @@ function detachYjsProsemirrorBinding() {
 	}
 
 	yjsPmPlugins = [];
+	yjsPmPluginKeys.clear();
 }
 
 function buildCursorDOM(user) {
@@ -1041,127 +1029,25 @@ function setupEditorBindingWithXmlFragment() {
 
 	// 저장용 스냅샷(HTML)만 yMetadata에 유지 (서버 저장 로직 호환)
 	editor.off?.('update', editor._snapshotHandler);
-	editor._snapshotHandler = ({ editor }) => {
+	editor._snapshotHandler = ({ editor, transaction }) => {
+		// Yjs 동기화로 인한 업데이트(원격 변경사항 반영)인 경우 스냅샷 업데이트 건너뜀
+		// 이를 통해 무한 루프나 불필요한 네트워크 트래픽, Yjs 내부 오류(Unexpected case) 방지
+		if (editor._syncIsUpdating || (transaction && (transaction.getMeta('y-sync$') || transaction.getMeta('y-prosemirror-sync')))) {
+			return;
+		}
+
 		clearTimeout(updateTimeout);
 		updateTimeout = setTimeout(() => {
 		    try {
 			    const html = editor.getHTML();
-				if (yMetadata.get('content') !== html)
+				if (yMetadata && yMetadata.get('content') !== html)
 					yMetadata.set('content', html);
 		    } catch {}
-		}, 250);
+		}, 1000);
 	};
 	editor.on('update', editor._snapshotHandler);
 
-	// 커서 추적(blur/selectionUpdate) 이벤트 연결
-	setupCursorTracking();
-
 	console.log('[WS] yXmlFragment 기반 동시편집 바인딩 완료');
-}
-
-function teardownCursorTracking() {
-	const editor = cursorState.trackingEditor;
-	if (!editor) return;
-
-	// 이벤트 리스너 제거
-	if (cursorState.selectionUpdateHandler) {
-		editor.off?.('selectionUpdate', cursorState.selectionUpdateHandler);
-	}
-	if (cursorState.blurHandler) {
-		editor.off?.('blur', cursorState.blurHandler);
-	}
-
-	cursorState.trackingEditor = null;
-	cursorState.selectionUpdateHandler = null;
-	cursorState.blurHandler = null;
-}
-
-/**
- * 커서 위치 추적 설정
- */
-function setupCursorTracking() {
-	if (!state.editor || !cursorState.awareness) return;
-
-	// 에디터 인스턴스가 바뀌었거나(재연결/재생성) 기존 핸들러가 남아있으면 정리 후 재설치
-	if (cursorState.trackingEditor && cursorState.trackingEditor !== state.editor)
-		teardownCursorTracking();
-
-	// 이미 설치된 경우 재설치 방지
-	if (cursorState.trackingEditor === state.editor && cursorState.selectionUpdateHandler && cursorState.blurHandler)
-		return;
-
-	cursorState.trackingEditor = state.editor;
-
-	// 에디터 selection 변경 감지
-	cursorState.selectionUpdateHandler = ({ editor }) => {
-		throttledSendCursorPosition(editor);
-	};
-
-	// 포커스 해제 시 커서 제거
-	cursorState.blurHandler = () => {
-		if (cursorState.awareness) {
-			cursorState.awareness.setLocalStateField('cursor', null);
-			cursorState.lastSentPosition = null;
-   		}
-	};
-
-	state.editor.on('selectionUpdate', cursorState.selectionUpdateHandler);
-	state.editor.on('blur', cursorState.blurHandler);
-}
-
-/**
- * Throttled 커서 위치 전송 (100ms)
- */
-function throttledSendCursorPosition(editor) {
-    if (cursorState.throttleTimer) {
-        clearTimeout(cursorState.throttleTimer);
-    }
-
-    cursorState.throttleTimer = setTimeout(() => {
-        sendCursorPosition(editor);
-    }, 100);
-}
-
-/**
- * 커서 위치 전송
- */
-function sendCursorPosition(editor) {
-    if (!editor || !cursorState.awareness) return;
-
-    // 읽기모드(or 편집 불가)이면 내 커서를 즉시 제거
-    if (!editor.isEditable) {
-	    cursorState.awareness.setLocalStateField('cursor', null);
-	    cursorState.lastSentPosition = null;
-	    return;
-    }
-
-    const hasFocus = !!(editor.view && editor.view.hasFocus && editor.view.hasFocus());
-    if (!hasFocus) {
-		cursorState.awareness.setLocalStateField('cursor', null);
-		cursorState.lastSentPosition = null;
-		return;
-    }
-
-    if (editor._syncIsUpdating) return;
-
-    const { selection } = editor.state;
-    const { anchor, head } = selection;
-
-    // 중복 전송 방지
-    const position = { anchor, head };
-    if (JSON.stringify(position) === JSON.stringify(cursorState.lastSentPosition)) {
-        return;
-    }
-
-    cursorState.lastSentPosition = position;
-
-    // Awareness state 업데이트
-    cursorState.awareness.setLocalStateField('cursor', {
-        anchor,
-        head,
-        type: anchor === head ? 'cursor' : 'selection',
-        lastUpdate: Date.now()
-    });
 }
 
 /**

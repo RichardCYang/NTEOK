@@ -203,19 +203,21 @@ export const ImageWithCaption = Node.create({
                             const tr = editor.view.state.tr;
                             const currentNode = editor.view.state.doc.nodeAt(pos);
 
-                            console.log('[ImageAlign] 현재 노드:', currentNode);
-                            console.log('[ImageAlign] 새 정렬:', align);
+                            if (currentNode && currentNode.type.name === this.name) {
+                                console.log('[ImageAlign] 현재 노드:', currentNode);
+                                console.log('[ImageAlign] 새 정렬:', align);
 
-                            tr.setNodeMarkup(pos, null, {
-                                src: currentNode.attrs.src,
-                                alt: currentNode.attrs.alt,
-                                caption: currentNode.attrs.caption,
-                                width: currentNode.attrs.width,
-                                align: align
-                            });
-                            editor.view.dispatch(tr);
+                                tr.setNodeMarkup(pos, null, {
+                                    src: currentNode.attrs.src,
+                                    alt: currentNode.attrs.alt,
+                                    caption: currentNode.attrs.caption,
+                                    width: currentNode.attrs.width,
+                                    align: align
+                                });
+                                editor.view.dispatch(tr);
 
-                            console.log('[ImageAlign] 정렬 저장 완료');
+                                console.log('[ImageAlign] 정렬 저장 완료');
+                            }
                         } catch (error) {
                             console.error('[ImageWithCaption] 정렬 저장 실패:', error);
                         }
@@ -277,14 +279,18 @@ export const ImageWithCaption = Node.create({
                         const pos = getPos();
                         try {
                             const tr = editor.view.state.tr;
-                            tr.setNodeMarkup(pos, null, {
-                                src: node.attrs.src,
-                                alt: node.attrs.alt,
-                                caption: currentCaption,
-                                width: figure.style.width || node.attrs.width,
-                                align: currentAlign
-                            });
-                            editor.view.dispatch(tr);
+                            const currentNode = editor.view.state.doc.nodeAt(pos);
+                            
+                            if (currentNode && currentNode.type.name === this.name) {
+                                tr.setNodeMarkup(pos, null, {
+                                    src: currentNode.attrs.src,
+                                    alt: currentNode.attrs.alt,
+                                    caption: currentCaption,
+                                    width: figure.style.width || currentNode.attrs.width,
+                                    align: currentAlign
+                                });
+                                editor.view.dispatch(tr);
+                            }
                         } catch (error) {
                             console.error('[ImageWithCaption] 캡션 자동 저장 실패:', error);
                         }
@@ -373,14 +379,17 @@ export const ImageWithCaption = Node.create({
                     try {
                         const tr = editor.view.state.tr;
                         const currentNode = tr.doc.nodeAt(pos);
-                        tr.setNodeMarkup(pos, null, {
-                            src: currentNode.attrs.src,
-                            alt: currentNode.attrs.alt,
-                            caption: currentNode.attrs.caption,
-                            width: finalWidth,
-                            align: currentAlign
-                        });
-                        editor.view.dispatch(tr);
+                        
+                        if (currentNode && currentNode.type.name === this.name) {
+                            tr.setNodeMarkup(pos, null, {
+                                src: currentNode.attrs.src,
+                                alt: currentNode.attrs.alt,
+                                caption: currentNode.attrs.caption,
+                                width: finalWidth,
+                                align: currentAlign
+                            });
+                            editor.view.dispatch(tr);
+                        }
                     } catch (error) {
                         console.error('[ImageWithCaption] width 저장 실패:', error);
                     }
@@ -412,8 +421,16 @@ export const ImageWithCaption = Node.create({
                         return false;
                     }
 
-                    // 이미지 src가 변경되었으면 업데이트
-                    if (updatedNode.attrs.src !== img.src) {
+                    // 이미지 src가 변경되었으면 업데이트 (상대 경로 vs 절대 경로 고려)
+                    const normalizeUrl = (url) => {
+                        try { return new URL(url, window.location.origin).href; }
+                        catch { return url; }
+                    };
+
+                    const updatedSrc = normalizeUrl(updatedNode.attrs.src);
+                    const currentSrc = normalizeUrl(img.src);
+
+                    if (updatedSrc !== currentSrc) {
                         img.src = updatedNode.attrs.src;
                         img.alt = updatedNode.attrs.alt || '';
                     }

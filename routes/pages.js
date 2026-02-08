@@ -437,8 +437,8 @@ module.exports = (dependencies) => {
             const existing = rows[0];
 
             const permission = await storagesRepo.getPermission(userId, existing.storage_id);
-            if (!permission || permission !== 'ADMIN') {
-                return res.status(403).json({ error: "발행 권한이 없습니다. (저장소 관리자만 가능)" });
+            if (!permission) {
+                return res.status(403).json({ error: "권한이 없습니다." });
             }
             
             const [pub] = await pool.execute(`SELECT token, created_at, allow_comments FROM page_publish_links WHERE page_id=? AND is_active=1`, [id]);
