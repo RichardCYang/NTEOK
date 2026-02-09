@@ -88,6 +88,45 @@ const WS_RATE_LIMIT_MAX_CONNECTIONS = 10;
 const WS_MAX_MESSAGE_BYTES = 2 * 1024 * 1024;
 const WS_MAX_AWARENESS_UPDATE_BYTES = 32 * 1024;
 
+const WS_MAX_ACTIVE_CONNECTIONS_PER_IP = Number.parseInt(process.env.WS_MAX_ACTIVE_CONNECTIONS_PER_IP || '25', 10);
+const WS_MAX_ACTIVE_CONNECTIONS_PER_SESSION = Number.parseInt(process.env.WS_MAX_ACTIVE_CONNECTIONS_PER_SESSION || '10', 10);
+
+const wsActiveConnectionsByIp = new Map();
+const wsActiveConnectionsBySession = new Map();
+
+function canRegisterActive(map, key, max) {
+    if (!key) return false;
+    const lim = Number.isFinite(max) ? max : 0;
+    if (lim <= 0) return false;
+    const cur = map.get(key) || 0;
+    return cur < lim;
+}
+
+function registerActive(map, key) {
+    const cur = map.get(key) || 0;
+    map.set(key, cur + 1);
+}
+
+function unregisterActive(map, key) {
+    const cur = (map.get(key) || 0) - 1;
+    if (cur <= 0) map.delete(key);
+    else map.set(key, cur);
+}
+
+function releaseActiveConnectionSlots(ws) {
+    if (!ws || ws._activeSlotsReleased) return;
+    ws._activeSlotsReleased = true;
+
+    if (ws._activeIpKey) {
+        unregisterActive(wsActiveConnectionsByIp, ws._activeIpKey);
+        ws._activeIpKey = null;
+    }
+    if (ws._activeSessionKey) {
+        unregisterActive(wsActiveConnectionsBySession, ws._activeSessionKey);
+        ws._activeSessionKey = null;
+    }
+}
+
 function registerSessionConnection(sessionId, ws) {
     if (!sessionId) return;
     if (!wsConnections.sessions.has(sessionId)) wsConnections.sessions.set(sessionId, new Set());
@@ -288,17 +327,38 @@ async function getStoragePermission(pool, userId, storageId) {
     return null;
 }
 
-function initWebSocketServer(server, sessions, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, SESSION_COOKIE_NAME, getSessionFromId) {
+function initWebSocketServer(server, sessions, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, SESSION_COOKIE_NAME, getSessionFromId, getClientIpFromRequest) {
     const wss = new WebSocket.Server({ server, path: '/ws', maxPayload: WS_MAX_MESSAGE_BYTES });
     wss.on('connection', async (ws, req) => {
     	try {
-			const remoteAddress = req.socket?.remoteAddress;
-			const clientIp = req.headers['x-forwarded-for']?.split(',')[0].trim() || remoteAddress || 'unknown';
-		    if (!checkWebSocketRateLimit(clientIp)) { ws.close(1008, 'Rate limit exceeded'); return; }
+            ws.on('close', () => { cleanupWebSocketConnection(ws, pool, sanitizeHtmlContent); });
+
+            const clientIp = (typeof getClientIpFromRequest === 'function')
+                ? getClientIpFromRequest(req)
+                : (req.socket?.remoteAddress || 'unknown');
+            const ipKey = (typeof clientIp === 'string' && clientIp.trim()) ? clientIp.trim() : 'unknown';
+
+            if (!canRegisterActive(wsActiveConnectionsByIp, ipKey, WS_MAX_ACTIVE_CONNECTIONS_PER_IP)) {
+                ws.close(1008, 'Too many connections');
+                return;
+            }
+            registerActive(wsActiveConnectionsByIp, ipKey);
+            ws._activeIpKey = ipKey;
+
+		    if (!checkWebSocketRateLimit(ipKey)) { ws.close(1008, 'Rate limit exceeded'); return; }
+
 		    const cookies = {};
 		    if (req.headers.cookie) req.headers.cookie.split(';').forEach(c => { const p = c.split('='); cookies[p[0].trim()] = (p[1] || '').trim(); });
 		    const sessionId = cookies[SESSION_COOKIE_NAME];
 		    if (!sessionId) { ws.close(1008, 'Unauthorized'); return; }
+
+            if (!canRegisterActive(wsActiveConnectionsBySession, sessionId, WS_MAX_ACTIVE_CONNECTIONS_PER_SESSION)) {
+                ws.close(1008, 'Too many sessions');
+                return;
+            }
+            registerActive(wsActiveConnectionsBySession, sessionId);
+            ws._activeSessionKey = sessionId;
+
 		    const session = typeof getSessionFromId === 'function' ? getSessionFromId(sessionId) : sessions.get(sessionId);
 		    if (!session || !session.userId) { ws.close(1008, 'Unauthorized'); return; }
 		    ws.userId = session.userId; ws.username = session.username; ws.sessionId = sessionId; ws.isAlive = true;
@@ -307,7 +367,6 @@ function initWebSocketServer(server, sessions, pool, sanitizeHtmlContent, IS_PRO
 			ws.on('message', async (msg) => {
 		        try { const data = JSON.parse(msg); await handleWebSocketMessage(ws, data, pool, sanitizeHtmlContent, getSessionFromId); } catch (e) { ws.send(JSON.stringify({ event: 'error', data: { message: 'Failed' } })); }
 		    });
-		    ws.on('close', () => { cleanupWebSocketConnection(ws, pool, sanitizeHtmlContent); });
 		    ws.send(JSON.stringify({ event: 'connected', data: { userId: session.userId, username: session.username } }));
       	} catch (err) { try { ws.close(1011, 'Error'); } catch (_) {} }
     });
@@ -426,6 +485,9 @@ function handleAwarenessUpdate(ws, payload) {
 }
 
 function cleanupWebSocketConnection(ws, pool, sanitizeHtmlContent) {
+    // DoS 방지: 활성 연결 슬롯 해제 (중복 호출 대비 idempotent)
+    releaseActiveConnectionSlots(ws);
+
 	unregisterSessionConnection(ws.sessionId, ws);
     wsConnections.pages.forEach((conns, pid) => {
         conns.forEach(c => { if (c.ws === ws) { conns.delete(c); wsBroadcastToPage(pid, 'user-left', { userId: ws.userId }, ws.userId); } });
