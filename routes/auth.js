@@ -44,6 +44,20 @@ module.exports = (dependencies) => {
     // 인증 모호성/강도 정책 우회를 유발할 수 있으므로 공통적으로 차단
     const PASSWORD_CONTROL_CHARS_RE = /[\u0000-\u001F\u007F]/;
 
+    // 저장형 XSS 방어: username은 여러 화면에서 표시되므로
+    // HTML/엔티티 기반 우회("&lt;...&gt;")까지 고려해 안전한 문자 집합으로 제한
+    // - \p{L}: 모든 유니코드 문자(한글 포함)
+    // - \p{N}: 숫자
+    // - 그 외: . _ - 만 허용
+    // (Node.js가 unicode property escapes를 지원하지 않는 경우를 대비해 ASCII fallback 제공)
+    let USERNAME_SAFE_RE;
+    try {
+        USERNAME_SAFE_RE = new RegExp('^[\\p{L}\\p{N}._-]{3,64}$', 'u');
+    } catch (_) {
+        USERNAME_SAFE_RE = /^[A-Za-z0-9._-]{3,64}$/;
+    }
+    const USERNAME_CONTROL_CHARS_RE = /[\u0000-\u001F\u007F]/;
+
     function getClientIp(req) {
         return (
             req.clientIp ||
@@ -405,6 +419,13 @@ module.exports = (dependencies) => {
 
         if (trimmedUsername.length < 3 || trimmedUsername.length > 64) {
             return res.status(400).json({ error: "아이디는 3~64자 사이로 입력해 주세요." });
+        }
+
+        // username 캐릭터 정책 (저장형 XSS / 혼동 문자 기반 우회 방어)
+        if (USERNAME_CONTROL_CHARS_RE.test(trimmedUsername) || !USERNAME_SAFE_RE.test(trimmedUsername)) {
+            return res.status(400).json({
+                error: "아이디는 한글/영문/숫자 및 . _ - 만 사용할 수 있습니다. (공백/특수문자/HTML 엔티티 불가)"
+            });
         }
 
         const passwordValidation = validatePasswordStrength(password);

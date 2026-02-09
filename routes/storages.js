@@ -5,6 +5,23 @@ const crypto = require('crypto');
 module.exports = (dependencies) => {
     const { storagesRepo, bootstrapRepo, authMiddleware, toIsoString, logError, formatDateForDb } = dependencies;
 
+    // 저장형 XSS/HTML 엔티티 우회 방어:
+    // storage 이름은 여러 화면에서 표시되므로, < > & 및 제어문자를 금지하고 길이를 제한
+    const CONTROL_CHARS_RE = /[\u0000-\u001F\u007F]/;
+    const HTML_META_CHARS_RE = /[<>&]/;
+    function validateStorageName(name) {
+        if (typeof name !== 'string') return null;
+        const trimmed = name.trim();
+        if (!trimmed) return null;
+        if (trimmed.length > 128) {
+            return { ok: false, error: '저장소 이름은 128자 이내로 입력해주세요.' };
+        }
+        if (CONTROL_CHARS_RE.test(trimmed) || HTML_META_CHARS_RE.test(trimmed)) {
+            return { ok: false, error: '저장소 이름에 <, >, &, 제어문자는 사용할 수 없습니다.' };
+        }
+        return { ok: true, value: trimmed };
+    }
+
     /**
      * 저장소 목록 조회
      */
@@ -67,9 +84,14 @@ module.exports = (dependencies) => {
     router.post('/', authMiddleware, async (req, res) => {
         try {
             const { name } = req.body;
-            if (!name || !name.trim()) {
+            const check = validateStorageName(name);
+            if (!check) {
                 return res.status(400).json({ error: '저장소 이름을 입력해주세요.' });
             }
+            if (!check.ok) {
+                return res.status(400).json({ error: check.error });
+            }
+            const storageName = check.value;
 
             const userId = req.user.id;
             const now = new Date();
@@ -80,7 +102,7 @@ module.exports = (dependencies) => {
             const storage = await storagesRepo.createStorage({
                 userId,
                 id,
-                name: name.trim(),
+                name: storageName,
                 sortOrder,
                 createdAt: nowStr,
                 updatedAt: nowStr
@@ -103,9 +125,14 @@ module.exports = (dependencies) => {
     router.put('/:id', authMiddleware, async (req, res) => {
         try {
             const { name } = req.body;
-            if (!name || !name.trim()) {
+            const check = validateStorageName(name);
+            if (!check) {
                 return res.status(400).json({ error: '저장소 이름을 입력해주세요.' });
             }
+            if (!check.ok) {
+                return res.status(400).json({ error: check.error });
+            }
+            const storageName = check.value;
 
             const userId = req.user.id;
             const storageId = req.params.id;
@@ -113,7 +140,7 @@ module.exports = (dependencies) => {
             const nowStr = formatDateForDb(now);
 
             await storagesRepo.updateStorage(userId, storageId, {
-                name: name.trim(),
+                name: storageName,
                 updatedAt: nowStr
             });
 

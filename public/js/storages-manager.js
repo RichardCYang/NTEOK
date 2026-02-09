@@ -2,7 +2,7 @@
  * 저장소 관리자
  */
 import * as api from './api-utils.js';
-import { showLoadingOverlay, hideLoadingOverlay } from './ui-utils.js';
+import { showLoadingOverlay, hideLoadingOverlay, escapeHtml, escapeHtmlAttr } from './ui-utils.js';
 
 export function initStoragesManager(appState, onStorageSelected) {
     const storageScreen = document.getElementById('storage-selection-screen');
@@ -32,17 +32,23 @@ export function initStoragesManager(appState, onStorageSelected) {
             const date = new Date(storage.createdAt || storage.created_at).toLocaleDateString();
             const isOwner = storage.is_owner === 1 || storage.is_owner === true;
             
+            // 보안: innerHTML 템플릿에 들어가는 값은 반드시 이스케이프 처리
+            // - storage.name / storage.owner_name 은 DB에 저장되는 사용자 입력이므로 신뢰할 수 없음
+            const safeStorageId = escapeHtmlAttr(storage.id);
+            const safeStorageName = escapeHtml(storage.name || '');
+            const safeOwnerName = escapeHtml(storage.owner_name || '');
+
             item.innerHTML = `
                 <div class="storage-item-actions">
                     ${isOwner ? `
-                        <button class="storage-action-btn collab-btn" title="참여자 관리" data-id="${storage.id}">
+                        <button class="storage-action-btn collab-btn" title="참여자 관리" data-id="${safeStorageId}">
                             <i class="fa-solid fa-user-group"></i>
                         </button>
-                        <button class="storage-action-btn delete-btn delete" title="저장소 삭제" data-id="${storage.id}">
+                        <button class="storage-action-btn delete-btn delete" title="저장소 삭제" data-id="${safeStorageId}">
                             <i class="fa-regular fa-trash-can"></i>
                         </button>
                     ` : `
-                        <button class="storage-action-btn delete-btn delete" title="공유 해제" data-id="${storage.id}">
+                        <button class="storage-action-btn delete-btn delete" title="공유 해제" data-id="${safeStorageId}">
                             <i class="fa-solid fa-right-from-bracket"></i>
                         </button>
                     `}
@@ -52,10 +58,10 @@ export function initStoragesManager(appState, onStorageSelected) {
                 </div>
                 <div class="storage-item-info">
                     <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 4px;">
-                        <span class="storage-item-name">${storage.name}</span>
+                        <span class="storage-item-name">${safeStorageName}</span>
                         ${!isOwner ? `<span class="storage-item-shared-badge">공유됨</span>` : ''}
                     </div>
-                    <span class="storage-item-meta">${date}${!isOwner ? ` (${storage.owner_name})` : ''}</span>
+                    <span class="storage-item-meta">${date}${!isOwner ? ` (${safeOwnerName})` : ''}</span>
                 </div>
             `;
             
@@ -158,13 +164,17 @@ export function initStoragesManager(appState, onStorageSelected) {
                 'ADMIN': '관리'
             }[collab.permission] || collab.permission;
 
+            // 보안: 사용자명/권한 문자열은 신뢰할 수 없으므로 HTML 이스케이프
+            const safeCollabName = escapeHtml(collab.username || '');
+            const safePermissionLabel = escapeHtml(permissionLabel || '');
+
             item.innerHTML = `
                 <div class="collaborator-info">
-                    <span class="collaborator-name">${collab.username}</span>
+                    <span class="collaborator-name">${safeCollabName}</span>
                     <span class="collaborator-meta">${new Date(collab.created_at).toLocaleDateString()}</span>
                 </div>
                 <div class="collaborator-actions">
-                    <span class="collaborator-permission-badge">${permissionLabel}</span>
+                    <span class="collaborator-permission-badge">${safePermissionLabel}</span>
                     <button class="collaborator-remove-btn" title="삭제">
                         <i class="fa-solid fa-user-minus"></i>
                     </button>
