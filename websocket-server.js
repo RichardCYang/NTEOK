@@ -5,6 +5,7 @@
 
 const WebSocket = require("ws");
 const Y = require("yjs");
+const { URL } = require("url");
 const { formatDateForDb } = require("./network-utils");
 
 function validateAndNormalizeIcon(raw) {
@@ -328,9 +329,69 @@ async function getStoragePermission(pool, userId, storageId) {
 }
 
 function initWebSocketServer(server, sessions, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, SESSION_COOKIE_NAME, getSessionFromId, getClientIpFromRequest) {
-    const wss = new WebSocket.Server({ server, path: '/ws', maxPayload: WS_MAX_MESSAGE_BYTES });
+    /**
+     * ==================== WebSocket 보안: Origin 검증 (CSWSH 방지) ====================
+     * - WebSocket은 브라우저의 SOP/CORS로 보호되지 않으므로, 핸드셰이크에서 Origin allowlist 검증이 필요합니다.
+     * - BASE_URL(예: https://example.com) 기준으로 허용 Origin을 구성합니다.
+     *   (리버스 프록시/도메인 변경 시 BASE_URL을 정확히 설정하세요.)
+     */
+    const allowedWsOrigins = (() => {
+        const set = new Set();
+        try { set.add(new URL(BASE_URL).origin); } catch (_) {}
+
+        // 개발 환경에서 흔히 사용하는 로컬 오리진 허용
+        if (!IS_PRODUCTION) {
+            const port = process.env.PORT || 3000;
+            try { set.add(new URL(`http://localhost:${port}`).origin); } catch (_) {}
+            try { set.add(new URL(`http://127.0.0.1:${port}`).origin); } catch (_) {}
+        }
+        return set;
+    })();
+
+    function isWsOriginAllowed(originHeader) {
+        if (typeof originHeader !== "string") return false;
+        const raw = originHeader.trim();
+        // 브라우저는 Origin을 보냅니다. 'null'은 sandbox/파일 등 의심 상황이므로 거부.
+        if (!raw || raw === "null") return false;
+        try {
+            const origin = new URL(raw).origin;
+            return allowedWsOrigins.has(origin);
+        } catch {
+            return false;
+        }
+    }
+
+    const wss = new WebSocket.Server({
+        server,
+        path: '/ws',
+        maxPayload: WS_MAX_MESSAGE_BYTES,
+        /**
+         * 핸드셰이크 단계에서 Origin 검증 (Cross-Site WebSocket Hijacking 방지)
+         * - 브라우저는 Origin 헤더를 자동으로 포함하며 JS로 임의 변경 불가
+         */
+        verifyClient: (info, done) => {
+            try {
+                const origin = info?.origin || info?.req?.headers?.origin;
+                if (!isWsOriginAllowed(origin)) {
+                    return done(false, 403, 'Forbidden');
+                }
+                return done(true);
+            } catch (_) {
+                return done(false, 403, 'Forbidden');
+            }
+        }
+    });
+
     wss.on('connection', async (ws, req) => {
-    	try {
+        try {
+            // 추가 방어: 라이브러리/프록시 환경에 따라 verifyClient가 우회될 가능성을 대비해
+            // connection 단계에서도 Origin을 재검증합니다.
+            const origin = req?.headers?.origin;
+            if (!isWsOriginAllowed(origin)) {
+                try { ws.close(1008, 'Forbidden'); } catch (_) {}
+                return;
+            }
+
             ws.on('close', () => { cleanupWebSocketConnection(ws, pool, sanitizeHtmlContent); });
 
             const clientIp = (typeof getClientIpFromRequest === 'function')
