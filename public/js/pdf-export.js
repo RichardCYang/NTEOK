@@ -4,6 +4,54 @@
  */
 
 import { secureFetch, escapeHtml, escapeHtmlAttr, addIcon } from './ui-utils.js';
+import DOMPurify from 'dompurify';
+
+// ------------------------------------------------------------
+// Security fix: Board(Kanban) block XSS hardening in PDF export
+// ------------------------------------------------------------
+// pdf-export.js는 data-columns(JSON)에서 파싱한 card.content를 innerHTML로 주입합니다.
+// export 시점에도 allow-list 기반 정화가 없으면 저장형/DOM XSS가 발생할 수 있습니다.
+const BOARD_CARD_PURIFY_CONFIG = {
+    USE_PROFILES: { html: true },
+    ALLOWED_TAGS: [
+        'br', 'p', 'div', 'span',
+        'strong', 'b', 'em', 'i', 'u', 's',
+        'code', 'pre', 'ul', 'ol', 'li', 'blockquote',
+        'a'
+    ],
+    ALLOWED_ATTR: ['href', 'target', 'rel'],
+    FORBID_TAGS: ['style', 'script', 'svg', 'math'],
+};
+
+function sanitizeBoardCardHtmlForPdf(html) {
+    const clean = DOMPurify.sanitize(String(html ?? ''), BOARD_CARD_PURIFY_CONFIG);
+
+    // target=_blank tabnabbing 방어
+    const tmp = document.createElement('div');
+    tmp.innerHTML = clean;
+    tmp.querySelectorAll('a').forEach((a) => {
+        const target = (a.getAttribute('target') || '').toLowerCase();
+        if (target === '_blank') {
+            const rel = new Set(
+                (a.getAttribute('rel') || '')
+                    .split(/\s+/)
+                    .filter(Boolean)
+                    .map(s => s.toLowerCase())
+            );
+            rel.add('noopener');
+            rel.add('noreferrer');
+            a.setAttribute('rel', Array.from(rel).join(' '));
+        }
+    });
+    return tmp.innerHTML;
+}
+
+// card.color는 class attribute로 들어가므로 허용값 allow-list로 제한
+const BOARD_ALLOWED_COLORS = new Set(['default', 'yellow', 'blue', 'green', 'pink', 'purple', 'orange']);
+function normalizeBoardColor(value) {
+    const c = String(value || '').toLowerCase().trim();
+    return BOARD_ALLOWED_COLORS.has(c) ? c : '';
+}
 
 /**
  * 라이브러리 로드 대기 (jsPDF, html2canvas)
@@ -525,10 +573,14 @@ async function renderCustomBlocks(container) {
                     `;
                 }
 
+                const safeColor = normalizeBoardColor(card.color);
+                const colorClass = safeColor ? `color-${safeColor}` : '';
+                const safeCardContent = sanitizeBoardCardHtmlForPdf(card.content || '');
+
                 cardsHTML += `
-                    <div class="board-card ${card.color ? 'color-' + card.color : ''}">
+                    <div class="board-card ${colorClass}">
                         ${cardHeaderHTML}
-                        <div class="board-card-content">${card.content || ''}</div>
+                        <div class="board-card-content">${safeCardContent}</div>
                     </div>
                 `;
             });
