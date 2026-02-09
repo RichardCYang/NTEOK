@@ -673,12 +673,21 @@ ${JSON.stringify(pageMetadata, null, 2)}
                     if (cParts.length === 2) coverImage = `${userId}/${cParts[1]}`;
                 }
 
+                // 보안: 백업(import) 파일의 HTML은 신뢰할 수 없으므로 서버 기준으로 정화/정규화한다.
+                // - pages.content는 WebSocket(Yjs) 초기 상태 시딩에도 사용되므로,
+                //   여기서 정화를 빼먹으면 악성 HTML이 협업자/새 세션으로 전파될 수 있다(Stored XSS).
+                const safeTitle = sanitizeInput(pageData.title || '제목 없음').slice(0, 200);
+                const safeIcon = pageData.icon ? sanitizeInput(String(pageData.icon)).slice(0, 64) : null;
+                const safeContent = pageData.isEncrypted ? '' : sanitizeHtmlContent(pageData.content || '<p></p>');
+                const safeEncryptionSalt = pageData.encryptionSalt || null;
+                const safeEncryptedContent = pageData.encryptedContent || null;
+
                 await connection.execute(
                     `INSERT INTO pages (id, user_id, storage_id, title, content, encryption_salt, encrypted_content,
                                        sort_order, created_at, updated_at, is_encrypted, share_allowed, icon, cover_image, cover_position)
                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                    [pageId, userId, storageId, pageData.title, pageData.content, pageData.encryptionSalt, pageData.encryptedContent,
-                     pageData.sortOrder || 0, nowStr, nowStr, pageData.isEncrypted ? 1 : 0, pageData.shareAllowed ? 1 : 0, pageData.icon, coverImage, pageData.coverPosition || 50]
+                    [pageId, userId, storageId, safeTitle, safeContent, safeEncryptionSalt, safeEncryptedContent,
+                     pageData.sortOrder || 0, nowStr, nowStr, pageData.isEncrypted ? 1 : 0, pageData.shareAllowed ? 1 : 0, safeIcon, coverImage, pageData.coverPosition || 50]
                 );
                 totalPages++;
             }

@@ -181,7 +181,7 @@ async function saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc) {
     } catch (error) { throw error; }
 }
 
-async function loadOrCreateYjsDoc(pool, pageId) {
+async function loadOrCreateYjsDoc(pool, sanitizeHtmlContent, pageId) {
     if (yjsDocuments.has(pageId)) {
         const doc = yjsDocuments.get(pageId);
         doc.lastAccess = Date.now();
@@ -199,7 +199,15 @@ async function loadOrCreateYjsDoc(pool, pageId) {
 	    if (yMetadata.get('icon') == null) yMetadata.set('icon', page.icon || null);
 	    if (yMetadata.get('sortOrder') == null) yMetadata.set('sortOrder', page.sort_order || 0);
 	    if (yMetadata.get('parentId') == null) yMetadata.set('parentId', page.parent_id || null);
-	    if (yMetadata.get('content') == null) yMetadata.set('content', page.content || '<p></p>');
+
+	    // 보안: DB/Yjs 상태에 들어있는 HTML 스냅샷은 신뢰하지 말고 서버 정책으로 항상 정화한다.
+	    // - 협업(WS) 경로에서는 init 상태가 그대로 브라우저 렌더링으로 이어질 수 있으므로(Stored XSS 방어)
+	    //   여기서 한 번 더 강제 정화를 적용한다.
+	    const _rawHtml = (yMetadata.get('content') == null)
+	        ? (page.content || '<p></p>')
+	        : yMetadata.get('content');
+	    const _safeHtml = (typeof sanitizeHtmlContent === 'function') ? sanitizeHtmlContent(_rawHtml) : _rawHtml;
+	    yMetadata.set('content', _safeHtml);
 	}
     yjsDocuments.set(pageId, { ydoc, lastAccess: Date.now(), saveTimeout: null });
     return ydoc;
@@ -315,7 +323,7 @@ async function handleWebSocketMessage(ws, data, pool, sanitizeHtmlContent, getSe
 	    if (!s || !s.userId) { try { ws.close(1008, 'Expired'); } catch (e) {} return; }
 	}
 	switch (type) {
-        case 'subscribe-page': await handleSubscribePage(ws, payload, pool); break;
+        case 'subscribe-page': await handleSubscribePage(ws, payload, pool, sanitizeHtmlContent); break;
         case 'unsubscribe-page': handleUnsubscribePage(ws, payload, pool, sanitizeHtmlContent); break;
         case 'subscribe-storage': await handleSubscribeStorage(ws, payload, pool); break;
         case 'unsubscribe-storage': handleUnsubscribeStorage(ws, payload); break;
@@ -325,7 +333,7 @@ async function handleWebSocketMessage(ws, data, pool, sanitizeHtmlContent, getSe
     }
 }
 
-async function handleSubscribePage(ws, payload, pool) {
+async function handleSubscribePage(ws, payload, pool, sanitizeHtmlContent) {
     const { pageId } = payload;
     const userId = ws.userId;
     try {
@@ -348,7 +356,7 @@ async function handleSubscribePage(ws, payload, pool) {
         for (const c of Array.from(conns)) { if (c.userId === userId && c.ws !== ws) { conns.delete(c); try { c.ws.close(1008, 'Duplicate'); } catch (e) {} } }
         const color = getUserColor(userId);
         conns.add({ ws, userId, username: ws.username, color, permission });
-        const ydoc = await loadOrCreateYjsDoc(pool, pageId);
+        const ydoc = await loadOrCreateYjsDoc(pool, sanitizeHtmlContent, pageId);
         ws.send(JSON.stringify({ event: 'init', data: { state: Buffer.from(Y.encodeStateAsUpdate(ydoc)).toString('base64'), userId, username: ws.username, color, permission } }));
         wsBroadcastToPage(pageId, 'user-joined', { userId, username: ws.username, color, permission }, userId);
     } catch (e) { ws.send(JSON.stringify({ event: 'error', data: { message: 'Failed' } })); }
@@ -396,7 +404,7 @@ async function handleYjsUpdate(ws, payload, pool, sanitizeHtmlContent) {
         const myConn = Array.from(conns).find(c => c.ws === ws);
         if (!myConn || !['EDIT', 'ADMIN'].includes(myConn.permission)) return;
 
-        const ydoc = await loadOrCreateYjsDoc(pool, pageId);
+        const ydoc = await loadOrCreateYjsDoc(pool, sanitizeHtmlContent, pageId);
         Y.applyUpdate(ydoc, Buffer.from(update, 'base64'));
         wsBroadcastToPage(pageId, 'yjs-update', { update }, ws.userId);
         const doc = yjsDocuments.get(pageId);
