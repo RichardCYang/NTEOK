@@ -1804,6 +1804,22 @@ app.get('/imgs/:userId/:filename', authMiddleware, async (req, res) => {
                             if (isSubscribed) {
                                 const docInfo = yjsDocuments.get(pageId);
                                 if (docInfo) {
+                                    // [핵심 패치] Yjs fallback이 권한 우회 통로가 되지 않도록
+                                    // - "요청한 이미지 소유자(requestedUserId)"와
+                                    //   "구독 중인 페이지의 소유자(docInfo.ownerUserId)"가 반드시 일치해야 함
+                                    // - 이 검증이 없으면 공격자가 자기 페이지에 피해자 이미지 URL 문자열만 넣고
+                                    //   피해자 이미지를 무단으로 가져갈 수 있음(IDOR/Broken Access Control)
+                                    if (!Number.isFinite(docInfo.ownerUserId) || Number(docInfo.ownerUserId) !== requestedUserId) {
+                                        continue;
+                                    }
+
+                                    // (선택) 암호화 + 공유불가 페이지 자산 우회 노출 방지
+                                    // - subscribe-page는 encrypted 협업을 차단하지만,
+                                    //   혹시라도 doc가 남아있는 경우를 방어적으로 막음
+                                    if (docInfo.isEncrypted === true && docInfo.shareAllowed === false && currentUserId !== requestedUserId) {
+                                        continue;
+                                    }
+
                                     const ydoc = docInfo.ydoc;
                                     // HTML 스냅샷 확인
                                     const content = ydoc.getMap('metadata').get('content') || '';

@@ -227,7 +227,14 @@ async function loadOrCreateYjsDoc(pool, sanitizeHtmlContent, pageId) {
         doc.lastAccess = Date.now();
         return doc.ydoc;
     }
-    const [rows] = await pool.execute('SELECT title, content, icon, sort_order, parent_id, yjs_state FROM pages WHERE id = ?', [pageId]);
+    const [rows] = await pool.execute(
+        `SELECT title, content, icon, sort_order, parent_id, yjs_state,
+                user_id, storage_id, is_encrypted, share_allowed
+         FROM pages
+         WHERE id = ?`,
+        [pageId]
+    );
+
     const ydoc = new Y.Doc();
     const yMetadata = ydoc.getMap('metadata');
 	if (rows.length > 0) {
@@ -248,8 +255,28 @@ async function loadOrCreateYjsDoc(pool, sanitizeHtmlContent, pageId) {
 	        : yMetadata.get('content');
 	    const _safeHtml = (typeof sanitizeHtmlContent === 'function') ? sanitizeHtmlContent(_rawHtml) : _rawHtml;
 	    yMetadata.set('content', _safeHtml);
+
+        // 보안/권한 검증에 필요한 최소 메타 저장
+        yjsDocuments.set(pageId, {
+            ydoc,
+            lastAccess: Date.now(),
+            saveTimeout: null,
+            ownerUserId: Number(page.user_id),
+            storageId: String(page.storage_id),
+            isEncrypted: page.is_encrypted === 1,
+            shareAllowed: page.share_allowed === 1
+        });
+        return ydoc;
 	}
-    yjsDocuments.set(pageId, { ydoc, lastAccess: Date.now(), saveTimeout: null });
+    yjsDocuments.set(pageId, {
+        ydoc,
+        lastAccess: Date.now(),
+        saveTimeout: null,
+        ownerUserId: null,
+        storageId: null,
+        isEncrypted: false,
+        shareAllowed: true
+    });
     return ydoc;
 }
 
