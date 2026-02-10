@@ -39,6 +39,20 @@ if (typeof _purifier?.addHook === 'function') {
             }
         }
     });
+
+    // Reverse Tabnabbing 방어: target="_blank"인 경우 rel="noopener noreferrer" 강제
+    _purifier.addHook('afterSanitizeAttributes', (node) => {
+        if (String(node.tagName).toLowerCase() === 'a') {
+            const target = String(node.getAttribute('target') || '').trim().toLowerCase();
+            if (target === '_blank') {
+                const rel = (node.getAttribute('rel') || '').toLowerCase();
+                const set = new Set(rel.split(/\s+/).filter(Boolean));
+                set.add('noopener');
+                set.add('noreferrer');
+                node.setAttribute('rel', Array.from(set).join(' '));
+            }
+        }
+    });
 }
 
 function sanitizeSharedHtml(html) {

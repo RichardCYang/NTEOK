@@ -19,24 +19,42 @@ function isSafeHttpUrlOrRelative(value) {
 }
 
 // 훅은 1회만 설치 (중복 설치 방지)
-if (!DOMPurify.__nteokDataSrcHookInstalled) {
-	DOMPurify.__nteokDataSrcHookInstalled = true;
+if (!DOMPurify.__nteokSecurityHooksInstalled) {
+	DOMPurify.__nteokSecurityHooksInstalled = true;
+
+	// data-src/data-url 등 data-* 속성 검증
 	DOMPurify.addHook('uponSanitizeAttribute', (node, data) => {
 		const name = String(data?.attrName || '').toLowerCase();
-		if (name !== 'data-src') return;
-		const nodeType = String(node?.getAttribute?.('data-type') || '').toLowerCase();
-		const raw = String(data?.attrValue || '');
 
-		if (!isSafeHttpUrlOrRelative(raw)) {
-		    data.keepAttr = false;
-		    data.forceKeepAttr = false;
-		    return;
+		if (name === 'data-src') {
+			const nodeType = String(node?.getAttribute?.('data-type') || '').toLowerCase();
+			const raw = String(data?.attrValue || '');
+
+			if (!isSafeHttpUrlOrRelative(raw)) {
+				data.keepAttr = false;
+				data.forceKeepAttr = false;
+				return;
+			}
+
+			// file-block는 내부 첨부만 허용
+			if (nodeType === 'file-block' && !raw.startsWith('/paperclip/')) {
+				data.keepAttr = false;
+				data.forceKeepAttr = false;
+			}
 		}
+	});
 
-		// file-block는 내부 첨부만 허용
-		if (nodeType === 'file-block' && !raw.startsWith('/paperclip/')) {
-		    data.keepAttr = false;
-		    data.forceKeepAttr = false;
+	// Reverse Tabnabbing 방어: target="_blank"인 경우 rel="noopener noreferrer" 강제
+	DOMPurify.addHook('afterSanitizeAttributes', (node) => {
+		if (String(node.tagName).toLowerCase() === 'a') {
+			const target = String(node.getAttribute('target') || '').trim().toLowerCase();
+			if (target === '_blank') {
+				const rel = (node.getAttribute('rel') || '').toLowerCase();
+				const set = new Set(rel.split(/\s+/).filter(Boolean));
+				set.add('noopener');
+				set.add('noreferrer');
+				node.setAttribute('rel', Array.from(set).join(' '));
+			}
 		}
 	});
 }
