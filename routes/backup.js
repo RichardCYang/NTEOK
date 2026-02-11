@@ -89,6 +89,35 @@ module.exports = (dependencies) => {
      */
     const KEEP_IMPORT_PUBLISH_TOKENS = String(process.env.KEEP_IMPORT_PUBLISH_TOKENS || '').toLowerCase() === 'true';
 
+    /**
+     * 보안: 저장소 이름(워크스페이스/컬렉션 이름) 정규화
+     * - backup import는 외부에서 가져오는 신뢰 불가 입력이므로 반드시 서버에서 검증해야 함
+     * - 목표: Stored XSS 및 UI 템플릿/DOM 주입 취약점의 우회 경로 차단
+     */
+    function normalizeStorageName(rawName) {
+        // 기본 타입/trim
+        if (typeof rawName !== 'string') rawName = '';
+        let name = rawName.trim();
+
+        // 제어문자 제거 (로그/헤더/렌더링 혼란 방지)
+        name = name.replace(/[\u0000-\u001F\u007F]/g, '');
+
+        // 너무 길면 자르기 (DB/렌더링 보호)
+        if (name.length > 100) name = name.slice(0, 100);
+
+        // XSS 위험 문자를 원천 차단 (정책은 프로젝트 전체와 동일하게 유지 권장)
+        //    - sanitizeInput은 태그 제거 중심이므로 여기서는 추가로 위험 기호를 막아 정책을 확실히 함
+        //    - (원한다면 아래 정규식 정책을 storages 생성/수정 API와 동일하게 맞추는 것이 최선)
+        if (/[<>&"'`]/.test(name)) {
+            // 태그/엔티티/속성 기반 공격을 원천 차단
+            name = name.replace(/[<>&"'`]/g, '');
+        }
+
+        // 최종적으로 비어 있으면 안전한 기본값
+        if (!name) name = '가져온 저장소';
+        return name;
+    }
+
     function isValidPublishToken(token) {
         return typeof token === 'string' && /^[a-f0-9]{64}$/i.test(token);
     }
@@ -626,10 +655,13 @@ ${JSON.stringify(pageMetadata, null, 2)}
                 const nowStr = formatDateForDb(new Date());
                 const storageId = 'stg-' + Date.now() + '-' + crypto.randomBytes(4).toString('hex');
 
+                // 보안: 외부 ZIP에서 온 저장소 이름은 신뢰 불가 → 반드시 정규화
+                const safeStorageName = normalizeStorageName(metadata?.name);
+
                 await connection.execute(
                     `INSERT INTO storages (id, user_id, name, sort_order, created_at, updated_at)
                      VALUES (?, ?, ?, ?, ?, ?)`,
-                    [storageId, userId, metadata.name, metadata.sortOrder || 0, nowStr, nowStr]
+                    [storageId, userId, safeStorageName, metadata.sortOrder || 0, nowStr, nowStr]
                 );
                 
                 const folderName = entry.entryName.split('/').pop().replace('.json', '');
@@ -647,7 +679,11 @@ ${JSON.stringify(pageMetadata, null, 2)}
                 });
                 for (const f of folders) {
                     const storageId = 'stg-' + Date.now() + '-' + crypto.randomBytes(4).toString('hex');
-                    await connection.execute(`INSERT INTO storages (id, user_id, name, created_at, updated_at) VALUES (?, ?, ?, NOW(), NOW())`, [storageId, userId, f]);
+
+                    // 보안: 폴더명 기반 저장소 생성도 외부 입력(백업 ZIP) → 정규화
+                    const safeStorageName = normalizeStorageName(f);
+
+                    await connection.execute(`INSERT INTO storages (id, user_id, name, created_at, updated_at) VALUES (?, ?, ?, NOW(), NOW())`, [storageId, userId, safeStorageName]);
                     workspaceMap.set(f, storageId);
                 }
             }
