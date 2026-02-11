@@ -1678,19 +1678,29 @@ app.use('/covers/default', express.static(path.join(__dirname, 'covers', 'defaul
 
 // 사용자별 커버 이미지 - 인증 필요
 app.get('/covers/:userId/:filename', authMiddleware, async (req, res) => {
-	const requestedUserId = parseInt(req.params.userId, 10);
+    const requestedUserId = parseInt(req.params.userId, 10);
 
-	if (!Number.isFinite(requestedUserId))
-		return res.status(400).json({ error: '잘못된 요청입니다.' });
+    if (!Number.isFinite(requestedUserId))
+        return res.status(400).json({ error: '잘못된 요청입니다.' });
 
-	setNoStore(res);
+    setNoStore(res);
 
-	const filename = req.params.filename;
     const currentUserId = req.user.id;
 
     try {
-        // 파일명 새니타이제이션 (경로 조작 방지)
-        const sanitizedFilename = path.basename(filename);
+        // 강화된 파일명 새니타이제이션 (경로 조작/특수문자/헤더 인젝션 방지)
+        const sanitizedFilename = sanitizeFilenameComponent(req.params.filename, 200);
+        if (!sanitizedFilename) {
+            return res.status(400).json({ error: '잘못된 파일명입니다.' });
+        }
+
+        // 커버 허용 확장자 allowlist (업로드 정책과 동일한 수준으로 제한)
+        const ext = path.extname(sanitizedFilename).toLowerCase();
+        const ALLOWED_COVER_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp']);
+        if (!ALLOWED_COVER_EXTS.has(ext)) {
+            return res.status(400).json({ error: '지원하지 않는 파일 형식입니다.' });
+        }
+
         const filePath = path.join(__dirname, 'covers', String(requestedUserId), sanitizedFilename);
 
         // 파일 존재 확인
@@ -1704,23 +1714,24 @@ app.get('/covers/:userId/:filename', authMiddleware, async (req, res) => {
             return res.sendFile(filePath);
         }
 
-        // 다른 사용자의 파일 - (1) 현재 사용자가 접근 가능한 컬렉션인지
-        // (2) 파일 소유자(requestedUserId) 또한 그 컬렉션의 참여자인지 검증
+        // 핵심 수정: /imgs, /paperclip과 동일하게 storages + storage_shares 권한 모델로 통일
+        // - 레거시(collections) 기반 권한 체크는 혼재 시 권한 우회/잔존 권한으로 인한 노출 가능성이 큼
         const coverPath = `${requestedUserId}/${sanitizedFilename}`;
         const [rows] = await pool.execute(
             `SELECT p.id
-                FROM pages p
-                JOIN collections c ON p.collection_id = c.id
-                LEFT JOIN collection_shares cs_cur ON c.id = cs_cur.collection_id AND cs_cur.shared_with_user_id = ?
-                LEFT JOIN collection_shares cs_req ON c.id = cs_req.collection_id AND cs_req.shared_with_user_id = ?
-                WHERE p.cover_image = ?
-                AND p.user_id = ?  -- 보안패치: 커버 파일 소유자 == 페이지 소유자
-                -- 보안패치: 암호화 + 공유불가 페이지의 자산(커버)은 공유 사용자에게 노출 금지
+               FROM pages p
+               JOIN storages s ON p.storage_id = s.id
+               LEFT JOIN storage_shares ss_cur
+                 ON s.id = ss_cur.storage_id AND ss_cur.shared_with_user_id = ?
+              WHERE p.cover_image = ?
+                -- 보안패치: 파일 소유자와 참조하는 페이지 소유자 일치
+                AND p.user_id = ?
+                -- 보안패치: 암호화 + 공유불가 페이지 자산은 타 사용자에게 노출 금지
                 AND NOT (p.is_encrypted = 1 AND p.share_allowed = 0 AND p.user_id != ?)
-                AND (c.user_id = ? OR cs_cur.shared_with_user_id IS NOT NULL)
-                AND (c.user_id = ? OR cs_req.shared_with_user_id IS NOT NULL)
-                LIMIT 1`,
-                [currentUserId, requestedUserId, coverPath, requestedUserId, currentUserId, currentUserId, requestedUserId]
+                -- 현재 사용자가 이 storage를 소유하거나 공유받았는지
+                AND (s.user_id = ? OR ss_cur.shared_with_user_id IS NOT NULL)
+              LIMIT 1`,
+            [currentUserId, coverPath, requestedUserId, currentUserId, currentUserId]
         );
 
         if (rows.length > 0) {
@@ -1747,12 +1758,22 @@ app.get('/imgs/:userId/:filename', authMiddleware, async (req, res) => {
 
 	setNoStore(res);
 
-	const filename = req.params.filename;
     const currentUserId = req.user.id;
 
     try {
-        // 파일명 새니타이제이션 (경로 조작 방지)
-        const sanitizedFilename = path.basename(filename);
+        // 강화된 파일명 새니타이제이션 (경로 조작/특수문자/헤더 인젝션 방지)
+        const sanitizedFilename = sanitizeFilenameComponent(req.params.filename, 200);
+        if (!sanitizedFilename) {
+            return res.status(400).json({ error: '잘못된 파일명입니다.' });
+        }
+
+        // 이미지 허용 확장자 allowlist
+        const ext = path.extname(sanitizedFilename).toLowerCase();
+        const ALLOWED_IMG_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg']);
+        if (!ALLOWED_IMG_EXTS.has(ext)) {
+            return res.status(400).json({ error: '지원하지 않는 파일 형식입니다.' });
+        }
+
         const filePath = path.join(__dirname, 'imgs', String(requestedUserId), sanitizedFilename);
 
         // 파일 존재 확인
@@ -1852,12 +1873,15 @@ app.get('/paperclip/:userId/:filename', authMiddleware, async (req, res) => {
     if (!Number.isFinite(requestedUserId))
         return res.status(400).json({ error: '잘못된 요청입니다.' });
 
-    const filename = req.params.filename;
     const currentUserId = req.user.id;
 
     try {
-        // 파일명 새니타이제이션
-        const sanitizedFilename = path.basename(filename);
+        // 강화된 파일명 새니타이제이션 (경로 조작/특수문자/헤더 인젝션 방지)
+        const sanitizedFilename = sanitizeFilenameComponent(req.params.filename, 200);
+        if (!sanitizedFilename) {
+            return res.status(400).json({ error: '잘못된 파일명입니다.' });
+        }
+
         const filePath = path.join(__dirname, 'paperclip', String(requestedUserId), sanitizedFilename);
 
         // 다운로드 파일명(표시용)은 URL query (?name=)로 받되, 헤더/경로 컨텍스트에 안전하게 정규화
