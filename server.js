@@ -141,11 +141,24 @@ if (typeof DOMPurify?.addHook === "function") {
                 return;
             }
 
-            // file-block는 내부 첨부(/paperclip/...)만 허용하여 XSS/피싱 표면 축소
+            // file-block는 내부 첨부(/paperclip/<userId>/<storedFilename>)만 허용
+            // - 과거처럼 "/paperclip/" prefix만 확인하면 "/paperclip/../server.js" 같은 경로 조작이 가능
+            // - storedFilename은 서버가 생성한 안전한 파일명(디렉터리 구분자/.. 없음)이어야 함
             if (nodeType === "file-block") {
-                if (!(raw.startsWith("/paperclip/") && !raw.startsWith("//"))) {
+                // 프로토콜/스킴 공격(//evil.com) 차단은 위 isSafeHttpUrlOrRelative에서 처리
+                // 여기서는 path traversal 방지 목적의 엄격 allowlist 적용
+                const m = raw.match(/^\/paperclip\/(\d{1,12})\/([A-Za-z0-9][A-Za-z0-9._-]{0,199})$/);
+                if (!m) {
                     hookEvent.keepAttr = false;
                     hookEvent.forceKeepAttr = false;
+                    return;
+                }
+                const filename = m[2];
+                // 이중 점(../, ..\) 및 제어문자 등 추가 방어
+                if (!filename || filename.includes('..') || /[\x00-\x1F\x7F]/.test(filename)) {
+                    hookEvent.keepAttr = false;
+                    hookEvent.forceKeepAttr = false;
+                    return;
                 }
             }
         }

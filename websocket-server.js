@@ -164,30 +164,73 @@ function cleanupInactiveConnections(pool, sanitizeHtmlContent) {
     });
 }
 
+function normalizePaperclipRef(ref) {
+    // ref expected: "<userId>/<filename>" from HTML like /paperclip/<userId>/<filename>
+    if (typeof ref !== 'string') return null;
+    const s = ref.trim();
+    if (!s || s.length > 512) return null;
+
+    const parts = s.split('/');
+    if (parts.length !== 2) return null;
+    const [userIdRaw, filenameRaw] = parts;
+
+    if (!/^\d{1,12}$/.test(userIdRaw)) return null;
+
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/.test(filenameRaw)) return null;
+    if (filenameRaw.includes('..') || /[\x00-\x1F\x7F]/.test(filenameRaw)) return null;
+
+    return `${userIdRaw}/${filenameRaw}`;
+}
+
 function extractFilesFromContent(content) {
     const files = [];
-    if (content) {
-        const fileRegex = /<div[^>]+data-type="file-block"[^>]+data-src=["']\/paperclip\/([^"']+)["']/g;
-        let match;
-        while ((match = fileRegex.exec(content)) !== null) files.push(match[1]);
+    if (!content) return files;
+
+    // data-src="/paperclip/<userId>/<filename>" 형태만 추출
+    // (파일명/유저ID allowlist 적용; path traversal 시도는 무시)
+    const fileRegex = /<div[^>]*data-type=["']file-block["'][^>]*data-src=["']\/paperclip\/([^"']+)["'][^>]*>/gi;
+    let match;
+    while ((match = fileRegex.exec(String(content))) !== null) {
+        const ref = normalizePaperclipRef(match[1]);
+        if (ref) files.push(ref);
     }
     return files;
 }
 
 async function cleanupOrphanedFiles(pool, filePaths, excludePageId) {
     if (!filePaths || filePaths.length === 0) return;
+
     const fs = require('fs');
     const path = require('path');
-    for (const filePath of filePaths) {
+    const baseDir = path.resolve(__dirname, 'paperclip') + path.sep;
+
+    // LIKE 패턴에서 와일드카드(% _) 오인 방지
+    const escapeLike = (s) => String(s).replace(/[\\%_]/g, (m) => '\\\\' + m);
+
+    for (const ref of filePaths) {
         try {
-            const parts = filePath.split('/');
-            if (parts.length !== 2) continue;
-            const [rows] = await pool.execute(`SELECT COUNT(*) as count FROM pages WHERE content LIKE ? AND id != ?`, [`%/paperclip/${filePath}%`, excludePageId]);
-            if (rows[0].count === 0) {
-                const fullPath = path.join(__dirname, 'paperclip', filePath);
-                if (fs.existsSync(fullPath)) fs.unlinkSync(fullPath);
+            const normalized = normalizePaperclipRef(ref);
+            if (!normalized) continue;
+
+            const fileUrl = `/paperclip/${normalized}`;
+            const likePattern = `%${escapeLike(fileUrl)}%`;
+
+            const [rows] = await pool.execute(
+                `SELECT COUNT(*) as count FROM pages WHERE content LIKE ? ESCAPE '\\\\' AND id != ?`,
+                [likePattern, excludePageId]
+            );
+            if (!rows || !rows[0] || rows[0].count > 0) continue;
+
+            const fullPath = path.resolve(__dirname, 'paperclip', normalized);
+            if (!fullPath.startsWith(baseDir)) {
+                console.warn(`[보안] orphan cleanup traversal blocked: ${normalized}`);
+                continue;
             }
-        } catch (err) {}
+
+            if (fs.existsSync(fullPath)) fs.unlinkSync(fullPath);
+        } catch (err) {
+            // best-effort cleanup
+        }
     }
 }
 
