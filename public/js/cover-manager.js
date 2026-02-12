@@ -64,6 +64,21 @@ export function initCoverManager(appState) {
     });
 }
 
+function buildSafeCoverUrl(ref) {
+    if (typeof ref !== 'string') return null;
+    const s = ref.trim();
+    const parts = s.split('/');
+    if (parts.length !== 2) return null;
+    const [scope, filename] = parts;
+    if (!(scope === 'default' || /^\d{1,12}$/.test(scope))) return null;
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/.test(filename)) return null;
+    if (filename.includes('..')) return null;
+    // 서버에서도 검증하지만, 클라이언트도 방어적으로 한번 더
+    if (!/\.(?:jpe?g|png|gif|webp)$/i.test(filename)) return null;
+
+    return `/covers/${encodeURIComponent(scope)}/${encodeURIComponent(filename)}`;
+}
+
 export function showCover(coverImage, coverPosition = 50) {
     if (!coverImage) {
         hideCover();
@@ -77,7 +92,9 @@ export function showCover(coverImage, coverPosition = 50) {
 
     if (container && imageEl) {
         container.style.display = 'block';
-        imageEl.style.backgroundImage = `url('/covers/${coverImage}')`;
+        const coverUrl = buildSafeCoverUrl(coverImage);
+        if (!coverUrl) { hideCover(); return; }
+        imageEl.style.backgroundImage = `url("${coverUrl}")`;
         imageEl.style.backgroundPositionY = `${coverPosition}%`;
 
         // 커버가 있으면 커버 추가 버튼 숨김

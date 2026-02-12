@@ -12,6 +12,33 @@ const erl = require("express-rate-limit");
 const rateLimit = erl.rateLimit || erl; 
 const { ipKeyGenerator } = erl;
 
+// cover_image는 UI에서 `/covers/${coverImage}` 형태로 쓰이므로
+// "default/<file>" 또는 "<userId>/<file>"만 허용 (저장형 CSS Injection 차단)
+function validateCoverImageRef(ref, currentUserId) {
+    if (ref === null || ref === '') return { ok: true, value: null };
+    if (typeof ref !== 'string') return { ok: false, error: 'coverImage 형식이 올바르지 않습니다.' };
+
+    const s = ref.trim();
+    if (s.length < 3 || s.length > 260) return { ok: false, error: 'coverImage 길이가 비정상입니다.' };
+    if (/[\x00-\x1F\x7F]/.test(s)) return { ok: false, error: 'coverImage에 제어문자를 사용할 수 없습니다.' };
+
+    const parts = s.split('/');
+    if (parts.length !== 2) return { ok: false, error: 'coverImage 형식이 올바르지 않습니다.' };
+    const [scope, filename] = parts;
+
+    const isDefault = scope === 'default';
+    const isUser = /^\d{1,12}$/.test(scope) && String(scope) === String(currentUserId);
+    if (!isDefault && !isUser) return { ok: false, error: 'coverImage 범위가 허용되지 않습니다.' };
+
+    // filename: 슬래시 불가(이미 split), path traversal/문자열 주입 방지
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/.test(filename)) return { ok: false, error: 'coverImage 파일명이 올바르지 않습니다.' };
+    if (filename.includes('..') || /["'()\\]/.test(filename)) return { ok: false, error: 'coverImage 파일명에 허용되지 않는 문자가 포함되어 있습니다.' };
+    // 확장자 allowlist(커버 업로드 정책과 일치)
+    if (!/\.(?:jpe?g|png|gif|webp)$/i.test(filename)) return { ok: false, error: '허용되지 않는 커버 이미지 확장자입니다.' };
+
+    return { ok: true, value: `${scope}/${filename}` };
+}
+
 module.exports = (dependencies) => {
     const {
 		pool,
@@ -246,8 +273,20 @@ module.exports = (dependencies) => {
                 return res.status(403).json({ error: "Forbidden" });
             }
 
-            const coverImage = req.body.coverImage !== undefined ? req.body.coverImage : existing.cover_image;
-            const coverPosition = req.body.coverPosition !== undefined ? req.body.coverPosition : existing.cover_position;
+            let coverImage = existing.cover_image;
+            if (req.body.coverImage !== undefined) {
+                const v = validateCoverImageRef(req.body.coverImage, userId);
+                if (!v.ok) return res.status(400).json({ error: v.error });
+                coverImage = v.value;
+            }
+
+            let coverPosition = existing.cover_position;
+            if (req.body.coverPosition !== undefined) {
+                const n = Number(req.body.coverPosition);
+                if (!Number.isFinite(n)) return res.status(400).json({ error: "coverPosition 형식이 올바르지 않습니다." });
+                const clamped = Math.max(0, Math.min(100, Math.round(n)));
+                coverPosition = clamped;
+            }
 
             await pool.execute(`UPDATE pages SET cover_image=?, cover_position=?, updated_at=NOW() WHERE id=?`, [coverImage, coverPosition, id]);
 

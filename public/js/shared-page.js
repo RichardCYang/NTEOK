@@ -81,6 +81,19 @@ function sanitizeSharedHtml(html) {
     });
 }
 
+function buildSafeCoverUrl(ref) {
+    if (typeof ref !== 'string') return null;
+    const s = ref.trim();
+    const parts = s.split('/');
+    if (parts.length !== 2) return null;
+    const [scope, filename] = parts;
+    if (!(scope === 'default' || /^\d{1,12}$/.test(scope))) return null;
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/.test(filename)) return null;
+    if (filename.includes('..')) return null;
+    if (!/\.(?:jpe?g|png|gif|webp)$/i.test(filename)) return null;
+    return `/covers/${encodeURIComponent(scope)}/${encodeURIComponent(filename)}`;
+}
+
 /**
  * 북마크 블록 렌더링 함수
  * @param {HTMLElement} container - 렌더링 대상 컨테이너
@@ -342,11 +355,14 @@ function renderCheckboxes(container) {
         // 커버 이미지 표시
         if (data.coverImage) {
             const coverEl = document.getElementById('page-cover');
-            coverEl.style.backgroundImage = `url('/covers/${data.coverImage}')`;
-            if (data.coverPosition) {
-                coverEl.style.backgroundPositionY = `${data.coverPosition}%`;
+            const coverUrl = buildSafeCoverUrl(data.coverImage);
+            if (coverUrl) {
+                coverEl.style.backgroundImage = `url("${coverUrl}")`;
+                if (data.coverPosition) {
+                    coverEl.style.backgroundPositionY = `${data.coverPosition}%`;
+                }
+                coverEl.style.display = 'block';
             }
-            coverEl.style.display = 'block';
         }
 
         // 콘텐츠 표시
