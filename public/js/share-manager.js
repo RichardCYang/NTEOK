@@ -2,7 +2,7 @@
  * 컬렉션 공유 관리 모듈
  */
 
-import { secureFetch, escapeHtml } from './ui-utils.js';
+import { secureFetch, escapeHtml, escapeHtmlAttr } from './ui-utils.js';
 
 // 전역 상태
 let currentSharingCollectionId = null;
@@ -52,10 +52,10 @@ export async function loadShareList(collectionId) {
             <div class="share-item">
                 <div class="share-item-info">
                     <div class="share-item-username">${escapeHtml(share.username)}</div>
-                    <div class="share-item-permission">${share.permission}</div>
+                    <div class="share-item-permission">${escapeHtml(share.permission)}</div>
                 </div>
                 <div class="share-item-actions">
-                    <button class="danger-button remove-share-btn" data-collection-id="${escapeHtml(collectionId)}" data-share-id="${share.id}" style="padding: 4px 8px; font-size: 12px;">
+                    <button class="danger-button remove-share-btn" data-collection-id="${escapeHtmlAttr(collectionId)}" data-share-id="${escapeHtmlAttr(share.id)}" style="padding: 4px 8px; font-size: 12px;">
                         삭제
                     </button>
                 </div>
