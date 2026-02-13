@@ -944,276 +944,110 @@ async function initDb() {
         ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
     `);
 
-    // users 가 하나도 없으면 기본 관리자 계정 생성
-    const [userRows] = await pool.execute("SELECT COUNT(*) AS cnt FROM users");
-    const userCount = userRows[0].cnt;
-
-    if (userCount === 0) {
-        const now = new Date();
-        const nowStr = formatDateForDb(now);
-
-        const username = DEFAULT_ADMIN_USERNAME;
-        const rawPassword = DEFAULT_ADMIN_PASSWORD;
-
-        // bcrypt 가 내부적으로 랜덤 SALT 를 포함한 해시를 생성함
-        const passwordHash = await bcrypt.hash(rawPassword, BCRYPT_SALT_ROUNDS);
-
-        const [result] = await pool.execute(
-            `
-            INSERT INTO users (username, password_hash, created_at, updated_at)
-            VALUES (?, ?, ?, ?)
-            `,
-            [username, passwordHash, nowStr, nowStr]
-        );
-
-        const adminUserId = result.insertId;
-
-        // 기본 저장소 생성
-        const storageId = 'stg-' + now.getTime() + '-' + crypto.randomBytes(4).toString('hex');
-        await pool.execute(
-            `
-            INSERT INTO storages (id, user_id, name, sort_order, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-            `,
-            [storageId, adminUserId, "기본 저장소", 0, nowStr, nowStr]
-        );
-
-        // 초기 시작 페이지 생성
-        const pageId = generatePageId(now);
-        const welcomeTitle = "넋(NTEOK)에 오신 것을 환영합니다! 👋";
-        const welcomeContent = `
-            <h1>반가워요!</h1>
-            <p>이곳은 당신의 생각과 기록을 담는 소중한 공간입니다.</p>
-            <p>왼쪽 사이드바에서 <strong>새 페이지</strong>를 추가하거나, 상단의 <strong>저장소 전환</strong> 버튼을 통해 다른 저장소를 관리할 수 있습니다.</p>
-            <p>저장소마다 서로 다른 페이지 목록을 가지며, 다른 사용자와 저장소 단위로 협업할 수도 있습니다.</p>
-        `;
-
-        await pool.execute(
-            `
-            INSERT INTO pages (id, user_id, storage_id, title, content, sort_order, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            `,
-            [pageId, adminUserId, storageId, welcomeTitle, welcomeContent, 0, nowStr, nowStr]
-        );
-
-        console.log("기본 관리자 계정, 저장소 및 시작 페이지 생성 완료. username:", username);
-    }
-
-        // storages 테이블 생성
-
-        await pool.execute(`
-
-            CREATE TABLE IF NOT EXISTS storages (
-
-                id          VARCHAR(64)  NOT NULL PRIMARY KEY,
-
-                user_id     INT          NOT NULL,
-
-                name        VARCHAR(255) NOT NULL,
-
-                sort_order  INT          NOT NULL DEFAULT 0,
-
-                created_at  DATETIME     NOT NULL,
-
-                updated_at  DATETIME     NOT NULL,
-
-                CONSTRAINT fk_storages_user
-
-                    FOREIGN KEY (user_id)
-
-                    REFERENCES users(id)
-
-                    ON DELETE CASCADE
-
-            ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
-
-        `);
-
-    
-
-        // pages 테이블 생성 (이제 storage_id에 직접 속함)
-
-        await pool.execute(`
-
-        	CREATE TABLE IF NOT EXISTS pages (
-
-                id          VARCHAR(64)  NOT NULL PRIMARY KEY,
-
-                sort_order  INT          NOT NULL DEFAULT 0,
-
-                user_id     INT          NOT NULL,
-
-                storage_id  VARCHAR(64)  NOT NULL,
-
-                title       VARCHAR(255) NOT NULL,
-
-                content     MEDIUMTEXT   NOT NULL,
-
-                created_at  DATETIME     NOT NULL,
-
-                updated_at  DATETIME     NOT NULL,
-
-                parent_id   VARCHAR(64)  NULL,
-
-                is_encrypted TINYINT(1) NOT NULL DEFAULT 0,
-
-                encryption_salt VARCHAR(255) NULL,
-
-                encrypted_content MEDIUMTEXT NULL,
-
-                yjs_state	LONGBLOB NULL,
-
-                share_allowed TINYINT(1) NOT NULL DEFAULT 0,
-
-                icon VARCHAR(100) NULL,
-
-                cover_image VARCHAR(255) NULL,
-
-                cover_position INT NOT NULL DEFAULT 50,
-
-                horizontal_padding INT NULL,
-
-                CONSTRAINT fk_pages_user
-
-                    FOREIGN KEY (user_id)
-
-                    REFERENCES users(id)
-
-                    ON DELETE CASCADE,
-
-                CONSTRAINT fk_pages_parent
-
-                    FOREIGN KEY (parent_id)
-
-                    REFERENCES pages(id)
-
-                    ON DELETE CASCADE,
-
-                CONSTRAINT fk_pages_storage
-
-                    FOREIGN KEY (storage_id)
-
-                    REFERENCES storages(id)
-
-                    ON DELETE CASCADE
-
-            ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
-
-        `);
-
-    
-
-        // storage_shares 테이블 생성 (구 collection_shares)
-
-        await pool.execute(`
-
-            CREATE TABLE IF NOT EXISTS storage_shares (
-
-                id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
-
-                storage_id VARCHAR(64) NOT NULL,
-
-                owner_user_id INT NOT NULL,
-
-                shared_with_user_id INT NOT NULL,
-
-                permission VARCHAR(20) NOT NULL DEFAULT 'READ',
-
-                created_at DATETIME NOT NULL,
-
-                updated_at DATETIME NOT NULL,
-
-                CONSTRAINT fk_storage_shares_storage
-
-                    FOREIGN KEY (storage_id)
-
-                    REFERENCES storages(id)
-
-                    ON DELETE CASCADE,
-
-                CONSTRAINT fk_storage_shares_owner
-
-                    FOREIGN KEY (owner_user_id)
-
-                    REFERENCES users(id)
-
-                    ON DELETE CASCADE,
-
-                CONSTRAINT fk_storage_shares_shared_with
-
-                    FOREIGN KEY (shared_with_user_id)
-
-                    REFERENCES users(id)
-
-                    ON DELETE CASCADE,
-
-                CONSTRAINT uc_storage_shares_unique
-
-                    UNIQUE (storage_id, shared_with_user_id),
-
-                INDEX idx_shared_with_user (shared_with_user_id)
-
-            ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
-
-        `);
-
-    
-
-        // share_links 테이블 생성 (이제 저장소 단위로 작동)
-
-        await pool.execute(`
-
-            CREATE TABLE IF NOT EXISTS share_links (
-
-                id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
-
-                token VARCHAR(64) NOT NULL UNIQUE,
-
-                storage_id VARCHAR(64) NOT NULL,
-
-                owner_user_id INT NOT NULL,
-
-                permission VARCHAR(20) NOT NULL DEFAULT 'READ',
-
-                expires_at DATETIME NULL,
-
-                is_active TINYINT(1) NOT NULL DEFAULT 1,
-
-                created_at DATETIME NOT NULL,
-
-                updated_at DATETIME NOT NULL,
-
-                CONSTRAINT fk_share_links_storage
-
-                    FOREIGN KEY (storage_id)
-
-                    REFERENCES storages(id)
-
-                    ON DELETE CASCADE,
-
-                CONSTRAINT fk_share_links_owner
-
-                    FOREIGN KEY (owner_user_id)
-
-                    REFERENCES users(id)
-
-                    ON DELETE CASCADE,
-
-                INDEX idx_token_active (token, is_active),
-
-                INDEX idx_expires_at (expires_at)
-
-            ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
-
-        `);
-
-    
-
-        // backup_codes, passkeys, webauthn_challenges, page_publish_links, login_logs, comments 등은 그대로 유지 (생략)
-
-        // ... 기존 코드의 해당 테이블 생성 부분으로 이어짐 ...
-
-    
+    // storages 테이블 생성
+    await pool.execute(`
+        CREATE TABLE IF NOT EXISTS storages (
+            id          VARCHAR(64)  NOT NULL PRIMARY KEY,
+            user_id     INT          NOT NULL,
+            name        VARCHAR(255) NOT NULL,
+            sort_order  INT          NOT NULL DEFAULT 0,
+            created_at  DATETIME     NOT NULL,
+            updated_at  DATETIME     NOT NULL,
+            CONSTRAINT fk_storages_user
+                FOREIGN KEY (user_id)
+                REFERENCES users(id)
+                ON DELETE CASCADE
+        ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
+    `);
+
+    // pages 테이블 생성 (이제 storage_id에 직접 속함)
+    await pool.execute(`
+        CREATE TABLE IF NOT EXISTS pages (
+            id          VARCHAR(64)  NOT NULL PRIMARY KEY,
+            sort_order  INT          NOT NULL DEFAULT 0,
+            user_id     INT          NOT NULL,
+            storage_id  VARCHAR(64)  NOT NULL,
+            title       VARCHAR(255) NOT NULL,
+            content     MEDIUMTEXT   NOT NULL,
+            created_at  DATETIME     NOT NULL,
+            updated_at  DATETIME     NOT NULL,
+            parent_id   VARCHAR(64)  NULL,
+            is_encrypted TINYINT(1) NOT NULL DEFAULT 0,
+            encryption_salt VARCHAR(255) NULL,
+            encrypted_content MEDIUMTEXT NULL,
+            yjs_state	LONGBLOB NULL,
+            share_allowed TINYINT(1) NOT NULL DEFAULT 0,
+            icon VARCHAR(100) NULL,
+            cover_image VARCHAR(255) NULL,
+            cover_position INT NOT NULL DEFAULT 50,
+            horizontal_padding INT NULL,
+            CONSTRAINT fk_pages_user
+                FOREIGN KEY (user_id)
+                REFERENCES users(id)
+                ON DELETE CASCADE,
+            CONSTRAINT fk_pages_parent
+                FOREIGN KEY (parent_id)
+                REFERENCES pages(id)
+                ON DELETE CASCADE,
+            CONSTRAINT fk_pages_storage
+                FOREIGN KEY (storage_id)
+                REFERENCES storages(id)
+                ON DELETE CASCADE
+        ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
+    `);
+
+    // storage_shares 테이블 생성 (구 collection_shares)
+    await pool.execute(`
+        CREATE TABLE IF NOT EXISTS storage_shares (
+            id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            storage_id VARCHAR(64) NOT NULL,
+            owner_user_id INT NOT NULL,
+            shared_with_user_id INT NOT NULL,
+            permission VARCHAR(20) NOT NULL DEFAULT 'READ',
+            created_at DATETIME NOT NULL,
+            updated_at DATETIME NOT NULL,
+            CONSTRAINT fk_storage_shares_storage
+                FOREIGN KEY (storage_id)
+                REFERENCES storages(id)
+                ON DELETE CASCADE,
+            CONSTRAINT fk_storage_shares_owner
+                FOREIGN KEY (owner_user_id)
+                REFERENCES users(id)
+                ON DELETE CASCADE,
+            CONSTRAINT fk_storage_shares_shared_with
+                FOREIGN KEY (shared_with_user_id)
+                REFERENCES users(id)
+                ON DELETE CASCADE,
+            CONSTRAINT uc_storage_shares_unique
+                UNIQUE (storage_id, shared_with_user_id),
+            INDEX idx_shared_with_user (shared_with_user_id)
+        ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
+    `);
+
+    // share_links 테이블 생성 (이제 저장소 단위로 작동)
+    await pool.execute(`
+        CREATE TABLE IF NOT EXISTS share_links (
+            id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            token VARCHAR(64) NOT NULL UNIQUE,
+            storage_id VARCHAR(64) NOT NULL,
+            owner_user_id INT NOT NULL,
+            permission VARCHAR(20) NOT NULL DEFAULT 'READ',
+            expires_at DATETIME NULL,
+            is_active TINYINT(1) NOT NULL DEFAULT 1,
+            created_at DATETIME NOT NULL,
+            updated_at DATETIME NOT NULL,
+            CONSTRAINT fk_share_links_storage
+                FOREIGN KEY (storage_id)
+                REFERENCES storages(id)
+                ON DELETE CASCADE,
+            CONSTRAINT fk_share_links_owner
+                FOREIGN KEY (owner_user_id)
+                REFERENCES users(id)
+                ON DELETE CASCADE,
+            INDEX idx_token_active (token, is_active),
+            INDEX idx_expires_at (expires_at)
+        ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
+    `);
 
     // backup_codes 테이블 생성 (TOTP 백업 코드)
     await pool.execute(`
@@ -1375,6 +1209,61 @@ async function initDb() {
         if (error.code !== 'ER_DUP_KEYNAME') {
             console.warn('pages 인덱스 생성 중 경고:', error.message);
         }
+    }
+
+    // users 가 하나도 없으면 기본 관리자 계정 생성
+    const [userRows] = await pool.execute("SELECT COUNT(*) AS cnt FROM users");
+    const userCount = userRows[0].cnt;
+
+    if (userCount === 0) {
+        const now = new Date();
+        const nowStr = formatDateForDb(now);
+
+        const username = DEFAULT_ADMIN_USERNAME;
+        const rawPassword = DEFAULT_ADMIN_PASSWORD;
+
+        // bcrypt 가 내부적으로 랜덤 SALT 를 포함한 해시를 생성함
+        const passwordHash = await bcrypt.hash(rawPassword, BCRYPT_SALT_ROUNDS);
+
+        const [result] = await pool.execute(
+            `
+            INSERT INTO users (username, password_hash, created_at, updated_at)
+            VALUES (?, ?, ?, ?)
+            `,
+            [username, passwordHash, nowStr, nowStr]
+        );
+
+        const adminUserId = result.insertId;
+
+        // 기본 저장소 생성
+        const storageId = 'stg-' + now.getTime() + '-' + crypto.randomBytes(4).toString('hex');
+        await pool.execute(
+            `
+            INSERT INTO storages (id, user_id, name, sort_order, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            `,
+            [storageId, adminUserId, "기본 저장소", 0, nowStr, nowStr]
+        );
+
+        // 초기 시작 페이지 생성
+        const pageId = generatePageId(now);
+        const welcomeTitle = "넋(NTEOK)에 오신 것을 환영합니다! 👋";
+        const welcomeContent = `
+            <h1>반가워요!</h1>
+            <p>이곳은 당신의 생각과 기록을 담는 소중한 공간입니다.</p>
+            <p>왼쪽 사이드바에서 <strong>새 페이지</strong>를 추가하거나, 상단의 <strong>저장소 전환</strong> 버튼을 통해 다른 저장소를 관리할 수 있습니다.</p>
+            <p>저장소마다 서로 다른 페이지 목록을 가지며, 다른 사용자와 저장소 단위로 협업할 수도 있습니다.</p>
+        `;
+
+        await pool.execute(
+            `
+            INSERT INTO pages (id, user_id, storage_id, title, content, sort_order, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            `,
+            [pageId, adminUserId, storageId, welcomeTitle, welcomeContent, 0, nowStr, nowStr]
+        );
+
+        console.log("기본 관리자 계정, 저장소 및 시작 페이지 생성 완료. username:", username);
     }
 }
 
