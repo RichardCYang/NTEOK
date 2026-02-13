@@ -87,7 +87,40 @@ module.exports = ({ pool, pageSqlPolicy }) => {
                  ORDER BY p.storage_id ASC, p.parent_id IS NULL DESC, p.sort_order ASC`,
                 [userId, ...vis.params]
             );
-            return rows || [];
-        }
-    };
-};
+                        return rows || [];
+                    },
+            
+                    /**
+                     * 업데이트 히스토리 기록
+                     */
+                    async recordUpdateHistory({ userId, storageId, pageId, action, details }) {
+                        const detailsStr = details ? JSON.stringify(details) : null;
+                        await pool.execute(
+                            `INSERT INTO updates_history (user_id, storage_id, page_id, action, details, created_at)
+                             VALUES (?, ?, ?, ?, ?, NOW())`,
+                            [userId, storageId, pageId, action, detailsStr]
+                        );
+                    },
+            
+                    /**
+                     * 업데이트 히스토리 조회
+                     */
+                    async getUpdateHistory({ userId, storageId, limit = 50 }) {
+                        // 내가 접근 가능한 저장소의 히스토리만 조회 (소유 또는 공유)
+                        const [rows] = await pool.execute(
+                            `SELECT h.*, u.username, p.title as page_title
+                             FROM updates_history h
+                             INNER JOIN users u ON h.user_id = u.id
+                             LEFT JOIN pages p ON h.page_id = p.id
+                             LEFT JOIN storage_shares ss ON h.storage_id = ss.storage_id AND ss.shared_with_user_id = ?
+                             INNER JOIN storages s ON h.storage_id = s.id
+                             WHERE h.storage_id = ? AND (s.user_id = ? OR ss.storage_id IS NOT NULL)
+                             ORDER BY h.created_at DESC
+                             LIMIT ?`,
+                            [userId, storageId, userId, limit]
+                        );
+                        return rows || [];
+                    }
+                };
+            };
+            

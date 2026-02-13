@@ -1159,6 +1159,29 @@ async function initDb() {
         ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
     `);
 
+    // 업데이트 히스토리 테이블 생성
+    await pool.execute(`
+        CREATE TABLE IF NOT EXISTS updates_history (
+            id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            user_id INT NOT NULL,
+            storage_id VARCHAR(64) NOT NULL,
+            page_id VARCHAR(64) NULL,
+            action VARCHAR(50) NOT NULL,
+            details TEXT NULL,
+            created_at DATETIME NOT NULL,
+            CONSTRAINT fk_updates_history_user
+                FOREIGN KEY (user_id)
+                REFERENCES users(id)
+                ON DELETE CASCADE,
+            CONSTRAINT fk_updates_history_storage
+                FOREIGN KEY (storage_id)
+                REFERENCES storages(id)
+                ON DELETE CASCADE,
+            INDEX idx_user_history (user_id, created_at DESC),
+            INDEX idx_storage_history (storage_id, created_at DESC)
+        ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
+    `);
+
     // ============================================================
     // 성능 최적화: 데이터베이스 인덱스 추가
     // ============================================================

@@ -154,6 +154,28 @@ module.exports = (dependencies) => {
         } catch (error) { logError("GET /api/pages", error); res.status(500).json({ error: "Failed" }); }
     });
 
+    router.get("/history", authMiddleware, async (req, res) => {
+        const userId = req.user.id;
+        const storageId = typeof req.query.storageId === "string" ? req.query.storageId.trim() : null;
+        if (!storageId) return res.status(400).json({ error: "storageId required" });
+        try {
+            const history = await pagesRepo.getUpdateHistory({ userId, storageId });
+            res.json(history.map(h => ({
+                id: h.id,
+                userId: h.user_id,
+                username: h.username,
+                pageId: h.page_id,
+                pageTitle: h.page_title,
+                action: h.action,
+                details: h.details ? JSON.parse(h.details) : null,
+                createdAt: toIsoString(h.created_at)
+            })));
+        } catch (error) {
+            logError("GET /api/pages/history", error);
+            res.status(500).json({ error: "Failed" });
+        }
+    });
+
     router.get("/:id", authMiddleware, async (req, res) => {
         const id = req.params.id;
         const userId = req.user.id;
@@ -194,6 +216,15 @@ module.exports = (dependencies) => {
             if (isEncrypted && (!salt || !encContent)) return res.status(400).json({ error: "Encryption fields missing" });
             await pool.execute(`INSERT INTO pages (id, user_id, parent_id, title, content, sort_order, created_at, updated_at, storage_id, is_encrypted, encryption_salt, encrypted_content) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                 [id, userId, parentId, title, content, sortOrder, nowStr, nowStr, storageId, isEncrypted, salt, encContent]);
+            
+            await pagesRepo.recordUpdateHistory({
+                userId,
+                storageId,
+                pageId: id,
+                action: 'CREATE_PAGE',
+                details: { title }
+            });
+
             res.status(201).json({ id, title, storageId, parentId, isEncrypted: !!isEncrypted, updatedAt: now.toISOString() });
         } catch (e) { logError("POST /api/pages", e); res.status(500).json({ error: "Failed" }); }
     });
@@ -223,6 +254,15 @@ module.exports = (dependencies) => {
             if (req.body.content !== undefined) { sql += `, yjs_state=NULL`; if (yjsDocuments.has(id)) yjsDocuments.delete(id); }
             sql += ` WHERE id=?`; params.push(id);
             await pool.execute(sql, params);
+            
+            await pagesRepo.recordUpdateHistory({
+                userId,
+                storageId: existing.storage_id,
+                pageId: id,
+                action: 'UPDATE_PAGE',
+                details: { title }
+            });
+
             wsBroadcastToStorage(existing.storage_id, 'metadata-change', { pageId: id, field: 'title', value: title }, null, { pageVisibility: wsPageVisibilityFromRow(existing) });
             res.json({ id, title, updatedAt: new Date().toISOString() });
         } catch (e) { logError("PUT /api/pages/:id", e); res.status(500).json({ error: "Failed" }); }
@@ -237,6 +277,14 @@ module.exports = (dependencies) => {
                 return res.status(403).json({ error: "이 저장소의 페이지 순서를 변경할 권한이 없습니다." });
             }
             for (let i = 0; i < pageIds.length; i++) { await pool.execute(`UPDATE pages SET sort_order=?, updated_at=NOW() WHERE id=? AND storage_id=?`, [i * 10, pageIds[i], storageId]); }
+            
+            await pagesRepo.recordUpdateHistory({
+                userId,
+                storageId,
+                action: 'REORDER_PAGES',
+                details: { parentId, count: pageIds.length }
+            });
+
             wsBroadcastToStorage(storageId, 'pages-reordered', { parentId, pageIds }, userId);
             res.json({ ok: true });
         } catch (e) { logError("PATCH /api/pages/reorder", e); res.status(500).json({ error: "Failed" }); }
@@ -255,6 +303,15 @@ module.exports = (dependencies) => {
             }
 
             await pool.execute(`DELETE FROM pages WHERE id=?`, [id]);
+
+            await pagesRepo.recordUpdateHistory({
+                userId,
+                storageId: existing.storage_id,
+                pageId: id,
+                action: 'DELETE_PAGE',
+                details: { title: existing.title }
+            });
+
             res.json({ ok: true });
         } catch (e) { logError("DELETE /api/pages/:id", e); res.status(500).json({ error: "Failed" }); }
     });
@@ -303,6 +360,14 @@ module.exports = (dependencies) => {
 
             await pool.execute(`UPDATE pages SET cover_image=?, cover_position=?, updated_at=NOW() WHERE id=?`, [coverImage, coverPosition, id]);
 
+            await pagesRepo.recordUpdateHistory({
+                userId,
+                storageId: existing.storage_id,
+                pageId: id,
+                action: 'UPDATE_COVER',
+                details: { coverImage, coverPosition }
+            });
+
             if (req.body.coverImage !== undefined) {
                 wsBroadcastToStorage(existing.storage_id, 'metadata-change', { pageId: id, field: 'coverImage', value: coverImage }, null, { pageVisibility: wsPageVisibilityFromRow(existing) });
             }
@@ -341,6 +406,14 @@ module.exports = (dependencies) => {
             const coverPath = `${userId}/${req.file.filename}`;
             await pool.execute(`UPDATE pages SET cover_image=?, cover_position=50, updated_at=NOW() WHERE id=?`, [coverPath, id]);
 
+            await pagesRepo.recordUpdateHistory({
+                userId,
+                storageId: existing.storage_id,
+                pageId: id,
+                action: 'UPDATE_COVER',
+                details: { coverImage: coverPath }
+            });
+
             wsBroadcastToStorage(existing.storage_id, 'metadata-change', { pageId: id, field: 'coverImage', value: coverPath }, null, { pageVisibility: wsPageVisibilityFromRow(existing) });
 
             res.json({ coverImage: coverPath });
@@ -364,6 +437,15 @@ module.exports = (dependencies) => {
             }
 
             await pool.execute(`UPDATE pages SET cover_image=NULL, updated_at=NOW() WHERE id=?`, [id]);
+            
+            await pagesRepo.recordUpdateHistory({
+                userId,
+                storageId: existing.storage_id,
+                pageId: id,
+                action: 'DELETE_COVER',
+                details: null
+            });
+
             wsBroadcastToStorage(existing.storage_id, 'metadata-change', { pageId: id, field: 'coverImage', value: null }, null, { pageVisibility: wsPageVisibilityFromRow(existing) });
 
             res.json({ ok: true });

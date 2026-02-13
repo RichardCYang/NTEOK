@@ -132,6 +132,12 @@
                             <ul id="search-results-list" style="list-style: none; padding: 0; max-height: 200px; overflow-y: auto;"></ul>
                         </div>
                     </div>
+                    <div id="sidebar-updates-container" class="sidebar-updates" style="padding: 0 12px 12px 12px;">
+                        <button id="show-updates-btn" class="sidebar-menu-item" style="width: 100%; text-align: left; background: none; border: none; padding: 8px 12px; border-radius: 6px; cursor: pointer; color: #6b7280; font-size: 14px; display: flex; align-items: center; gap: 8px; transition: background-color 0.2s, color 0.2s;">
+                            <i class="fa-solid fa-clock-rotate-left"></i>
+                            <span data-i18n="show_all_updates">모든 업데이트 보기</span>
+                        </button>
+                    </div>
                     <div class="sidebar-main">
                         <ul id="page-list" class="page-list"></ul>
                     </div>
@@ -1134,6 +1140,27 @@
                         <h3 class="modal-section-title">현재 참여자</h3>
                         <div id="storage-collaborator-list" class="collaborator-list">
                             <!-- 동적 생성 -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 업데이트 히스토리 모달 -->
+        <div id="updates-history-modal" class="modal hidden">
+            <div class="modal-overlay"></div>
+            <div class="modal-content" style="max-width: 700px; max-height: 80vh;">
+                <div class="modal-header">
+                    <h2 data-i18n="updates_history">모든 업데이트 보기</h2>
+                    <button id="close-updates-history-btn" class="modal-close-btn">
+                        <i class="fa-solid fa-xmark"></i>
+                    </button>
+                </div>
+                <div class="modal-body" style="padding: 0; overflow-y: auto;">
+                    <div id="updates-history-list" class="updates-history-list">
+                        <!-- 업데이트 항목들이 여기에 동적으로 생성됩니다 -->
+                        <div style="padding: 40px; text-align: center; color: #9ca3af;">
+                            업데이트 정보를 불러오는 중...
                         </div>
                     </div>
                 </div>

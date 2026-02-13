@@ -90,6 +90,9 @@ import {
     bindLoginLogsModal
 } from './login-logs-manager.js';
 import {
+    initUpdatesManager
+} from './updates-manager.js';
+import {
     exportPageToPDF
 } from './pdf-export.js';
 import {
@@ -328,6 +331,7 @@ async function init() {
         bindPasskeyModals();
         bindAccountManagementButtons();
         bindLoginLogsModal();
+        initUpdatesManager(appState);
 
         document.getElementById('switch-storage-btn')?.addEventListener('click', () => storagesManager.show());
 
