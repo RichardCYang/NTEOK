@@ -1554,6 +1554,44 @@ const JSON_BODY_LIMIT = process.env.JSON_BODY_LIMIT || "1mb";
 app.use(express.json({ limit: JSON_BODY_LIMIT }));
 
 /**
+ * 보안: __proto__/constructor/prototype 키는 다양한 JS 취약점(프로토타입 오염, 라이브러리 merge 취약점 등)의 트리거가 될 수 있음
+ * - CVE-2026-25639(axios mergeConfig DoS)도 JSON.parse로 만들어진 __proto__ own-property가 트리거 포인트
+ * - 따라서 요청 body에 포함되면 전역적으로 제거(정상 기능 영향 최소화를 위해 키 제거만 수행)
+ *
+ * 참고: OWASP Prototype Pollution Prevention Cheat Sheet는 __proto__ 제거가 공격 표면 감소에 도움이라고 언급
+ */
+const DANGEROUS_OBJECT_KEYS = new Set(["__proto__", "prototype", "constructor"]);
+
+function stripDangerousKeys(value, seen = new WeakSet()) {
+    if (!value || typeof value !== "object") return;
+    if (seen.has(value)) return;
+    seen.add(value);
+
+    if (Array.isArray(value)) {
+        for (const item of value) stripDangerousKeys(item, seen);
+        return;
+    }
+
+    for (const key of Object.keys(value)) {
+        if (DANGEROUS_OBJECT_KEYS.has(key)) {
+            delete value[key];
+            continue;
+        }
+        stripDangerousKeys(value[key], seen);
+    }
+}
+
+app.use((req, _res, next) => {
+    // JSON + urlencoded 모두 방어 (req.body가 없으면 noop)
+    try {
+        stripDangerousKeys(req.body);
+    } catch (_) {
+        // 방어 로직 실패로 요청 전체를 죽이지 않음
+    }
+    next();
+});
+
+/**
  * 보안: 웹 루트(public)에 남은 백업/임시 파일 노출 차단
  * - .backup/.bak/.old/.tmp/.swp 등은 개발 중 흔히 생기며, 남아 있으면 소스/설정/비밀값 유출 위험
  * - OWASP WSTG: Old/Backup/Unreferenced file 점검 권고
