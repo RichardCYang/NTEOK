@@ -316,6 +316,17 @@ async function init() {
         initSearch();
         initEvent();
         
+        document.getElementById('quick-search-btn')?.addEventListener('click', () => {
+            const modal = document.getElementById('quick-search-modal');
+            toggleModal(modal, true);
+            const input = document.getElementById('search-input');
+            if (input) {
+                input.value = '';
+                input.focus();
+                hideSearchResults();
+            }
+        });
+
         document.querySelector("#page-list")?.addEventListener("click", e => handlePageListClick(e, appState));
         document.querySelector("#context-menu")?.addEventListener("click", e => handlePageListClick(e, appState));
 
@@ -362,22 +373,34 @@ async function init() {
  */
 function initSearch() {
     const searchInput = document.getElementById('search-input');
-    if (!searchInput) return;
+    const searchModal = document.getElementById('quick-search-modal');
+    if (!searchInput || !searchModal) return;
 
     let searchTimeout = null;
 
     searchInput.addEventListener('input', (e) => {
         const query = e.target.value.trim();
 
-        // 입력 디바운싱 (300ms)
         clearTimeout(searchTimeout);
         searchTimeout = setTimeout(async () => {
             if (query.length === 0) {
                 hideSearchResults();
-            } else if (query.length >= 2) {
+            } else {
                 await performSearch(query);
             }
         }, 300);
+    });
+
+    // ESC 키로 닫기
+    window.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && !searchModal.classList.contains('hidden')) {
+            toggleModal(searchModal, false);
+        }
+    });
+
+    // 오버레이 클릭 시 닫기
+    searchModal.querySelector('.modal-overlay')?.addEventListener('click', () => {
+        toggleModal(searchModal, false);
     });
 }
 
@@ -393,14 +416,13 @@ async function performSearch(query) {
         let shouldInclude = false;
 
         if (page.isEncrypted) {
-            // 암호화된 페이지는 검색에서 제외 (보안상 이유)
-            shouldInclude = false;
+            // 암호화된 페이지는 제목만 검색 (내용은 서버에만 암호화된 상태로 있음)
+            titleToSearch = page.title || '';
+            shouldInclude = titleToSearch.toLowerCase().includes(queryLower);
         } else {
-            // 평문 페이지: 제목과 내용에서 직접 검색
             titleToSearch = page.title || '';
             const content = page.content || '';
 
-            // HTML 태그 제거
             const tempDiv = document.createElement('div');
             tempDiv.innerHTML = content;
             const textContent = tempDiv.textContent || '';
@@ -413,7 +435,8 @@ async function performSearch(query) {
             results.push({
                 id: page.id,
                 title: titleToSearch || '제목 없음',
-                isEncrypted: page.isEncrypted
+                isEncrypted: page.isEncrypted,
+                icon: page.icon
             });
         }
     }
@@ -425,70 +448,57 @@ async function performSearch(query) {
  * 검색 결과 표시
  */
 function displaySearchResults(results, query) {
-    const searchResultsContainer = document.getElementById('search-results');
     const searchCountEl = document.getElementById('search-count');
     const searchResultsList = document.getElementById('search-results-list');
+    const searchPlaceholder = document.getElementById('search-placeholder');
+    const searchResultsHeader = document.getElementById('search-results-header');
+    const searchModal = document.getElementById('quick-search-modal');
 
-    if (!searchResultsContainer || !searchCountEl || !searchResultsList) return;
+    if (!searchResultsList) return;
 
-    // 검색 결과 개수 표시
+    searchPlaceholder.style.display = 'none';
+    searchResultsHeader.style.display = 'block';
     searchCountEl.textContent = results.length;
-
-    // 검색 결과 목록 생성
     searchResultsList.innerHTML = '';
 
     if (results.length === 0) {
-        searchResultsList.innerHTML = '<li style="padding: 8px; color: #9ca3af; font-size: 13px;">검색 결과가 없습니다.</li>';
+        searchResultsList.innerHTML = '<li style="padding: 32px; text-align: center; color: #9ca3af; font-size: 14px;">검색 결과가 없습니다.</li>';
     } else {
         results.forEach(result => {
             const li = document.createElement('li');
-            li.style.cssText = 'padding: 8px; cursor: pointer; border-radius: 4px; font-size: 13px; display: flex; align-items: center; gap: 6px;';
+            li.className = 'search-result-item';
             li.dataset.pageId = result.id;
 
-            // 암호화 아이콘 추가
-            if (result.isEncrypted) {
-                const lockIcon = document.createElement('i');
-                lockIcon.className = 'fa-solid fa-lock';
-                lockIcon.style.cssText = 'font-size: 10px; color: #9ca3af;';
-                li.appendChild(lockIcon);
-            }
+            const iconClass = result.isEncrypted ? 'fa-solid fa-lock' : (result.icon || 'fa-regular fa-file-lines');
+            
+            li.innerHTML = `
+                <i class="${iconClass}"></i>
+                <span class="search-result-title">${escapeHtml(result.title)}</span>
+                <span style="font-size: 11px; color: #9ca3af;">열기</span>
+            `;
 
-            const titleSpan = document.createElement('span');
-            titleSpan.textContent = result.title;
-            titleSpan.style.cssText = 'overflow: hidden; text-overflow: ellipsis; white-space: nowrap;';
-            li.appendChild(titleSpan);
-
-            // 호버 효과
-            li.addEventListener('mouseenter', () => {
-                li.style.background = '#f3f4f6';
-            });
-            li.addEventListener('mouseleave', () => {
-                li.style.background = '';
-            });
-
-            // 클릭 시 페이지 로드
             li.addEventListener('click', async () => {
                 await loadPage(result.id);
-                hideSearchResults();
+                toggleModal(searchModal, false);
                 clearSearchInput();
             });
 
             searchResultsList.appendChild(li);
         });
     }
-
-    // 검색 결과 영역 표시
-    searchResultsContainer.style.display = 'block';
 }
 
 /**
  * 검색 결과 숨기기
  */
 function hideSearchResults() {
-    const searchResultsContainer = document.getElementById('search-results');
-    if (searchResultsContainer) {
-        searchResultsContainer.style.display = 'none';
-    }
+    const searchResultsList = document.getElementById('search-results-list');
+    const searchPlaceholder = document.getElementById('search-placeholder');
+    const searchResultsHeader = document.getElementById('search-results-header');
+    
+    if (searchResultsList) searchResultsList.innerHTML = '';
+    if (searchPlaceholder) searchPlaceholder.style.display = 'block';
+    if (searchResultsHeader) searchResultsHeader.style.display = 'none';
 }
 
 /**
