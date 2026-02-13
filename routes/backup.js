@@ -121,14 +121,14 @@ module.exports = (dependencies) => {
         return typeof token === 'string' && /^[a-f0-9]{64}$/i.test(token);
     }
 
-    async function insertPublishLinkWithRetry(connection, { token, pageId, ownerUserId, createdAt, updatedAt, allowComments = 0 }) {
+    async function insertPublishLinkWithRetry(connection, { token, pageId, ownerUserId, createdAt, updatedAt, allowComments = 0, isActive = 0 }) {
         let t = token;
         for (let i = 0; i < 5; i++) {
             try {
                 await connection.execute(
                     `INSERT INTO page_publish_links (token, page_id, owner_user_id, is_active, created_at, updated_at, allow_comments)
-                     VALUES (?, ?, ?, 1, ?, ?, ?)` ,
-                    [t, pageId, ownerUserId, createdAt, updatedAt, allowComments]
+                     VALUES (?, ?, ?, ?, ?, ?, ?)` ,
+                    [t, pageId, ownerUserId, isActive ? 1 : 0, createdAt, updatedAt, allowComments]
                 );
                 return t;
             } catch (e) {
@@ -316,6 +316,7 @@ module.exports = (dependencies) => {
             coverPosition: pageData.coverPosition || 50,
             publishToken: pageData.publishToken || null,
             publishedAt: pageData.publishedAt || null,
+            allowComments: pageData.allowComments || 0,
             isCoverImage: pageData.coverImage && !DEFAULT_COVERS.includes(pageData.coverImage) ? true : false
         };
 
@@ -457,6 +458,7 @@ ${JSON.stringify(pageMetadata, null, 2)}
                 sortOrder: metadata?.sortOrder || 0,
                 publishToken: metadata?.publishToken || null,
                 publishedAt: metadata?.publishedAt || null,
+                allowComments: metadata?.allowComments || 0,
                 isCoverImage: metadata?.isCoverImage || false
             };
         } catch (error) {
@@ -475,6 +477,7 @@ ${JSON.stringify(pageMetadata, null, 2)}
                 sortOrder: 0,
                 publishToken: null,
                 publishedAt: null,
+                allowComments: 0,
                 isCoverImage: false
             };
         }
@@ -500,7 +503,8 @@ ${JSON.stringify(pageMetadata, null, 2)}
 			(publishes || []).forEach(pub => {
 				publishMap.set(pub.page_id, {
 					token: pub.token,
-					createdAt: toIsoString(pub.created_at)
+					createdAt: toIsoString(pub.created_at),
+					allowComments: pub.allow_comments || 0
 				});
 			});
 
@@ -578,7 +582,8 @@ ${JSON.stringify(pageMetadata, null, 2)}
                 const pageData = {
                     ...page,
                     publishToken: publishInfo?.token || null,
-                    publishedAt: publishInfo?.createdAt || null
+                    publishedAt: publishInfo?.createdAt || null,
+                    allowComments: publishInfo?.allowComments || 0
                 };
 
                 const html = convertPageToHTML(pageData);
@@ -724,6 +729,28 @@ ${JSON.stringify(pageMetadata, null, 2)}
                     [pageId, userId, storageId, safeTitle, safeContent, safeEncryptionSalt, safeEncryptedContent,
                      pageData.sortOrder || 0, nowStr, nowStr, pageData.isEncrypted ? 1 : 0, pageData.shareAllowed ? 1 : 0, safeIcon, coverImage, pageData.coverPosition || 50]
                 );
+
+                // 보안: import 시 publish token은 기본적으로 신뢰하지 않음
+                // - KEEP_IMPORT_PUBLISH_TOKENS=false(기본): 토큰 재발급 + 비활성(is_active=0)로 복원
+                // - KEEP_IMPORT_PUBLISH_TOKENS=true : 신뢰된 백업 전제 하에 토큰 유지 + 활성 복원
+                if (pageData.publishToken) {
+                    const backupToken = String(pageData.publishToken || '');
+                    const useBackupToken = KEEP_IMPORT_PUBLISH_TOKENS && isValidPublishToken(backupToken);
+
+                    const finalToken = useBackupToken ? backupToken : generatePublishToken();
+                    const isActive = useBackupToken ? 1 : 0;
+
+                    await insertPublishLinkWithRetry(connection, {
+                        token: finalToken,
+                        pageId,
+                        ownerUserId: userId,
+                        createdAt: nowStr,
+                        updatedAt: nowStr,
+                        allowComments: pageData.allowComments ? 1 : 0,
+                        isActive
+                    });
+                }
+
                 totalPages++;
             }
 
