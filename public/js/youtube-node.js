@@ -214,27 +214,36 @@ export const YoutubeBlock = Node.create({
                 button.className = 'align-button';
                 button.type = 'button';
                 button.title = title;
+                button.setAttribute('data-align', align);
                 button.appendChild(createAlignIcon(align));
                 if (currentAlign === align) button.classList.add('active');
 
                 button.addEventListener('click', (e) => {
                     e.preventDefault();
                     e.stopPropagation();
-                    currentAlign = align;
-                    wrapper.setAttribute('data-align', align);
-
-                    if (align === 'center') wrapper.style.margin = '0 auto';
-                    else if (align === 'right') wrapper.style.marginLeft = 'auto';
-                    else wrapper.style.margin = '0';
-
-                    alignMenu.querySelectorAll('.align-button').forEach(btn => btn.classList.remove('active'));
-                    button.classList.add('active');
-
+                    
                     if (typeof getPos === 'function') {
                         const pos = getPos();
                         const tr = editor.view.state.tr;
-                        tr.setNodeMarkup(pos, null, { ...node.attrs, align: align });
-                        editor.view.dispatch(tr);
+                        const currentNode = editor.view.state.doc.nodeAt(pos);
+
+                        if (currentNode && currentNode.type.name === this.name) {
+                            currentAlign = align;
+                            wrapper.setAttribute('data-align', align);
+
+                            if (align === 'center') wrapper.style.margin = '0 auto';
+                            else if (align === 'right') wrapper.style.marginLeft = 'auto';
+                            else wrapper.style.margin = '0';
+
+                            alignMenu.querySelectorAll('.align-button').forEach(btn => btn.classList.remove('active'));
+                            button.classList.add('active');
+
+                            tr.setNodeMarkup(pos, null, { 
+                                ...currentNode.attrs, 
+                                align: align 
+                            });
+                            editor.view.dispatch(tr);
+                        }
                     }
                 });
                 return button;
@@ -272,8 +281,15 @@ export const YoutubeBlock = Node.create({
                     if (typeof getPos === 'function') {
                         const pos = getPos();
                         const tr = editor.view.state.tr;
-                        tr.setNodeMarkup(pos, null, { ...node.attrs, caption: currentCaption });
-                        editor.view.dispatch(tr);
+                        const currentNode = editor.view.state.doc.nodeAt(pos);
+
+                        if (currentNode && currentNode.type.name === this.name) {
+                            tr.setNodeMarkup(pos, null, { 
+                                ...currentNode.attrs, 
+                                caption: currentCaption 
+                            });
+                            editor.view.dispatch(tr);
+                        }
                     }
                 }, 500);
             };
@@ -326,8 +342,15 @@ export const YoutubeBlock = Node.create({
                 if (typeof getPos === 'function') {
                     const pos = getPos();
                     const tr = editor.view.state.tr;
-                    tr.setNodeMarkup(pos, null, { ...node.attrs, width: wrapper.style.width });
-                    editor.view.dispatch(tr);
+                    const currentNode = editor.view.state.doc.nodeAt(pos);
+
+                    if (currentNode && currentNode.type.name === this.name) {
+                        tr.setNodeMarkup(pos, null, { 
+                            ...currentNode.attrs, 
+                            width: wrapper.style.width 
+                        });
+                        editor.view.dispatch(tr);
+                    }
                 }
             };
 
