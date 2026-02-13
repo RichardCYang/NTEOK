@@ -35,6 +35,81 @@ module.exports = (dependencies) => {
         );
     }
 
+    /**
+     * Login CSRF 방지(2FA 검증 엔드포인트용)
+     * - CSRF 토큰 예외가 필요한 인증 단계(/verify-*)는
+     *   Origin/Referer + Sec-Fetch-Site 기반 동일 출처만 허용
+     */
+    function requireSameOriginForAuth(req, res, next) {
+        try {
+            const allowedOrigins = new Set(
+                String(process.env.ALLOWED_ORIGINS || BASE_URL || "")
+                    .split(",")
+                    .map(s => s.trim())
+                    .filter(Boolean)
+                    .map(u => new URL(u).origin)
+            );
+
+            const sfs = req.headers["sec-fetch-site"];
+            if (typeof sfs === "string" && sfs && sfs !== "same-origin" && sfs !== "same-site") {
+                return res.status(403).json({ error: "요청 출처가 유효하지 않습니다." });
+            }
+
+            const origin = req.headers.origin;
+            const referer = req.headers.referer;
+
+            let reqOrigin = null;
+            if (typeof origin === "string" && origin) {
+                reqOrigin = origin;
+            } else if (typeof referer === "string" && referer) {
+                reqOrigin = new URL(referer).origin;
+            }
+
+            if (!reqOrigin) return res.status(403).json({ error: "요청 출처가 유효하지 않습니다." });
+            if (!allowedOrigins.has(reqOrigin)) return res.status(403).json({ error: "요청 출처가 유효하지 않습니다." });
+
+            return next();
+        } catch (e) {
+            return res.status(403).json({ error: "요청 출처가 유효하지 않습니다." });
+        }
+    }
+
+    /**
+     * TOTP와 동일한 정책으로 2FA 임시 세션을 검증한다.
+     * - type=2fa, pendingUserId 존재
+     * - expiresAt 만료 체크
+     * - ipKey(발급 당시 IP) 일치 체크
+     * - uaHash(발급 당시 UA 해시) 일치 체크
+     */
+    function getValid2FATempSession(req, tempSessionId) {
+        const s = sessions.get(tempSessionId);
+        if (!s || s.type !== "2fa" || !s.pendingUserId) return null;
+
+        const now = Date.now();
+        if (s.expiresAt && s.expiresAt <= now) {
+            sessions.delete(tempSessionId);
+            return null;
+        }
+
+        // 발급 당시 환경 바인딩(느슨) - IP
+        const ipNow = getClientIp(req);
+        if (s.ipKey && ipNow && s.ipKey !== ipNow) {
+            sessions.delete(tempSessionId);
+            return null;
+        }
+
+        // 발급 당시 환경 바인딩(느슨) - UA
+        const uaNow = req.headers["user-agent"] || "";
+        const uaHashNow = crypto.createHash("sha256").update(uaNow).digest("hex");
+        if (s.uaHash && s.uaHash !== uaHashNow) {
+            sessions.delete(tempSessionId);
+            return null;
+        }
+
+        s.lastAccessedAt = now;
+        return s;
+    }
+
     const {
         generateRegistrationOptions,
         verifyRegistrationResponse,
@@ -704,15 +779,16 @@ module.exports = (dependencies) => {
      * 패스키 로그인 인증 시작 - 챌린지 생성
      * POST /api/passkey/authenticate/options
      */
-    router.post("/authenticate/options", async (req, res) => {
+    router.post("/authenticate/options", requireSameOriginForAuth, async (req, res) => {
         try {
             const { tempSessionId } = req.body;
 
             if (!tempSessionId)
                 return res.status(400).json({ error: "세션 정보가 없습니다." });
 
-            const tempSession = sessions.get(tempSessionId);
-            if (!tempSession || !tempSession.pendingUserId)
+            // 보안: 2FA 임시 세션의 type/만료/IP/UA 바인딩 검증
+            const tempSession = getValid2FATempSession(req, tempSessionId);
+            if (!tempSession)
                 return res.status(400).json({ error: "세션이 만료되었습니다. 다시 로그인하세요." });
 
             const userId = tempSession.pendingUserId;
@@ -760,15 +836,16 @@ module.exports = (dependencies) => {
      * 패스키 로그인 인증 완료 - 검증 및 세션 생성
      * POST /api/passkey/authenticate/verify
      */
-    router.post("/authenticate/verify", passkeyLimiter, async (req, res) => {
+    router.post("/authenticate/verify", passkeyLimiter, requireSameOriginForAuth, async (req, res) => {
         try {
             const { credential, tempSessionId } = req.body;
 
             if (!credential || !tempSessionId)
                 return res.status(400).json({ error: "인증 정보가 없습니다." });
 
-            const tempSession = sessions.get(tempSessionId);
-            if (!tempSession || !tempSession.pendingUserId)
+            // 보안: 2FA 임시 세션의 type/만료/IP/UA 바인딩 검증
+            const tempSession = getValid2FATempSession(req, tempSessionId);
+            if (!tempSession)
                 return res.status(400).json({ error: "세션이 만료되었습니다. 다시 로그인하세요." });
 
             const userId = tempSession.pendingUserId;
