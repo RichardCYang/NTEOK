@@ -3,7 +3,7 @@ const router = express.Router();
 const crypto = require('crypto');
 
 module.exports = (dependencies) => {
-    const { storagesRepo, bootstrapRepo, authMiddleware, toIsoString, logError, formatDateForDb } = dependencies;
+    const { storagesRepo, bootstrapRepo, authMiddleware, toIsoString, logError, formatDateForDb, wsKickUserFromStorage } = dependencies;
 
     // 저장형 XSS/HTML 엔티티 우회 방어:
     // storage 이름은 여러 화면에서 표시되므로, < > & 및 제어문자를 금지하고 길이를 제한
@@ -275,6 +275,14 @@ module.exports = (dependencies) => {
             }
 
             await storagesRepo.removeCollaborator(storageId, targetUserId);
+
+            // 권한 회수 즉시 반영: 기존 WebSocket 구독(열려 있는 실시간 연결) 강제 해제
+            try {
+                if (typeof wsKickUserFromStorage === 'function') {
+                    wsKickUserFromStorage(storageId, targetUserId, 1008, 'Storage access revoked');
+                }
+            } catch (e) {}
+
             res.json({ success: true });
         } catch (error) {
             logError('DELETE /api/storages/:id/collaborators/:targetUserId', error);

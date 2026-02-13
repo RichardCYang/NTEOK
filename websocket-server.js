@@ -23,10 +23,10 @@ function validateAndNormalizeIcon(raw) {
 }
 
 const wsConnections = {
-    pages: new Map(), 
-    storages: new Map(), 
-	users: new Map(), 
-    sessions: new Map() 
+    pages: new Map(),
+    storages: new Map(),
+	users: new Map(),
+    sessions: new Map()
 };
 
 const yjsDocuments = new Map();
@@ -36,6 +36,13 @@ const WS_RATE_LIMIT_WINDOW = 60 * 1000;
 const WS_RATE_LIMIT_MAX_CONNECTIONS = 10;
 const WS_MAX_MESSAGE_BYTES = 2 * 1024 * 1024;
 const WS_MAX_AWARENESS_UPDATE_BYTES = 32 * 1024;
+
+// 권한 변경/회수 반영을 위한 주기적 재검증(밀리초)
+const WS_PERMISSION_REFRESH_MS = (() => {
+    const n = Number.parseInt(process.env.WS_PERMISSION_REFRESH_MS || '5000', 10);
+    if (!Number.isFinite(n)) return 5000;
+    return Math.max(500, Math.min(60_000, n));
+})();
 
 const WS_MAX_ACTIVE_CONNECTIONS_PER_IP = Number.parseInt(process.env.WS_MAX_ACTIVE_CONNECTIONS_PER_IP || '25', 10);
 const WS_MAX_ACTIVE_CONNECTIONS_PER_SESSION = Number.parseInt(process.env.WS_MAX_ACTIVE_CONNECTIONS_PER_SESSION || '10', 10);
@@ -337,7 +344,7 @@ async function getStoragePermission(pool, userId, storageId) {
 
     // 2. 공유 확인
     const [shareRows] = await pool.execute(
-        `SELECT permission FROM storage_shares 
+        `SELECT permission FROM storage_shares
          WHERE storage_id = ? AND shared_with_user_id = ?`,
         [storageId, userId]
     );
@@ -477,12 +484,12 @@ async function handleSubscribePage(ws, payload, pool, sanitizeHtmlContent) {
     try {
         const [rows] = await pool.execute(`SELECT p.id, p.is_encrypted, p.storage_id FROM pages p WHERE p.id = ?`, [pageId]);
         if (!rows.length) { ws.send(JSON.stringify({ event: 'error', data: { message: 'Page not found' } })); return; }
-        
+
         const page = rows[0];
         const permission = await getStoragePermission(pool, userId, page.storage_id);
-        
+
         if (!permission) { ws.send(JSON.stringify({ event: 'error', data: { message: 'Unauthorized' } })); return; }
-        
+
         if (page.is_encrypted === 1) {
             // 암호화된 페이지는 실시간 편집 지원 안 함 (단순 동기화만 하거나 제외)
             ws.send(JSON.stringify({ event: 'error', data: { message: 'Encrypted pages do not support real-time collaboration yet' } }));
@@ -493,7 +500,7 @@ async function handleSubscribePage(ws, payload, pool, sanitizeHtmlContent) {
         const conns = wsConnections.pages.get(pageId);
         for (const c of Array.from(conns)) { if (c.userId === userId && c.ws !== ws) { conns.delete(c); try { c.ws.close(1008, 'Duplicate'); } catch (e) {} } }
         const color = getUserColor(userId);
-        conns.add({ ws, userId, username: ws.username, color, permission });
+        conns.add({ ws, userId, username: ws.username, color, permission, storageId: page.storage_id, permCheckedAt: Date.now() });
         const ydoc = await loadOrCreateYjsDoc(pool, sanitizeHtmlContent, pageId);
         ws.send(JSON.stringify({ event: 'init', data: { state: Buffer.from(Y.encodeStateAsUpdate(ydoc)).toString('base64'), userId, username: ws.username, color, permission } }));
         wsBroadcastToPage(pageId, 'user-joined', { userId, username: ws.username, color, permission }, userId);
@@ -517,7 +524,7 @@ async function handleSubscribeStorage(ws, payload, pool) {
         const permission = await getStoragePermission(pool, userId, storageId);
         if (!permission) { ws.send(JSON.stringify({ event: 'error', data: { message: 'Unauthorized' } })); return; }
         if (!wsConnections.storages.has(storageId)) wsConnections.storages.set(storageId, new Set());
-        wsConnections.storages.get(storageId).add({ ws, userId, permission });
+        wsConnections.storages.get(storageId).add({ ws, userId, permission, storageId, permCheckedAt: Date.now() });
     } catch (e) {}
 }
 
@@ -525,6 +532,18 @@ function handleUnsubscribeStorage(ws, payload) {
     const { storageId } = payload;
     const conns = wsConnections.storages.get(storageId);
     if (conns) { conns.forEach(c => { if (c.ws === ws) conns.delete(c); }); if (conns.size === 0) wsConnections.storages.delete(storageId); }
+}
+
+async function refreshConnPermission(pool, conn) {
+    if (!conn || !conn.storageId) return conn?.permission || null;
+    const now = Date.now();
+    const last = conn.permCheckedAt || 0;
+    if (now - last < WS_PERMISSION_REFRESH_MS) return conn.permission;
+
+    const fresh = await getStoragePermission(pool, conn.userId, conn.storageId);
+    conn.permCheckedAt = now;
+    conn.permission = fresh;
+    return fresh;
 }
 
 function handleSubscribeUser(ws, payload) {
@@ -536,11 +555,23 @@ async function handleYjsUpdate(ws, payload, pool, sanitizeHtmlContent) {
 	const { pageId, update } = payload || {};
 	try {
         if (!pageId || typeof update !== 'string' || !isSubscribedToPage(ws, pageId)) return;
-        
+
         // 권한 확인 (EDIT 또는 ADMIN)
         const conns = wsConnections.pages.get(pageId);
         const myConn = Array.from(conns).find(c => c.ws === ws);
-        if (!myConn || !['EDIT', 'ADMIN'].includes(myConn.permission)) return;
+        if (!myConn) return;
+
+        // 권한 재검증(권한 회수/다운그레이드 즉시 반영)
+        const freshPerm = await refreshConnPermission(pool, myConn);
+        if (!freshPerm) {
+            // 접근 회수: 페이지 구독에서 제거하고 클라이언트에 통지
+            conns.delete(myConn);
+            if (conns.size === 0) wsConnections.pages.delete(pageId);
+            try { ws.send(JSON.stringify({ event: 'access-revoked', data: { pageId } })); } catch (e) {}
+            return;
+        }
+
+        if (!['EDIT', 'ADMIN'].includes(freshPerm)) return;
 
         const ydoc = await loadOrCreateYjsDoc(pool, sanitizeHtmlContent, pageId);
         Y.applyUpdate(ydoc, Buffer.from(update, 'base64'));
@@ -578,6 +609,46 @@ function cleanupWebSocketConnection(ws, pool, sanitizeHtmlContent) {
 }
 
 function startRateLimitCleanup() { return setInterval(() => { const now = Date.now(); wsConnectionLimiter.forEach((l, ip) => { if (now > l.resetTime) wsConnectionLimiter.delete(ip); }); }, 300000); }
+
 function startInactiveConnectionsCleanup(pool, sanitizeHtmlContent) { return setInterval(() => cleanupInactiveConnections(pool, sanitizeHtmlContent), 600000); }
 
-module.exports = { initWebSocketServer, wsBroadcastToPage, wsBroadcastToStorage, wsBroadcastToUser, startRateLimitCleanup, startInactiveConnectionsCleanup, wsConnections, yjsDocuments, saveYjsDocToDatabase, wsCloseConnectionsForSession };
+
+
+/**
+ * 저장소 권한이 회수된 사용자를 해당 storage/page 구독에서 즉시 강제 해제
+ * - 협업자 제거/권한 변경 시 서버에서 호출해 열려 있는 WebSocket 기반 권한 지속을 차단
+ */
+function wsKickUserFromStorage(storageId, targetUserId, closeCode = 1008, reason = 'Access revoked') {
+    const sid = String(storageId);
+    const uid = String(targetUserId);
+
+    // storage 구독 제거
+    const storConns = wsConnections.storages.get(sid);
+
+    if (storConns) {
+        for (const c of Array.from(storConns)) {
+            if (String(c.userId) === uid) {
+                storConns.delete(c);
+                try { c.ws.send(JSON.stringify({ event: 'access-revoked', data: { storageId: sid } })); } catch (e) {}
+            }
+        }
+        if (storConns.size === 0) wsConnections.storages.delete(sid);
+    }
+
+    // page 구독 제거 (storageId가 같은 것만)
+    for (const [pageId, pageConns] of Array.from(wsConnections.pages.entries())) {
+        for (const c of Array.from(pageConns)) {
+            if (String(c.userId) === uid && String(c.storageId) === sid) {
+                pageConns.delete(c);
+                try { c.ws.send(JSON.stringify({ event: 'access-revoked', data: { pageId, storageId: sid } })); } catch (e) {}
+            }
+        }
+        if (pageConns.size === 0) wsConnections.pages.delete(pageId);
+    }
+
+    // 해당 사용자의 모든 WS를 끊어 재연결 유도
+    const userConns = wsConnections.users.get(uid);
+    if (userConns) for (const c of Array.from(userConns)) { try { c.ws.close(closeCode, reason); } catch (e) {} }
+}
+
+module.exports = { initWebSocketServer, wsBroadcastToPage, wsBroadcastToStorage, wsBroadcastToUser, startRateLimitCleanup, startInactiveConnectionsCleanup, wsConnections, yjsDocuments, saveYjsDocToDatabase, wsCloseConnectionsForSession, wsKickUserFromStorage };

@@ -195,7 +195,8 @@ const {
     wsConnections,
     yjsDocuments,
 	saveYjsDocToDatabase,
-	wsCloseConnectionsForSession
+	wsCloseConnectionsForSession,
+    wsKickUserFromStorage
 } = require("./websocket-server");
 
 const app = express();
@@ -2028,6 +2029,7 @@ function getSessionFromId(sessionId) {
             wsBroadcastToStorage,
 			wsBroadcastToUser,
 			wsCloseConnectionsForSession,
+            wsKickUserFromStorage,
             saveYjsDocToDatabase,
             yjsDocuments,
             authLimiter,
