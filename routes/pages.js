@@ -9,7 +9,7 @@ const ipaddr = require("ipaddr.js");
 const { assertImageFileSignature } = require("../security-utils.js");
 
 const erl = require("express-rate-limit");
-const rateLimit = erl.rateLimit || erl; 
+const rateLimit = erl.rateLimit || erl;
 const { ipKeyGenerator } = erl;
 
 // cover_image는 UI에서 `/covers/${coverImage}` 형태로 쓰이므로
@@ -64,6 +64,22 @@ module.exports = (dependencies) => {
         fs,
         yjsDocuments
 	} = dependencies;
+
+    /**
+     * 보안: 암호화(is_encrypted=1) + 공유불가(share_allowed=0) 페이지는 작성자만 접근 가능해야 함
+     * - 기존에는 일부 Write 엔드포인트가 pool.execute("SELECT * FROM pages WHERE id=?")로 직접 로드하여
+     * - pageSqlPolicy(가시성 정책)를 우회 → 권한우회(Broken Access Control) 발생
+     * - 모든 mutation 전에 pagesRepo.getPageByIdForUser()로 객체 단위 권한 검증을 통일
+     */
+    async function loadPageForMutationOr404(userId, pageId, res) {
+        const page = await pagesRepo.getPageByIdForUser({ userId, pageId });
+        if (!page) {
+            // 존재 여부 최소화: 숨김 페이지도 동일하게 404
+            res.status(404).json({ error: "Not found" });
+            return null;
+        }
+        return page;
+    }
 
 	function normalizeUploadedImageFile(fileObj, detectedExt) {
 	    if (!fileObj?.path || !fileObj?.filename) throw new Error('INVALID_UPLOAD');
@@ -186,10 +202,9 @@ module.exports = (dependencies) => {
         const id = req.params.id;
         const userId = req.user.id;
         try {
-            const [rows] = await pool.execute(`SELECT * FROM pages WHERE id = ?`, [id]);
-            if (!rows.length) return res.status(404).json({ error: "Not found" });
-            const existing = rows[0];
-            
+            const existing = await loadPageForMutationOr404(userId, id, res);
+            if (!existing) return;
+
             const permission = await storagesRepo.getPermission(userId, existing.storage_id);
             if (!permission || !['EDIT', 'ADMIN'].includes(permission)) {
                 return res.status(403).json({ error: "이 페이지를 수정할 권한이 없습니다." });
@@ -231,9 +246,8 @@ module.exports = (dependencies) => {
         const id = req.params.id;
         const userId = req.user.id;
         try {
-            const [rows] = await pool.execute(`SELECT * FROM pages WHERE id=?`, [id]);
-            if (!rows.length) return res.status(404).json({ error: "Not found" });
-            const existing = rows[0];
+            const existing = await loadPageForMutationOr404(userId, id, res);
+            if (!existing) return;
 
             const permission = await storagesRepo.getPermission(userId, existing.storage_id);
             if (!permission || !['EDIT', 'ADMIN'].includes(permission)) {
@@ -264,9 +278,8 @@ module.exports = (dependencies) => {
         const id = req.params.id;
         const userId = req.user.id;
         try {
-            const [rows] = await pool.execute(`SELECT * FROM pages WHERE id = ?`, [id]);
-            if (!rows.length) return res.status(404).json({ error: "Not found" });
-            const existing = rows[0];
+            const existing = await loadPageForMutationOr404(userId, id, res);
+            if (!existing) return;
 
             const permission = await storagesRepo.getPermission(userId, existing.storage_id);
             if (!permission || !['EDIT', 'ADMIN'].includes(permission)) {
@@ -310,12 +323,11 @@ module.exports = (dependencies) => {
         if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
         try {
-            const [rows] = await pool.execute(`SELECT * FROM pages WHERE id = ?`, [id]);
-            if (!rows.length) {
+            const existing = await loadPageForMutationOr404(userId, id, res);
+            if (!existing) {
                 if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
-                return res.status(404).json({ error: "Not found" });
+                return;
             }
-            const existing = rows[0];
 
             const permission = await storagesRepo.getPermission(userId, existing.storage_id);
             if (!permission || !['EDIT', 'ADMIN'].includes(permission)) {
@@ -343,9 +355,8 @@ module.exports = (dependencies) => {
         const id = req.params.id;
         const userId = req.user.id;
         try {
-            const [rows] = await pool.execute(`SELECT * FROM pages WHERE id = ?`, [id]);
-            if (!rows.length) return res.status(404).json({ error: "Not found" });
-            const existing = rows[0];
+            const existing = await loadPageForMutationOr404(userId, id, res);
+            if (!existing) return;
 
             const permission = await storagesRepo.getPermission(userId, existing.storage_id);
             if (!permission || !['EDIT', 'ADMIN'].includes(permission)) {
@@ -368,12 +379,11 @@ module.exports = (dependencies) => {
         if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
         try {
-            const [rows] = await pool.execute(`SELECT storage_id FROM pages WHERE id = ?`, [id]);
-            if (!rows.length) {
+            const existing = await loadPageForMutationOr404(userId, id, res);
+            if (!existing) {
                 if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
-                return res.status(404).json({ error: "Not found" });
+                return;
             }
-            const existing = rows[0];
 
             const permission = await storagesRepo.getPermission(userId, existing.storage_id);
             if (!permission || !['EDIT', 'ADMIN'].includes(permission)) {
@@ -382,7 +392,7 @@ module.exports = (dependencies) => {
             }
 
             const fileUrl = `/paperclip/${userId}/${req.file.filename}`;
-            
+
             res.json({
                 url: fileUrl,
                 filename: req.file.originalname,
@@ -403,9 +413,8 @@ module.exports = (dependencies) => {
         if (!fileUrl) return res.status(400).json({ error: "fileUrl required" });
 
         try {
-            const [rows] = await pool.execute(`SELECT storage_id FROM pages WHERE id = ?`, [id]);
-            if (!rows.length) return res.status(404).json({ error: "Not found" });
-            const existing = rows[0];
+            const existing = await loadPageForMutationOr404(userId, id, res);
+            if (!existing) return;
 
             const permission = await storagesRepo.getPermission(userId, existing.storage_id);
             if (!permission || !['EDIT', 'ADMIN'].includes(permission)) {
@@ -442,12 +451,11 @@ module.exports = (dependencies) => {
         if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
         try {
-            const [rows] = await pool.execute(`SELECT storage_id FROM pages WHERE id = ?`, [id]);
-            if (!rows.length) {
+            const existing = await loadPageForMutationOr404(userId, id, res);
+            if (!existing) {
                 if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
-                return res.status(404).json({ error: "Not found" });
+                return;
             }
-            const existing = rows[0];
 
             const permission = await storagesRepo.getPermission(userId, existing.storage_id);
             if (!permission || !['EDIT', 'ADMIN'].includes(permission)) {
@@ -471,15 +479,14 @@ module.exports = (dependencies) => {
         const id = req.params.id;
         const userId = req.user.id;
         try {
-            const [rows] = await pool.execute(`SELECT p.id, p.user_id, p.storage_id, p.is_encrypted FROM pages p WHERE p.id=?`, [id]);
-            if (!rows.length) return res.status(404).json({ error: "Not found" });
-            const existing = rows[0];
+            const existing = await loadPageForMutationOr404(userId, id, res);
+            if (!existing) return;
 
             const permission = await storagesRepo.getPermission(userId, existing.storage_id);
             if (!permission) {
                 return res.status(403).json({ error: "권한이 없습니다." });
             }
-            
+
             const [pub] = await pool.execute(`SELECT token, created_at, allow_comments FROM page_publish_links WHERE page_id=? AND is_active=1`, [id]);
             if (!pub.length) return res.json({ published: false });
             res.json({ published: true, token: pub[0].token, url: `${process.env.BASE_URL}/shared/page/${pub[0].token}`, createdAt: toIsoString(pub[0].created_at), allowComments: pub[0].allow_comments === 1 });
