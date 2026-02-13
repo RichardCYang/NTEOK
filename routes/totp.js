@@ -1,6 +1,46 @@
 const express = require('express');
 const router = express.Router();
 
+const erl = require("express-rate-limit");
+const rateLimit = erl.rateLimit || erl;
+const { ipKeyGenerator } = erl;
+
+// IPv6 우회 방지(프로젝트 다른 파일과 동일한 정책)
+const RATE_LIMIT_IPV6_SUBNET = (() => {
+    const n = Number(process.env.RATE_LIMIT_IPV6_SUBNET ?? 56);
+    if (!Number.isFinite(n)) return 56;
+    return Math.max(0, Math.min(128, n));
+})();
+
+// 실패 누적 잠금(메모리 기반: 운영은 DB 컬럼 권장)
+// key: accountKey(userId/username/tempSessionId)
+const totpLockMap = new Map(); // accountKey -> { failCount, lockedUntil }
+const TOTP_MAX_FAILS = Number(process.env.TOTP_MAX_FAILS || 8);
+const TOTP_LOCK_MS = Number(process.env.TOTP_LOCK_MS || (10 * 60 * 1000)); // 10분
+
+function assertNotLocked(accountKey) {
+    const st = totpLockMap.get(accountKey);
+    if (!st) return { ok: true };
+    if (st.lockedUntil && Date.now() < st.lockedUntil) {
+        return { ok: false, retryAfterMs: st.lockedUntil - Date.now() };
+    }
+    return { ok: true };
+}
+
+function recordTotpFailure(accountKey) {
+    const cur = totpLockMap.get(accountKey) || { failCount: 0, lockedUntil: 0 };
+    cur.failCount += 1;
+    if (cur.failCount >= TOTP_MAX_FAILS) {
+        cur.lockedUntil = Date.now() + TOTP_LOCK_MS;
+        cur.failCount = 0; // 잠금 시 카운터 리셋
+    }
+    totpLockMap.set(accountKey, cur);
+}
+
+function clearTotpFailures(accountKey) {
+    totpLockMap.delete(accountKey);
+}
+
 /**
  * TOTP (2FA) Routes
  *
@@ -51,6 +91,22 @@ module.exports = (dependencies) => {
             'unknown'
         );
     }
+
+    // TOTP 검증 전용 레이트 리밋 (계정키 + IP 결합)
+    const totpVerifyLimiter = rateLimit({
+        windowMs: 5 * 60 * 1000, // 5분
+        max: 12,                 // 계정키+IP당 5분에 12회
+        standardHeaders: true,
+        legacyHeaders: false,
+        message: { error: "TOTP 인증 시도가 너무 많습니다. 잠시 후 다시 시도해 주세요." },
+        keyGenerator: (req) => {
+            const body = req.body || {};
+            const accountKey = String(body.tempSessionId || "unknown").slice(0, 128);
+            const rawIp = getClientIp(req);
+            const ipKey = rawIp && rawIp !== 'unknown' ? ipKeyGenerator(rawIp, RATE_LIMIT_IPV6_SUBNET) : "noip";
+            return `totp:${accountKey}:${ipKey}`;
+        }
+    });
 
     /**
      * Login CSRF 방지(2FA 검증 엔드포인트용)
@@ -293,18 +349,28 @@ module.exports = (dependencies) => {
      * 로그인 시 TOTP 검증
      * POST /api/totp/verify-login
      */
-    router.post("/verify-login", totpLimiter, requireSameOriginForAuth, async (req, res) => {
-        try {
-            const { token, tempSessionId } = req.body;
+    router.post("/verify-login", totpVerifyLimiter, requireSameOriginForAuth, async (req, res) => {
+        const { token, tempSessionId } = req.body;
+        const accountKey = String(tempSessionId || "unknown").slice(0, 128);
 
+        // 계정 단위 잠금 체크
+        const lock = assertNotLocked(accountKey);
+        if (!lock.ok) {
+            return res.status(429).json({
+                error: "TOTP 인증 실패가 누적되어 잠시 잠금되었습니다.",
+                retryAfterMs: lock.retryAfterMs
+            });
+        }
+
+        try {
             if (!token || !/^\d{6}$/.test(token))
                 return res.status(400).json({ error: "유효한 6자리 코드를 입력하세요." });
 
             if (!tempSessionId)
                 return res.status(400).json({ error: "세션 정보가 없습니다." });
 
-			const tempSession = getValid2FATempSession(req, tempSessionId);
-			if (!tempSession)
+            const tempSession = getValid2FATempSession(req, tempSessionId);
+            if (!tempSession)
                 return res.status(400).json({ error: "세션이 만료되었습니다. 다시 로그인하세요." });
 
             const userId = tempSession.pendingUserId;
@@ -328,6 +394,9 @@ module.exports = (dependencies) => {
             });
 
             if (!verified) {
+                // 실패 누적
+                recordTotpFailure(accountKey);
+
                 // 로그인 로그 기록
                 await recordLoginAttempt(pool, {
                     userId: userId,
@@ -341,6 +410,9 @@ module.exports = (dependencies) => {
 
                 return res.status(401).json({ error: "잘못된 인증 코드입니다." });
             }
+
+            // 성공 시 실패 카운터 제거
+            clearTotpFailures(accountKey);
 
             // 국가 화이트리스트 체크
             const countryCheck = checkCountryWhitelist(
@@ -427,10 +499,20 @@ module.exports = (dependencies) => {
      * 백업 코드로 로그인
      * POST /api/totp/verify-backup-code
      */
-    router.post("/verify-backup-code", totpLimiter, requireSameOriginForAuth, async (req, res) => {
-        try {
-            const { backupCode, tempSessionId } = req.body;
+    router.post("/verify-backup-code", totpVerifyLimiter, requireSameOriginForAuth, async (req, res) => {
+        const { backupCode, tempSessionId } = req.body;
+        const accountKey = String(tempSessionId || "unknown").slice(0, 128);
 
+        // 계정 단위 잠금 체크
+        const lock = assertNotLocked(accountKey);
+        if (!lock.ok) {
+            return res.status(429).json({
+                error: "백업 코드 인증 실패가 누적되어 잠시 잠금되었습니다.",
+                retryAfterMs: lock.retryAfterMs
+            });
+        }
+
+        try {
             if (!backupCode)
                 return res.status(400).json({ error: "백업 코드를 입력하세요." });
 
@@ -494,17 +576,23 @@ module.exports = (dependencies) => {
             }
 
             if (!validCodeId) {
-	           	await recordLoginAttempt(pool, {
-	                userId,
-	                username,
-	                ipAddress: getClientIp(req),
-	                port: req.connection.remotePort || 0,
-	                success: false,
-	                failureReason: '백업 코드 불일치',
-	                userAgent: req.headers['user-agent'] || null
-	            });
-            	return res.status(401).json({ error: "잘못된 백업 코드입니다." });
+                // 실패 누적
+                recordTotpFailure(accountKey);
+
+                await recordLoginAttempt(pool, {
+                    userId,
+                    username,
+                    ipAddress: getClientIp(req),
+                    port: req.connection.remotePort || 0,
+                    success: false,
+                    failureReason: '백업 코드 불일치',
+                    userAgent: req.headers['user-agent'] || null
+                });
+                return res.status(401).json({ error: "잘못된 백업 코드입니다." });
             }
+
+            // 성공 시 실패 카운터 제거
+            clearTotpFailures(accountKey);
 
             const now = new Date();
             const nowStr = formatDateForDb(now);
