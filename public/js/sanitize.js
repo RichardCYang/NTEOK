@@ -75,7 +75,7 @@ export const EDITOR_PURIFY_CONFIG = {
 		'style','class','href','target','rel','data-type','data-latex','colspan','rowspan','colwidth',
 		'src','alt','data-src','data-alt','data-caption','data-width','data-align','data-url','data-title',
 		'data-description','data-thumbnail','data-id','data-icon','data-checked','type','checked',
-		'data-callout-type','data-content','data-columns','data-is-open'
+		'data-callout-type','data-content','data-columns','data-is-open','data-selected-date','data-memos'
 	],
 	ALLOW_DATA_ATTR: true,
 	// javascript:, data: 등을 차단하기 위한 안전한 URI 패턴

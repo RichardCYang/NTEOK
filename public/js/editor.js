@@ -103,6 +103,9 @@ import { YoutubeBlock } from './youtube-node.js';
 // FileBlock 노드 import
 import { FileBlock } from './file-node.js';
 
+// CalendarBlock 노드 import
+import { CalendarBlock } from './calendar-node.js';
+
 // DragHandle extension import
 import { DragHandle } from './drag-handle-extension.js';
 
@@ -504,6 +507,15 @@ export const SLASH_ITEMS = [
             } else {
                 alert("올바른 YouTube URL이 아닙니다.");
             }
+        }
+    },
+    {
+        id: "calendar",
+        label: "캘린더",
+        description: "날짜 선택 및 표시를 위한 캘린더",
+        icon: "📅",
+        command(editor) {
+            editor.chain().focus().setCalendarBlock().run();
         }
     }
 ];
@@ -1313,6 +1325,7 @@ export function initEditor() {
             BoardBlock,
             YoutubeBlock,
             FileBlock,
+            CalendarBlock,
             DragHandle,
             ImagePaste,
             Placeholder.configure({
