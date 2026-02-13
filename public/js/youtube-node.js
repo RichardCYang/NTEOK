@@ -116,7 +116,7 @@ export const YoutubeBlock = Node.create({
                         'frameborder': '0',
                         'allowfullscreen': 'true',
                         'allow': 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture',
-                        'sandbox': 'allow-scripts allow-presentation',
+                        'sandbox': 'allow-scripts allow-same-origin allow-presentation allow-popups',
                         'referrerpolicy': 'strict-origin-when-cross-origin'
                     }
                 ]
@@ -168,7 +168,7 @@ export const YoutubeBlock = Node.create({
             iframe.frameBorder = '0';
             iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture';
             iframe.allowFullscreen = true;
-            iframe.sandbox = 'allow-scripts allow-presentation';
+            iframe.sandbox = 'allow-scripts allow-same-origin allow-presentation allow-popups';
             iframe.referrerPolicy = 'strict-origin-when-cross-origin';
 
             // 드래그/리사이즈 중 iframe 이벤트 방지용 오버레이

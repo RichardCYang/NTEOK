@@ -1429,7 +1429,7 @@ app.use((req, res, next) => {
 		"base-uri 'self'; " +
         "object-src 'none'; " +
         "frame-ancestors 'none'; " +
-        "frame-src 'self' https://www.youtube.com https://youtube.com; " +
+        "frame-src 'self' https://www.youtube.com https://youtube.com https://www.youtube-nocookie.com https://youtube-nocookie.com; " +
         "form-action 'self'; " +
         // NOTE: CSP의 핵심은 nonce가 있는 스크립트만 실행 되도록 하는 것
         // 기존처럼 광범위 CDN(예: jsdelivr/esm.sh)을 script-src에 allowlist 하면,
