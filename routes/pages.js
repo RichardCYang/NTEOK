@@ -320,9 +320,17 @@ module.exports = (dependencies) => {
         const userId = req.user.id;
         const filename = path.basename(req.params.filename);
         try {
-            const filePath = path.join(__dirname, '..', 'covers', String(userId), filename);
-            if (fs.existsSync(filePath)) {
-                fs.unlinkSync(filePath);
+            const baseDir = path.resolve(__dirname, '..', 'covers', String(userId));
+            const targetPath = path.resolve(baseDir, filename);
+            const rel = path.relative(baseDir, targetPath);
+
+            if (rel.startsWith("..") || path.isAbsolute(rel)) {
+                return res.status(400).json({ error: "Invalid filename" });
+            }
+
+            if (fs.existsSync(targetPath)) {
+                const st = fs.statSync(targetPath);
+                if (st.isFile()) fs.unlinkSync(targetPath);
             }
             res.json({ ok: true });
         } catch (error) {
@@ -487,6 +495,32 @@ module.exports = (dependencies) => {
         }
     });
 
+    // paperclip URL/filename 검증(경로 조작 방지)
+    // - /paperclip/<userId>/<storedFilename> 형태만 허용
+    // - storedFilename은 업로드 저장 규칙(서버에서 생성)과 일치하는 안전한 문자만 허용
+    const PAPERCLIP_PATH_RE = /^\/paperclip\/(\d{1,12})\/([A-Za-z0-9][A-Za-z0-9._-]{0,199})$/;
+    function parsePaperclipPathFromUserInput(raw) {
+        if (typeof raw !== "string") return null;
+        const s = raw.trim();
+        if (!s) return null;
+
+        // 절대 URL이 들어와도 pathname만 추출 (호스트/스킴 무시)
+        let pathname = s;
+        try {
+            // base는 어떤 값이든 무방(상대경로 파싱용)
+            pathname = new URL(s, "http://local").pathname;
+        } catch (_) {
+            pathname = s; // 상대경로 등 파싱 실패 시 원문 그대로(아래 정규식에서 걸러짐)
+        }
+
+        const m = pathname.match(PAPERCLIP_PATH_RE);
+        if (!m) return null;
+        const urlUserId = m[1];
+        const filename = m[2];
+        if (filename.includes("..")) return null; // 점-점 시퀀스는 명시 차단
+        return { urlUserId, filename };
+    }
+
     router.delete("/:id/file-cleanup", authMiddleware, async (req, res) => {
         const id = req.params.id;
         const userId = req.user.id;
@@ -503,21 +537,30 @@ module.exports = (dependencies) => {
                 return res.status(403).json({ error: "Forbidden" });
             }
 
-            const parts = fileUrl.split('/');
-            if (parts.length < 4 || parts[1] !== 'paperclip') {
+            const parsed = parsePaperclipPathFromUserInput(fileUrl);
+            if (!parsed) {
+                // 입력 검증 실패는 400 (경로 조작/이상치 차단)
                 return res.status(400).json({ error: "Invalid fileUrl" });
             }
 
-            const urlUserId = parts[2];
-            const filename = parts[3];
+            const { urlUserId, filename } = parsed;
 
             if (String(urlUserId) !== String(userId)) {
                 return res.status(403).json({ error: "자신의 파일만 삭제할 수 있습니다." });
             }
 
-            const filePath = path.join(__dirname, '..', 'paperclip', String(userId), filename);
-            if (fs.existsSync(filePath)) {
-                fs.unlinkSync(filePath);
+            // 경로 정규화 + 디렉터리 경계 체크 (Windows/절대경로/드라이브 경로 등 방어)
+            const baseDir = path.resolve(__dirname, "..", "paperclip", String(userId));
+            const targetPath = path.resolve(baseDir, filename);
+            const rel = path.relative(baseDir, targetPath);
+            if (rel.startsWith("..") || path.isAbsolute(rel)) {
+                return res.status(400).json({ error: "Invalid fileUrl" });
+            }
+
+            // 파일만 삭제(디렉터리 삭제 시도 차단)
+            if (fs.existsSync(targetPath)) {
+                const st = fs.statSync(targetPath);
+                if (st.isFile()) fs.unlinkSync(targetPath);
             }
 
             res.json({ ok: true });
