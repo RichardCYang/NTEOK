@@ -190,7 +190,6 @@ const {
     wsBroadcastToPage,
     wsBroadcastToStorage,
 	wsBroadcastToUser,
-	wsRevokeUserAccessFromCollection,
     startRateLimitCleanup,
     startInactiveConnectionsCleanup,
     wsConnections,
@@ -469,15 +468,7 @@ function generatePageId(now) {
     return "page-" + iso + "-" + rand;
 }
 
-/**
- * 보안 개선: 암호학적으로 안전한 컬렉션 ID 생성
- * Math.random() 대신 crypto.randomBytes 사용
- */
-function generateCollectionId(now) {
-    const iso = now.toISOString().replace(/[:.]/g, "-");
-    const rand = crypto.randomBytes(6).toString("hex"); // 12자 hex 문자열
-    return "col-" + iso + "-" + rand;
-}
+
 
 /**
  * DB DATETIME 값을 ISO 문자열로 변환
@@ -996,7 +987,7 @@ async function initDb() {
         ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
     `);
 
-    // storage_shares 테이블 생성 (구 collection_shares)
+    // storage_shares 테이블 생성
     await pool.execute(`
         CREATE TABLE IF NOT EXISTS storage_shares (
             id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -1268,62 +1259,6 @@ async function initDb() {
 }
 
 /**
- * 사용자별 컬렉션 순서 구하기
- */
-async function getNextCollectionSortOrder(userId) {
-    const [rows] = await pool.execute(
-        `SELECT COALESCE(MAX(sort_order), -1) AS maxOrder FROM collections WHERE user_id = ?`,
-        [userId]
-    );
-    return Number(rows[0].maxOrder) + 1;
-}
-
-/**
- * 컬렉션 접근 권한 확인
- * @param {string} collectionId - 컬렉션 ID
- * @param {number} userId - 사용자 ID
- * @returns {Promise<{permission: string|null, isOwner: boolean}>}
- */
-async function getCollectionPermission(collectionId, userId) {
-    // 1. 소유자 확인
-    const [ownerRows] = await pool.execute(
-        `SELECT id FROM collections WHERE id = ? AND user_id = ?`,
-        [collectionId, userId]
-    );
-
-    if (ownerRows.length > 0) {
-        return { permission: 'ADMIN', isOwner: true };
-    }
-
-    // 2. 직접 공유 확인
-    const [shareRows] = await pool.execute(
-        `SELECT permission FROM collection_shares
-         WHERE collection_id = ? AND shared_with_user_id = ?`,
-        [collectionId, userId]
-    );
-
-    if (shareRows.length > 0) {
-        return { permission: shareRows[0].permission, isOwner: false };
-    }
-
-    return { permission: null, isOwner: false };
-}
-
-/**
- * 공유 불가능한 암호화 페이지 존재 여부 확인
- * @param {string} collectionId - 컬렉션 ID
- * @returns {Promise<boolean>}
- */
-async function hasEncryptedPages(collectionId) {
-    const [rows] = await pool.execute(
-        `SELECT COUNT(*) as count FROM pages
-         WHERE collection_id = ? AND is_encrypted = 1 AND share_allowed = 0`,
-        [collectionId]
-    );
-    return rows[0].count > 0;
-}
-
-/**
  * 공유 링크 토큰 생성
  * @returns {string} - 64자 hex 문자열
  */
@@ -1336,35 +1271,6 @@ function generateShareToken() {
  */
 function generatePublishToken() {
     return crypto.randomBytes(32).toString('hex');
-}
-
-/**
- * 새 컬렉션 생성
- */
-async function createCollection({ userId, name, storageId }) {
-    const now = new Date();
-    const nowStr = formatDateForDb(now);
-    const id = generateCollectionId(now);
-    const sortOrder = await getNextCollectionSortOrder(userId);
-
-    await pool.execute(
-        `
-        INSERT INTO collections (id, user_id, name, sort_order, created_at, updated_at, storage_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-        `,
-        [id, userId, name, sortOrder, nowStr, nowStr, storageId]
-    );
-
-    return {
-        id,
-        name,
-        sortOrder,
-        storageId,
-        createdAt: now.toISOString(),
-        updatedAt: now.toISOString(),
-        isOwner: true,
-        permission: 'OWNER'
-    };
 }
 
 /**
@@ -1655,7 +1561,6 @@ app.get('/covers/:userId/:filename', authMiddleware, async (req, res) => {
         }
 
         // 핵심 수정: /imgs, /paperclip과 동일하게 storages + storage_shares 권한 모델로 통일
-        // - 레거시(collections) 기반 권한 체크는 혼재 시 권한 우회/잔존 권한으로 인한 노출 가능성이 큼
         const coverPath = `${requestedUserId}/${sanitizedFilename}`;
         const [rows] = await pool.execute(
             `SELECT p.id
@@ -2092,10 +1997,6 @@ function getSessionFromId(sessionId) {
             sanitizeExtension,
             sanitizeHtmlContent,
             generatePageId,
-            generateCollectionId,
-            createCollection,
-            getCollectionPermission,
-            hasEncryptedPages,
             generateShareToken,
             generatePublishToken,
             // WebSocket 관련 (websocket-server.js 모듈에서 import)
@@ -2103,7 +2004,6 @@ function getSessionFromId(sessionId) {
             wsBroadcastToPage,
             wsBroadcastToStorage,
 			wsBroadcastToUser,
-			wsRevokeUserAccessFromCollection,
 			wsCloseConnectionsForSession,
             saveYjsDocToDatabase,
             yjsDocuments,
@@ -2139,7 +2039,6 @@ function getSessionFromId(sessionId) {
         const storagesRoutes = require('./routes/storages')(routeDependencies);
         const pagesRoutes = require('./routes/pages')(routeDependencies);
         const bootstrapRoutes = require('./routes/bootstrap')(routeDependencies);
-        const sharesRoutes = require('./routes/shares')(routeDependencies);
         const totpRoutes = require('./routes/totp')(routeDependencies);
         const passkeyRoutes = require('./routes/passkey')(routeDependencies);
         const backupRoutes = require('./routes/backup')(routeDependencies);
@@ -2152,7 +2051,6 @@ function getSessionFromId(sessionId) {
         app.use('/api/storages', storagesRoutes);
         app.use('/api/pages', pagesRoutes);
         app.use('/api/bootstrap', bootstrapRoutes);
-        app.use('/api', sharesRoutes);
         app.use('/api/totp', totpRoutes);
         app.use('/api/passkey', passkeyRoutes);
         app.use('/api/backup', backupRoutes);

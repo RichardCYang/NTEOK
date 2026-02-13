@@ -74,7 +74,6 @@ module.exports = (dependencies) => {
 		sanitizeHtmlContent,
         generatePublishToken,
         generatePageId,
-        generateCollectionId,
         formatDateForDb,
         logError
 	} = dependencies;

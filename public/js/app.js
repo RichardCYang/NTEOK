@@ -45,12 +45,6 @@ import {
     bindDecryptionModal
 } from './encryption-manager.js';
 import {
-    openShareModal,
-    closeShareModal,
-    bindShareModal,
-    removeShare
-} from './share-manager.js';
-import {
     initSettingsManager,
     openSettingsModal,
     closeSettingsModal,
@@ -260,7 +254,7 @@ function bindMobileSidebar() {
  */
 function initEvent() {
     document.addEventListener("click", (event) => {
-        if (!event.target.closest(".collection-menu-btn, .page-menu-btn, #context-menu")) {
+        if (!event.target.closest(".page-menu-btn, #context-menu")) {
             closeContextMenu();
         }
     });
@@ -319,7 +313,7 @@ async function init() {
         initSearch();
         initEvent();
         
-        document.querySelector("#collection-list")?.addEventListener("click", e => handlePageListClick(e, appState));
+        document.querySelector("#page-list")?.addEventListener("click", e => handlePageListClick(e, appState));
         document.querySelector("#context-menu")?.addEventListener("click", e => handlePageListClick(e, appState));
 
         bindNewPageButton();
@@ -328,7 +322,6 @@ async function init() {
         bindSettingsModal();
         bindEncryptionModal();
         bindDecryptionModal();
-        bindShareModal();
         bindMobileSidebar();
         bindPublishEvents();
         bindTotpModals();

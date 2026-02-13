@@ -27,12 +27,12 @@ const RATE_LIMIT_IPV6_SUBNET = (() => {
 module.exports = (dependencies) => {
     const {
         pool,
+        storagesRepo,
         authMiddleware,
         toIsoString,
         sanitizeInput,
         logError,
-        formatDateForDb,
-        getCollectionPermission
+        formatDateForDb
 	} = dependencies;
 
     /**
@@ -117,7 +117,7 @@ module.exports = (dependencies) => {
 
 				// 내부 권한 확인(소유자/공유자)
 			    const [pageRows] = await pool.execute(
-			        `SELECT id, user_id, collection_id FROM pages WHERE id = ?`,
+			        `SELECT id, user_id, storage_id FROM pages WHERE id = ?`,
 			        [pageId]
 				);
 
@@ -129,7 +129,7 @@ module.exports = (dependencies) => {
 				if (page.user_id === userId) {
 					canReadInternal = true;
 				} else {
-			        const { permission } = await getCollectionPermission(page.collection_id, userId);
+			        const permission = await storagesRepo.getPermission(userId, page.storage_id);
 			        if (permission) canReadInternal = true;
 			    }
 
@@ -235,10 +235,8 @@ module.exports = (dependencies) => {
 
             // 페이지 정보 조회
             const [pageRows] = await pool.execute(
-                `SELECT p.id, p.user_id, p.collection_id,
-                        c.user_id as collection_owner_id
+                `SELECT p.id, p.user_id, p.storage_id
                  FROM pages p
-                 JOIN collections c ON p.collection_id = c.id
                  WHERE p.id = ?`,
                 [pageId]
             );
@@ -256,8 +254,8 @@ module.exports = (dependencies) => {
                     canRead = true;
                     isOwner = true;
                 } else {
-                    // 컬렉션 권한 확인
-                    const { permission } = await getCollectionPermission(page.collection_id, userId);
+                    // 저장소 권한 확인
+                    const permission = await storagesRepo.getPermission(userId, page.storage_id);
                     if (permission) {
                         canRead = true;
                     }
@@ -314,7 +312,7 @@ module.exports = (dependencies) => {
         try {
             // 권한 확인
             const [pageRows] = await pool.execute(
-                `SELECT p.id, p.user_id, p.collection_id
+                `SELECT p.id, p.user_id, p.storage_id
                  FROM pages p
                  WHERE p.id = ?`,
                 [pageId]
@@ -331,7 +329,7 @@ module.exports = (dependencies) => {
                 if (page.user_id === userId) {
                     canComment = true;
                 } else {
-                    const { permission } = await getCollectionPermission(page.collection_id, userId);
+                    const permission = await storagesRepo.getPermission(userId, page.storage_id);
                     // READ 권한만 있어도 댓글 작성 허용
                     if (permission) {
                         canComment = true;

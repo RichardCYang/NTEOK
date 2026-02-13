@@ -19,7 +19,7 @@ Self-Hostable Web-Based Note-Taking Application
 - **Markdown Editor**: Tiptap-based block editor with various block type support
 - **Diverse Block Types**: Paragraph, heading, lists, checklist, image, code, math, board, bookmark, callout, toggle, YouTube embed, and more
 - **End-to-End Encryption**: AES-256-GCM client-side encryption
-- **Collection Sharing**: User collaboration and link sharing
+- **Storage Sharing**: User collaboration and link sharing
 - **Hierarchical Structure**: Parent-child page relationships
 - **Multiple Authentication**: TOTP 2FA and Passkey (WebAuthn/FIDO2) support
 - **Backup/Restore**: Complete data backup and recovery in ZIP format
@@ -56,8 +56,8 @@ Self-Hostable Web-Based Note-Taking Application
 - **Slash Commands**: Type `/` to switch block types
 - **Keyboard Shortcuts**: `Ctrl+S` / `Cmd+S` to save
 
-### Collections and Pages
-- Group pages by collection
+### Storages and Pages
+- Group pages by storage
 - Hierarchical page structure (parent-child relationships)
 - Page icon settings (170 Font Awesome icons, 400 emoji)
 - **Page Cover Images**: Set default or user-uploaded cover images
@@ -73,7 +73,7 @@ Self-Hostable Web-Based Note-Taking Application
 - **Session Management**: Secure cookie-based authentication
 
 ### Data Management
-- **Backup/Restore**: Full backup and recovery of collections and pages in ZIP format
+- **Backup/Restore**: Full backup and recovery of storages and pages in ZIP format
 - **Data Export**: Convert page content to HTML format
 - **Data Import**: Recover and restore previous backup data
 - **PDF Export**: Convert page content to PDF format
@@ -85,9 +85,8 @@ Self-Hostable Web-Based Note-Taking Application
 - **Data Consistency**: Conflict resolution and improved sync accuracy
 
 ### Collaboration Features
-- **User Sharing**: Share collections with specific users
-- **Link Sharing**: Access collections via link
-- **Permission Management**: READ, EDIT, OWNER permission levels
+- **User Sharing**: Share storages with specific users
+- **Permission Management**: READ, EDIT, ADMIN permission levels
 - **Encrypted Page Sharing**: Share permission settings for encrypted pages
 - **Page Comments**: Comment on pages for collaborative communication
 - **Login Logs**: Track login history for account security
@@ -139,6 +138,7 @@ CREATE DATABASE nteok
 Create a `.env` file or set environment variables:
 
 ```bash
+# Basic Settings
 DB_HOST=localhost
 DB_PORT=3306
 DB_USER=root
@@ -148,7 +148,16 @@ PORT=3000
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=your_secure_password
 BCRYPT_SALT_ROUNDS=12
+
+# HTTPS Auto Certificate Settings (Optional)
+# Setting DuckDNS domain and token will automatically issue Let's Encrypt certificates.
+DUCKDNS_DOMAIN=your-domain.duckdns.org
+DUCKDNS_TOKEN=your-duckdns-token
+CERT_EMAIL=admin@example.com
+ENABLE_HTTP_REDIRECT=true
 ```
+
+Refer to `.env.example` file for detailed environment variable descriptions.
 
 ### 3. Install Dependencies and Run
 
@@ -261,7 +270,7 @@ If HTTPS certificate issuance fails, it automatically falls back to HTTP mode:
 - `POST /api/auth/logout` - Logout
 - `POST /api/auth/register` - Register
 - `GET /api/auth/me` - Current user info
-- `DELETE /api/auth/delete-account` - Delete account
+- `DELETE /api/auth/account` - Delete account
 
 ### Two-Factor Authentication
 - `POST /api/auth/totp/setup` - Setup TOTP
@@ -275,16 +284,14 @@ If HTTPS certificate issuance fails, it automatically falls back to HTTP mode:
 - `POST /api/passkey/authenticate/options` - Generate authentication options
 - `POST /api/passkey/authenticate/verify` - Verify Passkey authentication
 
-### Collections
-- `GET /api/collections` - List collections
-- `POST /api/collections` - Create collection
-- `DELETE /api/collections/:id` - Delete collection
-
-### Collection Sharing
-- `POST /api/collections/:id/share` - Share with user
-- `DELETE /api/collections/:id/share/:shareId` - Remove share
-- `POST /api/collections/:id/share-link` - Create share link
-- `POST /api/share-link/:token` - Access via share link
+### Storages
+- `GET /api/storages` - List storages
+- `POST /api/storages` - Create storage
+- `PUT /api/storages/:id` - Update storage name
+- `DELETE /api/storages/:id` - Delete storage
+- `GET /api/storages/:id/collaborators` - List collaborators
+- `POST /api/storages/:id/collaborators` - Add collaborator
+- `DELETE /api/storages/:id/collaborators/:userId` - Remove collaborator
 
 ### Pages
 - `GET /api/pages` - List pages
@@ -292,7 +299,6 @@ If HTTPS certificate issuance fails, it automatically falls back to HTTP mode:
 - `POST /api/pages` - Create page
 - `PUT /api/pages/:id` - Update page
 - `DELETE /api/pages/:id` - Delete page
-- `PUT /api/pages/:id/share-permission` - Set encrypted page sharing
 - `GET /api/pages/covers/user` - List user cover images
 
 ### Backup/Restore
@@ -309,8 +315,8 @@ If HTTPS certificate issuance fails, it automatically falls back to HTTP mode:
 - `PUT /api/themes` - Change theme setting
 
 ### Published Pages
-- `GET /api/pages/:id/publish-link` - Get publish link
-- `POST /api/pages/:id/publish-link` - Create publish link
+- `GET /api/pages/:id/publish` - Get publish status
+- `POST /api/pages/:id/publish` - Create publish link
 
 ---
 
@@ -393,15 +399,15 @@ NTEOK/
 │   ├── register.html      # Registration page
 │   ├── shared-page.html   # Public page view
 │   ├── css/
-│   │   ├── main.css       # Main styles (about 90KB)
+│   │   ├── main.css       # Main styles
 │   │   ├── login.css      # Login styles
 │   │   └── comments.css   # Comments feature styles
-│   └── js/                # Frontend JavaScript modules (about 600KB)
+│   └── js/                # Frontend JavaScript modules
 │       ├── app.js         # Main application logic
 │       ├── editor.js      # Tiptap editor initialization
 │       ├── pages-manager.js         # Page management
 │       ├── encryption-manager.js    # E2EE encryption management
-│       ├── share-manager.js         # Collection sharing management
+│       ├── storages-manager.js      # Storage management
 │       ├── settings-manager.js      # User settings management
 │       ├── backup-manager.js        # Backup/restore management
 │       ├── sync-manager.js          # WebSocket real-time sync
@@ -433,8 +439,7 @@ NTEOK/
 │   ├── index.js           # Static pages and public pages
 │   ├── auth.js            # Authentication API
 │   ├── pages.js           # Pages CRUD and sync API
-│   ├── collections.js     # Collections management API
-│   ├── shares.js          # Collection sharing API
+│   ├── storages.js        # Storage management API
 │   ├── totp.js            # TOTP 2FA setup/verify API
 │   ├── passkey.js         # Passkey/WebAuthn API
 │   ├── backup.js          # Backup/restore API

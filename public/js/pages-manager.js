@@ -111,14 +111,14 @@ export function buildPageTree(flatPages) {
  * 페이지 목록 렌더링
  */
 export function renderPageList() {
-    const listEl = document.querySelector("#collection-list"); // index.html 구조 유지
+    const listEl = document.querySelector("#page-list");
     if (!listEl) return;
 
     listEl.innerHTML = "";
 
     if (!state.pages.length) {
         const empty = document.createElement("li");
-        empty.className = "collection-empty";
+        empty.className = "page-empty";
         empty.textContent = "페이지가 없습니다. 아래에서 새 페이지를 추가하세요.";
         listEl.appendChild(empty);
         return;
@@ -145,7 +145,7 @@ export function renderPageList() {
         titleWrap.style.cssText = "display:flex; align-items:center; gap:4px; flex:1; min-width:0;";
 
         const toggleSpan = document.createElement("span");
-        toggleSpan.className = "page-toggle collection-toggle";
+        toggleSpan.className = "page-toggle";
         if (isExpanded) toggleSpan.classList.add("expanded");
         if (hasChildren) {
             toggleSpan.innerHTML = '<i class="fa-solid fa-caret-right"></i>';
@@ -442,7 +442,3 @@ export function bindNewPageButton() {
         }
     });
 }
-
-// 기존 fetchCollections 등 제거됨 (컬렉션이 없으므로)
-export async function fetchCollections() { return []; } 
-export function applyCollectionsData() {}

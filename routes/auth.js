@@ -31,7 +31,6 @@ module.exports = (dependencies) => {
 		IS_PRODUCTION,
         BASE_URL,
         BCRYPT_SALT_ROUNDS,
-        createCollection,
         authMiddleware,
         authLimiter,
         recordLoginAttempt,

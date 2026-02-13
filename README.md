@@ -19,7 +19,7 @@
 - **마크다운 편집기**: Tiptap 기반 블록 에디터 (다양한 블록 타입 지원)
 - **다양한 블록 타입**: 문단, 제목, 리스트, 체크리스트, 이미지, 코드, 수식, 보드, 북마크, 콜아웃, 토글, YouTube 임베드 등
 - **End-to-End 암호화**: AES-256-GCM 방식의 클라이언트 측 암호화
-- **컬렉션 공유**: 사용자 간 협업 및 링크 공유
+- **저장소 공유**: 사용자 간 협업 및 링크 공유
 - **계층적 구조**: 페이지 부모-자식 관계 지원
 - **다양한 인증**: TOTP 2단계 인증 및 Passkey (WebAuthn/FIDO2) 지원
 - **백업/복구**: 데이터 전체 백업 및 복구 기능 (ZIP 포맷)
@@ -56,8 +56,8 @@
 - **슬래시 명령**: `/` 입력으로 블록 타입 전환
 - **단축키**: `Ctrl+S` / `Cmd+S` 저장
 
-### 컬렉션 및 페이지
-- 컬렉션별 페이지 그룹화
+### 저장소 및 페이지
+- 저장소별 페이지 그룹화
 - 계층적 페이지 구조 (부모-자식 관계)
 - 페이지 아이콘 설정 (170개 Font Awesome 아이콘, 400개 이모지)
 - **페이지 커버 이미지**: 기본 이미지 또는 사용자 업로드 이미지 설정
@@ -285,16 +285,14 @@ HTTPS 인증서 발급에 실패하면 자동으로 HTTP 모드로 폴백됩니�
 - `POST /api/passkey/authenticate/options` - 인증 옵션 생성
 - `POST /api/passkey/authenticate/verify` - Passkey 인증 검증
 
-### 컬렉션
-- `GET /api/collections` - 컬렉션 목록 조회
-- `POST /api/collections` - 컬렉션 생성
-- `DELETE /api/collections/:id` - 컬렉션 삭제
-
-### 컬렉션 공유
-- `POST /api/collections/:id/share` - 사용자에게 공유
-- `DELETE /api/collections/:id/share/:shareId` - 공유 해제
-- `POST /api/collections/:id/share-link` - 공유 링크 생성
-- `POST /api/share-link/:token` - 공유 링크로 접근
+### 저장소
+- `GET /api/storages` - 저장소 목록 조회
+- `POST /api/storages` - 저장소 생성
+- `PUT /api/storages/:id` - 저장소 이름 수정
+- `DELETE /api/storages/:id` - 저장소 삭제
+- `GET /api/storages/:id/collaborators` - 참여자 목록 조회
+- `POST /api/storages/:id/collaborators` - 참여자 추가
+- `DELETE /api/storages/:id/collaborators/:userId` - 참여자 삭제
 
 ### 페이지
 - `GET /api/pages` - 페이지 목록 조회
@@ -411,7 +409,7 @@ NTEOK/
 │       ├── editor.js      # Tiptap 에디터 초기화
 │       ├── pages-manager.js         # 페이지 관리
 │       ├── encryption-manager.js    # E2EE 암호화 관리
-│       ├── share-manager.js         # 컬렉션 공유 관리
+│       ├── storages-manager.js      # 저장소 관리
 │       ├── settings-manager.js      # 사용자 설정 관리
 │       ├── backup-manager.js        # 백업/복구 관리
 │       ├── sync-manager.js          # WebSocket 실시간 동기화
@@ -443,8 +441,7 @@ NTEOK/
 │   ├── index.js           # 정적 페이지 및 공개 페이지
 │   ├── auth.js            # 인증 API (회원가입, 로그인, 계정 삭제)
 │   ├── pages.js           # 페이지 CRUD 및 동기화 API
-│   ├── collections.js     # 컬렉션 관리 API
-│   ├── shares.js          # 컬렉션 공유 API
+│   ├── storages.js        # 저장소 관리 API
 │   ├── totp.js            # TOTP 2FA 설정/인증 API
 │   ├── passkey.js         # Passkey/WebAuthn API
 │   ├── backup.js          # 백업/복구 API

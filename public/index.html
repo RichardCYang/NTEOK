@@ -66,7 +66,7 @@
                     <img src="/icon.png" class="storage-logo" alt="NTEOK">
                     <div class="storage-header-text">
                         <h1 data-i18n="select_workspace">작업 공간 선택</h1>
-                        <p data-i18n="select_storage_desc">노트와 컬렉션이 저장된 저장소를 선택하세요.</p>
+                        <p data-i18n="select_storage_desc">노트와 페이지가 저장된 저장소를 선택하세요.</p>
                     </div>
                 </div>
                 <div class="storage-header-actions">
@@ -133,13 +133,13 @@
                         </div>
                     </div>
                     <div class="sidebar-main">
-                        <ul id="collection-list" class="collection-list"></ul>
+                        <ul id="page-list" class="page-list"></ul>
                     </div>
 
                     <div class="sidebar-footer">
                         <button
                             id="new-page-btn"
-                            class="primary-button sidebar-new-collection-button"
+                            class="primary-button sidebar-new-page-button"
                         >
                             <i class="fa-solid fa-file-circle-plus"></i>
                             <span data-i18n="new_page">새 페이지 추가</span>
@@ -389,7 +389,7 @@
                                     <span data-i18n="settings_backup_export_btn">내보내기</span>
                                 </button>
                                 <p class="settings-description" data-i18n="settings_backup_export_desc">
-                                    모든 컬렉션과 페이지를 ZIP 파일로 내보냅니다.<br>커버 이미지와 에디터 이미지도 포함됩니다.
+                                    모든 저장소와 페이지를 ZIP 파일로 내보냅니다.<br>커버 이미지와 에디터 이미지도 포함됩니다.
                                 </p>
                             </div>
                         </div>
@@ -512,7 +512,7 @@
                             계정을 삭제하면 다음 데이터가 영구적으로 삭제되며 복구할 수 없습니다:
                         </p>
                         <ul style="margin: 0; padding-left: 20px; font-size: 13px; color: #991b1b; line-height: 1.8;">
-                            <li>모든 컬렉션과 페이지</li>
+                            <li>모든 저장소와 페이지</li>
                             <li>공유 설정 및 공유 링크</li>
                             <li>암호화된 페이지를 포함한 모든 콘텐츠</li>
                             <li>2단계 인증 및 백업 코드</li>
@@ -676,94 +676,6 @@
             </div>
         </div>
 
-        <!-- 컬렉션 공유 모달 -->
-        <div id="share-collection-modal" class="modal hidden">
-            <div class="modal-overlay"></div>
-            <div class="modal-content" style="max-width: 600px;">
-                <div class="modal-header">
-                    <h2>컬렉션 공유</h2>
-                    <button id="close-share-modal-btn" class="modal-close-btn">
-                        <i class="fa-solid fa-xmark"></i>
-                    </button>
-                </div>
-                <div class="modal-body">
-                    <!-- 사용자 공유 -->
-                    <form id="share-user-form" style="margin-bottom: 24px;">
-                        <div style="display: flex; gap: 8px; margin-bottom: 16px;">
-                            <input
-                                type="text"
-                                id="share-username"
-                                placeholder="사용자명 입력"
-                                class="settings-select"
-                                style="flex: 1;"
-                                required
-                            />
-                            <select id="share-permission" class="settings-select">
-                                <option value="READ">읽기 전용</option>
-                                <option value="EDIT">편집 가능</option>
-                                <option value="ADMIN">관리자</option>
-                            </select>
-                            <button type="submit" class="primary-button">공유</button>
-                        </div>
-                        <div id="share-error" style="color: #ef4444; font-size: 12px; min-height: 18px;"></div>
-                    </form>
-
-                    <!-- 공유 목록 -->
-                    <div>
-                        <h3 style="font-size: 14px; margin-bottom: 12px; color: #5a6169;">현재 공유 중</h3>
-                        <div id="share-list" style="display: flex; flex-direction: column; gap: 8px;">
-                            <!-- 동적 생성 -->
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- 컬렉션 설정 모달 -->
-        <div id="collection-settings-modal" class="modal hidden">
-            <div class="modal-overlay"></div>
-            <div class="modal-content" style="max-width: 500px;">
-                <div class="modal-header">
-                    <h2>컬렉션 설정</h2>
-                    <button id="close-collection-settings-btn" class="modal-close-btn">
-                        <i class="fa-solid fa-xmark"></i>
-                    </button>
-                </div>
-                <div class="modal-body">
-                    <form id="collection-settings-form">
-                        <div style="margin-bottom: 24px;">
-                            <label style="display: block; font-weight: 500; margin-bottom: 8px;">컬렉션 이름</label>
-                            <input type="text" id="collection-name-input" placeholder="컬렉션 이름을 입력하세요"
-                                   style="width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px;" required>
-                        </div>
-                        <div style="margin-bottom: 24px;">
-                            <label style="display: flex; align-items: flex-start; cursor: pointer;">
-                                <input type="checkbox" id="collection-default-encryption" style="margin-top: 3px; margin-right: 10px;">
-                                <div>
-                                    <div style="font-weight: 500; margin-bottom: 4px;">새 페이지 기본 암호화</div>
-                                    <div style="font-size: 13px; color: #6b7280;">활성화하면 이 컬렉션에 새로 추가되는 페이지가 기본적으로 암호화됩니다.</div>
-                                </div>
-                            </label>
-                        </div>
-                        <div style="margin-bottom: 24px;">
-                            <label style="display: flex; align-items: flex-start; cursor: pointer;">
-                                <input type="checkbox" id="collection-enforce-encryption" style="margin-top: 3px; margin-right: 10px;">
-                                <div>
-                                    <div style="font-weight: 500; margin-bottom: 4px;">암호화 강제</div>
-                                    <div style="font-size: 13px; color: #6b7280;">활성화하면 이 컬렉션의 모든 페이지가 반드시 암호화되어야 합니다.</div>
-                                </div>
-                            </label>
-                        </div>
-                        <div style="display: flex; gap: 8px; justify-content: flex-end;">
-                            <button type="button" id="cancel-collection-settings-btn" class="secondary-button">취소</button>
-                            <button type="submit" class="primary-button">저장</button>
-                        </div>
-                        <div id="collection-settings-error" style="color: #ef4444; font-size: 12px; margin-top: 12px; min-height: 18px;"></div>
-                    </form>
-                </div>
-            </div>
-        </div>
-
         <!-- 읽기 전용 경고 모달 -->
         <div id="readonly-warning-modal" class="modal hidden">
             <div class="modal-overlay"></div>
@@ -776,7 +688,7 @@
                 </div>
                 <div class="modal-body">
                     <p style="margin-bottom: 16px; color: #6b7280; font-size: 14px; line-height: 1.5;">
-                        읽기 전용 컬렉션의 페이지는 수정할 수 없습니다.
+                        읽기 전용 저장소의 페이지는 수정할 수 없습니다.
                     </p>
                     <div style="display: flex; justify-content: flex-end;">
                         <button id="readonly-warning-confirm-btn" class="primary-button" style="padding: 10px 20px; font-size: 14px;">
@@ -799,7 +711,7 @@
                 </div>
                 <div class="modal-body">
                     <p style="margin-bottom: 16px; color: #6b7280; font-size: 14px; line-height: 1.5;">
-                        읽기 전용 컬렉션의 페이지는 삭제할 수 없습니다.
+                        읽기 전용 저장소의 페이지는 삭제할 수 없습니다.
                     </p>
                     <div style="display: flex; justify-content: flex-end;">
                         <button id="delete-permission-confirm-btn" class="primary-button" style="padding: 10px 20px; font-size: 14px;">
@@ -822,7 +734,7 @@
                 </div>
                 <div class="modal-body">
                     <p style="margin-bottom: 16px; color: #6b7280; font-size: 14px; line-height: 1.5;">
-                        읽기 전용 컬렉션의 페이지는 암호화할 수 없습니다.
+                        읽기 전용 저장소의 페이지는 암호화할 수 없습니다.
                     </p>
                     <div style="display: flex; justify-content: flex-end;">
                         <button id="encrypt-permission-confirm-btn" class="primary-button" style="padding: 10px 20px; font-size: 14px;">

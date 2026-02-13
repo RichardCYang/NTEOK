@@ -19,7 +19,7 @@
 - **マークダウンエディタ**: 様々なブロックタイプに対応したTiptapベースのブロックエディタ
 - **多様なブロックタイプ**: 段落、見出し、リスト、チェックリスト、画像、コード、数式、ボード、ブックマーク、コールアウト、トグル、YouTube埋め込みなど
 - **エンドツーエンド暗号化**: AES-256-GCMクライアント側暗号化
-- **コレクション共有**: ユーザー間のコラボレーションとリンク共有
+- **ストレージ共有**: ユーザー間のコラボレーションとリンク共有
 - **階層構造**: 親子ページの関係をサポート
 - **複数認証**: TOTP 2段階認証とPasskey (WebAuthn/FIDO2)対応
 - **バックアップ/復元**: 完全なデータバックアップと復元 (ZIP形式)
@@ -56,8 +56,8 @@
 - **スラッシュコマンド**: `/`入力でブロックタイプを切り替え
 - **キーボードショートカット**: `Ctrl+S` / `Cmd+S`で保存
 
-### コレクションとページ
-- コレクション別にページを分類
+### ストレージとページ
+- ストレージ別にページを分類
 - 階層的なページ構造 (親子関係)
 - ページアイコン設定 (170個のFont Awesomeアイコン、400個の絵文字)
 - **ページカバー画像**: デフォルト画像またはユーザーアップロード画像の設定
@@ -73,7 +73,7 @@
 - **セッション管理**: 安全なクッキーベースの認証
 
 ### データ管理
-- **バックアップ/復元**: コレクションとページの全データバックアップと復元 (ZIP形式)
+- **バックアップ/復元**: ストレージとページの全データバックアップと復元 (ZIP形式)
 - **データエクスポート**: ページ内容をHTML形式に変換
 - **データインポート**: 前回のバックアップデータを復元
 - **PDFエクスポート**: ページ内容をPDF形式に変換
@@ -85,9 +85,8 @@
 - **データの一貫性**: 変更の競合を解決し、同期精度を向上
 
 ### コラボレーション機能
-- **ユーザー共有**: 特定のユーザーとコレクションを共有
-- **リンク共有**: リンク経由でコレクションにアクセス
-- **権限管理**: READ、EDIT、OWNER権限レベル
+- **ユーザー共有**: 特定のユーザーとストレージを共有
+- **権限管理**: READ、EDIT、ADMIN 権限レベル
 - **暗号化ページ共有**: 共有許可設定
 - **ページコメント**: ページにコメントを投稿して協業コミュニケーション
 - **ログイン履歴**: アカウントセキュリティのためのログイン記録追跡
@@ -102,7 +101,7 @@
 - **データベース**: MySQL 8.x
 - **認証**: bcrypt (パスワードハッシング)、speakeasy (TOTP)、@simplewebauthn (Passkey)
 - **セキュリティ**: cookie-parser、CSRFトークン、SameSiteクッキー
-- **バックアップ**: archiver (ZIP作成)、adm-zip (ZIP抽出)
+- **백업**: archiver (ZIP作成)、adm-zip (ZIP抽出)
 - **リアルタイム**: WebSocket (ws)、Yjs (CRDT同期)
 - **HTTPS**: acme-client (Let's Encrypt)、dotenv (環境変数)
 
@@ -285,16 +284,14 @@ HTTPS証明書発行に失敗した場合は自動的にHTTPモードにフォ�
 - `POST /api/passkey/authenticate/options` - 認証オプション生成
 - `POST /api/passkey/authenticate/verify` - Passkey認証検証
 
-### コレクション
-- `GET /api/collections` - コレクション一覧
-- `POST /api/collections` - コレクション作成
-- `DELETE /api/collections/:id` - コレクション削除
-
-### コレクション共有
-- `POST /api/collections/:id/share` - ユーザーと共有
-- `DELETE /api/collections/:id/share/:shareId` - 共有解除
-- `POST /api/collections/:id/share-link` - 共有リンク作成
-- `POST /api/share-link/:token` - 共有リンクでアクセス
+### ストレージ
+- `GET /api/storages` - ストレージ一覧
+- `POST /api/storages` - ストレージ作成
+- `PUT /api/storages/:id` - ストレージ名の変更
+- `DELETE /api/storages/:id` - ストレージ削除
+- `GET /api/storages/:id/collaborators` - 参加者一覧
+- `POST /api/storages/:id/collaborators` - 参加者の追加
+- `DELETE /api/storages/:id/collaborators/:userId` - 参加者の削除
 
 ### ページ
 - `GET /api/pages` - ページ一覧
@@ -302,7 +299,6 @@ HTTPS証明書発行に失敗した場合は自動的にHTTPモードにフォ�
 - `POST /api/pages` - ページ作成
 - `PUT /api/pages/:id` - ページ更新
 - `DELETE /api/pages/:id` - ページ削除
-- `PUT /api/pages/:id/share-permission` - 暗号化ページ共有設定
 - `GET /api/pages/covers/user` - ユーザーカバー画像一覧
 
 ### バックアップ/復元
@@ -319,8 +315,8 @@ HTTPS証明書発行に失敗した場合は自動的にHTTPモードにフォ�
 - `PUT /api/themes` - テーマ設定変更
 
 ### 発行されたページ
-- `GET /api/pages/:id/publish-link` - 発行リンク取得
-- `POST /api/pages/:id/publish-link` - 発行リンク作成
+- `GET /api/pages/:id/publish` - 発行状態取得
+- `POST /api/pages/:id/publish` - 発行リンク作成
 
 ---
 
@@ -366,7 +362,7 @@ HTTPS証明書発行に失敗した場合は自動的にHTTPモードにフォ�
 ### デザイン原則
 - 控えめな余白とクリーンなレイアウト
 - 直線中心のミニマリストなインターフェース
-- すべてのデバイスに対応するレスポンシブデザイン
+- すべてのデバイスに対応するレスポンスブデザイン
 - 読みやすさのための充分なline-height (1.7)
 
 ---
@@ -403,15 +399,15 @@ NTEOK/
 │   ├── register.html      # 登録ページ
 │   ├── shared-page.html   # 公開ページビュー
 │   ├── css/
-│   │   ├── main.css       # メインスタイル (約90KB)
+│   │   ├── main.css       # メインスタイル
 │   │   ├── login.css      # ログインスタイル
 │   │   └── comments.css   # コメント機能スタイル
-│   └── js/                # フロントエンドJavaScriptモジュール (約600KB)
+│   └── js/                # フロントエンドJavaScriptモジュール
 │       ├── app.js         # メインアプリケーションロジック
 │       ├── editor.js      # Tiptapエディター初期化
 │       ├── pages-manager.js         # ページ管理
 │       ├── encryption-manager.js    # E2EE暗号化管理
-│       ├── share-manager.js         # コレクション共有管理
+│       ├── storages-manager.js      # ストレージ管理
 │       ├── settings-manager.js      # ユーザー設定管理
 │       ├── backup-manager.js        # バックアップ/復元管理
 │       ├── sync-manager.js          # WebSocketリアルタイム同期
@@ -443,8 +439,7 @@ NTEOK/
 │   ├── index.js           # 静的ページと公開ページ
 │   ├── auth.js            # 認証API
 │   ├── pages.js           # ページCRUD同期API
-│   ├── collections.js     # コレクション管理API
-│   ├── shares.js          # コレクション共有API
+│   ├── storages.js        # ストレージ管理API
 │   ├── totp.js            # TOTP 2FA設定/検証API
 │   ├── passkey.js         # Passkey/WebAuthn API
 │   ├── backup.js          # バックアップ/復元API

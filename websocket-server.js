@@ -29,58 +29,6 @@ const wsConnections = {
     sessions: new Map() 
 };
 
-async function wsRevokeUserAccessFromCollection(pool, storageId, revokedUserId, opts = {}) {
-	const reason = typeof opts.reason === 'string' ? opts.reason : '접근 권한이 회수되었습니다.';
-	if (!pool || !storageId || !Number.isFinite(revokedUserId)) return;
-
-	const affectedSockets = new Set();
-	const affectedPageIds = [];
-
-	const storageSet = wsConnections.storages.get(storageId);
-	if (storageSet) {
-		for (const conn of Array.from(storageSet)) {
-			if (conn.userId === revokedUserId) {
-				storageSet.delete(conn);
-				affectedSockets.add(conn.ws);
-			}
-		}
-		if (storageSet.size === 0) wsConnections.storages.delete(storageId);
-	}
-
-	let pageRows = [];
-	try {
-		const [rows] = await pool.execute(`SELECT id FROM pages WHERE storage_id = ?`, [storageId]);
-		pageRows = Array.isArray(rows) ? rows : [];
-	} catch (e) {
-		pageRows = [];
-	}
-
-	for (const row of pageRows) {
-		const pageId = row?.id;
-		if (!pageId) continue;
-		const pageSet = wsConnections.pages.get(pageId);
-		if (!pageSet) continue;
-		let removed = false;
-		for (const conn of Array.from(pageSet)) {
-			if (conn.userId === revokedUserId) {
-				pageSet.delete(conn);
-				affectedSockets.add(conn.ws);
-				removed = true;
-			}
-		}
-		if (removed) {
-			affectedPageIds.push(pageId);
-			try { wsBroadcastToPage(pageId, 'user-left', { userId: revokedUserId }, revokedUserId); } catch (e) {}
-		}
-		if (pageSet.size === 0) wsConnections.pages.delete(pageId);
-	}
-
-	const payload = JSON.stringify({ event: 'access-revoked', data: { storageId, pageIds: affectedPageIds, message: reason } });
-	for (const ws of affectedSockets) {
-		try { if (ws && ws.readyState === WebSocket.OPEN) ws.send(payload); } catch (e) {}
-	}
-}
-
 const yjsDocuments = new Map();
 const USER_COLORS = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A', '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E2', '#F8B195', '#C06C84'];
 const wsConnectionLimiter = new Map();
@@ -632,4 +580,4 @@ function cleanupWebSocketConnection(ws, pool, sanitizeHtmlContent) {
 function startRateLimitCleanup() { return setInterval(() => { const now = Date.now(); wsConnectionLimiter.forEach((l, ip) => { if (now > l.resetTime) wsConnectionLimiter.delete(ip); }); }, 300000); }
 function startInactiveConnectionsCleanup(pool, sanitizeHtmlContent) { return setInterval(() => cleanupInactiveConnections(pool, sanitizeHtmlContent), 600000); }
 
-module.exports = { initWebSocketServer, wsBroadcastToPage, wsBroadcastToStorage, wsBroadcastToUser, wsRevokeUserAccessFromCollection, startRateLimitCleanup, startInactiveConnectionsCleanup, wsConnections, yjsDocuments, saveYjsDocToDatabase, wsCloseConnectionsForSession };
+module.exports = { initWebSocketServer, wsBroadcastToPage, wsBroadcastToStorage, wsBroadcastToUser, startRateLimitCleanup, startInactiveConnectionsCleanup, wsConnections, yjsDocuments, saveYjsDocToDatabase, wsCloseConnectionsForSession };

@@ -640,7 +640,7 @@ async function importBackup(file) {
 
         alert(
             `백업 불러오기가 완료되었습니다!\n\n` +
-            `컬렉션: ${result.collectionsCount}개\n` +
+            `저장소: ${result.storagesCount}개\n` +
             `페이지: ${result.pagesCount}개\n` +
             `이미지: ${result.imagesCount}개\n\n` +
             `페이지를 새로고침합니다.`

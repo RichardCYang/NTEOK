@@ -243,7 +243,7 @@ body {
     gap: 8px;
 }
 
-.sidebar-new-collection-button,
+.sidebar-new-page-button,
 .sidebar-logout-button {
     width: 100%;
     justify-content: center;
@@ -450,75 +450,13 @@ body {
     padding: 0;
 }
 
-.collection-list {
+.page-list {
     list-style: none;
     margin: 0;
     padding: 0;
 }
 
-/* 컬렉션 카드 스타일: 한국적 미니멀 */
-.collection-item {
-    margin: 3px 0;
-    border-radius: 3px;
-    border: none;
-    background-color: transparent;
-    box-shadow: none;
-    transition: background-color 0.1s ease;
-}
-
-.collection-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 6px 10px;
-    cursor: pointer;
-    border-radius: 3px;
-    gap: 8px;
-    background: transparent;
-}
-
-.collection-header:hover {
-    background-color: var(--item-hover-bg-color);
-}
-
-.collection-actions {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    position: relative;
-}
-
-.collection-menu-btn,
-.page-menu-btn {
-    border: none;
-    background: none;
-    padding: 4px 6px;
-    border-radius: 3px;
-    cursor: pointer;
-    color: #a0a0a0; /* 채도를 낮추고 더 연하게 변경 */
-}
-
-.collection-menu-btn:hover,
-.page-menu-btn:hover {
-    background-color: var(--border-color);
-    color: #1a1a1a;
-}
-
-.collection-add-page-btn {
-    border: none;
-    background: none;
-    padding: 4px 6px;
-    border-radius: 3px;
-    cursor: pointer;
-    color: #a0a0a0; /* 채도를 낮추고 더 연하게 변경 */
-}
-
-.collection-add-page-btn:hover {
-    background-color: var(--border-color);
-    color: #1a1a1a;
-}
-
-.dropdown-menu {
+/* 드롭다운 메뉴 */
     position: absolute;
     left: calc(100% + 6px);
     top: 0;
@@ -666,7 +604,7 @@ body {
     color: #6b7280;
 }
 
-.collection-empty {
+.page-empty {
     padding: 8px 12px 10px 32px;
     color: #94a3b8;
     font-size: 12px;
@@ -1340,7 +1278,7 @@ body {
     gap: 8px;
 }
 
-.sidebar-new-collection-button {
+.sidebar-new-page-button {
     width: 100%;
     display: flex;
     align-items: center;
@@ -1351,7 +1289,7 @@ body {
     font-weight: 500;
 }
 
-.sidebar-new-collection-button:hover {
+.sidebar-new-page-button:hover {
     background-color: var(--point-hover-color);
 }
 
@@ -1720,16 +1658,6 @@ body {
 .share-item-actions {
     display: flex;
     gap: 6px;
-}
-
-.shared-collection-indicator {
-    margin-left: 6px;
-    padding: 2px 6px;
-    background-color: var(--point-color);
-    color: var(--button-text-color);
-    border-radius: 2px;
-    font-size: 10px;
-    font-weight: 600;
 }
 
 /* 수식 블록 스타일 */
