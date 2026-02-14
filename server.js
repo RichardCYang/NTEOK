@@ -310,6 +310,9 @@ const DEFAULT_ADMIN_USERNAME = process.env.ADMIN_USERNAME || "admin";
 
 let DEFAULT_ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
 if (!DEFAULT_ADMIN_PASSWORD) {
+    // 보안: DEV에서도 정책을 통과하는 강력한 임시 비밀번호를 생성하되,
+    // 기본값으로 로그에 노출하지 않는다(로그 유출 → 계정 탈취 위험).
+    const SHOW_BOOTSTRAP_PASSWORD_IN_LOGS = String(process.env.SHOW_BOOTSTRAP_PASSWORD_IN_LOGS || "").toLowerCase() === "true";
     if (IS_PRODUCTION) {
         console.error("\n" + "=".repeat(80));
         console.error("❌ 프로덕션 환경에서 ADMIN_PASSWORD가 설정되지 않았습니다.");
@@ -320,13 +323,48 @@ if (!DEFAULT_ADMIN_PASSWORD) {
     }
 
     // 개발/로컬 환경: 편의상 임시 랜덤 비밀번호 생성 + 콘솔 경고
-    DEFAULT_ADMIN_PASSWORD = crypto.randomBytes(16).toString("hex");
+    DEFAULT_ADMIN_PASSWORD = generateStrongPassword();
     console.warn("\n" + "=".repeat(80));
     console.warn("⚠️  보안 경고: 기본 관리자 비밀번호가 환경변수로 설정되지 않았습니다! (개발/로컬)");
     console.warn(`   관리자 계정: ${DEFAULT_ADMIN_USERNAME}`);
-    console.warn(`   임시 비밀번호: ${DEFAULT_ADMIN_PASSWORD}`);
+    if (SHOW_BOOTSTRAP_PASSWORD_IN_LOGS) {
+        console.warn(`   임시 비밀번호: ${DEFAULT_ADMIN_PASSWORD}`);
+    } else {
+        console.warn("   임시 비밀번호: (보안을 위해 로그에 출력하지 않습니다)");
+        console.warn("   필요 시 SHOW_BOOTSTRAP_PASSWORD_IN_LOGS=true 로 출력 가능(비권장)");
+    }
     console.warn("   첫 로그인 후 반드시 비밀번호를 변경하세요!");
     console.warn("=".repeat(80) + "\n");
+}
+
+// 보안: 운영 환경에서는 약한 ADMIN_PASSWORD를 절대 허용하지 않음 (fail-closed)
+// - README의 'admin' 같은 기본/약한 비밀번호로 배포되는 것을 방지
+{
+    const common = new Set(["admin", "password", "administrator"]);
+    const pwLower = String(DEFAULT_ADMIN_PASSWORD || "").trim().toLowerCase();
+    const strength = validatePasswordStrength(DEFAULT_ADMIN_PASSWORD);
+
+    if (common.has(pwLower) || !strength.valid) {
+        const reason = common.has(pwLower)
+            ? "너무 흔한 기본 비밀번호입니다."
+            : (strength.error || "비밀번호 강도 정책을 만족하지 않습니다.");
+
+        if (IS_PRODUCTION) {
+            console.error("\n" + "=".repeat(80));
+            console.error("🛑 [보안] ADMIN_PASSWORD가 약하여 서버 시작을 중단합니다.");
+            console.error(`   사유: ${reason}`);
+            console.error("   해결: 길고(>=10), 예측 불가한 강력 비밀번호로 변경 후 재시작하세요.");
+            console.error("=".repeat(80) + "\n");
+            process.exit(1);
+        } else {
+            console.warn("\n" + "=".repeat(80));
+            console.warn("⚠️  [DEV 경고] ADMIN_PASSWORD가 약합니다. 임시로 강력 비밀번호로 대체합니다.");
+            console.warn(`   사유: ${reason}`);
+            DEFAULT_ADMIN_PASSWORD = generateStrongPassword();
+            console.warn("   (비밀번호 로그 출력은 기본 비활성화)");
+            console.warn("=".repeat(80) + "\n");
+        }
+    }
 }
 
 const BCRYPT_SALT_ROUNDS = Number(process.env.BCRYPT_SALT_ROUNDS || 12);
@@ -687,6 +725,44 @@ function validatePasswordStrength(password) {
     }
 
     return { valid: true };
+}
+
+/**
+ * 정책을 통과하는 강력한 랜덤 비밀번호 생성
+ * - 최소 4종 문자군 중 3종 이상 포함(현 validatePasswordStrength 정책 준수)
+ * - 기본 길이 20
+ */
+function generateStrongPassword(length = 20) {
+    const LOWER = "abcdefghijklmnopqrstuvwxyz";
+    const UPPER = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    const DIGITS = "0123456789";
+    const SPECIAL = "!@#$%^&*(),.?\":{}|<>";
+
+    const pick = (chars) => chars[Math.floor(Math.random() * chars.length)];
+    // 최소 구성(4종 중 3종 이상을 확실히 포함)
+    const required = [
+        pick(LOWER),
+        pick(UPPER),
+        pick(DIGITS),
+        pick(SPECIAL),
+    ];
+
+    let rest = "";
+    const all = LOWER + UPPER + DIGITS + SPECIAL;
+    for (let i = required.length; i < Math.max(length, 12); i++) {
+        rest += pick(all);
+    }
+
+    // 셔플
+    const arr = (required.join("") + rest).split("");
+    for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+
+    const pw = arr.join("");
+    // 혹시 실패하면 재귀(극히 드묾)
+    return validatePasswordStrength(pw).valid ? pw : generateStrongPassword(length);
 }
 
 /**
@@ -1237,6 +1313,12 @@ async function initDb() {
         const username = DEFAULT_ADMIN_USERNAME;
         const rawPassword = DEFAULT_ADMIN_PASSWORD;
 
+        // 보안: DB에 기본 관리자 계정을 생성하기 직전에도 강도 검증(우회 방지)
+        const check = validatePasswordStrength(rawPassword);
+        if (!check.valid) {
+            throw new Error(`ADMIN_PASSWORD 약함: ${check.error || "invalid"}`);
+        }
+
         // bcrypt 가 내부적으로 랜덤 SALT 를 포함한 해시를 생성함
         const passwordHash = await bcrypt.hash(rawPassword, BCRYPT_SALT_ROUNDS);
 
@@ -1680,12 +1762,12 @@ app.get('/imgs/:userId/:filename', authMiddleware, async (req, res) => {
                                 LIMIT 1`,
                             [currentUserId, likePattern, currentUserId, currentUserId, requestedUserId]
                         );
-                
+
                         if (rows.length > 0) {
                             // 공유받은 페이지의 이미지 - 접근 허용
                             return res.sendFile(filePath);
                         }
-                
+
                         // 보안: 실시간 동기화 중인(Yjs) 문서의 내용도 확인
                         // DB 저장 지연(약 1초)으로 인해 협업자가 이미지를 즉시 로드하지 못하는 문제 해결
                         for (const [pageId, connections] of wsConnections.pages) {
@@ -1725,7 +1807,7 @@ app.get('/imgs/:userId/:filename', authMiddleware, async (req, res) => {
                                 }
                             }
                         }
-                
+
                         // 권한 없음
                         console.warn(`[보안] 사용자 ${currentUserId}이(가) 권한 없이 이미지 접근 시도: ${imagePath}`);        return res.status(403).json({ error: '접근 권한이 없습니다.' });
 

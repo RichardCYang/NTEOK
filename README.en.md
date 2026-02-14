@@ -170,9 +170,11 @@ Server runs at `http://localhost:3000`.
 
 ### 4. Initial Login
 
-Login with default admin account and change password:
-- Username: `admin` (or your configured value)
-- Password: `admin` (or your configured value)
+Login with the admin account. **There is no default password** — the values from `.env` (`ADMIN_USERNAME` / `ADMIN_PASSWORD`) are used.
+- Username: `ADMIN_USERNAME` in `.env`
+- Password: `ADMIN_PASSWORD` in `.env`
+
+> Security note: Set a strong password and rotate it immediately after the first login.
 
 ---
 
