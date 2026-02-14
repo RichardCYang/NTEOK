@@ -591,6 +591,13 @@ module.exports = (dependencies) => {
         }
     });
 
+    // 페이지 발행 링크(공유 URL)는 사실상 URL 안의 비밀 토큰(capability URL)
+    // 따라서 읽기 권한만 있는 협업자(READ)에게 토큰을 노출하지 않도록 최소권한을 적용
+    function canManagePublish(permission, ownerUserId, currentUserId) {
+        // 소유자이거나, 저장소 권한이 ADMIN 인 경우만 발행 링크를 관리/열람 가능
+        return String(ownerUserId) === String(currentUserId) || permission === 'ADMIN';
+    }
+
     router.get("/:id/publish", authMiddleware, async (req, res) => {
         const id = req.params.id;
         const userId = req.user.id;
@@ -603,10 +610,142 @@ module.exports = (dependencies) => {
                 return res.status(403).json({ error: "권한이 없습니다." });
             }
 
-            const [pub] = await pool.execute(`SELECT token, created_at, allow_comments FROM page_publish_links WHERE page_id=? AND is_active=1`, [id]);
+            // 암호화 페이지는 공개 발행 대상이 아니므로, 토큰/URL은 반환하지 않음
+            if (existing.is_encrypted === 1) {
+                return res.json({ published: false });
+            }
+
+            const [pub] = await pool.execute(
+                `SELECT token, created_at, allow_comments FROM page_publish_links WHERE page_id=? AND is_active=1`,
+                [id]
+            );
             if (!pub.length) return res.json({ published: false });
-            res.json({ published: true, token: pub[0].token, url: `${process.env.BASE_URL}/shared/page/${pub[0].token}`, createdAt: toIsoString(pub[0].created_at), allowComments: pub[0].allow_comments === 1 });
-        } catch (e) { logError("GET /api/pages/:id/publish", e); res.status(500).json({ error: "Failed" }); }
+
+            const base = (process.env.BASE_URL || '').replace(/\/$/, '');
+            const allowComments = pub[0].allow_comments === 1;
+
+            // READ 협업자에게는 발행됨 상태만 알려주고, 토큰은 숨김(정보 노출/오남용 방지)
+            if (!canManagePublish(permission, existing.user_id, userId)) {
+                return res.json({
+                    published: true,
+                    createdAt: toIsoString(pub[0].created_at),
+                    allowComments
+                });
+            }
+
+            res.json({
+                published: true,
+                token: pub[0].token,
+                url: base ? `${base}/shared/page/${pub[0].token}` : `/shared/page/${pub[0].token}`,
+                createdAt: toIsoString(pub[0].created_at),
+                allowComments
+            });
+        } catch (e) {
+            logError("GET /api/pages/:id/publish", e);
+            res.status(500).json({ error: "Failed" });
+        }
+    });
+
+    // 발행(또는 allow_comments 설정 갱신)
+    router.post("/:id/publish", authMiddleware, async (req, res) => {
+        const id = req.params.id;
+        const userId = req.user.id;
+
+        try {
+            const existing = await loadPageForMutationOr404(userId, id, res);
+            if (!existing) return;
+
+            const permission = await storagesRepo.getPermission(userId, existing.storage_id);
+            if (!permission) {
+                return res.status(403).json({ error: "권한이 없습니다." });
+            }
+
+            if (!canManagePublish(permission, existing.user_id, userId)) {
+                return res.status(403).json({ error: "발행 링크를 관리할 권한이 없습니다." });
+            }
+
+            if (existing.is_encrypted === 1) {
+                return res.status(400).json({ error: "암호화된 페이지는 발행할 수 없습니다." });
+            }
+
+            const allowComments = req.body && req.body.allowComments === true;
+            const now = new Date();
+            const nowStr = now.toISOString().slice(0, 19).replace('T', ' ');
+
+            // 이미 발행된 경우: 토큰은 유지하고 설정만 업데이트
+            const [active] = await pool.execute(
+                `SELECT id, token FROM page_publish_links WHERE page_id=? AND is_active=1 LIMIT 1`,
+                [id]
+            );
+
+            let token;
+            if (active.length) {
+                token = active[0].token;
+                await pool.execute(
+                    `UPDATE page_publish_links SET allow_comments=?, updated_at=? WHERE id=?`,
+                    [allowComments ? 1 : 0, nowStr, active[0].id]
+                );
+            } else {
+                // 최초 발행: 새 토큰 발급
+                let inserted = false;
+                for (let i = 0; i < 3; i++) {
+                    try {
+                        token = generatePublishToken();
+                        await pool.execute(
+                            `INSERT INTO page_publish_links (token, page_id, owner_user_id, is_active, allow_comments, created_at, updated_at)
+                             VALUES (?, ?, ?, 1, ?, ?, ?)`,
+                            [token, id, existing.user_id, allowComments ? 1 : 0, nowStr, nowStr]
+                        );
+                        inserted = true;
+                        break;
+                    } catch (err) {
+                        // 토큰 충돌(UNIQUE) 시 재시도
+                        if (err && err.code === 'ER_DUP_ENTRY') continue;
+                        throw err;
+                    }
+                }
+                if (!inserted) {
+                    return res.status(500).json({ error: "토큰 생성에 실패했습니다." });
+                }
+            }
+
+            const base = (process.env.BASE_URL || '').replace(/\/$/, '');
+            const url = base ? `${base}/shared/page/${token}` : `/shared/page/${token}`;
+            res.json({ published: true, token, url, allowComments });
+        } catch (e) {
+            logError("POST /api/pages/:id/publish", e);
+            res.status(500).json({ error: "Failed" });
+        }
+    });
+
+    // 발행 취소
+    router.delete("/:id/publish", authMiddleware, async (req, res) => {
+        const id = req.params.id;
+        const userId = req.user.id;
+
+        try {
+            const existing = await loadPageForMutationOr404(userId, id, res);
+            if (!existing) return;
+
+            const permission = await storagesRepo.getPermission(userId, existing.storage_id);
+            if (!permission) {
+                return res.status(403).json({ error: "권한이 없습니다." });
+            }
+
+            if (!canManagePublish(permission, existing.user_id, userId)) {
+                return res.status(403).json({ error: "발행 링크를 관리할 권한이 없습니다." });
+            }
+
+            const nowStr = new Date().toISOString().slice(0, 19).replace('T', ' ');
+            await pool.execute(
+                `UPDATE page_publish_links SET is_active=0, updated_at=? WHERE page_id=? AND is_active=1`,
+                [nowStr, id]
+            );
+            res.json({ ok: true });
+        } catch (e) {
+            logError("DELETE /api/pages/:id/publish", e);
+            res.status(500).json({ error: "Failed" });
+        }
     });
 
     return router;

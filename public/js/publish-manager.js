@@ -72,6 +72,14 @@ export function updatePublishButton() {
         return;
     }
 
+    // 발행 링크는 사실상 비밀 토큰이 포함된 URL(capability URL)이므로,
+    // 최소 권한 원칙에 따라 저장소 ADMIN(또는 소유자)만 발행/관리하도록 UI에서도 제한
+    // (서버에서도 반드시 동일하게 강제해야 함)
+    if (state?.currentStoragePermission !== 'ADMIN') {
+        publishBtn.style.display = 'none';
+        return;
+    }
+
     // 평문 페이지는 표시
     publishBtn.style.display = 'flex';
 
