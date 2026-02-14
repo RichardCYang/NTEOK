@@ -7,6 +7,7 @@
 import {
     secureFetch,
     escapeHtml,
+    escapeHtmlAttr,
     showErrorInEditor,
     closeAllDropdowns,
     openDropdown,
@@ -472,7 +473,7 @@ function displaySearchResults(results, query) {
             const iconClass = result.isEncrypted ? 'fa-solid fa-lock' : (result.icon || 'fa-regular fa-file-lines');
             
             li.innerHTML = `
-                <i class="${iconClass}"></i>
+                <i class="${escapeHtmlAttr(iconClass)}"></i>
                 <span class="search-result-title">${escapeHtml(result.title)}</span>
                 <span style="font-size: 11px; color: #9ca3af;">열기</span>
             `;

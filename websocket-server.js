@@ -7,20 +7,7 @@ const WebSocket = require("ws");
 const Y = require("yjs");
 const { URL } = require("url");
 const { formatDateForDb } = require("./network-utils");
-
-function validateAndNormalizeIcon(raw) {
-	if (raw === undefined || raw === null) return null;
-	if (typeof raw !== "string") return null;
-	const icon = raw.trim();
-	if (icon === "") return null;
-	if (/[<>]/.test(icon)) return null;
-	if (/[\x00-\x1F\x7F]/.test(icon)) return null;
-	const FA_CLASS_RE = /^(fa-(?:solid|regular|brands|duotone|light|thin))\s+fa-[a-z0-9-]+$/i;
-	const FA_SINGLE_RE = /^fa-[a-z0-9-]+$/i;
-	if (FA_CLASS_RE.test(icon) || FA_SINGLE_RE.test(icon)) return icon;
-	if (icon.length <= 8 && !/\s/.test(icon) && !/["'`&]/.test(icon)) return icon;
-	return null;
-}
+const { validateAndNormalizeIcon } = require("./utils/icon-utils");
 
 const wsConnections = {
     pages: new Map(),

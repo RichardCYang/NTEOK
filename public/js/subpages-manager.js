@@ -3,7 +3,7 @@
  * 하위 페이지 카드 그리드 렌더링
  */
 
-import { secureFetch, escapeHtml } from './ui-utils.js';
+import { secureFetch, escapeHtml, escapeHtmlAttr } from './ui-utils.js';
 
 let state = null;
 
@@ -140,7 +140,7 @@ function renderIcon(icon, isEncrypted) {
     if (icon) {
         // Font Awesome 아이콘
         if (icon.startsWith('fa-')) {
-            return `<i class="${escapeHtml(icon)}"></i>`;
+            return `<i class="${escapeHtmlAttr(icon)}"></i>`;
         }
         // 이모지
         return escapeHtml(icon);

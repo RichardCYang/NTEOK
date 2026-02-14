@@ -7,6 +7,7 @@ const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
 const crypto = require('crypto');
+const { validateAndNormalizeIcon } = require('../utils/icon-utils.js');
 
 /**
  * Backup Routes
@@ -717,7 +718,9 @@ ${JSON.stringify(pageMetadata, null, 2)}
                 // - pages.content는 WebSocket(Yjs) 초기 상태 시딩에도 사용되므로,
                 //   여기서 정화를 빼먹으면 악성 HTML이 협업자/새 세션으로 전파될 수 있다(Stored XSS).
                 const safeTitle = sanitizeInput(pageData.title || '제목 없음').slice(0, 200);
-                const safeIcon = pageData.icon ? sanitizeInput(String(pageData.icon)).slice(0, 64) : null;
+                // 중요: icon은 프론트에서 class="..."로 렌더링되므로, 백업(import)에서도
+                // allowlist 검증을 적용하여 속성 탈출/DOM XSS 위험을 제거
+                const safeIcon = validateAndNormalizeIcon(pageData.icon);
                 const safeContent = pageData.isEncrypted ? '' : sanitizeHtmlContent(pageData.content || '<p></p>');
                 const safeEncryptionSalt = pageData.encryptionSalt || null;
                 const safeEncryptedContent = pageData.encryptedContent || null;

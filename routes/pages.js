@@ -7,6 +7,7 @@ const https = require("node:https");
 const net = require("node:net");
 const ipaddr = require("ipaddr.js");
 const { assertImageFileSignature } = require("../security-utils.js");
+const { validateAndNormalizeIcon } = require("../utils/icon-utils.js");
 
 const erl = require("express-rate-limit");
 const rateLimit = erl.rateLimit || erl;
@@ -114,16 +115,6 @@ module.exports = (dependencies) => {
         const sfs = String(req.headers["sec-fetch-site"] || "").toLowerCase();
         if (sfs && !["same-origin", "same-site", "none"].includes(sfs)) return res.status(403).json({ error: "Forbidden" });
         return next();
-    }
-
-	function validateAndNormalizeIcon(raw) {
-        if (!raw || typeof raw !== "string") return null;
-        const icon = raw.trim();
-        if (icon === "" || /[<>]/.test(icon)) return null;
-        const FA_RE = /^(fa-[\w-]+)(\s+fa-[\w-]+)*$/i;
-        if (FA_RE.test(icon)) return icon;
-        if (icon.length <= 8 && !/\s/.test(icon) && !/["'`&]/.test(icon)) return icon;
-        return null;
     }
 
     router.get("/covers/user", authMiddleware, async (req, res) => {
