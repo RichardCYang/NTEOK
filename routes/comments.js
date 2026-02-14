@@ -180,7 +180,7 @@ module.exports = (dependencies) => {
 	 * POST /api/comments/shared/:token
 	 * - 공개 페이지 댓글 작성(게스트 허용)
 	 */
-	router.post('/shared/:token', sharedCommentWriteLimiter, async (req, res) => {
+	router.post('/shared/:token', sharedCommentWriteLimiter, requireSameOriginForAuth, async (req, res) => {
 		const token = req.params.token;
 		// 토큰은 DB 스키마상 VARCHAR(64)이며(발행 링크), 일반적으로 64자 랜덤(헥스) 문자열로 발급
 		// 형식이 명백히 이상한 값은 조기 차단(불필요한 DB hit/로그 노이즈 감소)
@@ -255,6 +255,44 @@ module.exports = (dependencies) => {
 		    res.status(500).json({ error: "댓글 작성 실패" });
 		}
 	});
+
+    /**
+     * Login CSRF 방지: 발행 페이지 댓글 작성 등은 CSRF 토큰이 없더라도 호출될 수 있으므로,
+     * Origin/Referer + Sec-Fetch-Site 기반으로 동일 출처 요청만 허용합니다.
+     */
+    function requireSameOriginForAuth(req, res, next) {
+        try {
+            const allowedOrigins = new Set(
+                String(process.env.ALLOWED_ORIGINS || dependencies.BASE_URL || "")
+                    .split(",")
+                    .map(s => s.trim())
+                    .filter(Boolean)
+                    .map(u => new URL(u).origin)
+            );
+
+            const sfs = req.headers["sec-fetch-site"];
+            if (typeof sfs === "string" && sfs && sfs !== "same-origin" && sfs !== "same-site") {
+                return res.status(403).json({ error: "요청 출처가 유효하지 않습니다." });
+            }
+
+            const origin = req.headers.origin;
+            const referer = req.headers.referer;
+
+            let reqOrigin = null;
+            if (typeof origin === "string" && origin) {
+                reqOrigin = origin;
+            } else if (typeof referer === "string" && referer) {
+                reqOrigin = new URL(referer).origin;
+            }
+
+            if (!reqOrigin) return res.status(403).json({ error: "요청 출처가 유효하지 않습니다." });
+            if (!allowedOrigins.has(reqOrigin)) return res.status(403).json({ error: "요청 출처가 유효하지 않습니다." });
+
+            return next();
+        } catch (e) {
+            return res.status(403).json({ error: "요청 출처가 유효하지 않습니다." });
+        }
+    }
 
     // Internal comments: pageId 기반은 로그인(인증) 전용
     router.get('/:pageId', authMiddleware, async (req, res) => {

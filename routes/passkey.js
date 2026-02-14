@@ -306,7 +306,7 @@ module.exports = (dependencies) => {
      * 패스키 직접 로그인 시작 (아이디 입력 없이) - Discoverable Credentials
      * POST /api/passkey/login/userless/options
      */
-    router.post("/login/userless/options", async (req, res) => {
+    router.post("/login/userless/options", passkeyLimiter, requireSameOriginForAuth, async (req, res) => {
         try {
             // allowCredentials를 비워두면 브라우저가 디바이스의 모든 패스키를 표시
             const options = await generateAuthenticationOptions({
@@ -323,6 +323,16 @@ module.exports = (dependencies) => {
 
             // 임시 세션 ID 생성 (패스키 로그인용)
             const tempSessionId = crypto.randomBytes(32).toString('hex');
+
+            // 방어적 정리: 만료된 챌린지는 주기적으로 정리되지만,
+            // 공개 엔드포인트이므로 요청 시점에도 한 번 더 정리해 DB 부하/테이블 팽창을 줄인다.
+            try {
+                await pool.execute(
+                    "DELETE FROM webauthn_challenges WHERE operation = 'userless_login' AND expires_at < NOW()"
+                );
+            } catch (_) {
+                // cleanup 실패는 로그인 흐름을 막지 않음
+            }
 
             await pool.execute(
                 `INSERT INTO webauthn_challenges
@@ -345,13 +355,25 @@ module.exports = (dependencies) => {
      * 패스키 직접 로그인 완료 (아이디 입력 없이) - Discoverable Credentials
      * POST /api/passkey/login/userless/verify
      */
-    router.post("/login/userless/verify", passkeyLimiter, async (req, res) => {
+    router.post("/login/userless/verify", passkeyLimiter, requireSameOriginForAuth, async (req, res) => {
         try {
             const { credential, tempSessionId } = req.body;
 
-            if (!credential || !tempSessionId) {
+            // 입력 검증(리소스 소모/DB 과부하 방지)
+            // tempSessionId는 서버가 발급한 32바이트 hex(64 chars)
+            if (typeof tempSessionId !== 'string' || !/^[a-f0-9]{64}$/i.test(tempSessionId))
+                return res.status(400).json({ error: "tempSessionId 형식이 올바르지 않습니다." });
+
+			if (typeof credential !== 'object' || credential === null || typeof credential.id !== 'string')
+                return res.status(400).json({ error: "credential 형식이 올바르지 않습니다." });
+
+			// DB 컬럼: passkeys.credential_id = VARCHAR(512)
+            // 과도한 입력(인덱스/비교 비용)을 사전에 차단
+            if (credential.id.length < 10 || credential.id.length > 512 || !/^[A-Za-z0-9_-]+$/.test(credential.id))
+                return res.status(400).json({ error: "credential.id 형식이 올바르지 않습니다." });
+
+            if (!credential || !tempSessionId)
                 return res.status(400).json({ error: "인증 정보가 없습니다." });
-            }
 
             // 챌린지 조회
             const [challenges] = await pool.execute(
@@ -529,7 +551,7 @@ module.exports = (dependencies) => {
      * 패스키 직접 로그인 시작 - 챌린지 생성 (비밀번호 없이)
      * POST /api/passkey/login/options
      */
-    router.post("/login/options", passkeyLimiter, async (req, res) => {
+    router.post("/login/options", passkeyLimiter, requireSameOriginForAuth, async (req, res) => {
         try {
             const { username } = req.body;
 
@@ -587,7 +609,7 @@ module.exports = (dependencies) => {
      * 패스키 직접 로그인 완료 - 검증 및 세션 생성 (비밀번호 없이)
      * POST /api/passkey/login/verify
      */
-    router.post("/login/verify", passkeyLimiter, async (req, res) => {
+    router.post("/login/verify", passkeyLimiter, requireSameOriginForAuth, async (req, res) => {
         try {
             const { credential, tempSessionId } = req.body;
 
