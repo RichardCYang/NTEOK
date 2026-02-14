@@ -27,6 +27,7 @@ const RATE_LIMIT_IPV6_SUBNET = (() => {
 module.exports = (dependencies) => {
     const {
         pool,
+        pagesRepo,
         storagesRepo,
         authMiddleware,
         toIsoString,
@@ -34,6 +35,31 @@ module.exports = (dependencies) => {
         logError,
         formatDateForDb
 	} = dependencies;
+
+    /**
+     * 페이지 접근 제어(특히 encrypted + share_allowed=0)를 일관되게 적용하기 위해,
+     * 댓글 엔드포인트에서도 pagesRepo.getPageByIdForUser()를 통해
+     * 해당 사용자에게 이 페이지가 보이는지를 먼저 판정
+     *
+     * 이렇게 하면, 다른 라우트에서 사용하는 중앙 정책(pageSqlPolicy)을
+     * 댓글 라우트가 우회하는 실수를 방지할 수 있음
+     */
+    async function loadPageForCommentsOr404(userId, pageId, res) {
+        try {
+            const page = await pagesRepo.getPageByIdForUser({ userId, pageId });
+            if (!page) {
+                // 권한이 없거나(공유 해제/차단) 페이지가 없는 경우를 동일하게 취급
+                // -> ID 추측/열거(enumeration) 완화
+                res.status(404).json({ error: "페이지를 찾을 수 없습니다." });
+                return null;
+            }
+            return page;
+        } catch (e) {
+            logError("loadPageForCommentsOr404", e);
+            res.status(500).json({ error: "페이지 확인 실패" });
+            return null;
+        }
+    }
 
     /**
      * Abuse/DoS 방어: 공개(발행 링크) 댓글 작성 엔드포인트 전용 제한
@@ -119,26 +145,12 @@ module.exports = (dependencies) => {
 			    if (!userId)
 			        return res.status(403).json({ error: "댓글이 비활성화되었습니다." });
 
-				// 내부 권한 확인(소유자/공유자)
-			    const [pageRows] = await pool.execute(
-			        `SELECT id, user_id, storage_id FROM pages WHERE id = ?`,
-			        [pageId]
-				);
-
-				if (!pageRows.length)
-					return res.status(404).json({ error: "페이지를 찾을 수 없습니다." });
-
-			    const page = pageRows[0];
-			    let canReadInternal = false;
-				if (page.user_id === userId) {
-					canReadInternal = true;
-				} else {
-			        const permission = await storagesRepo.getPermission(userId, page.storage_id);
-			        if (permission) canReadInternal = true;
-			    }
-
-				if (!canReadInternal)
-			        return res.status(403).json({ error: "댓글이 비활성화되었습니다." });
+				// 내부 권한 확인(소유자/공유자) + 중앙 정책(pageSqlPolicy) 적용
+				// - encrypted + share_allowed=0 페이지는 소유자 외에는 pagesRepo에서 NULL
+				const page = await pagesRepo.getPageByIdForUser({ userId, pageId });
+				if (!page) {
+					return res.status(403).json({ error: "댓글이 비활성화되었습니다." });
+				}
 		    }
 
 		    const [comments] = await pool.execute(
@@ -224,24 +236,10 @@ module.exports = (dependencies) => {
 					return res.status(403).json({ error: "댓글을 작성할 권한이 없습니다." });
 				}
 
-				const [pageRows] = await pool.execute(
-					`SELECT id, user_id, storage_id
-					   FROM pages
-					  WHERE id = ?
-					  LIMIT 1`,
-					[pageId]
-				);
-
-				if (!pageRows.length) {
-					return res.status(404).json({ error: "페이지를 찾을 수 없습니다." });
-				}
-
-				const page = pageRows[0];
-				if (Number(page.user_id) !== Number(userId)) {
-					const permission = await storagesRepo.getPermission(userId, page.storage_id);
-					if (!permission) {
-						return res.status(403).json({ error: "댓글을 작성할 권한이 없습니다." });
-					}
+				// 중앙 정책(pageSqlPolicy) 적용: encrypted + share_allowed=0 페이지는 소유자만
+				const page = await pagesRepo.getPageByIdForUser({ userId, pageId });
+				if (!page) {
+					return res.status(403).json({ error: "댓글을 작성할 권한이 없습니다." });
 				}
 			}
 
@@ -264,42 +262,9 @@ module.exports = (dependencies) => {
         const userId = req.user.id;
 
         try {
-            // 페이지 존재 및 권한 확인
-            // - 소유자
-            // - 공유받은 사용자 (컬렉션 공유)
-            // - 발행된 페이지이고 댓글 허용된 경우 (공개)
-
-            // 페이지 정보 조회
-            const [pageRows] = await pool.execute(
-                `SELECT p.id, p.user_id, p.storage_id
-                 FROM pages p
-                 WHERE p.id = ?`,
-                [pageId]
-            );
-
-            if (!pageRows.length) {
-                return res.status(404).json({ error: "페이지를 찾을 수 없습니다." });
-            }
-
-            const page = pageRows[0];
-            let canRead = false;
-            let isOwner = false;
-
-            if (userId) {
-                if (page.user_id === userId) {
-                    canRead = true;
-                    isOwner = true;
-                } else {
-                    // 저장소 권한 확인
-                    const permission = await storagesRepo.getPermission(userId, page.storage_id);
-                    if (permission) {
-                        canRead = true;
-                    }
-                }
-            }
-
-            if (!canRead)
-                return res.status(403).json({ error: "접근 권한이 없습니다." });
+            // 중앙 정책(pageSqlPolicy)을 우회하지 않도록 pagesRepo로 접근 여부 판정
+            const page = await loadPageForCommentsOr404(userId, pageId, res);
+            if (!page) return;
 
             // 댓글 목록 조회
             const [comments] = await pool.execute(
@@ -346,35 +311,9 @@ module.exports = (dependencies) => {
         const sanitizedGuestName = guestName ? sanitizeInput(guestName.trim()) : 'Guest';
 
         try {
-            // 권한 확인
-            const [pageRows] = await pool.execute(
-                `SELECT p.id, p.user_id, p.storage_id
-                 FROM pages p
-                 WHERE p.id = ?`,
-                [pageId]
-            );
-
-            if (!pageRows.length) {
-                return res.status(404).json({ error: "페이지를 찾을 수 없습니다." });
-            }
-
-            const page = pageRows[0];
-            let canComment = false;
-
-            if (userId) {
-                if (page.user_id === userId) {
-                    canComment = true;
-                } else {
-                    const permission = await storagesRepo.getPermission(userId, page.storage_id);
-                    // READ 권한만 있어도 댓글 작성 허용
-                    if (permission) {
-                        canComment = true;
-                    }
-                }
-            }
-
-            if (!canComment)
-                return res.status(403).json({ error: "댓글을 작성할 권한이 없습니다." });
+            // 중앙 정책(pageSqlPolicy)을 우회하지 않도록 pagesRepo로 접근 여부 판정
+            const page = await loadPageForCommentsOr404(userId, pageId, res);
+            if (!page) return;
 
             // 댓글 저장
             const now = new Date();
@@ -402,9 +341,8 @@ module.exports = (dependencies) => {
         try {
             // 댓글 확인
             const [comments] = await pool.execute(
-                `SELECT c.id, c.user_id, c.page_id, p.user_id as page_owner_id
+                `SELECT c.id, c.user_id, c.page_id
                  FROM comments c
-                 JOIN pages p ON c.page_id = p.id
                  WHERE c.id = ?`,
                 [commentId]
             );
@@ -415,8 +353,14 @@ module.exports = (dependencies) => {
 
             const comment = comments[0];
 
+            // 페이지 접근 가능 여부 확인 (공유 해제/차단/암호화 정책 반영)
+            const page = await loadPageForCommentsOr404(userId, comment.page_id, res);
+            if (!page) return;
+
             // 삭제 권한: 댓글 작성자 또는 페이지 소유자
-            if (comment.user_id !== userId && comment.page_owner_id !== userId) {
+            const isAuthor = comment.user_id && Number(comment.user_id) === Number(userId);
+            const isPageOwner = Number(page.user_id) === Number(userId);
+            if (!isAuthor && !isPageOwner) {
                 return res.status(403).json({ error: "삭제 권한이 없습니다." });
             }
 
@@ -449,7 +393,7 @@ module.exports = (dependencies) => {
         try {
             // 댓글 확인
             const [comments] = await pool.execute(
-                `SELECT c.id, c.user_id
+                `SELECT c.id, c.user_id, c.page_id
                  FROM comments c
                  WHERE c.id = ?`,
                 [commentId]
@@ -461,10 +405,14 @@ module.exports = (dependencies) => {
 
             const comment = comments[0];
 
+            // 페이지 접근 가능 여부 확인 (공유 해제/차단/암호화 정책 반영)
+            const page = await loadPageForCommentsOr404(userId, comment.page_id, res);
+            if (!page) return;
+
             // 수정 권한: 댓글 작성자만 가능 (익명 댓글은 수정 불가 - 세션 기반)
             // 익명 댓글(user_id IS NULL)은 현재 로직상 세션과 연결되지 않으므로 수정 불가능이 원칙.
             // 로그인한 사용자의 댓글만 수정 허용.
-            if (!userId || comment.user_id !== userId) {
+            if (!userId || !comment.user_id || Number(comment.user_id) !== Number(userId)) {
                 return res.status(403).json({ error: "수정 권한이 없습니다." });
             }
 
