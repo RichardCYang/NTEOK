@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const archiver = require('archiver');
-const AdmZip = require('adm-zip');
+const yauzl = require('yauzl');
 const { JSDOM } = require('jsdom');
 const path = require('path');
 const fs = require('fs');
@@ -35,11 +35,60 @@ const MAX_TOTAL_UNCOMPRESSED_BYTES = 200 * 1024 * 1024; // 전체 압축해제 �
 const MAX_SUSPICIOUS_RATIO = 2000;                    	// (선택) 초고압축 비율 의심 기준
 const MIN_RATIO_ENTRY_BYTES = 1 * 1024 * 1024;        	// ratio 검사 적용 최소 크기(1MB 이상)
 
-function getEntrySizes(entry) {
-	// adm-zip는 entry.header.size(압축해제 크기), entry.header.compressedSize(압축 크기)를 제공
-	const uncompressed = Number(entry?.header?.size || 0);
-	const compressed = Number(entry?.header?.compressedSize || 0);
-	return { uncompressed, compressed };
+function openZipFile(zipPath) {
+    return new Promise((resolve, reject) => {
+        yauzl.open(zipPath, { lazyEntries: true, autoClose: true }, (err, zipfile) => {
+            if (err) return reject(err);
+            resolve(zipfile);
+        });
+    });
+}
+
+function openZipReadStream(zipfile, entry) {
+    return new Promise((resolve, reject) => {
+        zipfile.openReadStream(entry, (err, stream) => {
+            if (err) return reject(err);
+            resolve(stream);
+        });
+    });
+}
+
+function readStreamToBufferWithLimits(stream, { perEntryLimitBytes, getTotalBytes, addTotalBytes, context }) {
+    return new Promise((resolve, reject) => {
+        const chunks = [];
+        let size = 0;
+        let done = false;
+
+        function fail(err) {
+            if (done) return;
+            done = true;
+            try { stream.destroy(); } catch (_) { }
+            reject(err);
+        }
+
+        stream.on('data', (chunk) => {
+            if (done) return;
+
+            size += chunk.length;
+            addTotalBytes(chunk.length);
+
+            if (size > perEntryLimitBytes) {
+                return fail(new Error(`[보안] ZIP 항목이 제한을 초과했습니다: ${context}`));
+            }
+
+            if (getTotalBytes() > MAX_TOTAL_UNCOMPRESSED_BYTES) {
+                return fail(new Error('[보안] ZIP 전체 해제 용량이 제한을 초과했습니다.'));
+            }
+
+            chunks.push(chunk);
+        });
+        stream.on('end', () => {
+            if (done) return;
+            done = true;
+            resolve(Buffer.concat(chunks, size));
+        });
+        stream.on('error', fail);
+    });
 }
 
 const backupUpload = multer({
@@ -226,43 +275,102 @@ module.exports = (dependencies) => {
 
 	const ALLOWED_IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
 
-	function getUncompressedSize(entry) {
-	    // adm-zip: entry.header.size 는 uncompressed size (number)
-	    const size = entry?.header?.size;
-	    if (typeof size !== "number" || !Number.isFinite(size) || size < 0)
-	        return null;
-	    return size;
-	}
+	async function readBackupZipEntriesForImport(zipPath) {
+		const zipfile = await openZipFile(zipPath);
+		const zipEntries = [];
 
-	function validateZipEntriesForImport(zipEntries) {
-	    if (!Array.isArray(zipEntries))
-	        throw new Error("유효하지 않은 백업 파일입니다.");
+		const allowedTopLevel = ['backup-info.json', 'workspaces/', 'collections/', 'pages/', 'images/'];
 
-	    if (zipEntries.length > BACKUP_IMPORT_MAX_ENTRIES)
-	        throw new Error(`백업 파일 내 항목이 너무 많습니다. (최대 ${BACKUP_IMPORT_MAX_ENTRIES}개)`);
+		let entryCount = 0;
+		let totalHeaderUncompressed = 0;
+		let totalBytesRead = 0;
+		const getTotalBytes = () => totalBytesRead;
+		const addTotalBytes = (n) => { totalBytesRead += n; };
 
-	    let total = 0;
+		return await new Promise((resolve, reject) => {
+			function fail(err) {
+				try { zipfile.close(); } catch (_) { }
+				reject(err);
+			}
 
-	    for (const entry of zipEntries) {
-	        if (!entry || entry.isDirectory) continue;
+			zipfile.on('error', fail);
+			zipfile.on('end', () => resolve(zipEntries));
 
-	        // Windows 구분자(\) 등 비정상 경로 방지
-	        if (typeof entry.entryName === "string" && entry.entryName.includes("\\"))
-	            throw new Error("백업 파일 경로 형식이 유효하지 않습니다.");
+			zipfile.on('entry', (entry) => {
+				(async () => {
+					try {
+						entryCount++;
+						if (entryCount > Math.min(BACKUP_IMPORT_MAX_ENTRIES, MAX_ZIP_ENTRIES)) {
+							throw new Error(`[보안] 백업 ZIP 엔트리 수가 너무 많습니다. (최대 ${Math.min(BACKUP_IMPORT_MAX_ENTRIES, MAX_ZIP_ENTRIES)}개)`);
+						}
 
-	        const size = getUncompressedSize(entry);
-	        if (size === null) {
-	            // 크기를 알 수 없는 엔트리는 처리하지 않음 (안전 우선)
-	            throw new Error("백업 파일의 일부 항목 크기를 확인할 수 없습니다.");
-	        }
+						const entryName = String(entry.fileName || '');
+						if (!entryName) throw new Error('[보안] ZIP 엔트리 이름이 비어 있습니다.');
 
-	        if (size > BACKUP_IMPORT_MAX_ENTRY_UNCOMPRESSED)
-	            throw new Error("백업 파일 내 일부 항목이 너무 큽니다.");
+						// 경로 조작/이상 경로 차단
+						if (entryName.includes('\\') || entryName.includes('\0')) {
+							throw new Error('[보안] ZIP 엔트리 경로 형식이 유효하지 않습니다.');
+						}
 
-	        total += size;
-	        if (total > BACKUP_IMPORT_MAX_TOTAL_UNCOMPRESSED)
-	            throw new Error("백업 파일의 전체 해제 용량이 너무 큽니다.");
-	    }
+						// '..'는 경로 세그먼트로만 차단(파일명에 포함된 '..'는 허용)
+						if (path.isAbsolute(entryName) || entryName.split('/').some(seg => seg === '..' || seg === '.')) {
+							throw new Error('[보안] ZIP 엔트리 경로 조작이 감지되었습니다.');
+						}
+
+						// 디렉토리는 skip
+						if (entryName.endsWith('/')) {
+							zipfile.readEntry();
+							return;
+						}
+
+						// 허용된 최상위 경로만 처리 (그 외는 해제하지 않고 무시)
+						const allowed = allowedTopLevel.some(prefix => entryName === prefix || entryName.startsWith(prefix));
+						if (!allowed) {
+							zipfile.readEntry();
+							return;
+						}
+
+						const uncompressed = Number(entry.uncompressedSize || 0);
+						const compressed = Number(entry.compressedSize || 0);
+						if (!Number.isFinite(uncompressed) || uncompressed < 0) {
+							throw new Error('[보안] ZIP 엔트리 크기 정보를 확인할 수 없습니다.');
+						}
+
+						if (uncompressed > BACKUP_IMPORT_MAX_ENTRY_UNCOMPRESSED) {
+							throw new Error('[보안] 백업 파일 내 일부 항목이 너무 큽니다.');
+						}
+
+						totalHeaderUncompressed += uncompressed;
+						if (totalHeaderUncompressed > BACKUP_IMPORT_MAX_TOTAL_UNCOMPRESSED) {
+							throw new Error('[보안] 백업 파일의 전체 해제 용량이 너무 큽니다.');
+						}
+
+						// (선택) 초고압축 비율 감지
+						if (compressed > 0 && uncompressed >= MIN_RATIO_ENTRY_BYTES) {
+							const ratio = uncompressed / compressed;
+							if (ratio > MAX_SUSPICIOUS_RATIO) {
+								throw new Error('[보안] 압축 비율이 비정상적으로 높아 Zip Bomb 의심으로 차단했습니다.');
+							}
+						}
+
+						const stream = await openZipReadStream(zipfile, entry);
+						const buf = await readStreamToBufferWithLimits(stream, {
+							perEntryLimitBytes: Math.min(BACKUP_IMPORT_MAX_ENTRY_UNCOMPRESSED, MAX_ENTRY_UNCOMPRESSED_BYTES),
+							getTotalBytes,
+							addTotalBytes,
+							context: entryName
+						});
+
+						zipEntries.push({ entryName, isDirectory: false, data: buf });
+						zipfile.readEntry();
+					} catch (e) {
+						fail(e);
+					}
+				})();
+			});
+
+			zipfile.readEntry();
+		});
 	}
 
 	function isAllowedImageFilename(filename) {
@@ -639,9 +747,9 @@ ${JSON.stringify(pageMetadata, null, 2)}
 
         let connection;
         try {
-            const zip = new AdmZip(uploadedFile.path);
-            const zipEntries = zip.getEntries();
-			validateZipEntriesForImport(zipEntries);
+            // 보안: Zip Bomb(Decompression Bomb) 대응을 위해 스트리밍으로 읽고,
+            // 실제 해제(읽기) 바이트 기준으로 상한을 강제
+            const zipEntries = await readBackupZipEntriesForImport(uploadedFile.path);
 
             connection = await pool.getConnection();
             await connection.beginTransaction();
@@ -656,7 +764,7 @@ ${JSON.stringify(pageMetadata, null, 2)}
             
             for (const entry of workspaceEntries) {
                 if (entry.isDirectory || !entry.entryName.endsWith('.json')) continue;
-                const metadata = JSON.parse(entry.getData().toString('utf8'));
+                const metadata = JSON.parse(entry.data.toString('utf8'));
                 const nowStr = formatDateForDb(new Date());
                 const storageId = 'stg-' + Date.now() + '-' + crypto.randomBytes(4).toString('hex');
 
@@ -702,7 +810,7 @@ ${JSON.stringify(pageMetadata, null, 2)}
                 const storageId = workspaceMap.get(folderName);
                 if (!storageId) continue;
 
-                const pageData = extractPageFromHTML(entry.getData().toString('utf8'));
+                const pageData = extractPageFromHTML(entry.data.toString('utf8'));
                 const pageId = generatePageId(new Date());
                 const nowStr = formatDateForDb(new Date());
 
@@ -775,7 +883,7 @@ ${JSON.stringify(pageMetadata, null, 2)}
                 const targetDir = path.join(__dirname, '..', isCover ? 'covers' : 'imgs', String(userId));
                 if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
 
-                const imageData = entry.getData();
+                const imageData = entry.data;
                 if (isSupportedImageBuffer(imageData, filename)) {
                     fs.writeFileSync(path.join(targetDir, filename), imageData);
                     totalImages++;
