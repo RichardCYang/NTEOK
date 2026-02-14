@@ -2200,7 +2200,7 @@ function getSessionFromId(sessionId) {
                 });
 
                 // WebSocket 서버 초기화
-                initWebSocketServer(httpsServer, sessions, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, SESSION_COOKIE_NAME, getSessionFromId, getClientIpFromRequest);
+                initWebSocketServer(httpsServer, sessions, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, SESSION_COOKIE_NAME, getSessionFromId, getClientIpFromRequest, pageSqlPolicy);
 
                 // WebSocket Rate Limit 정리 작업 시작
                 startRateLimitCleanup();
@@ -2257,7 +2257,7 @@ function getSessionFromId(sessionId) {
                 // WebSocket 서버 초기화
                 // HTTP 모드에서도 WebSocket 메시지 처리 시 세션 검증 로직(getSessionFromId)을 사용해야
                 // 동기화 메시지가 "Session expired"로 오판되어 연결이 반복 종료되는 문제를 방지할 수 있습니다.
-                initWebSocketServer(httpServer, sessions, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, SESSION_COOKIE_NAME, getSessionFromId, getClientIpFromRequest);
+                initWebSocketServer(httpServer, sessions, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, SESSION_COOKIE_NAME, getSessionFromId, getClientIpFromRequest, pageSqlPolicy);
 
                 // WebSocket Rate Limit 정리 작업 시작
                 startRateLimitCleanup();
@@ -2281,7 +2281,7 @@ function getSessionFromId(sessionId) {
             // WebSocket 서버 초기화
             // HTTP 모드에서도 WebSocket 메시지 처리 시 세션 검증 로직(getSessionFromId)을 사용해야
             // 동기화 메시지가 "Session expired"로 오판되어 연결이 반복 종료되는 문제를 방지할 수 있습니다.
-            initWebSocketServer(httpServer, sessions, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, SESSION_COOKIE_NAME, getSessionFromId, getClientIpFromRequest);
+            initWebSocketServer(httpServer, sessions, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, SESSION_COOKIE_NAME, getSessionFromId, getClientIpFromRequest, pageSqlPolicy);
 
             // WebSocket Rate Limit 정리 작업 시작
             startRateLimitCleanup();

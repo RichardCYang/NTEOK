@@ -340,7 +340,7 @@ async function getStoragePermission(pool, userId, storageId) {
     return null;
 }
 
-function initWebSocketServer(server, sessions, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, SESSION_COOKIE_NAME, getSessionFromId, getClientIpFromRequest) {
+function initWebSocketServer(server, sessions, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, SESSION_COOKIE_NAME, getSessionFromId, getClientIpFromRequest, pageSqlPolicy) {
     /**
      * ==================== WebSocket 보안: Origin 검증 (CSWSH 방지) ====================
      * - WebSocket은 브라우저의 SOP/CORS로 보호되지 않으므로, 핸드셰이크에서 Origin allowlist 검증이 필요합니다.
@@ -438,7 +438,7 @@ function initWebSocketServer(server, sessions, pool, sanitizeHtmlContent, IS_PRO
 			registerSessionConnection(sessionId, ws);
 		    ws.on('pong', () => { ws.isAlive = true; });
 			ws.on('message', async (msg) => {
-		        try { const data = JSON.parse(msg); await handleWebSocketMessage(ws, data, pool, sanitizeHtmlContent, getSessionFromId); } catch (e) { ws.send(JSON.stringify({ event: 'error', data: { message: 'Failed' } })); }
+		        try { const data = JSON.parse(msg); await handleWebSocketMessage(ws, data, pool, sanitizeHtmlContent, getSessionFromId, pageSqlPolicy); } catch (e) { ws.send(JSON.stringify({ event: 'error', data: { message: 'Failed' } })); }
 		    });
 		    ws.send(JSON.stringify({ event: 'connected', data: { userId: session.userId, username: session.username } }));
       	} catch (err) { try { ws.close(1011, 'Error'); } catch (_) {} }
@@ -448,14 +448,14 @@ function initWebSocketServer(server, sessions, pool, sanitizeHtmlContent, IS_PRO
     return wss;
 }
 
-async function handleWebSocketMessage(ws, data, pool, sanitizeHtmlContent, getSessionFromId) {
+async function handleWebSocketMessage(ws, data, pool, sanitizeHtmlContent, getSessionFromId, pageSqlPolicy) {
 	const { type, payload } = data;
 	if (ws.sessionId && typeof getSessionFromId === 'function') {
 	    const s = getSessionFromId(ws.sessionId);
 	    if (!s || !s.userId) { try { ws.close(1008, 'Expired'); } catch (e) {} return; }
 	}
 	switch (type) {
-        case 'subscribe-page': await handleSubscribePage(ws, payload, pool, sanitizeHtmlContent); break;
+        case 'subscribe-page': await handleSubscribePage(ws, payload, pool, sanitizeHtmlContent, pageSqlPolicy); break;
         case 'unsubscribe-page': handleUnsubscribePage(ws, payload, pool, sanitizeHtmlContent); break;
         case 'subscribe-storage': await handleSubscribeStorage(ws, payload, pool); break;
         case 'unsubscribe-storage': handleUnsubscribeStorage(ws, payload); break;
@@ -465,17 +465,42 @@ async function handleWebSocketMessage(ws, data, pool, sanitizeHtmlContent, getSe
     }
 }
 
-async function handleSubscribePage(ws, payload, pool, sanitizeHtmlContent) {
+async function handleSubscribePage(ws, payload, pool, sanitizeHtmlContent, pageSqlPolicy) {
     const { pageId } = payload;
     const userId = ws.userId;
     try {
-        const [rows] = await pool.execute(`SELECT p.id, p.is_encrypted, p.storage_id FROM pages p WHERE p.id = ?`, [pageId]);
-        if (!rows.length) { ws.send(JSON.stringify({ event: 'error', data: { message: 'Page not found' } })); return; }
+        // 보안: WebSocket에서도 HTTP API와 동일한 가시성 정책(pageSqlPolicy)을 적용해야 함
+        // - 암호화(is_encrypted=1) + 공유불가(share_allowed=0) 페이지는 작성자만 접근 가능
+        const vis = (pageSqlPolicy && typeof pageSqlPolicy.andVisible === "function")
+            ? pageSqlPolicy.andVisible({ alias: "p", viewerUserId: userId })
+            : { sql: " AND NOT (p.is_encrypted = 1 AND p.share_allowed = 0 AND p.user_id != ?)", params: [userId] };
+
+        const [rows] = await pool.execute(
+            `SELECT p.id, p.user_id, p.is_encrypted, p.share_allowed, p.storage_id
+             FROM pages p
+             WHERE p.id = ?${vis.sql}`,
+            [pageId, ...vis.params]
+        );
+
+        // 존재 여부/권한 여부 노출 최소화: 접근 불가도 동일하게 Not found
+        if (!rows.length) {
+            ws.send(JSON.stringify({ event: 'error', data: { message: 'Page not found' } }));
+            return;
+        }
 
         const page = rows[0];
         const permission = await getStoragePermission(pool, userId, page.storage_id);
 
-        if (!permission) { ws.send(JSON.stringify({ event: 'error', data: { message: 'Unauthorized' } })); return; }
+        if (!permission) {
+            ws.send(JSON.stringify({ event: 'error', data: { message: 'Page not found' } }));
+            return;
+        }
+
+        // 방어적 재검증(정책 누락/변경 대비)
+        if (page.is_encrypted === 1 && page.share_allowed === 0 && Number(page.user_id) !== Number(userId)) {
+            ws.send(JSON.stringify({ event: 'error', data: { message: 'Page not found' } }));
+            return;
+        }
 
         if (page.is_encrypted === 1) {
             // 암호화된 페이지는 실시간 편집 지원 안 함 (단순 동기화만 하거나 제외)
