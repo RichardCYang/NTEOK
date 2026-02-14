@@ -90,6 +90,10 @@ module.exports = (dependencies) => {
 	 */
 	router.get('/shared/:token', async (req, res) => {
 		const token = req.params.token;
+		// 형식이 명백히 이상한 값은 조기 차단
+		if (typeof token !== 'string' || token.length !== 64 || !/^[a-f0-9]{64}$/i.test(token)) {
+			return res.status(404).json({ error: "페이지를 찾을 수 없습니다." });
+		}
 		const session = dependencies.getSessionFromRequest(req);
 		const userId = session ? session.userId : null;
 
@@ -166,6 +170,11 @@ module.exports = (dependencies) => {
 	 */
 	router.post('/shared/:token', sharedCommentWriteLimiter, async (req, res) => {
 		const token = req.params.token;
+		// 토큰은 DB 스키마상 VARCHAR(64)이며(발행 링크), 일반적으로 64자 랜덤(헥스) 문자열로 발급
+		// 형식이 명백히 이상한 값은 조기 차단(불필요한 DB hit/로그 노이즈 감소)
+		if (typeof token !== 'string' || token.length !== 64 || !/^[a-f0-9]{64}$/i.test(token)) {
+			return res.status(404).json({ error: "페이지를 찾을 수 없습니다." });
+		}
 		const session = dependencies.getSessionFromRequest(req);
 		const userId = session ? session.userId : null;
 		const { content, guestName } = req.body;
@@ -206,8 +215,35 @@ module.exports = (dependencies) => {
 
 		    const pageId = publishRows[0].page_id;
 		    const allowComments = Number(publishRows[0].allow_comments) === 1;
-		    if (!allowComments && !userId)
-			    return res.status(403).json({ error: "댓글을 작성할 권한이 없습니다." });
+			// allow_comments=0 인 경우:
+			//  - 비로그인 사용자는 차단(기존 동작)
+			//  - 로그인 사용자는 *반드시* 내부 권한(소유자/공유 저장소 권한)을 확인해야 함
+			//    (그렇지 않으면 발행 링크만 알면 임의 계정으로도 댓글 작성이 가능해짐)
+			if (!allowComments) {
+				if (!userId) {
+					return res.status(403).json({ error: "댓글을 작성할 권한이 없습니다." });
+				}
+
+				const [pageRows] = await pool.execute(
+					`SELECT id, user_id, storage_id
+					   FROM pages
+					  WHERE id = ?
+					  LIMIT 1`,
+					[pageId]
+				);
+
+				if (!pageRows.length) {
+					return res.status(404).json({ error: "페이지를 찾을 수 없습니다." });
+				}
+
+				const page = pageRows[0];
+				if (Number(page.user_id) !== Number(userId)) {
+					const permission = await storagesRepo.getPermission(userId, page.storage_id);
+					if (!permission) {
+						return res.status(403).json({ error: "댓글을 작성할 권한이 없습니다." });
+					}
+				}
+			}
 
 		    const nowStr = formatDateForDb(new Date());
 		    await pool.execute(

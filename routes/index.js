@@ -148,6 +148,10 @@ module.exports = (dependencies) => {
      * GET /shared/page/:token
      */
     router.get("/shared/page/:token", (req, res) => {
+        const token = req.params.token;
+        if (typeof token !== 'string' || token.length !== 64 || !/^[a-f0-9]{64}$/i.test(token)) {
+            return res.status(404).send("페이지를 찾을 수 없습니다.");
+        }
     	return sendHtmlWithNonce(res, "shared-page.html");
     });
 
@@ -219,6 +223,10 @@ module.exports = (dependencies) => {
      */
     router.get("/api/shared/page/:token", async (req, res) => {
         const token = req.params.token;
+        // 형식이 명백히 이상한 값은 조기 차단
+        if (typeof token !== 'string' || token.length !== 64 || !/^[a-f0-9]{64}$/i.test(token)) {
+            return res.status(404).json({ error: "페이지를 찾을 수 없습니다." });
+        }
         const clientIp = typeof getClientIpFromRequest === 'function' ? getClientIpFromRequest(req) : (req.ip || req.socket?.remoteAddress || 'unknown');
 
         try {
