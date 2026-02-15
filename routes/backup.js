@@ -373,10 +373,50 @@ module.exports = (dependencies) => {
 		});
 	}
 
-	function isAllowedImageFilename(filename) {
-	    const ext = path.extname(filename).toLowerCase();
-	    return ALLOWED_IMAGE_EXTENSIONS.has(ext);
-	}
+    /**
+     * 보안(Zip Slip 방지): ZIP 엔트리에서 나온 파일명은 절대 신뢰하면 안 됨
+     * - 확장자만 체크하면 Windows 백슬래시(\) 경로 구분자를 이용한 탈출 가능성이 생길 수 있음
+     */
+    const IMAGE_FILENAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,199}\.(?:png|jpe?g|gif|webp)$/i;
+    const WINDOWS_RESERVED = new Set([
+        "CON","PRN","AUX","NUL",
+        "COM1","COM2","COM3","COM4","COM5","COM6","COM7","COM8","COM9",
+        "LPT1","LPT2","LPT3","LPT4","LPT5","LPT6","LPT7","LPT8","LPT9",
+    ]);
+
+    function getSafeImageFilenameFromZipPath(maybePath) {
+        if (typeof maybePath !== "string") return null;
+        // 백슬래시를 슬래시로 정규화(Windows 경로 구분자 우회 차단)
+        const normalized = maybePath.replace(/\\/g, "/").trim();
+        if (!normalized) return null;
+
+        const base = normalized.split("/").pop();
+        if (!base) return null;
+        // 제어문자/경로문자/상위이동 차단
+        if (/[\x00-\x1F\x7F]/.test(base)) return null;
+        if (base.includes("/") || base.includes("\\")) return null;
+        if (base.includes("..")) return null;
+
+        if (!IMAGE_FILENAME_RE.test(base)) return null;
+
+        // Windows 예약 장치명(CON, PRN 등) 방어(상대경로 탈출은 아니지만 예외 케이스 방지)
+        const stem = base.replace(/\.[^.]+$/, "");
+        const first = stem.split(".")[0].toUpperCase();
+        if (WINDOWS_RESERVED.has(first)) return null;
+
+        return base;
+    }
+
+    function safeResolveIntoDir(baseDir, filename) {
+        const base = path.resolve(baseDir);
+        const target = path.resolve(base, filename);
+        const rel = path.relative(base, target);
+        // base 밖으로 나가거나(../), 절대경로가 되어버리면 차단
+        if (rel.startsWith("..") || path.isAbsolute(rel)) return null;
+        // startsWith 경계(유사 prefix) 혼동 방지
+        if (!target.startsWith(base + path.sep)) return null;
+        return target;
+    }
 
 	function isSupportedImageBuffer(buf, filename) {
 	    if (!Buffer.isBuffer(buf) || buf.length < 12) return false;
@@ -871,9 +911,9 @@ ${JSON.stringify(pageMetadata, null, 2)}
                 const imagePath = entry.entryName.substring(7);
                 if (DEFAULT_COVERS.includes(imagePath)) continue;
 
-                const parts = imagePath.split('/');
-                const filename = parts[parts.length - 1];
-                if (!isAllowedImageFilename(filename)) continue;
+                // ZIP 엔트리에서 파일명 추출 + 엄격 검증 (Zip Slip/Path Traversal 방지)
+                const filename = getSafeImageFilenameFromZipPath(imagePath);
+                if (!filename) continue;
 
                 let isCover = false;
                 for (const pd of pageDataMap.values()) {
@@ -884,10 +924,14 @@ ${JSON.stringify(pageMetadata, null, 2)}
                 if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
 
                 const imageData = entry.data;
-                if (isSupportedImageBuffer(imageData, filename)) {
-                    fs.writeFileSync(path.join(targetDir, filename), imageData);
-                    totalImages++;
-                }
+                if (!isSupportedImageBuffer(imageData, filename)) continue;
+
+                // 최종 저장 경로를 baseDir 내부로 강제
+                const targetPath = safeResolveIntoDir(targetDir, filename);
+                if (!targetPath) continue;
+
+                fs.writeFileSync(targetPath, imageData);
+                totalImages++;
             }
 
             await connection.commit();
@@ -908,54 +952,6 @@ ${JSON.stringify(pageMetadata, null, 2)}
      */
     function sanitizeFilename(name) {
         return name.replace(/[<>:"/\\|?*]/g, '_').substring(0, 100);
-    }
-
-    /**
-     * 안전한 경로 검증 (ZIP Slip 방지)
-     * @param {string} entryPath - ZIP 엔트리 경로
-     * @param {string} baseDir - 기준 디렉토리
-     * @returns {boolean} - 안전한 경로면 true
-     */
-	function isSafePath(entryPath, baseDir) {
-		// Windows 경로 구분자(\\) 차단
-		if (entryPath.includes('\\')) {
-		    console.warn(`[보안] Windows 경로 구분자 감지: ${entryPath}`);
-		    return false;
-		}
-
-        // 경로 조작 문자열 검사
-        if (entryPath.includes('..') || entryPath.includes('./') || entryPath.includes('.\\')) {
-            console.warn(`[보안] 경로 조작 시도 감지: ${entryPath}`);
-            return false;
-        }
-
-        // 절대 경로 검사
-        if (path.isAbsolute(entryPath)) {
-            console.warn(`[보안] 절대 경로 사용 시도: ${entryPath}`);
-            return false;
-        }
-
-        // null byte 검사
-        if (entryPath.includes('\0')) {
-            console.warn(`[보안] null byte 감지: ${entryPath}`);
-            return false;
-        }
-
-        // 최종 경로가 기준 디렉토리 내부인지 검증
-        try {
-            const resolvedPath = path.resolve(baseDir, entryPath);
-            const resolvedBase = path.resolve(baseDir);
-
-            if (!resolvedPath.startsWith(resolvedBase + path.sep) && resolvedPath !== resolvedBase) {
-                console.warn(`[보안] 디렉토리 탈출 시도: ${entryPath} -> ${resolvedPath}`);
-                return false;
-            }
-        } catch (error) {
-            console.error(`[보안] 경로 검증 오류: ${entryPath}`, error);
-            return false;
-        }
-
-        return true;
     }
 
     return router;
