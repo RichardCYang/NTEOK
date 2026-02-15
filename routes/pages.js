@@ -289,8 +289,25 @@ module.exports = (dependencies) => {
             if (!existing) return;
 
             const permission = await storagesRepo.getPermission(userId, existing.storage_id);
-            if (!permission || !['EDIT', 'ADMIN'].includes(permission)) {
+            if (!permission) {
                 return res.status(403).json({ error: "이 페이지를 삭제할 권한이 없습니다." });
+            }
+
+            /**
+             * 권한 정책 강화 (Broken Access Control 방지)
+             * - ADMIN: 어떤 페이지든 삭제 가능
+             * - EDIT : 본인이 작성한 페이미 삭제 가능
+             * - READ : 삭제 불가
+             */
+            const isOwnerOfPage = Number(existing.user_id) === Number(userId);
+            const canDelete =
+                permission === 'ADMIN' ||
+                (permission === 'EDIT' && isOwnerOfPage);
+
+            if (!canDelete) {
+                return res.status(403).json({
+                    error: "이 페이지를 삭제할 권한이 없습니다. (ADMIN 또는 본인 작성 페이지만 삭제 가능)"
+                });
             }
 
             await pool.execute(`DELETE FROM pages WHERE id=?`, [id]);

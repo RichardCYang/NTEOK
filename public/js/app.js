@@ -190,13 +190,22 @@ async function handlePageListClick(event, state) {
     if (pageMenuBtn) {
         event.stopPropagation();
         const pageId = pageMenuBtn.dataset.pageId;
+
+        // 권한 체크: ADMIN이거나, EDIT이면서 본인 페이지인 경우만 삭제 가능
+        const page = state.pages.find(p => p.id === pageId);
+        const isOwner = page && state.currentUser && Number(page.userId) === Number(state.currentUser.id);
+        const isAdmin = state.currentStoragePermission === 'ADMIN';
+        const canDelete = isAdmin || (state.currentStoragePermission === 'EDIT' && isOwner);
+
         const menuItems = `
             <button data-action="set-icon" data-page-id="${escapeHtml(pageId)}">
                 <i class="fa-solid fa-icons"></i> 아이콘 설정
             </button>
+            ${canDelete ? `
             <button data-action="delete-page" data-page-id="${escapeHtml(pageId)}">
                 <i class="fa-regular fa-trash-can"></i> 페이지 삭제
             </button>
+            ` : ''}
         `;
         showContextMenu(pageMenuBtn, menuItems);
         return;
