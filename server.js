@@ -18,7 +18,7 @@ const certManager = require("./cert-manager");
 const multer = require("multer");
 const fs = require("fs");
 const compression = require("compression");
-const { installDomPurifySecurityHooks } = require("./security-utils");
+const { installDomPurifySecurityHooks, assertImageFileSignature } = require("./security-utils");
 const ipKeyGenerator = expressRateLimit.ipKeyGenerator || (expressRateLimit.default && expressRateLimit.default.ipKeyGenerator);
 
 // DOMPurify 보안 훅 설치 (target=_blank에 rel=noopener/noreferrer 강제 등)
@@ -606,6 +606,39 @@ function sendSafeDownload(res, filePath, downloadName) {
     res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
     setNoStore(res);
     return res.download(filePath, downloadName);
+}
+
+function sendSafeImage(res, filePath) {
+    // 업로드 파일이 변조/오염되었을 가능성을 방어적으로 차단
+    // (확장자만 믿지 않고 매직 넘버로 실제 타입 확인)
+    const detected = assertImageFileSignature(filePath, new Set(['jpg', 'jpeg', 'png', 'gif', 'webp']));
+
+    // MIME sniffing을 막아 이미지처럼 보이는 HTML/JS가 문서로 렌더링되는 것을 방지
+    res.setHeader('Content-Type', detected.mime);
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+
+    // 혹시라도 브라우저가 문서로 처리하는 경우를 대비해 강한 제한(다운로드만큼 강하지 않아도 됨)
+    res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+    // 타 사이트에서의 임의 임베드/재사용 최소화(선택)
+    res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
+
+    setNoStore(res);
+
+    // 디렉터리/특수파일 오용 방지
+    try {
+        const st = fs.statSync(filePath);
+        if (!st.isFile()) return res.status(404).end();
+        res.setHeader('Content-Length', String(st.size));
+    } catch (_) {
+        return res.status(404).end();
+    }
+
+    const stream = fs.createReadStream(filePath);
+    stream.on('error', () => {
+        if (!res.headersSent) return res.status(404).end();
+        try { res.end(); } catch (_) {}
+    });
+    return stream.pipe(res);
 }
 
 // DOMPurify는 JSDOM 위에서 동작 -> 이때 입력 HTML을 DOM으로 파싱하는 과정에서
@@ -1673,7 +1706,7 @@ app.get('/covers/:userId/:filename', authMiddleware, async (req, res) => {
         // 권한 확인: 본인 파일이거나, 공유받은 페이지의 커버인 경우
         if (requestedUserId === currentUserId) {
             // 본인 파일 - 접근 허용
-            return res.sendFile(filePath);
+            return sendSafeImage(res, filePath);
         }
 
         // 핵심 수정: /imgs, /paperclip과 동일하게 storages + storage_shares 권한 모델로 통일
@@ -1697,7 +1730,7 @@ app.get('/covers/:userId/:filename', authMiddleware, async (req, res) => {
 
         if (rows.length > 0) {
             // 공유받은 페이지의 커버 - 접근 허용
-            return res.sendFile(filePath);
+            return sendSafeImage(res, filePath);
         }
 
         // 권한 없음
@@ -1730,7 +1763,7 @@ app.get('/imgs/:userId/:filename', authMiddleware, async (req, res) => {
 
         // 이미지 허용 확장자 allowlist
         const ext = path.extname(sanitizedFilename).toLowerCase();
-        const ALLOWED_IMG_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg']);
+        const ALLOWED_IMG_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp']);
         if (!ALLOWED_IMG_EXTS.has(ext)) {
             return res.status(400).json({ error: '지원하지 않는 파일 형식입니다.' });
         }
@@ -1745,7 +1778,7 @@ app.get('/imgs/:userId/:filename', authMiddleware, async (req, res) => {
         // 권한 확인: 본인 파일이거나, 공유받은 페이지의 이미지인 경우
         if (requestedUserId === currentUserId) {
             // 본인 파일 - 접근 허용
-            return res.sendFile(filePath);
+            return sendSafeImage(res, filePath);
         }
 
         // 다른 사용자의 파일 - 공유받은 페이지의 이미지인지 확인
@@ -1775,7 +1808,7 @@ app.get('/imgs/:userId/:filename', authMiddleware, async (req, res) => {
 
                         if (rows.length > 0) {
                             // 공유받은 페이지의 이미지 - 접근 허용
-                            return res.sendFile(filePath);
+                            return sendSafeImage(res, filePath);
                         }
 
                         // 보안: 실시간 동기화 중인(Yjs) 문서의 내용도 확인
@@ -1806,13 +1839,13 @@ app.get('/imgs/:userId/:filename', authMiddleware, async (req, res) => {
                                     // HTML 스냅샷 확인
                                     const content = ydoc.getMap('metadata').get('content') || '';
                                     if (content.includes(imageUrl)) {
-                                        return res.sendFile(filePath);
+                                        return sendSafeImage(res, filePath);
                                     }
                                     // HTML 스냅샷이 아직 업데이트 전이라면, Y.XmlFragment 직접 확인
                                     // toString()은 전체 XML 구조를 반환하므로 속성(data-src)에 포함된 URL도 찾을 수 있음
                                     const xmlContent = ydoc.getXmlFragment('prosemirror').toString();
                                     if (xmlContent.includes(imageUrl)) {
-                                        return res.sendFile(filePath);
+                                        return sendSafeImage(res, filePath);
                                     }
                                 }
                             }
