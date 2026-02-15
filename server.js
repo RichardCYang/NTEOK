@@ -738,8 +738,19 @@ function generateStrongPassword(length = 20) {
     const DIGITS = "0123456789";
     const SPECIAL = "!@#$%^&*(),.?\":{}|<>";
 
-    const pick = (chars) => chars[Math.floor(Math.random() * chars.length)];
-    // 최소 구성(4종 중 3종 이상을 확실히 포함)
+    // 보안: Math.random()은 CSPRNG가 아니므로(예측 가능성/편향 가능성)
+    // 보안 비밀값(관리자 임시 비밀번호 등) 생성에 사용하면 안 됨
+    // Node.js에서는 crypto.randomInt/randomBytes를 사용
+    const pick = (chars) => {
+        if (!chars || chars.length === 0) throw new Error("generateStrongPassword: empty charset");
+        // crypto.randomInt는 0..max-1 구간에서 균등 분포의 암호학적 난수를 반환
+        return chars[crypto.randomInt(0, chars.length)];
+    };
+
+    // 최소 길이: 정책(10자 이상 + 3종 이상)과 운영 편의성 고려
+    const targetLen = Math.max(12, Number.isFinite(Number(length)) ? Number(length) : 20);
+
+    // 최소 구성: 4종 문자군을 모두 포함(정책의 3종 이상을 항상 만족)
     const required = [
         pick(LOWER),
         pick(UPPER),
@@ -747,22 +758,21 @@ function generateStrongPassword(length = 20) {
         pick(SPECIAL),
     ];
 
-    let rest = "";
     const all = LOWER + UPPER + DIGITS + SPECIAL;
-    for (let i = required.length; i < Math.max(length, 12); i++) {
-        rest += pick(all);
+    const arr = required.slice();
+    for (let i = arr.length; i < targetLen; i++) {
+        arr.push(pick(all));
     }
 
-    // 셔플
-    const arr = (required.join("") + rest).split("");
+    // 셔플 (CSPRNG 기반 Fisher–Yates)
     for (let i = arr.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
+        const j = crypto.randomInt(0, i + 1);
         [arr[i], arr[j]] = [arr[j], arr[i]];
     }
 
     const pw = arr.join("");
-    // 혹시 실패하면 재귀(극히 드묾)
-    return validatePasswordStrength(pw).valid ? pw : generateStrongPassword(length);
+    // 혹시 정책 검사에 실패하면 재시도(극히 드묾)
+    return validatePasswordStrength(pw).valid ? pw : generateStrongPassword(targetLen);
 }
 
 /**
