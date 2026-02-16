@@ -63,8 +63,20 @@ module.exports = (dependencies) => {
         fileUpload,
         path,
         fs,
-        yjsDocuments
+        yjsDocuments,
+        getClientIpFromRequest
 	} = dependencies;
+
+    function getClientIp(req) {
+        return (
+            req.clientIp ||
+            (typeof getClientIpFromRequest === 'function' ? getClientIpFromRequest(req) : null) ||
+            req.ip ||
+            req.connection?.remoteAddress ||
+            req.socket?.remoteAddress ||
+            'unknown'
+        );
+    }
 
     /**
      * 보안: 암호화(is_encrypted=1) + 공유불가(share_allowed=0) 페이지는 작성자만 접근 가능해야 함
@@ -107,7 +119,7 @@ module.exports = (dependencies) => {
     const outboundProxyLimiter = rateLimit({
         windowMs: 60 * 1000,
         max: 30,
-        keyGenerator: (req) => { const uid = req.user?.id ? String(req.user.id) : "anon"; const rawIp = req.clientIp || req.ip; const ipKey = rawIp ? ipKeyGenerator(rawIp, 56) : "noip"; return `outbound:${uid}:${ipKey}`; },
+        keyGenerator: (req) => { const uid = req.user?.id ? String(req.user.id) : "anon"; const rawIp = getClientIp(req); const ipKey = rawIp && rawIp !== 'unknown' ? ipKeyGenerator(rawIp, 56) : "noip"; return `outbound:${uid}:${ipKey}`; },
         handler: (req, res) => res.status(429).json({ error: "Too many requests" }),
     });
 

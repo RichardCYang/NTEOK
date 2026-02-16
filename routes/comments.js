@@ -33,8 +33,20 @@ module.exports = (dependencies) => {
         toIsoString,
         sanitizeInput,
         logError,
-        formatDateForDb
+        formatDateForDb,
+        getClientIpFromRequest
 	} = dependencies;
+
+    function getClientIp(req) {
+        return (
+            req.clientIp ||
+            (typeof getClientIpFromRequest === 'function' ? getClientIpFromRequest(req) : null) ||
+            req.ip ||
+            req.connection?.remoteAddress ||
+            req.socket?.remoteAddress ||
+            'unknown'
+        );
+    }
 
     /**
      * 페이지 접근 제어(특히 encrypted + share_allowed=0)를 일관되게 적용하기 위해,
@@ -77,9 +89,9 @@ module.exports = (dependencies) => {
         message: { error: "댓글 작성 요청이 너무 많습니다. 잠시 후 다시 시도해 주세요." },
         keyGenerator: (req) => {
             const token = String(req.params.token || "");
-            const rawIp = req.clientIp || req.ip || req.connection?.remoteAddress;
+            const rawIp = getClientIp(req);
             // 중요: IPv6 우회 방지를 위해 ipKeyGenerator로 서브넷 마스킹 적용
-            const ipKey = rawIp ? ipKeyGenerator(rawIp, RATE_LIMIT_IPV6_SUBNET) : "noip";
+            const ipKey = rawIp && rawIp !== 'unknown' ? ipKeyGenerator(rawIp, RATE_LIMIT_IPV6_SUBNET) : "noip";
             return `guest:${token}:${ipKey}`;
         },
     });

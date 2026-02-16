@@ -127,7 +127,7 @@ module.exports = (dependencies) => {
         // 보안: 제어문자 포함 비밀번호 차단 (bcrypt 입력 처리 모호성/정책 우회 방지)
         if (PASSWORD_CONTROL_CHARS_RE.test(password)) {
             // 사용자 존재/정책 노출 방지: 동일한 실패 메시지 유지
-            console.warn(`[로그인 실패] IP: ${req.ip}, 사유: 비정상 비밀번호 입력`);
+            console.warn(`[로그인 실패] IP: ${getClientIp(req)}, 사유: 비정상 비밀번호 입력`);
             return res.status(401).json({ error: "아이디 또는 비밀번호가 올바르지 않습니다." });
         }
 
@@ -157,7 +157,7 @@ module.exports = (dependencies) => {
                 });
 
                 // 보안: 사용자 존재 여부를 노출하지 않도록 통일된 메시지 사용
-                console.warn(`[로그인 실패] IP: ${req.ip}, 사유: 인증 실패`);
+                console.warn(`[로그인 실패] IP: ${getClientIp(req)}, 사유: 인증 실패`);
                 return res.status(401).json({ error: "아이디 또는 비밀번호가 올바르지 않습니다." });
             }
 
@@ -177,7 +177,7 @@ module.exports = (dependencies) => {
                 });
 
                 // 보안: 사용자 존재 여부를 노출하지 않도록 통일된 메시지 사용
-                console.warn(`[로그인 실패] IP: ${req.ip}, 사유: 인증 실패`);
+                console.warn(`[로그인 실패] IP: ${getClientIp(req)}, 사유: 인증 실패`);
                 return res.status(401).json({ error: "아이디 또는 비밀번호가 올바르지 않습니다." });
             }
 
@@ -187,7 +187,7 @@ module.exports = (dependencies) => {
                     country_whitelist_enabled: user.country_whitelist_enabled,
                     allowed_login_countries: user.allowed_login_countries
                 },
-                req.ip || req.connection.remoteAddress
+                getClientIp(req)
             );
 
             if (!countryCheck.allowed) {
@@ -201,7 +201,7 @@ module.exports = (dependencies) => {
                     userAgent: req.headers['user-agent'] || null
                 });
 
-                console.warn(`[로그인 실패] IP: ${req.ip}, 사유: ${countryCheck.reason}`);
+                console.warn(`[로그인 실패] IP: ${getClientIp(req)}, 사유: ${countryCheck.reason}`);
                 return res.status(403).json({
                     error: "현재 위치에서는 로그인할 수 없습니다. 계정 보안 설정을 확인하세요."
                 });
@@ -367,7 +367,7 @@ module.exports = (dependencies) => {
             if (!ok) {
                 // 보안: 민감 정보 마스킹 (사용자명 일부만 표시)
                 const maskedUsername = req.user.username.substring(0, 2) + '***';
-                console.warn(`[계정 삭제 실패] 사용자: ${maskedUsername}, IP: ${req.ip}, 사유: 비밀번호 불일치`);
+                console.warn(`[계정 삭제 실패] 사용자: ${maskedUsername}, IP: ${getClientIp(req)}, 사유: 비밀번호 불일치`);
                 return res.status(401).json({ error: "비밀번호가 올바르지 않습니다." });
             }
 

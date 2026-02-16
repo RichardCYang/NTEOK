@@ -433,7 +433,7 @@ module.exports = (dependencies) => {
                 await recordLoginAttempt(pool, {
                     userId: userId,
                     username: username,
-                    ipAddress: req.ip || req.connection.remoteAddress,
+                    ipAddress: getClientIp(req),
                     port: req.connection.remotePort || 0,
                     success: false,
                     failureReason: '패스키 userless 로그인 인증 실패',
@@ -684,7 +684,7 @@ module.exports = (dependencies) => {
                 await recordLoginAttempt(pool, {
                     userId: userId,
                     username: username,
-                    ipAddress: req.ip || req.connection.remoteAddress,
+                    ipAddress: getClientIp(req),
                     port: req.connection.remotePort || 0,
                     success: false,
                     failureReason: '패스키 로그인 인증 실패',
@@ -721,21 +721,21 @@ module.exports = (dependencies) => {
                     country_whitelist_enabled: country_whitelist_enabled,
                     allowed_login_countries: allowed_login_countries
                 },
-                req.ip || req.connection.remoteAddress
+                getClientIp(req)
             );
 
             if (!countryCheck.allowed) {
                 await recordLoginAttempt(pool, {
                     userId: userId,
                     username: username,
-                    ipAddress: req.ip || req.connection.remoteAddress,
+                    ipAddress: getClientIp(req),
                     port: req.connection.remotePort || 0,
                     success: false,
                     failureReason: countryCheck.reason,
                     userAgent: req.headers['user-agent'] || null
                 });
 
-                console.warn(`[로그인 실패] IP: ${req.ip}, 사유: ${countryCheck.reason}`);
+                console.warn(`[로그인 실패] IP: ${getClientIp(req)}, 사유: ${countryCheck.reason}`);
                 return res.status(403).json({
                     error: "현재 위치에서는 로그인할 수 없습니다. 계정 보안 설정을 확인하세요."
                 });
@@ -785,7 +785,7 @@ module.exports = (dependencies) => {
             recordLoginAttempt(pool, {
                 userId: userId,
                 username: username,
-                ipAddress: req.ip || req.connection.remoteAddress,
+                ipAddress: getClientIp(req),
                 port: req.connection.remotePort || 0,
                 success: true,
                 failureReason: null,
@@ -928,7 +928,7 @@ module.exports = (dependencies) => {
                 await recordLoginAttempt(pool, {
                     userId: userId,
                     username: username,
-                    ipAddress: req.ip || req.connection.remoteAddress,
+                    ipAddress: getClientIp(req),
                     port: req.connection.remotePort || 0,
                     success: false,
                     failureReason: '패스키 인증 실패',
@@ -1007,7 +1007,7 @@ module.exports = (dependencies) => {
             recordLoginAttempt(pool, {
                 userId: userId,
                 username: username,
-                ipAddress: req.ip || req.connection.remoteAddress,
+                ipAddress: getClientIp(req),
                 port: req.connection.remotePort || 0,
                 success: true,
                 failureReason: null,

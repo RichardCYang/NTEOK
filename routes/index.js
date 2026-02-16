@@ -15,6 +15,17 @@ const fsNative = require('fs');
 module.exports = (dependencies) => {
 	const { getSessionFromRequest, fs, pool, logError, getClientIpFromRequest, sanitizeHtmlContent } = dependencies;
 
+    function getClientIp(req) {
+        return (
+            req.clientIp ||
+            (typeof getClientIpFromRequest === 'function' ? getClientIpFromRequest(req) : null) ||
+            req.ip ||
+            req.connection?.remoteAddress ||
+            req.socket?.remoteAddress ||
+            'unknown'
+        );
+    }
+
     function sendHtmlWithNonce(res, filename, theme = 'default') {
         const filePath = path.join(__dirname, "..", "public", filename);
         fs.readFile(filePath, "utf8", (err, html) => {
@@ -227,7 +238,7 @@ module.exports = (dependencies) => {
         if (typeof token !== 'string' || token.length !== 64 || !/^[a-f0-9]{64}$/i.test(token)) {
             return res.status(404).json({ error: "페이지를 찾을 수 없습니다." });
         }
-        const clientIp = typeof getClientIpFromRequest === 'function' ? getClientIpFromRequest(req) : (req.ip || req.socket?.remoteAddress || 'unknown');
+        const clientIp = getClientIp(req);
 
         try {
             const [publishRows] = await pool.execute(

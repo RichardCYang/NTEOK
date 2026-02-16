@@ -434,7 +434,7 @@ module.exports = (dependencies) => {
                     userAgent: req.headers['user-agent'] || null
                 });
 
-                console.warn(`[로그인 실패] IP: ${req.ip}, 사유: ${countryCheck.reason}`);
+                console.warn(`[로그인 실패] IP: ${getClientIp(req)}, 사유: ${countryCheck.reason}`);
                 sessions.delete(tempSessionId);
                 return res.status(403).json({
                     error: "현재 위치에서는 로그인할 수 없습니다. 계정 보안 설정을 확인하세요."

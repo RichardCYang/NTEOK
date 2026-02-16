@@ -1000,7 +1000,7 @@ function authMiddleware(req, res, next) {
         const sessionId = req.cookies[SESSION_COOKIE_NAME];
         // 보안: 세션 ID 일부만 표시
         const maskedSessionId = sessionId ? `${sessionId.substring(0, 8)}...` : '없음';
-        console.warn(`[인증 실패] ${req.method} ${req.path} - 세션 ID: ${maskedSessionId}, 유효한 세션: 없음, IP: ${req.clientIp || req.ip}`);
+        console.warn(`[인증 실패] ${req.method} ${req.path} - 세션 ID: ${maskedSessionId}, 유효한 세션: 없음, IP: ${req.clientIp}`);
         return res.status(401).json({ error: "로그인이 필요합니다." });
     }
 
