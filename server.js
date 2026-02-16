@@ -1092,6 +1092,7 @@ async function initDb() {
             cover_image VARCHAR(255) NULL,
             cover_position INT NOT NULL DEFAULT 50,
             horizontal_padding INT NULL,
+            deleted_at  DATETIME     NULL,
             CONSTRAINT fk_pages_user
                 FOREIGN KEY (user_id)
                 REFERENCES users(id)
@@ -1106,6 +1107,13 @@ async function initDb() {
                 ON DELETE CASCADE
         ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
     `);
+
+    // pages 테이블에 deleted_at 컬럼 추가 (하위 호환성)
+    try {
+        await pool.execute(`ALTER TABLE pages ADD COLUMN deleted_at DATETIME NULL`);
+    } catch (e) {
+        // 이미 존재하면 무시
+    }
 
     // storage_shares 테이블 생성
     await pool.execute(`

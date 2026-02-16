@@ -27,6 +27,7 @@ module.exports = ({ pool, pageSqlPolicy }) => {
                     FROM pages p
                     WHERE p.user_id = ?
                     AND p.storage_id = ?
+                    AND p.deleted_at IS NULL
                     ${visOwner.sql}
                 )
                 UNION ALL
@@ -38,6 +39,7 @@ module.exports = ({ pool, pageSqlPolicy }) => {
                     INNER JOIN storage_shares ss ON p.storage_id = ss.storage_id
                     WHERE ss.shared_with_user_id = ?
                     AND p.storage_id = ?
+                    AND p.deleted_at IS NULL
                     ${visShared.sql}
                 )
                 ORDER BY parent_id IS NULL DESC, sort_order ASC, updated_at DESC
@@ -55,21 +57,119 @@ module.exports = ({ pool, pageSqlPolicy }) => {
         /**
          * 단일 페이지 조회
          */
-        async getPageByIdForUser({ userId, pageId }) {
+        async getPageByIdForUser({ userId, pageId, includeDeleted = false }) {
             const vis = pageSqlPolicy.andVisible({ alias: "p", viewerUserId: userId });
-            const [rows] = await pool.execute(
-                `SELECT p.id, p.title, p.content, p.encryption_salt, p.encrypted_content,
+            let sql = `SELECT p.id, p.title, p.content, p.encryption_salt, p.encrypted_content,
                         p.created_at, p.updated_at, p.parent_id, p.sort_order, p.storage_id,
                         p.is_encrypted, p.share_allowed, p.user_id, p.icon, p.cover_image, p.cover_position,
-                        p.horizontal_padding
+                        p.horizontal_padding, p.deleted_at
                  FROM pages p
                  LEFT JOIN storage_shares ss ON p.storage_id = ss.storage_id AND ss.shared_with_user_id = ?
                  WHERE p.id = ? AND (p.user_id = ? OR ss.storage_id IS NOT NULL)
-                 ${vis.sql}`,
-                [userId, pageId, userId, ...vis.params]
-            );
+                 ${vis.sql}`;
+            
+            if (!includeDeleted) {
+                sql += ` AND p.deleted_at IS NULL`;
+            }
+
+            const [rows] = await pool.execute(sql, [userId, pageId, userId, ...vis.params]);
 
             return rows?.[0] || null;
+        },
+
+        /**
+         * 휴지통 목록 조회
+         */
+        async listTrashedPagesForUser({ userId, storageId }) {
+            const vis = pageSqlPolicy.andVisible({ alias: "p", viewerUserId: userId });
+            const [rows] = await pool.execute(
+                `SELECT p.id, p.title, p.updated_at, p.deleted_at, p.storage_id, p.user_id
+                 FROM pages p
+                 LEFT JOIN storage_shares ss ON p.storage_id = ss.storage_id AND ss.shared_with_user_id = ?
+                 WHERE (p.user_id = ? OR ss.storage_id IS NOT NULL)
+                 AND p.storage_id = ?
+                 AND p.deleted_at IS NULL = 0
+                 ${vis.sql}
+                 ORDER BY p.deleted_at DESC`,
+                [userId, userId, storageId, ...vis.params]
+            );
+            return rows || [];
+        },
+
+        /**
+         * 페이지 복구
+         */
+        async restorePage(pageId, userId) {
+            // 권한 체크: 본인 소유이거나 저장소 관리 권한이 있어야 함 (단순하게 소유자만 가능하게 하거나, 저장소 권한 연동)
+            // 여기서는 페이지 작성자 혹은 저장소 소유자만 복구 가능하게 함
+            await pool.execute(
+                `UPDATE pages SET deleted_at = NULL WHERE id = ? AND (user_id = ? OR storage_id IN (SELECT id FROM storages WHERE user_id = ?))`,
+                [pageId, userId, userId]
+            );
+        },
+
+        /**
+         * 페이지 및 모든 하위 페이지 복구
+         */
+        async restorePageAndDescendants(pageId, userId) {
+            const [allPages] = await pool.execute(`SELECT id, parent_id FROM pages WHERE storage_id IN (SELECT storage_id FROM pages WHERE id = ?)`, [pageId]);
+            
+            const descendants = [];
+            const findDescendants = (pid) => {
+                allPages.forEach(p => {
+                    if (p.parent_id === pid) {
+                        descendants.push(p.id);
+                        findDescendants(p.id);
+                    }
+                });
+            };
+            findDescendants(pageId);
+
+            const targetIds = [pageId, ...descendants];
+            const placeholders = targetIds.map(() => '?').join(',');
+            
+            await pool.execute(
+                `UPDATE pages SET deleted_at = NULL WHERE id IN (${placeholders})`,
+                targetIds
+            );
+        },
+
+        /**
+         * 페이지 영구 삭제
+         */
+        async permanentlyDeletePage(pageId, userId) {
+            await pool.execute(
+                `DELETE FROM pages WHERE id = ? AND (user_id = ? OR storage_id IN (SELECT id FROM storages WHERE user_id = ?))`,
+                [pageId, userId, userId]
+            );
+        },
+
+        /**
+         * 페이지 및 모든 하위 페이지 휴지통으로 이동
+         */
+        async softDeletePageAndDescendants(pageId, userId) {
+            // 1. 권한 체크 (간소화: 삭제 권한이 있는지는 호출부에서 이미 체크함)
+            // 2. 재귀적으로 모든 하위 페이지 ID 가져오기
+            const [allPages] = await pool.execute(`SELECT id, parent_id FROM pages WHERE storage_id IN (SELECT storage_id FROM pages WHERE id = ?)`, [pageId]);
+            
+            const descendants = [];
+            const findDescendants = (pid) => {
+                allPages.forEach(p => {
+                    if (p.parent_id === pid) {
+                        descendants.push(p.id);
+                        findDescendants(p.id);
+                    }
+                });
+            };
+            findDescendants(pageId);
+
+            const targetIds = [pageId, ...descendants];
+            const placeholders = targetIds.map(() => '?').join(',');
+            
+            await pool.execute(
+                `UPDATE pages SET deleted_at = NOW() WHERE id IN (${placeholders})`,
+                targetIds
+            );
         },
 
         /**
@@ -83,6 +183,7 @@ module.exports = ({ pool, pageSqlPolicy }) => {
                         p.is_encrypted, p.share_allowed, p.icon, p.cover_image, p.cover_position
                  FROM pages p
                  WHERE p.storage_id IN (SELECT id FROM storages WHERE user_id = ?)
+                 AND p.deleted_at IS NULL
                  ${vis.sql}
                  ORDER BY p.storage_id ASC, p.parent_id IS NULL DESC, p.sort_order ASC`,
                 [userId, ...vis.params]

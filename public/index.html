@@ -124,6 +124,10 @@
                             <i class="fa-solid fa-clock-rotate-left"></i>
                             <span data-i18n="show_all_updates">모든 업데이트 보기</span>
                         </button>
+                        <button id="show-trash-btn" class="sidebar-menu-item" style="width: 100%; text-align: left; background: none; border: none; padding: 8px 12px; border-radius: 6px; cursor: pointer; color: #6b7280; font-size: 14px; display: flex; align-items: center; gap: 8px; transition: background-color 0.2s, color 0.2s;">
+                            <i class="fa-solid fa-trash-can"></i>
+                            <span data-i18n="show_trash">휴지통 보기</span>
+                        </button>
                     </div>
                     <div class="sidebar-category-label" data-i18n="workspace_label">워크스페이스</div>
                     <div class="sidebar-main">
@@ -1181,6 +1185,27 @@
                         <!-- 업데이트 항목들이 여기에 동적으로 생성됩니다 -->
                         <div style="padding: 40px; text-align: center; color: #9ca3af;">
                             업데이트 정보를 불러오는 중...
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 휴지통 모달 -->
+        <div id="trash-modal" class="modal hidden">
+            <div class="modal-overlay"></div>
+            <div class="modal-content" style="max-width: 600px; max-height: 70vh;">
+                <div class="modal-header">
+                    <h2 data-i18n="trash_title">휴지통</h2>
+                    <button id="close-trash-modal-btn" class="modal-close-btn">
+                        <i class="fa-solid fa-xmark"></i>
+                    </button>
+                </div>
+                <div class="modal-body" style="padding: 0; overflow-y: auto;">
+                    <div id="trash-list" class="trash-list" style="display: flex; flex-direction: column;">
+                        <!-- 휴지통 항목들이 여기에 동적으로 생성됩니다 -->
+                        <div style="padding: 40px; text-align: center; color: #9ca3af;">
+                            휴지통이 비어 있습니다.
                         </div>
                     </div>
                 </div>

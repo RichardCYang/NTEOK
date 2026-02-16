@@ -43,5 +43,15 @@
     "select_storage_desc": "Select a storage where your notes and pages are stored.",
     "new_storage": "Create New Storage",
     "your_storages": "Your Storages",
-    "storage_empty": "No storages. Click the button above to create your first storage!"
+    "storage_empty": "No storages. Click the button above to create your first storage!",
+    "quick_search": "Quick Search",
+    "show_all_updates": "All Updates",
+    "show_trash": "Trash",
+    "trash_title": "Trash",
+    "trash_empty": "Trash is empty.",
+    "trash_restore": "Restore",
+    "trash_permanent_delete": "Delete Permanently",
+    "trash_delete_confirm": "Are you sure you want to delete this page permanently? This action cannot be undone.",
+    "updates_history": "All Updates",
+    "workspace_label": "Workspace"
 }

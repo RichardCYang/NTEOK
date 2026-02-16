@@ -43,5 +43,15 @@
     "select_storage_desc": "ノートとページが保存されているストレージを選択してください。",
     "new_storage": "新しいストレージを作成",
     "your_storages": "マイストレージ",
-    "storage_empty": "ストレージがありません。上のボタンを押して最初のストレージを作成してください！"
+    "storage_empty": "ストレージ가ありません。上のボタンを押して最初のストレージを作成してください！",
+    "quick_search": "クイック検索",
+    "show_all_updates": "すべての更新を表示",
+    "show_trash": "ゴミ箱を表示",
+    "trash_title": "ゴミ箱",
+    "trash_empty": "ゴミ箱は空です。",
+    "trash_restore": "復元",
+    "trash_permanent_delete": "完全に削除",
+    "trash_delete_confirm": "このページを完全に削除してもよろしいですか？この操作は取り消せません。",
+    "updates_history": "すべての更新を表示",
+    "workspace_label": "ワークスペース"
 }

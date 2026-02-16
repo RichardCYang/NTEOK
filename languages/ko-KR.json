@@ -43,5 +43,15 @@
     "select_storage_desc": "노트와 페이지가 저장된 저장소를 선택하세요.",
     "new_storage": "새 저장소 만들기",
     "your_storages": "나의 저장소",
-    "storage_empty": "저장소가 없습니다. 상단의 버튼을 눌러 첫 번째 저장소를 만들어보세요!"
+    "storage_empty": "저장소가 없습니다. 상단의 버튼을 눌러 첫 번째 저장소를 만들어보세요!",
+    "quick_search": "빠른 검색",
+    "show_all_updates": "모든 업데이트 보기",
+    "show_trash": "휴지통 보기",
+    "trash_title": "휴지통",
+    "trash_empty": "휴지통이 비어 있습니다.",
+    "trash_restore": "복구",
+    "trash_permanent_delete": "영구 삭제",
+    "trash_delete_confirm": "이 페이지를 영구적으로 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.",
+    "updates_history": "모든 업데이트 보기",
+    "workspace_label": "워크스페이스"
 }

@@ -102,6 +102,8 @@ function getActionIcon(action) {
         case 'REORDER_PAGES': return '<i class="fa-solid fa-sort" style="color: #7c3aed;"></i>';
         case 'UPDATE_COVER': return '<i class="fa-solid fa-image" style="color: #ea580c;"></i>';
         case 'DELETE_COVER': return '<i class="fa-solid fa-image-slash" style="color: #9ca3af;"></i>';
+        case 'RESTORE_PAGE': return '<i class="fa-solid fa-rotate-left" style="color: #10b981;"></i>';
+        case 'PERMANENT_DELETE_PAGE': return '<i class="fa-solid fa-trash-can" style="color: #dc2626;"></i>';
         default: return '<i class="fa-solid fa-clock-rotate-left"></i>';
     }
 }
@@ -111,7 +113,7 @@ function getActionMessage(item) {
     const pageTitle = item.pageTitle || (item.details && item.details.title) || '제목 없음';
     
     // 삭제된 페이지는 링크를 걸지 않음
-    const isDeleted = action === 'DELETE_PAGE';
+    const isDeleted = action === 'DELETE_PAGE' || action === 'PERMANENT_DELETE_PAGE';
     const pageLink = (item.pageId && !isDeleted) 
         ? `<span class="update-page-link" data-page-id="${item.pageId}">${escapeHtml(pageTitle)}</span>` 
         : `<span style="font-weight: 600;">${escapeHtml(pageTitle)}</span>`;
@@ -119,7 +121,9 @@ function getActionMessage(item) {
     switch (action) {
         case 'CREATE_PAGE': return `${pageLink} 페이지를 생성했습니다.`;
         case 'UPDATE_PAGE': return `${pageLink} 문서를 수정했습니다.`;
-        case 'DELETE_PAGE': return `${pageLink} 페이지를 삭제했습니다.`;
+        case 'DELETE_PAGE': return `${pageLink} 페이지를 휴지통으로 이동했습니다.`;
+        case 'RESTORE_PAGE': return `${pageLink} 페이지를 복구했습니다.`;
+        case 'PERMANENT_DELETE_PAGE': return `${pageLink} 페이지를 영구 삭제했습니다.`;
         case 'REORDER_PAGES': return `페이지 순서를 변경했습니다.`;
         case 'UPDATE_COVER': return `${pageLink} 페이지의 커버를 변경했습니다.`;
         case 'DELETE_COVER': return `${pageLink} 페이지의 커버를 제거했습니다.`;

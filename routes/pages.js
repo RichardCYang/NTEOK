@@ -179,6 +179,28 @@ module.exports = (dependencies) => {
         }
     });
 
+    // 휴지통 목록 조회
+    router.get("/trash", authMiddleware, async (req, res) => {
+        try {
+            const userId = req.user.id;
+            const storageId = typeof req.query.storageId === "string" ? req.query.storageId.trim() : null;
+            if (!storageId) return res.status(400).json({ error: "storageId required" });
+
+            const pages = await pagesRepo.listTrashedPagesForUser({ userId, storageId });
+            res.json(pages.map(p => ({
+                id: p.id,
+                title: p.title || "제목 없음",
+                updatedAt: toIsoString(p.updated_at),
+                deletedAt: toIsoString(p.deleted_at),
+                storageId: p.storage_id,
+                userId: p.user_id
+            })));
+        } catch (e) {
+            logError("GET /api/pages/trash", e);
+            res.status(500).json({ error: "Failed" });
+        }
+    });
+
     router.get("/:id", authMiddleware, async (req, res) => {
         const id = req.params.id;
         const userId = req.user.id;
@@ -293,6 +315,77 @@ module.exports = (dependencies) => {
         } catch (e) { logError("PATCH /api/pages/reorder", e); res.status(500).json({ error: "Failed" }); }
     });
 
+    // 페이지 복구
+    router.post("/:id/restore", authMiddleware, async (req, res) => {
+        try {
+            const userId = req.user.id;
+            const { id } = req.params;
+
+            const page = await pagesRepo.getPageByIdForUser({ userId, pageId: id, includeDeleted: true });
+            if (!page) return res.status(404).json({ error: "Not found" });
+
+            const permission = await storagesRepo.getPermission(userId, page.storage_id);
+            if (!permission || !['EDIT', 'ADMIN'].includes(permission)) {
+                return res.status(403).json({ error: "이 페이지를 복구할 권한이 없습니다." });
+            }
+
+            await pagesRepo.restorePageAndDescendants(id, userId);
+
+            await pagesRepo.recordUpdateHistory({
+                userId,
+                storageId: page.storage_id,
+                pageId: id,
+                action: 'RESTORE_PAGE',
+                details: { title: page.title }
+            });
+
+            res.json({ ok: true });
+        } catch (e) {
+            logError("POST /api/pages/:id/restore", e);
+            res.status(500).json({ error: "Failed" });
+        }
+    });
+
+    // 페이지 영구 삭제
+    router.delete("/:id/permanent", authMiddleware, async (req, res) => {
+        try {
+            const userId = req.user.id;
+            const { id } = req.params;
+
+            const page = await pagesRepo.getPageByIdForUser({ userId, pageId: id, includeDeleted: true });
+            if (!page) return res.status(404).json({ error: "Not found" });
+
+            const permission = await storagesRepo.getPermission(userId, page.storage_id);
+            if (!permission) {
+                return res.status(403).json({ error: "권한이 없습니다." });
+            }
+
+            const isOwnerOfPage = Number(page.user_id) === Number(userId);
+            const canDelete =
+                permission === 'ADMIN' ||
+                (permission === 'EDIT' && isOwnerOfPage);
+
+            if (!canDelete) {
+                return res.status(403).json({ error: "이 페이지를 영구 삭제할 권한이 없습니다." });
+            }
+
+            await pagesRepo.permanentlyDeletePage(id, userId);
+
+            await pagesRepo.recordUpdateHistory({
+                userId,
+                storageId: page.storage_id,
+                pageId: id,
+                action: 'PERMANENT_DELETE_PAGE',
+                details: { title: page.title }
+            });
+
+            res.json({ ok: true });
+        } catch (e) {
+            logError("DELETE /api/pages/:id/permanent", e);
+            res.status(500).json({ error: "Failed" });
+        }
+    });
+
     router.delete("/:id", authMiddleware, async (req, res) => {
         const id = req.params.id;
         const userId = req.user.id;
@@ -322,7 +415,8 @@ module.exports = (dependencies) => {
                 });
             }
 
-            await pool.execute(`DELETE FROM pages WHERE id=?`, [id]);
+            // Soft delete: 자신과 모든 하위 페이지의 deleted_at 설정
+            await pagesRepo.softDeletePageAndDescendants(id, userId);
 
             await pagesRepo.recordUpdateHistory({
                 userId,

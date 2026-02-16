@@ -94,6 +94,9 @@ import {
     initUpdatesManager
 } from './updates-manager.js';
 import {
+    initTrashManager
+} from './trash-manager.js';
+import {
     exportPageToPDF
 } from './pdf-export.js';
 import {
@@ -216,11 +219,13 @@ async function handlePageListClick(event, state) {
     if (menuAction) {
         const { action, pageId } = menuAction.dataset;
         if (action === "delete-page") {
-            if (!confirm("이 페이지와 모든 하위 페이지를 삭제하시겠습니까?")) return;
+            if (!confirm("이 페이지를 휴지통으로 이동하시겠습니까?")) return;
             try {
                 await api.del("/api/pages/" + encodeURIComponent(pageId));
                 state.pages = state.pages.filter(p => p.id !== pageId);
-                if (state.currentPageId === pageId) state.currentPageId = null;
+                if (state.currentPageId === pageId) {
+                    clearCurrentPage();
+                }
                 renderPageList();
             } catch (e) {
                 alert("삭제 실패: " + e.message);
@@ -353,6 +358,7 @@ async function init() {
         bindAccountManagementButtons();
         bindLoginLogsModal();
         initUpdatesManager(appState);
+        initTrashManager(appState);
 
         document.getElementById('switch-storage-btn')?.addEventListener('click', () => storagesManager.show());
 
