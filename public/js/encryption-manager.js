@@ -5,7 +5,7 @@
 import { secureFetch } from './ui-utils.js';
 import { loadPage, renderPageList, fetchPageList } from './pages-manager.js';
 import { sanitizeEditorHtml } from './sanitize.js';
-import { stopPageSync } from './sync-manager.js';
+import { stopPageSync, flushPendingUpdates } from './sync-manager.js';
 
 // 전역 상태
 let state = {
@@ -92,6 +92,18 @@ export async function handleEncryption(event) {
         return;
     }
 
+    // 보안/정합성: 실시간 협업(Yjs) 편집 중 암호화를 수행하면
+    // - (1) 아직 DB에 flush되지 않은 로컬 편집 내용이 누락되거나
+    // - (2) 암호화 전 평문 스냅샷이 yjs_state 등에 잔존할 수 있는 경쟁 조건이 생김
+    // 현재 페이지를 암호화하는 경우에는 먼저 대기 중인 업데이트를 flush하고 WS 구독을 해제
+    const wasActivePage = state.currentPageId === state.currentEncryptingPageId;
+    if (wasActivePage) {
+        try { flushPendingUpdates(); } catch (_) {}
+        try { stopPageSync(); } catch (_) {}
+        // stopPageSync()가 선택된 페이지 상태까지 null로 만들므로, UI 관점의 선택 상태는 복구
+        state.currentPageId = state.currentEncryptingPageId;
+    }
+
     try {
         // 1. 현재 페이지 가져오기
         const res = await fetch(`/api/pages/${encodeURIComponent(state.currentEncryptingPageId)}`);
@@ -130,14 +142,14 @@ export async function handleEncryption(event) {
         closeEncryptionModal();
 
         // 암호화 완료 - 쓰기 모드 차단
-        if (state.currentPageId === state.currentEncryptingPageId) {
+        if (wasActivePage) {
             state.currentPageIsEncrypted = true;
         }
 
         await fetchPageList();
         renderPageList();
 
-        if (state.currentPageId === state.currentEncryptingPageId) {
+        if (wasActivePage) {
             const titleInput = document.querySelector("#page-title-input");
             if (titleInput) {
                 titleInput.value = page.title;

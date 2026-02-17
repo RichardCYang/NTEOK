@@ -276,7 +276,16 @@ module.exports = (dependencies) => {
             const nowStr = formatDateForDb(new Date());
             let sql = `UPDATE pages SET title=?, content=?, is_encrypted=?, encryption_salt=?, encrypted_content=?, icon=?, horizontal_padding=?, updated_at=?`;
             const params = [title, content, isEncrypted, salt, encContent, icon, hPadding, nowStr];
-            if (req.body.content !== undefined) { sql += `, yjs_state=NULL`; if (yjsDocuments.has(id)) yjsDocuments.delete(id); }
+            // 보안: 암호화 페이지는 서버/DB 어디에도 평문이 남지 않아야 함
+            // - yjs_state는 협업 편집 상태(전체 문서 스냅샷)를 그대로 담을 수 있어(평문 잔존) 암호화 보안을 훼손
+            // - 따라서 (1) 콘텐츠가 직접 업데이트되거나, (2) 암호화 상태가 바뀌거나, (3) 암호화 상태인 경우에는
+            //   yjs_state를 항상 초기화하고, 서버 메모리의 Yjs 문서도 drop
+            const encryptionStateChanged = Number(existing.is_encrypted) !== Number(isEncrypted);
+            const shouldResetYjsState = (req.body.content !== undefined) || encryptionStateChanged || (Number(isEncrypted) === 1);
+            if (shouldResetYjsState) {
+                sql += `, yjs_state=NULL`;
+                if (yjsDocuments && yjsDocuments.has(id)) yjsDocuments.delete(id);
+            }
             sql += ` WHERE id=?`; params.push(id);
             await pool.execute(sql, params);
             

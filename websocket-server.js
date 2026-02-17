@@ -187,6 +187,7 @@ async function saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc) {
         const content = sanitizeHtmlContent(rawContent);
 
         const [existingRows] = await pool.execute('SELECT content, is_encrypted, user_id FROM pages WHERE id = ?', [pageId]);
+        const isEncrypted = (existingRows.length > 0 && existingRows[0].is_encrypted === 1);
         let finalContent = content;
         let oldFiles = [];
         if (existingRows.length > 0) {
@@ -195,8 +196,19 @@ async function saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc) {
             else oldFiles = extractFilesFromContent(existing.content);
         }
 
-		let yjsStateToSave = Buffer.from(Y.encodeStateAsUpdate(ydoc));
-        await pool.execute(`UPDATE pages SET title = ?, content = ?, icon = ?, sort_order = ?, parent_id = ?, yjs_state = ?, updated_at = NOW() WHERE id = ?`, [title, finalContent, icon, sortOrder, parentId, yjsStateToSave, pageId]);
+        // 보안: 암호화된 페이지는 yjs_state에 문서 스냅샷(평문)이 남을 수 있으므로 DB에 저장하지 않음
+        // - 페이지 암호화의 핵심은 서버/DB 어디에도 평문이 남지 않게 하는 것
+        // - 암호화 페이지에 대한 WS 구독은 이미 차단하지만(실시간 협업 미지원)
+        //   경쟁 조건/레거시 문서 객체가 남아 있는 경우 저장 타이밍에 평문이 영구 저장될 수 있음
+        let yjsStateToSave = null;
+        if (!isEncrypted) {
+            yjsStateToSave = Buffer.from(Y.encodeStateAsUpdate(ydoc));
+        }
+
+        await pool.execute(
+            `UPDATE pages SET title = ?, content = ?, icon = ?, sort_order = ?, parent_id = ?, yjs_state = ?, updated_at = NOW() WHERE id = ?`,
+            [title, finalContent, icon, sortOrder, parentId, yjsStateToSave, pageId]
+        );
 
         if (existingRows.length > 0 && existingRows[0].is_encrypted === 0) {
             const newFiles = extractFilesFromContent(content);
@@ -224,9 +236,15 @@ async function loadOrCreateYjsDoc(pool, sanitizeHtmlContent, pageId) {
     const yMetadata = ydoc.getMap('metadata');
 	if (rows.length > 0) {
 	    const page = rows[0];
-	    if (page.yjs_state) {
+
+	    // 보안: 암호화 페이지는 yjs_state를 절대 신뢰/복원하지 않는다(평문 잔존/복호화 우회 방지)
+	    if (page.is_encrypted === 1) {
+	        yMetadata.set('seeded', false);
+	    } else if (page.yjs_state) {
 	        try { Y.applyUpdate(ydoc, Buffer.from(page.yjs_state)); yMetadata.set('seeded', true); } catch (e) { yMetadata.set('seeded', false); }
-	    } else { yMetadata.set('seeded', false); }
+	    } else {
+	        yMetadata.set('seeded', false);
+	    }
 	    if (yMetadata.get('title') == null) yMetadata.set('title', page.title || '제목 없음');
 	    if (yMetadata.get('icon') == null) yMetadata.set('icon', page.icon || null);
 	    if (yMetadata.get('sortOrder') == null) yMetadata.set('sortOrder', page.sort_order || 0);
