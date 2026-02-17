@@ -241,13 +241,22 @@ module.exports = (dependencies) => {
         const clientIp = getClientIp(req);
 
         try {
-            const [publishRows] = await pool.execute(
-                `SELECT page_id FROM page_publish_links
-                 WHERE token = ? AND is_active = 1`,
+            // 보안: 토큰 검증 + 페이지 존재/상태(삭제/암호화) 검증을 하나의 쿼리로 결합
+            // - soft-delete된 페이지가 토큰을 통해 계속 노출되는 것을 방지
+            // - 중간에 is_active가 바뀌는 레이스 컨디션도 줄임
+            const [pageRows] = await pool.execute(
+                `SELECT p.id, p.title, p.content, p.icon, p.cover_image, p.cover_position
+                 FROM page_publish_links ppl
+                 JOIN pages p ON p.id = ppl.page_id
+                 WHERE ppl.token = ?
+                   AND ppl.is_active = 1
+                   AND p.is_encrypted = 0
+                   AND p.deleted_at IS NULL
+                 LIMIT 1`,
                 [token]
             );
 
-            const isValid = publishRows.length > 0;
+            const isValid = pageRows.length > 0;
 
             // Rate Limiting 체크
             if (!checkSharedPageAccess(clientIp, token, isValid)) {
@@ -256,20 +265,6 @@ module.exports = (dependencies) => {
 
             if (!isValid) {
                 console.log(`[공개 페이지 접근] 실패 - 토큰: ${token.substring(0, 8)}..., IP: ${clientIp}`);
-                return res.status(404).json({ error: "페이지를 찾을 수 없습니다." });
-            }
-
-            const pageId = publishRows[0].page_id;
-
-            const [pageRows] = await pool.execute(
-                `SELECT id, title, content, icon, cover_image, cover_position
-                 FROM pages
-                 WHERE id = ? AND is_encrypted = 0`,
-                [pageId]
-            );
-
-            if (!pageRows.length) {
-                console.log(`[공개 페이지 접근] 실패 - 페이지 없음, 토큰: ${token.substring(0, 8)}..., IP: ${clientIp}`);
                 return res.status(404).json({ error: "페이지를 찾을 수 없습니다." });
             }
 

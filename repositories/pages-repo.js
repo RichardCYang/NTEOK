@@ -170,6 +170,16 @@ module.exports = ({ pool, pageSqlPolicy }) => {
                 `UPDATE pages SET deleted_at = NOW() WHERE id IN (${placeholders})`,
                 targetIds
             );
+
+            // 보안: 휴지통 이동 시 기존 공개 발행 링크(베어러 토큰)가 남아있으면
+            // 삭제된 페이지가 계속 외부에 노출될 수 있으므로 즉시 비활성화
+            // (하위 페이지들도 동일 적용)
+            await pool.execute(
+                `UPDATE page_publish_links
+                 SET is_active = 0, updated_at = NOW()
+                 WHERE is_active = 1 AND page_id IN (${placeholders})`,
+                targetIds
+            );
         },
 
         /**

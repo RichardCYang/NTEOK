@@ -136,11 +136,16 @@ module.exports = (dependencies) => {
 		const userId = session ? session.userId : null;
 
 		try {
+		    // 보안: soft-delete된 페이지는 공개 링크를 통해 댓글/작성도 노출되면 안 됨
 		    const [publishRows] = await pool.execute(
-			    `SELECT page_id, allow_comments
-			        FROM page_publish_links
-			        WHERE token = ? AND is_active = 1
-			        ORDER BY created_at DESC
+			    `SELECT ppl.page_id, ppl.allow_comments
+			        FROM page_publish_links ppl
+			        JOIN pages p ON p.id = ppl.page_id
+			        WHERE ppl.token = ?
+			          AND ppl.is_active = 1
+			          AND p.deleted_at IS NULL
+			          AND p.is_encrypted = 0
+			        ORDER BY ppl.created_at DESC
 			        LIMIT 1`,
 			    [token]
 		    );
@@ -225,11 +230,16 @@ module.exports = (dependencies) => {
         const sanitizedGuestName = userId ? null : sanitizeInput(rawGuestName);
 
 		try {
+		    // 보안: soft-delete된 페이지는 공개 링크를 통해 댓글/작성도 노출되면 안 됨
 		    const [publishRows] = await pool.execute(
-			    `SELECT page_id, allow_comments
-			        FROM page_publish_links
-			        WHERE token = ? AND is_active = 1
-			        ORDER BY created_at DESC
+			    `SELECT ppl.page_id, ppl.allow_comments
+			        FROM page_publish_links ppl
+			        JOIN pages p ON p.id = ppl.page_id
+			        WHERE ppl.token = ?
+			          AND ppl.is_active = 1
+			          AND p.deleted_at IS NULL
+			          AND p.is_encrypted = 0
+			        ORDER BY ppl.created_at DESC
 			        LIMIT 1`,
 			    [token]
 			);

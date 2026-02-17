@@ -1246,6 +1246,16 @@ async function initDb() {
         ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
     `);
 
+    // 보안/호환성: 과거 버전에서 soft-delete된 페이지가 공개 발행 링크를 통해
+    // 계속 노출될 수 있었으므로, 시작 시 한 번 정리
+    // (deleted_at은 soft delete에서만 채워지며, 영구 삭제는 FK ON DELETE CASCADE로 정리됨)
+    await pool.execute(
+        `UPDATE page_publish_links ppl
+         JOIN pages p ON p.id = ppl.page_id
+         SET ppl.is_active = 0, ppl.updated_at = NOW()
+         WHERE ppl.is_active = 1 AND p.deleted_at IS NOT NULL`
+    );
+
     // login_logs 테이블 생성 (로그인 시도 기록)
     await pool.execute(`
         CREATE TABLE IF NOT EXISTS login_logs (
