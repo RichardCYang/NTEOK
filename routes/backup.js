@@ -7,6 +7,11 @@ const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
 const crypto = require('crypto');
+const erl = require('express-rate-limit');
+const rateLimit = erl.rateLimit || erl;
+const { Transform, pipeline } = require('stream');
+const { promisify } = require('util');
+const pipelineAsync = promisify(pipeline);
 const { validateAndNormalizeIcon } = require('../utils/icon-utils.js');
 
 /**
@@ -34,6 +39,9 @@ const MAX_ENTRY_UNCOMPRESSED_BYTES = 10 * 1024 * 1024;	// 엔트리 1개 압축�
 const MAX_TOTAL_UNCOMPRESSED_BYTES = 200 * 1024 * 1024; // 전체 압축해제 최대: 200MB
 const MAX_SUSPICIOUS_RATIO = 2000;                    	// (선택) 초고압축 비율 의심 기준
 const MIN_RATIO_ENTRY_BYTES = 1 * 1024 * 1024;        	// ratio 검사 적용 최소 크기(1MB 이상)
+
+// 메모리 DoS 방지: 이 크기 이하 + pages/images/ 아닌 경우만 Buffer로 보관, 그 외는 디스크 스풀
+const MAX_ENTRY_BUFFER_BYTES = 256 * 1024; // 256KB
 
 function openZipFile(zipPath) {
     return new Promise((resolve, reject) => {
@@ -72,13 +80,11 @@ function readStreamToBufferWithLimits(stream, { perEntryLimitBytes, getTotalByte
             size += chunk.length;
             addTotalBytes(chunk.length);
 
-            if (size > perEntryLimitBytes) {
+            if (size > perEntryLimitBytes)
                 return fail(new Error(`[보안] ZIP 항목이 제한을 초과했습니다: ${context}`));
-            }
 
-            if (getTotalBytes() > MAX_TOTAL_UNCOMPRESSED_BYTES) {
+            if (getTotalBytes() > MAX_TOTAL_UNCOMPRESSED_BYTES)
                 return fail(new Error('[보안] ZIP 전체 해제 용량이 제한을 초과했습니다.'));
-            }
 
             chunks.push(chunk);
         });
@@ -113,6 +119,61 @@ const backupUpload = multer({
         }
     }
 });
+
+// 백업 import 전용 레이트리밋 — DoS 반복 공격 비용 상승
+// authMiddleware 뒤에 배치하므로 req.user?.id 기준으로 사용자 구분
+const backupImportLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 2, // 1분에 2회: 정상 UX 유지 + 반복 공격 억제
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) => String(req.user?.id || req.ip),
+});
+
+// import 세션별 임시 디렉터리 생성 (mode 0o700: 소유자만 접근)
+function createImportTempDir() {
+    const dir = path.join(tempDir, `import-extract-${Date.now()}-${crypto.randomBytes(6).toString('hex')}`);
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    return dir;
+}
+
+// ZIP 엔트리 이름을 해시하여 안전한 임시 파일 경로 반환 (경로 조작 원천 차단)
+function entryTempPath(extractDir, entryName) {
+    const h = crypto.createHash('sha256').update(entryName).digest('hex').slice(0, 32);
+    return path.join(extractDir, h);
+}
+
+// 스트림 압축 해제 중 크기 제한을 적용하는 Transform 생성
+function createLimitTransform({ perEntryLimitBytes, getTotalBytes, addTotalBytes, context }) {
+    let size = 0;
+    return new Transform({
+        transform(chunk, enc, cb) {
+            size += chunk.length;
+            addTotalBytes(chunk.length);
+            if (size > perEntryLimitBytes)
+                return cb(new Error(`[보안] ZIP 항목이 제한을 초과했습니다: ${context}`));
+
+            if (getTotalBytes() > MAX_TOTAL_UNCOMPRESSED_BYTES)
+                return cb(new Error('[보안] ZIP 전체 해제 용량이 제한을 초과했습니다.'));
+
+			cb(null, chunk);
+        }
+    });
+}
+
+// 스트림을 임시 파일로 저장 (메모리 적재 없이 디스크 스풀)
+async function readStreamToTempFileWithLimits(stream, { outPath, perEntryLimitBytes, getTotalBytes, addTotalBytes, context }) {
+    const limiter = createLimitTransform({ perEntryLimitBytes, getTotalBytes, addTotalBytes, context });
+    const ws = fs.createWriteStream(outPath, { flags: 'wx', mode: 0o600 });
+    try {
+        await pipelineAsync(stream, limiter, ws);
+        return outPath;
+    } catch (e) {
+        try { ws.destroy(); } catch (_) {}
+        try { if (fs.existsSync(outPath)) fs.unlinkSync(outPath); } catch (_) {}
+        throw e;
+    }
+}
 
 module.exports = (dependencies) => {
     const {
@@ -278,6 +339,8 @@ module.exports = (dependencies) => {
 	async function readBackupZipEntriesForImport(zipPath) {
 		const zipfile = await openZipFile(zipPath);
 		const zipEntries = [];
+		// 큰 엔트리(pages/, images/)를 메모리 대신 디스크에 스풀하기 위한 임시 디렉터리
+		const extractDir = createImportTempDir();
 
 		const allowedTopLevel = ['backup-info.json', 'workspaces/', 'collections/', 'pages/', 'images/'];
 
@@ -290,11 +353,13 @@ module.exports = (dependencies) => {
 		return await new Promise((resolve, reject) => {
 			function fail(err) {
 				try { zipfile.close(); } catch (_) { }
+				// 실패 시 임시 디렉터리 즉시 정리
+				try { fs.rmSync(extractDir, { recursive: true, force: true }); } catch (_) {}
 				reject(err);
 			}
 
 			zipfile.on('error', fail);
-			zipfile.on('end', () => resolve(zipEntries));
+			zipfile.on('end', () => resolve({ zipEntries, extractDir }));
 
 			zipfile.on('entry', (entry) => {
 				(async () => {
@@ -353,15 +418,32 @@ module.exports = (dependencies) => {
 							}
 						}
 
-						const stream = await openZipReadStream(zipfile, entry);
-						const buf = await readStreamToBufferWithLimits(stream, {
-							perEntryLimitBytes: Math.min(BACKUP_IMPORT_MAX_ENTRY_UNCOMPRESSED, MAX_ENTRY_UNCOMPRESSED_BYTES),
-							getTotalBytes,
-							addTotalBytes,
-							context: entryName
-						});
+						const perEntryLimitBytes = Math.min(BACKUP_IMPORT_MAX_ENTRY_UNCOMPRESSED, MAX_ENTRY_UNCOMPRESSED_BYTES);
+						// pages/, images/ 엔트리 또는 큰 파일은 디스크로 스풀 (메모리 DoS 방지)
+						const forceToDisk = entryName.startsWith('pages/') || entryName.startsWith('images/');
+						const canBuffer = !forceToDisk && Number(entry.uncompressedSize || 0) <= MAX_ENTRY_BUFFER_BYTES;
 
-						zipEntries.push({ entryName, isDirectory: false, data: buf });
+						const stream = await openZipReadStream(zipfile, entry);
+
+						if (canBuffer) {
+							const buf = await readStreamToBufferWithLimits(stream, {
+								perEntryLimitBytes,
+								getTotalBytes,
+								addTotalBytes,
+								context: entryName
+							});
+							zipEntries.push({ entryName, isDirectory: false, data: buf });
+						} else {
+							const outPath = entryTempPath(extractDir, entryName);
+							await readStreamToTempFileWithLimits(stream, {
+								outPath,
+								perEntryLimitBytes,
+								getTotalBytes,
+								addTotalBytes,
+								context: entryName
+							});
+							zipEntries.push({ entryName, isDirectory: false, tempFilePath: outPath });
+						}
 						zipfile.readEntry();
 					} catch (e) {
 						fail(e);
@@ -779,17 +861,21 @@ ${JSON.stringify(pageMetadata, null, 2)}
      * 백업 불러오기
      * POST /api/backup/import
      */
-    router.post('/import', authMiddleware, backupUpload.single('backup'), async (req, res) => {
+    router.post('/import', authMiddleware, backupImportLimiter, backupUpload.single('backup'), async (req, res) => {
         const userId = req.user.id;
         const uploadedFile = req.file;
 
         if (!uploadedFile) return res.status(400).json({ error: '파일이 없습니다.' });
 
         let connection;
+        let extractDir;
         try {
             // 보안: Zip Bomb(Decompression Bomb) 대응을 위해 스트리밍으로 읽고,
             // 실제 해제(읽기) 바이트 기준으로 상한을 강제
-            const zipEntries = await readBackupZipEntriesForImport(uploadedFile.path);
+            // 큰 엔트리는 디스크 스풀 - extractDir에 임시 파일 저장
+            const importResult = await readBackupZipEntriesForImport(uploadedFile.path);
+            const zipEntries = importResult.zipEntries;
+            extractDir = importResult.extractDir;
 
             connection = await pool.getConnection();
             await connection.beginTransaction();
@@ -801,7 +887,7 @@ ${JSON.stringify(pageMetadata, null, 2)}
 
             // 1. 저장소(구 컬렉션) 생성
             const workspaceEntries = zipEntries.filter(e => e.entryName.startsWith('workspaces/') || e.entryName.startsWith('collections/'));
-            
+
             for (const entry of workspaceEntries) {
                 if (entry.isDirectory || !entry.entryName.endsWith('.json')) continue;
                 const metadata = JSON.parse(entry.data.toString('utf8'));
@@ -816,7 +902,7 @@ ${JSON.stringify(pageMetadata, null, 2)}
                      VALUES (?, ?, ?, ?, ?, ?)`,
                     [storageId, userId, safeStorageName, metadata.sortOrder || 0, nowStr, nowStr]
                 );
-                
+
                 const folderName = entry.entryName.split('/').pop().replace('.json', '');
                 workspaceMap.set(folderName, storageId);
             }
@@ -850,7 +936,10 @@ ${JSON.stringify(pageMetadata, null, 2)}
                 const storageId = workspaceMap.get(folderName);
                 if (!storageId) continue;
 
-                const pageData = extractPageFromHTML(entry.data.toString('utf8'));
+                const html = entry.data
+                    ? entry.data.toString('utf8')
+                    : fs.readFileSync(entry.tempFilePath, 'utf8');
+                const pageData = extractPageFromHTML(html);
                 const pageId = generatePageId(new Date());
                 const nowStr = formatDateForDb(new Date());
 
@@ -923,14 +1012,29 @@ ${JSON.stringify(pageMetadata, null, 2)}
                 const targetDir = path.join(__dirname, '..', isCover ? 'covers' : 'imgs', String(userId));
                 if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
 
-                const imageData = entry.data;
-                if (!isSupportedImageBuffer(imageData, filename)) continue;
-
                 // 최종 저장 경로를 baseDir 내부로 강제
                 const targetPath = safeResolveIntoDir(targetDir, filename);
                 if (!targetPath) continue;
 
-                fs.writeFileSync(targetPath, imageData);
+                if (entry.data) {
+                    // 메모리 Buffer 엔트리
+                    if (!isSupportedImageBuffer(entry.data, filename)) continue;
+                    fs.writeFileSync(targetPath, entry.data);
+                } else {
+                    // 디스크 스풀 엔트리: 헤더만 읽어 타입 검증 후 이동
+                    const fd = fs.openSync(entry.tempFilePath, 'r');
+                    const header = Buffer.alloc(16);
+                    const n = fs.readSync(fd, header, 0, 16, 0);
+                    fs.closeSync(fd);
+                    if (!isSupportedImageBuffer(header.slice(0, n), filename)) continue;
+                    // 파일 이동 (메모리 사용 최소화)
+                    try {
+                        fs.renameSync(entry.tempFilePath, targetPath);
+                    } catch (e) {
+                        fs.copyFileSync(entry.tempFilePath, targetPath);
+                        fs.unlinkSync(entry.tempFilePath);
+                    }
+                }
                 totalImages++;
             }
 
@@ -944,6 +1048,8 @@ ${JSON.stringify(pageMetadata, null, 2)}
             res.status(500).json({ error: error.message });
         } finally {
             if (connection) connection.release();
+            // import용 임시 디렉터리 정리 (성공/실패 모두)
+            try { if (typeof extractDir === 'string') fs.rmSync(extractDir, { recursive: true, force: true }); } catch (_) {}
         }
     });
 
