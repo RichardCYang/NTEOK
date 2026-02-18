@@ -1201,10 +1201,19 @@ module.exports = (dependencies) => {
             const contentType = String(proxyRes.headers['content-type'] || '').toLowerCase();
             const isImage = contentType.startsWith('image/');
             const isOctetStream = contentType.includes('application/octet-stream');
+            const isSvgMime = contentType.includes('image/svg') || contentType.includes('svg+xml');
 
             const pathname = finalUrl?.pathname || '';
             const ext = path.extname(pathname).toLowerCase();
-            const allowedExt = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.ico', '.tif', '.tiff', '.svg']);
+            // 보안: SVG는 스크립트가 실행될 수 있는 활성 콘텐츠 이므로 프록시로 same-origin 서빙 금지
+            // - 사용자가 프록시 URL을 직접 열면(SVG 문서로 렌더링) same-origin XSS로 이어질 수 있음
+            const allowedExt = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.ico', '.tif', '.tiff']);
+
+            if (isSvgMime || ext === '.svg') {
+                proxyRes.resume();
+                return res.status(403).end();
+            }
+
             if (!isImage && !(isOctetStream && allowedExt.has(ext))) {
                 proxyRes.resume();
                 return res.status(403).end();
@@ -1221,8 +1230,13 @@ module.exports = (dependencies) => {
 
             res.writeHead(200, {
                 'Content-Type': contentType || 'application/octet-stream',
-                'Cache-Control': 'public, max-age=86400',
-                'X-Content-Type-Options': 'nosniff'
+                'X-Content-Type-Options': 'nosniff',
+                // 보안: 이미지 프록시 URL을 사용자가 직접 열어도 문서 컨텍스트에서 스크립트가 못 돌게 강제
+                // (SVG를 차단하더라도, 혹시 모를 타입 혼동/브라우저 동작 차이를 방어적으로 커버)
+                'Content-Security-Policy': "default-src 'none'; sandbox",
+                'Cross-Origin-Resource-Policy': 'same-origin',
+                // 인증이 필요한 프록시이므로 shared cache 저장 방지(선호: private/no-store)
+                'Cache-Control': 'private, max-age=86400'
             });
 
             let seen = 0;
