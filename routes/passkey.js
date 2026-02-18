@@ -16,6 +16,7 @@ module.exports = (dependencies) => {
         CSRF_COOKIE_NAME,
         SESSION_TTL_MS,
         IS_PRODUCTION,
+        COOKIE_SECURE,
         BASE_URL,
         logError,
         recordLoginAttempt,
@@ -516,16 +517,18 @@ module.exports = (dependencies) => {
 
             res.cookie(SESSION_COOKIE_NAME, sessionId, {
                 httpOnly: true,
-                secure: IS_PRODUCTION,
+                secure: COOKIE_SECURE,
                 sameSite: "strict",
+                path: "/",
                 maxAge: SESSION_TTL_MS
             });
 
             const csrfToken = generateCsrfToken();
             res.cookie(CSRF_COOKIE_NAME, csrfToken, {
                 httpOnly: false,
-                secure: IS_PRODUCTION,
+                secure: COOKIE_SECURE,
                 sameSite: "strict",
+                path: "/",
                 maxAge: SESSION_TTL_MS
             });
 
@@ -766,16 +769,18 @@ module.exports = (dependencies) => {
 
             res.cookie(SESSION_COOKIE_NAME, sessionId, {
                 httpOnly: true,
-                secure: IS_PRODUCTION,
+                secure: COOKIE_SECURE,
                 sameSite: "strict",
+                path: "/",
                 maxAge: SESSION_TTL_MS
             });
 
             const csrfToken = generateCsrfToken();
             res.cookie(CSRF_COOKIE_NAME, csrfToken, {
                 httpOnly: false,
-                secure: IS_PRODUCTION,
+                secure: COOKIE_SECURE,
                 sameSite: "strict",
+                path: "/",
                 maxAge: SESSION_TTL_MS
             });
 
@@ -988,16 +993,18 @@ module.exports = (dependencies) => {
 
             res.cookie(SESSION_COOKIE_NAME, sessionId, {
                 httpOnly: true,
-                secure: IS_PRODUCTION,
+                secure: COOKIE_SECURE,
                 sameSite: "strict",
+                path: "/",
                 maxAge: SESSION_TTL_MS
             });
 
             const csrfToken = generateCsrfToken();
             res.cookie(CSRF_COOKIE_NAME, csrfToken, {
                 httpOnly: false,
-                secure: IS_PRODUCTION,
+                secure: COOKIE_SECURE,
                 sameSite: "strict",
+                path: "/",
                 maxAge: SESSION_TTL_MS
             });
 

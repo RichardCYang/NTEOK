@@ -29,6 +29,7 @@ module.exports = (dependencies) => {
         CSRF_COOKIE_NAME,
         SESSION_TTL_MS,
 		IS_PRODUCTION,
+        COOKIE_SECURE,
         BASE_URL,
         BCRYPT_SALT_ROUNDS,
         authMiddleware,
@@ -261,7 +262,8 @@ module.exports = (dependencies) => {
             res.cookie(SESSION_COOKIE_NAME, sessionId, {
                 httpOnly: true,
                 sameSite: "strict",
-                secure: IS_PRODUCTION,
+                secure: COOKIE_SECURE,
+                path: "/",
                 maxAge: SESSION_TTL_MS
             });
 
@@ -269,7 +271,8 @@ module.exports = (dependencies) => {
             res.cookie(CSRF_COOKIE_NAME, newCsrfToken, {
                 httpOnly: false,
                 sameSite: "strict",
-                secure: IS_PRODUCTION,
+                secure: COOKIE_SECURE,
+                path: "/",
                 maxAge: SESSION_TTL_MS
             });
 
@@ -327,7 +330,8 @@ module.exports = (dependencies) => {
         res.clearCookie(SESSION_COOKIE_NAME, {
             httpOnly: true,
             sameSite: "strict",
-            secure: IS_PRODUCTION
+            path: "/",
+            secure: COOKIE_SECURE
         });
 
         res.json({ ok: true });
@@ -392,7 +396,8 @@ module.exports = (dependencies) => {
             res.clearCookie(SESSION_COOKIE_NAME, {
                 httpOnly: true,
                 sameSite: "strict",
-                secure: IS_PRODUCTION
+                path: "/",
+                secure: COOKIE_SECURE
             });
 
             res.json({ ok: true });
@@ -491,7 +496,8 @@ module.exports = (dependencies) => {
             res.cookie(SESSION_COOKIE_NAME, sessionId, {
                 httpOnly: true,
                 sameSite: "strict",
-                secure: IS_PRODUCTION,
+                secure: COOKIE_SECURE,
+                path: "/",
                 maxAge: SESSION_TTL_MS
             });
 
@@ -499,7 +505,8 @@ module.exports = (dependencies) => {
             res.cookie(CSRF_COOKIE_NAME, newCsrfToken, {
                 httpOnly: false,
                 sameSite: "strict",
-                secure: IS_PRODUCTION,
+                secure: COOKIE_SECURE,
+                path: "/",
                 maxAge: SESSION_TTL_MS
             });
 

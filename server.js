@@ -224,12 +224,21 @@ app.use((req, res, next) => {
 });
 
 // 세션 / 인증 관련 설정
-const SESSION_COOKIE_NAME = "nteok_session";
+const SESSION_COOKIE_NAME_RAW = "nteok_session";
+const CSRF_COOKIE_NAME_RAW = "nteok_csrf";
+
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7; // 7일 (idle timeout)
 const SESSION_ABSOLUTE_TTL_MS = 1000 * 60 * 60 * 24 * 7; // 7일 (absolute timeout)
-const CSRF_COOKIE_NAME = "nteok_csrf";
+
 const IS_PRODUCTION = process.env.NODE_ENV === "production";
 const BASE_URL = process.env.BASE_URL || (IS_PRODUCTION ? "https://localhost:3000" : "http://localhost:3000");
+
+// 보안: Secure 쿠키/HSTS 활성 여부를 NODE_ENV가 아닌 실제 HTTPS 운영 여부로 판단
+// - NODE_ENV 누락(=production 미설정) 상태에서도 HTTPS 운영 시 세션 쿠키가 HTTP로 노출되는 문제 방지
+const IS_HTTPS_BASE_URL = (() => {
+    try { return new URL(BASE_URL).protocol === "https:"; }
+    catch { return /^https:\/\//i.test(String(BASE_URL)); }
+})();
 
 /**
  * HTTPS 강제 옵션
@@ -239,6 +248,25 @@ const BASE_URL = process.env.BASE_URL || (IS_PRODUCTION ? "https://localhost:300
  * - REQUIRE_HTTPS=true 를 켜면 개발 환경에서도 동일하게 fail-closed로 동작
  */
 const REQUIRE_HTTPS = String(process.env.REQUIRE_HTTPS || '').toLowerCase() === 'true';
+
+const COOKIE_SECURE = IS_HTTPS_BASE_URL || REQUIRE_HTTPS;
+
+// 보안: __Host- prefix 적용 (Secure + Path=/ + No Domain)
+// - HTTPS 환경일 때만 적용 가능 (prefix 요구사항)
+const SESSION_COOKIE_NAME = COOKIE_SECURE ? `__Host-${SESSION_COOKIE_NAME_RAW}` : SESSION_COOKIE_NAME_RAW;
+const CSRF_COOKIE_NAME = COOKIE_SECURE ? `__Host-${CSRF_COOKIE_NAME_RAW}` : CSRF_COOKIE_NAME_RAW;
+
+const ENABLE_HSTS = String(process.env.ENABLE_HSTS ?? "true").toLowerCase() !== "false";
+function isLocalhostHost(host) {
+    return host === "localhost" || host === "127.0.0.1" || host === "::1";
+}
+
+const HSTS_ENABLED = (() => {
+    if (!COOKIE_SECURE || !ENABLE_HSTS) return false;
+    try { return !isLocalhostHost(new URL(BASE_URL).hostname); }
+    catch { return false; }
+})();
+
 const ALLOW_INSECURE_HTTP_FALLBACK = String(process.env.ALLOW_INSECURE_HTTP_FALLBACK || '').toLowerCase() === 'true';
 
 // TOTP 비밀키 (2FA) 최소 암호화
@@ -1618,7 +1646,7 @@ app.use((req, res, next) => {
     res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
 
     // HSTS (HTTPS에서만, production 권장)
-    if (IS_PRODUCTION)
+    if (HSTS_ENABLED)
         res.setHeader('Strict-Transport-Security', 'max-age=15552000; includeSubDomains');
 
 	next();
@@ -1632,7 +1660,8 @@ app.use((req, res, next) => {
         res.cookie(CSRF_COOKIE_NAME, token, {
             httpOnly: false, // JavaScript에서 읽을 수 있어야 함
             sameSite: "strict",
-            secure: IS_PRODUCTION,  // 보안 개선: 환경에 따라 설정
+            secure: COOKIE_SECURE,  // 보안 개선: 환경에 따라 설정
+            path: "/",
             maxAge: SESSION_TTL_MS
         });
     }
@@ -2184,6 +2213,7 @@ function getSessionFromId(sessionId) {
             CSRF_COOKIE_NAME,
             SESSION_TTL_MS,
             IS_PRODUCTION,
+            COOKIE_SECURE,
             BCRYPT_SALT_ROUNDS,
             BASE_URL,
             coverUpload,

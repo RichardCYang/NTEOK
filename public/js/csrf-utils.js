@@ -18,7 +18,8 @@ function getCookie(name) {
  * CSRF 토큰을 쿠키에서 읽기
  */
 function getCsrfToken() {
-    return getCookie('nteok_csrf');
+    // 보안: __Host- prefix가 붙은 쿠키를 먼저 확인
+    return getCookie('__Host-nteok_csrf') || getCookie('nteok_csrf');
 }
 
 /**

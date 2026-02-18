@@ -123,6 +123,84 @@ module.exports = (dependencies) => {
         handler: (req, res) => res.status(429).json({ error: "Too many requests" }),
     });
 
+    /**
+     * SSRF 방어: 요청하려는 URL의 IP가 사설/로컬 대역인지 검증
+     * - DNS Rebinding 공격은 이 검증만으로는 부족하지만, 1차적인 네트워크 격리를 제공
+     */
+    async function isSafeUrl(urlStr) {
+        try {
+            const u = new URL(urlStr);
+            if (u.protocol !== "http:" && u.protocol !== "https:") return false;
+
+            const hostname = u.hostname;
+            // 숫자로 된 IP인 경우 즉시 체크
+            if (net.isIP(hostname)) {
+                return !isPrivateOrLocalIP(hostname);
+            }
+
+            // 도메인인 경우 resolve하여 IP 체크 (DNS Rebinding 방어 기초)
+            const ips = await dns.resolve(hostname).catch(() => []);
+            if (ips.length === 0) return true; // resolve 실패는 fetch 시점에서 에러 처리됨
+
+            return ips.every(ip => !isPrivateOrLocalIP(ip));
+        } catch (e) {
+            return false;
+        }
+    }
+
+    async function getMetadata(url) {
+        if (!(await isSafeUrl(url))) {
+            throw new Error("허용되지 않는 URL입니다. (사설 IP 또는 비정상 프로토콜)");
+        }
+
+        return new Promise((resolve, reject) => {
+            const protocol = url.startsWith('https') ? https : http;
+            const timeout = 5000; // 5초 타임아웃
+
+            const req = protocol.get(url, {
+                timeout,
+                headers: { 'User-Agent': 'NTEOK-Bot/1.0', 'Accept': 'text/html' }
+            }, (res) => {
+                if (res.statusCode < 200 || res.statusCode >= 300) {
+                    return reject(new Error(`Fetch failed: ${res.statusCode}`));
+                }
+
+                let body = '';
+                let totalSize = 0;
+                const MAX_SIZE = 1024 * 1024; // 1MB 제한
+
+                res.on('data', (chunk) => {
+                    totalSize += chunk.length;
+                    if (totalSize > MAX_SIZE) {
+                        req.destroy();
+                        return reject(new Error("Response too large"));
+                    }
+                    body += chunk.toString();
+                });
+
+                res.on('end', () => {
+                    const metadata = { title: '', description: '', thumbnail: '' };
+                    try {
+                        const titleMatch = body.match(/<title>(.*?)<\/title>/i);
+                        if (titleMatch) metadata.title = titleMatch[1];
+
+                        const descMatch = body.match(/<meta name="description" content="(.*?)"/i) ||
+                                         body.match(/<meta property="og:description" content="(.*?)"/i);
+                        if (descMatch) metadata.description = descMatch[1];
+
+                        const thumbMatch = body.match(/<meta property="og:image" content="(.*?)"/i) ||
+                                          body.match(/<link rel="apple-touch-icon" href="(.*?)"/i);
+                        if (thumbMatch) metadata.thumbnail = thumbMatch[1];
+                    } catch (e) {}
+                    resolve(metadata);
+                });
+            });
+
+            req.on('error', reject);
+            req.on('timeout', () => { req.destroy(); reject(new Error("Timeout")); });
+        });
+    }
+
     function blockCrossSiteFetch(req, res, next) {
         const sfs = String(req.headers["sec-fetch-site"] || "").toLowerCase();
         if (sfs && !["same-origin", "same-site", "none"].includes(sfs)) return res.status(403).json({ error: "Forbidden" });
@@ -241,7 +319,7 @@ module.exports = (dependencies) => {
             if (isEncrypted && (!salt || !encContent)) return res.status(400).json({ error: "Encryption fields missing" });
             await pool.execute(`INSERT INTO pages (id, user_id, parent_id, title, content, sort_order, created_at, updated_at, storage_id, is_encrypted, encryption_salt, encrypted_content) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                 [id, userId, parentId, title, content, sortOrder, nowStr, nowStr, storageId, isEncrypted, salt, encContent]);
-            
+
             await pagesRepo.recordUpdateHistory({
                 userId,
                 storageId,
@@ -288,7 +366,7 @@ module.exports = (dependencies) => {
             }
             sql += ` WHERE id=?`; params.push(id);
             await pool.execute(sql, params);
-            
+
             await pagesRepo.recordUpdateHistory({
                 userId,
                 storageId: existing.storage_id,
@@ -311,7 +389,7 @@ module.exports = (dependencies) => {
                 return res.status(403).json({ error: "이 저장소의 페이지 순서를 변경할 권한이 없습니다." });
             }
             for (let i = 0; i < pageIds.length; i++) { await pool.execute(`UPDATE pages SET sort_order=?, updated_at=NOW() WHERE id=? AND storage_id=?`, [i * 10, pageIds[i], storageId]); }
-            
+
             await pagesRepo.recordUpdateHistory({
                 userId,
                 storageId,
@@ -568,7 +646,7 @@ module.exports = (dependencies) => {
             }
 
             await pool.execute(`UPDATE pages SET cover_image=NULL, updated_at=NOW() WHERE id=?`, [id]);
-            
+
             await pagesRepo.recordUpdateHistory({
                 userId,
                 storageId: existing.storage_id,
@@ -602,6 +680,15 @@ module.exports = (dependencies) => {
             if (!permission || !['EDIT', 'ADMIN'].includes(permission)) {
                 if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
                 return res.status(403).json({ error: "Forbidden" });
+            }
+
+            // 보안: 파일 시그니처 검증 (이미지인 경우) 및 파일명 정규화
+            const ext = path.extname(req.file.originalname).toLowerCase();
+            const isImageExt = ['.jpg', '.jpeg', '.png', '.gif', '.webp'].includes(ext);
+
+            if (isImageExt) {
+                const sig = await assertImageFileSignature(req.file.path).catch(() => null);
+                if (sig) normalizeUploadedImageFile(req.file, sig.ext);
             }
 
             const fileUrl = `/paperclip/${userId}/${req.file.filename}`;
@@ -877,6 +964,66 @@ module.exports = (dependencies) => {
         } catch (e) {
             logError("DELETE /api/pages/:id/publish", e);
             res.status(500).json({ error: "Failed" });
+        }
+    });
+
+    /**
+     * 북마크 메타데이터 추출 (SSRF 방어 적용)
+     * POST /api/pages/:id/bookmark-metadata
+     */
+    router.post("/:id/bookmark-metadata", authMiddleware, outboundProxyLimiter, async (req, res) => {
+        const { url } = req.body;
+        const pageId = req.params.id;
+        const userId = req.user.id;
+
+        if (!url) return res.status(400).json({ error: "URL is required" });
+
+        try {
+            // 권한 확인 (페이지에 접근 가능한지)
+            const existing = await pagesRepo.getPageByIdForUser({ userId, pageId });
+            if (!existing) return res.status(404).json({ error: "Not found" });
+
+            const metadata = await getMetadata(url);
+            res.json({ success: true, metadata });
+        } catch (error) {
+            logError("POST /api/pages/:id/bookmark-metadata", error);
+            res.status(400).json({ error: error.message || "Failed to fetch metadata" });
+        }
+    });
+
+    /**
+     * 이미지 프록시 (SSRF 방어 및 CSP 우회용)
+     * GET /api/pages/proxy/image?url=...
+     */
+    router.get("/proxy/image", authMiddleware, outboundProxyLimiter, async (req, res) => {
+        const { url } = req.query;
+        if (!url) return res.status(400).end();
+
+        try {
+            if (!(await isSafeUrl(url))) {
+                return res.status(403).end();
+            }
+
+            const protocol = url.startsWith('https') ? https : http;
+            const proxyReq = protocol.get(url, { timeout: 10000 }, (proxyRes) => {
+                // 이미지/일반 바이너리 타입만 허용
+                const contentType = proxyRes.headers['content-type'] || '';
+                if (!contentType.startsWith('image/') && !contentType.includes('application/octet-stream')) {
+                    return res.status(403).end();
+                }
+
+                res.writeHead(proxyRes.statusCode, {
+                    'Content-Type': contentType,
+                    'Cache-Control': 'public, max-age=86400', // 1일 캐싱
+                    'X-Content-Type-Options': 'nosniff'
+                });
+                proxyRes.pipe(res);
+            });
+
+            proxyReq.on('error', () => res.status(500).end());
+            proxyReq.on('timeout', () => { proxyReq.destroy(); res.status(504).end(); });
+        } catch (e) {
+            res.status(500).end();
         }
     });
 
