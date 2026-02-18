@@ -9,6 +9,7 @@ const multer = require('multer');
 const crypto = require('crypto');
 const erl = require('express-rate-limit');
 const rateLimit = erl.rateLimit || erl;
+const { ipKeyGenerator } = erl;
 const { Transform, pipeline } = require('stream');
 const { promisify } = require('util');
 const pipelineAsync = promisify(pipeline);
@@ -127,7 +128,7 @@ const backupImportLimiter = rateLimit({
     max: 2, // 1분에 2회: 정상 UX 유지 + 반복 공격 억제
     standardHeaders: true,
     legacyHeaders: false,
-    keyGenerator: (req) => String(req.user?.id || req.ip),
+    keyGenerator: (req) => String(req.user?.id || ipKeyGenerator(req)),
 });
 
 // import 세션별 임시 디렉터리 생성 (mode 0o700: 소유자만 접근)
