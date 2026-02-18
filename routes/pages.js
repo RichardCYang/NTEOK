@@ -64,6 +64,7 @@ module.exports = (dependencies) => {
         path,
         fs,
         yjsDocuments,
+        isPrivateOrLocalIP,
         getClientIpFromRequest
 	} = dependencies;
 
@@ -124,81 +125,206 @@ module.exports = (dependencies) => {
     });
 
     /**
-     * SSRF 방어: 요청하려는 URL의 IP가 사설/로컬 대역인지 검증
-     * - DNS Rebinding 공격은 이 검증만으로는 부족하지만, 1차적인 네트워크 격리를 제공
+     * SSRF 방어: URL 파싱/포트/프로토콜 검증 + userinfo 차단
+     * - dns.lookup(all:true)는 OS resolver(/etc/hosts 포함) + A/AAAA 모두 반영
+     * - resolve/검증 후 실제 요청 시 lookup을 핀닝하여 DNS rebinding(TOCTOU)을 완화
      */
-    async function isSafeUrl(urlStr) {
-        try {
-            const u = new URL(urlStr);
-            if (u.protocol !== "http:" && u.protocol !== "https:") return false;
+    const OUTBOUND_ALLOWED_PORTS = (() => {
+        const raw = String(process.env.OUTBOUND_HTTP_ALLOWED_PORTS || "80,443")
+            .split(",")
+            .map(s => s.trim())
+            .filter(Boolean);
 
-            const hostname = u.hostname;
-            // 숫자로 된 IP인 경우 즉시 체크
-            if (net.isIP(hostname)) {
-                return !isPrivateOrLocalIP(hostname);
-            }
-
-            // 도메인인 경우 resolve하여 IP 체크 (DNS Rebinding 방어 기초)
-            const ips = await dns.resolve(hostname).catch(() => []);
-            if (ips.length === 0) return true; // resolve 실패는 fetch 시점에서 에러 처리됨
-
-            return ips.every(ip => !isPrivateOrLocalIP(ip));
-        } catch (e) {
-            return false;
+        const set = new Set();
+        for (const p of raw) {
+            const n = Number.parseInt(p, 10);
+            if (Number.isFinite(n) && n > 0 && n < 65536) set.add(n);
         }
+        if (set.size === 0) { set.add(80); set.add(443); }
+        return set;
+    })();
+
+    const OUTBOUND_DNS_LOOKUP_TIMEOUT_MS = (() => {
+        const n = Number.parseInt(process.env.OUTBOUND_DNS_LOOKUP_TIMEOUT_MS || "1500", 10);
+        if (!Number.isFinite(n)) return 1500;
+        return Math.max(200, Math.min(5000, n));
+    })();
+
+    function isRedirectStatus(code) {
+        return code === 301 || code === 302 || code === 303 || code === 307 || code === 308;
     }
 
-    async function getMetadata(url) {
-        if (!(await isSafeUrl(url))) {
-            throw new Error("허용되지 않는 URL입니다. (사설 IP 또는 비정상 프로토콜)");
+    async function dnsLookupAll(hostname) {
+        const p = dns.lookup(hostname, { all: true, verbatim: true });
+        const t = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error("DNS lookup timeout")), OUTBOUND_DNS_LOOKUP_TIMEOUT_MS)
+        );
+        return Promise.race([p, t]);
+    }
+
+    function normalizedDefaultPort(u) {
+        if (u.port) {
+            const n = Number.parseInt(u.port, 10);
+            return Number.isFinite(n) ? n : null;
+        }
+        return u.protocol === "https:" ? 443 : 80;
+    }
+
+    function makePinnedLookup(address, family) {
+        return (hostname, options, callback) => {
+            const cb = typeof options === "function" ? options : callback;
+            process.nextTick(() => cb(null, address, family));
+        };
+    }
+
+    async function validateOutboundUrl(urlStr) {
+        if (typeof urlStr !== "string") throw new Error("Invalid URL");
+        const trimmed = urlStr.trim();
+        if (!trimmed) throw new Error("Invalid URL");
+        if (trimmed.length > 2048) throw new Error("URL is too long");
+
+        let u;
+        try { u = new URL(trimmed); } catch { throw new Error("Invalid URL"); }
+
+        if (u.protocol !== "http:" && u.protocol !== "https:")
+            throw new Error("Only http/https allowed");
+
+        // userinfo (username:password@host) 차단
+        if (u.username || u.password)
+            throw new Error("Userinfo in URL is not allowed");
+
+        const port = normalizedDefaultPort(u);
+        if (!port || !OUTBOUND_ALLOWED_PORTS.has(port))
+            throw new Error("Port is not allowed");
+
+        const hostname = u.hostname;
+        if (!hostname) throw new Error("Invalid hostname");
+
+        const ipFamily = net.isIP(hostname);
+        if (ipFamily) {
+            if (isPrivateOrLocalIP(hostname)) throw new Error("Private/local IP is not allowed");
+            return { url: u, lookup: makePinnedLookup(hostname, ipFamily) };
         }
 
-        return new Promise((resolve, reject) => {
-            const protocol = url.startsWith('https') ? https : http;
-            const timeout = 5000; // 5초 타임아웃
+        let addrs;
+        try {
+            addrs = await dnsLookupAll(hostname);
+        } catch {
+            throw new Error("Failed to resolve hostname");
+        }
 
-            const req = protocol.get(url, {
-                timeout,
-                headers: { 'User-Agent': 'NTEOK-Bot/1.0', 'Accept': 'text/html' }
-            }, (res) => {
-                if (res.statusCode < 200 || res.statusCode >= 300) {
-                    return reject(new Error(`Fetch failed: ${res.statusCode}`));
-                }
+        if (!Array.isArray(addrs) || addrs.length === 0)
+            throw new Error("Failed to resolve hostname");
 
-                let body = '';
-                let totalSize = 0;
-                const MAX_SIZE = 1024 * 1024; // 1MB 제한
+        for (const a of addrs) {
+            const ip = a?.address;
+            if (!ip || isPrivateOrLocalIP(ip))
+                throw new Error("Private/local IP is not allowed");
+        }
 
-                res.on('data', (chunk) => {
-                    totalSize += chunk.length;
-                    if (totalSize > MAX_SIZE) {
-                        req.destroy();
-                        return reject(new Error("Response too large"));
+        const pinned = addrs[0];
+        const fam = pinned.family || net.isIP(pinned.address) || 0;
+        return { url: u, lookup: makePinnedLookup(pinned.address, fam) };
+    }
+
+    const METADATA_FETCH_TIMEOUT_MS = (() => {
+        const n = Number.parseInt(process.env.METADATA_FETCH_TIMEOUT_MS || "5000", 10);
+        if (!Number.isFinite(n)) return 5000;
+        return Math.max(1000, Math.min(15000, n));
+    })();
+
+    const METADATA_MAX_BYTES = (() => {
+        const n = Number.parseInt(process.env.METADATA_MAX_BYTES || String(512 * 1024), 10); // 512KB
+        if (!Number.isFinite(n)) return 512 * 1024;
+        return Math.max(32 * 1024, Math.min(2 * 1024 * 1024, n));
+    })();
+
+    const METADATA_MAX_REDIRECTS = (() => {
+        const n = Number.parseInt(process.env.METADATA_MAX_REDIRECTS || "3", 10);
+        if (!Number.isFinite(n)) return 3;
+        return Math.max(0, Math.min(10, n));
+    })();
+
+    async function getMetadata(urlStr) {
+        let current = urlStr;
+
+        for (let i = 0; i <= METADATA_MAX_REDIRECTS; i++) {
+            const { url, lookup } = await validateOutboundUrl(current);
+
+            const result = await new Promise((resolve, reject) => {
+                const protocol = url.protocol === "https:" ? https : http;
+
+                const req = protocol.get(url, {
+                    timeout: METADATA_FETCH_TIMEOUT_MS,
+                    lookup,
+                    headers: {
+                        'User-Agent': 'NTEOK-MetadataFetcher/1.0',
+                        'Accept': 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.1'
                     }
-                    body += chunk.toString();
+                }, (res) => {
+                    const status = res.statusCode || 0;
+
+                    if (isRedirectStatus(status) && res.headers.location) {
+                        res.resume();
+                        try {
+                            const nextUrl = new URL(res.headers.location, url);
+                            return resolve({ redirectTo: nextUrl.toString() });
+                        } catch {
+                            return reject(new Error("Invalid redirect URL"));
+                        }
+                    }
+
+                    if (status < 200 || status >= 300) {
+                        res.resume();
+                        return reject(new Error(`Failed to fetch metadata (status: ${status})`));
+                    }
+
+                    const ct = String(res.headers['content-type'] || '').toLowerCase();
+                    if (!(ct.includes('text/html') || ct.includes('application/xhtml+xml'))) {
+                        res.resume();
+                        return reject(new Error("Unsupported content-type for metadata"));
+                    }
+
+                    let size = 0;
+                    const chunks = [];
+
+                    res.on('data', (chunk) => {
+                        size += chunk.length;
+                        if (size > METADATA_MAX_BYTES) {
+                            res.destroy(new Error("Metadata response too large"));
+                            return;
+                        }
+                        chunks.push(chunk);
+                    });
+                    res.on('end', () => resolve({ body: Buffer.concat(chunks).toString('utf8') }));
+                    res.on('error', reject);
                 });
 
-                res.on('end', () => {
-                    const metadata = { title: '', description: '', thumbnail: '' };
-                    try {
-                        const titleMatch = body.match(/<title>(.*?)<\/title>/i);
-                        if (titleMatch) metadata.title = titleMatch[1];
-
-                        const descMatch = body.match(/<meta name="description" content="(.*?)"/i) ||
-                                         body.match(/<meta property="og:description" content="(.*?)"/i);
-                        if (descMatch) metadata.description = descMatch[1];
-
-                        const thumbMatch = body.match(/<meta property="og:image" content="(.*?)"/i) ||
-                                          body.match(/<link rel="apple-touch-icon" href="(.*?)"/i);
-                        if (thumbMatch) metadata.thumbnail = thumbMatch[1];
-                    } catch (e) {}
-                    resolve(metadata);
+                req.on('error', reject);
+                req.on('timeout', () => {
+                    req.destroy(new Error("Metadata request timeout"));
                 });
             });
 
-            req.on('error', reject);
-            req.on('timeout', () => { req.destroy(); reject(new Error("Timeout")); });
-        });
+            if (result?.redirectTo) {
+                if (i === METADATA_MAX_REDIRECTS) throw new Error("Too many redirects");
+                current = result.redirectTo;
+                continue;
+            }
+
+            const html = result.body || "";
+            const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
+            const descMatch = html.match(/<meta\s+name=["']description["']\s+content=["']([^"']+)["']/i);
+            const ogImageMatch = html.match(/<meta\s+property=["']og:image["']\s+content=["']([^"']+)["']/i);
+
+            return {
+                title: titleMatch ? titleMatch[1].trim() : '',
+                description: descMatch ? descMatch[1].trim() : '',
+                thumbnail: ogImageMatch ? ogImageMatch[1].trim() : ''
+            };
+        }
+
+        throw new Error("Too many redirects");
     }
 
     function blockCrossSiteFetch(req, res, next) {
@@ -996,34 +1122,136 @@ module.exports = (dependencies) => {
      * GET /api/pages/proxy/image?url=...
      */
     router.get("/proxy/image", authMiddleware, outboundProxyLimiter, async (req, res) => {
-        const { url } = req.query;
-        if (!url) return res.status(400).end();
+        const urlStr = (typeof req.query.url === "string") ? req.query.url : "";
+        if (!urlStr) return res.status(400).end();
+
+        const IMAGE_PROXY_TIMEOUT_MS = (() => {
+            const n = Number.parseInt(process.env.IMAGE_PROXY_TIMEOUT_MS || "10000", 10);
+            if (!Number.isFinite(n)) return 10000;
+            return Math.max(1000, Math.min(30000, n));
+        })();
+
+        const IMAGE_PROXY_MAX_BYTES = (() => {
+            const n = Number.parseInt(process.env.IMAGE_PROXY_MAX_BYTES || String(5 * 1024 * 1024), 10);
+            if (!Number.isFinite(n)) return 5 * 1024 * 1024;
+            return Math.max(256 * 1024, Math.min(20 * 1024 * 1024, n));
+        })();
+
+        const IMAGE_PROXY_MAX_REDIRECTS = (() => {
+            const n = Number.parseInt(process.env.IMAGE_PROXY_MAX_REDIRECTS || "3", 10);
+            if (!Number.isFinite(n)) return 3;
+            return Math.max(0, Math.min(10, n));
+        })();
+
+        async function openImageStream(urlCandidate) {
+            let current = urlCandidate;
+
+            for (let i = 0; i <= IMAGE_PROXY_MAX_REDIRECTS; i++) {
+                const { url, lookup } = await validateOutboundUrl(current);
+                const protocol = url.protocol === "https:" ? https : http;
+
+                const proxyRes = await new Promise((resolve, reject) => {
+                    const proxyReq = protocol.get(url, {
+                        timeout: IMAGE_PROXY_TIMEOUT_MS,
+                        lookup,
+                        headers: {
+                            'User-Agent': 'NTEOK-ImageProxy/1.0',
+                            'Accept': 'image/*,*/*;q=0.1'
+                        }
+                    }, (r) => resolve(r));
+
+                    proxyReq.on('error', reject);
+                    proxyReq.on('timeout', () => {
+                        proxyReq.destroy(new Error("Image proxy timeout"));
+                    });
+                });
+
+                const status = proxyRes.statusCode || 0;
+                if (isRedirectStatus(status) && proxyRes.headers.location) {
+                    if (i === IMAGE_PROXY_MAX_REDIRECTS) {
+                        proxyRes.resume();
+                        throw new Error("Too many redirects");
+                    }
+                    try {
+                        const nextUrl = new URL(proxyRes.headers.location, url);
+                        proxyRes.resume();
+                        current = nextUrl.toString();
+                        continue;
+                    } catch {
+                        proxyRes.resume();
+                        throw new Error("Invalid redirect URL");
+                    }
+                }
+
+                return { proxyRes, finalUrl: url };
+            }
+
+            throw new Error("Too many redirects");
+        }
 
         try {
-            if (!(await isSafeUrl(url))) {
+            const { proxyRes, finalUrl } = await openImageStream(urlStr);
+
+            const status = proxyRes.statusCode || 0;
+            if (status < 200 || status >= 300) {
+                proxyRes.resume();
+                return res.status(502).end();
+            }
+
+            const contentType = String(proxyRes.headers['content-type'] || '').toLowerCase();
+            const isImage = contentType.startsWith('image/');
+            const isOctetStream = contentType.includes('application/octet-stream');
+
+            const pathname = finalUrl?.pathname || '';
+            const ext = path.extname(pathname).toLowerCase();
+            const allowedExt = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.ico', '.tif', '.tiff', '.svg']);
+            if (!isImage && !(isOctetStream && allowedExt.has(ext))) {
+                proxyRes.resume();
                 return res.status(403).end();
             }
 
-            const protocol = url.startsWith('https') ? https : http;
-            const proxyReq = protocol.get(url, { timeout: 10000 }, (proxyRes) => {
-                // 이미지/일반 바이너리 타입만 허용
-                const contentType = proxyRes.headers['content-type'] || '';
-                if (!contentType.startsWith('image/') && !contentType.includes('application/octet-stream')) {
-                    return res.status(403).end();
+            const lenHeader = proxyRes.headers['content-length'];
+            if (lenHeader) {
+                const len = Number.parseInt(String(lenHeader), 10);
+                if (Number.isFinite(len) && len > IMAGE_PROXY_MAX_BYTES) {
+                    proxyRes.resume();
+                    return res.status(413).end();
                 }
+            }
 
-                res.writeHead(proxyRes.statusCode, {
-                    'Content-Type': contentType,
-                    'Cache-Control': 'public, max-age=86400', // 1일 캐싱
-                    'X-Content-Type-Options': 'nosniff'
-                });
-                proxyRes.pipe(res);
+            res.writeHead(200, {
+                'Content-Type': contentType || 'application/octet-stream',
+                'Cache-Control': 'public, max-age=86400',
+                'X-Content-Type-Options': 'nosniff'
             });
 
-            proxyReq.on('error', () => res.status(500).end());
-            proxyReq.on('timeout', () => { proxyReq.destroy(); res.status(504).end(); });
+            let seen = 0;
+            proxyRes.on('data', (chunk) => {
+                seen += chunk.length;
+                if (seen > IMAGE_PROXY_MAX_BYTES) {
+                    proxyRes.destroy(new Error("Image too large"));
+                    try { res.destroy(); } catch (_) {}
+                }
+            });
+            proxyRes.on('error', () => {
+                try { res.destroy(); } catch (_) {}
+            });
+
+            proxyRes.pipe(res);
         } catch (e) {
-            res.status(500).end();
+            const msg = String(e?.message || '');
+            if (
+                msg.includes('Invalid URL') ||
+                msg.includes('Only http/https') ||
+                msg.includes('Userinfo') ||
+                msg.includes('Port is not allowed') ||
+                msg.includes('Private/local IP') ||
+                msg.includes('Failed to resolve')
+            ) {
+                return res.status(403).end();
+            }
+            if (msg.toLowerCase().includes('timeout')) return res.status(504).end();
+            return res.status(500).end();
         }
     });
 
