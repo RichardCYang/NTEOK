@@ -8,6 +8,66 @@ module.exports = ({ pool, pageSqlPolicy }) => {
     if (!pool) throw new Error("pool 필요");
     if (!pageSqlPolicy) throw new Error("pageSqlPolicy 필요");
 
+    // ====== subtree mutation helpers (access control safe) ======
+    const SUBTREE_BATCH_SIZE = (() => {
+        const n = Number.parseInt(process.env.PAGE_SUBTREE_BATCH_SIZE || "500", 10);
+        if (!Number.isFinite(n)) return 500;
+        return Math.max(50, Math.min(2000, n));
+    })();
+
+    function chunkArray(arr, size) {
+        const out = [];
+        for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+        return out;
+    }
+
+    function buildChildrenIndex(rows) {
+        const map = new Map();
+        for (const r of rows) {
+            const p = r.parent_id || null;
+            if (!map.has(p)) map.set(p, []);
+            map.get(p).push(r);
+        }
+        return map;
+    }
+
+    function collectSubtreeIds(rows, rootId) {
+        const byParent = buildChildrenIndex(rows);
+        const seen = new Set();
+        const order = [];
+        const stack = [rootId];
+        while (stack.length) {
+            const id = stack.pop();
+            if (seen.has(id)) continue;
+            seen.add(id);
+            order.push(id);
+            const children = byParent.get(id) || [];
+            for (const c of children) stack.push(c.id);
+        }
+        return order;
+    }
+
+    function splitIdsByPermission(rowsById, ids, actorUserId, isAdmin) {
+        const allowed = [];
+        const disallowed = [];
+        for (const id of ids) {
+            const row = rowsById.get(id);
+            if (!row) continue;
+            if (isAdmin || Number(row.user_id) === Number(actorUserId)) allowed.push(id);
+            else disallowed.push(id);
+        }
+        return { allowed, disallowed };
+    }
+
+    async function updateByIdInBatches(sqlPrefixWhereIdIn, ids, paramsBeforeIds = []) {
+        if (!Array.isArray(ids) || ids.length === 0) return;
+        for (const chunk of chunkArray(ids, SUBTREE_BATCH_SIZE)) {
+            const placeholders = chunk.map(() => '?').join(',');
+            const sql = `${sqlPrefixWhereIdIn} (${placeholders})`;
+            await pool.execute(sql, [...paramsBeforeIds, ...chunk]);
+        }
+    }
+
     return {
         /**
          * 페이지 목록 조회 (특정 저장소의 페이지: 소유한 페이지 + 공유받은 페이지)
@@ -110,27 +170,30 @@ module.exports = ({ pool, pageSqlPolicy }) => {
 
         /**
          * 페이지 및 모든 하위 페이지 복구
+         * 보안: 하위 트리 업데이트는 반드시 객체 단위 권한(Object-level auth)을 강제해야 함
+         * - ADMIN: 서브트리 전체 복구
+         * - EDIT : 본인 소유 페이지(및 그 하위 중 본인 소유)만 복구
          */
-        async restorePageAndDescendants(pageId, userId) {
-            const [allPages] = await pool.execute(`SELECT id, parent_id FROM pages WHERE storage_id IN (SELECT storage_id FROM pages WHERE id = ?)`, [pageId]);
-            
-            const descendants = [];
-            const findDescendants = (pid) => {
-                allPages.forEach(p => {
-                    if (p.parent_id === pid) {
-                        descendants.push(p.id);
-                        findDescendants(p.id);
-                    }
-                });
-            };
-            findDescendants(pageId);
+        async restorePageAndDescendants({ rootPageId, storageId, actorUserId, isAdmin = false }) {
+            if (!rootPageId || !storageId) return;
 
-            const targetIds = [pageId, ...descendants];
-            const placeholders = targetIds.map(() => '?').join(',');
-            
-            await pool.execute(
-                `UPDATE pages SET deleted_at = NULL WHERE id IN (${placeholders})`,
-                targetIds
+            const [allPages] = await pool.execute(
+                `SELECT id, parent_id, user_id FROM pages WHERE storage_id = ?`,
+                [storageId]
+            );
+
+            const rowsById = new Map((allPages || []).map(r => [r.id, r]));
+            if (!rowsById.has(rootPageId)) return;
+
+            const subtreeIds = collectSubtreeIds(allPages || [], rootPageId);
+            const { allowed: restorableIds } = splitIdsByPermission(rowsById, subtreeIds, actorUserId, isAdmin);
+
+            // 복구할 대상이 없으면 종료
+            if (!restorableIds || restorableIds.length === 0) return;
+
+            await updateByIdInBatches(
+                `UPDATE pages SET deleted_at = NULL WHERE id IN`,
+                restorableIds
             );
         },
 
@@ -146,39 +209,48 @@ module.exports = ({ pool, pageSqlPolicy }) => {
 
         /**
          * 페이지 및 모든 하위 페이지 휴지통으로 이동
+         * 보안: 내가 삭제할 수 있는 페이미만 soft-delete 해야 함
+         * - ADMIN: 서브트리 전체 삭제
+         * - EDIT : 본인 소유 페이미만 삭제(다른 사용자의 하위 페이지는 삭제하지 않고 부모를 재연결)
          */
-        async softDeletePageAndDescendants(pageId, userId) {
-            // 1. 권한 체크 (간소화: 삭제 권한이 있는지는 호출부에서 이미 체크함)
-            // 2. 재귀적으로 모든 하위 페이지 ID 가져오기
-            const [allPages] = await pool.execute(`SELECT id, parent_id FROM pages WHERE storage_id IN (SELECT storage_id FROM pages WHERE id = ?)`, [pageId]);
-            
-            const descendants = [];
-            const findDescendants = (pid) => {
-                allPages.forEach(p => {
-                    if (p.parent_id === pid) {
-                        descendants.push(p.id);
-                        findDescendants(p.id);
-                    }
-                });
-            };
-            findDescendants(pageId);
+        async softDeletePageAndDescendants({ rootPageId, storageId, rootParentId = null, actorUserId, isAdmin = false }) {
+            if (!rootPageId || !storageId) return;
 
-            const targetIds = [pageId, ...descendants];
-            const placeholders = targetIds.map(() => '?').join(',');
-            
-            await pool.execute(
-                `UPDATE pages SET deleted_at = NOW() WHERE id IN (${placeholders})`,
-                targetIds
+            const [allPages] = await pool.execute(
+                `SELECT id, parent_id, user_id FROM pages WHERE storage_id = ?`,
+                [storageId]
+            );
+
+            const rowsById = new Map((allPages || []).map(r => [r.id, r]));
+            if (!rowsById.has(rootPageId)) return;
+
+            const subtreeIds = collectSubtreeIds(allPages || [], rootPageId);
+
+            const { allowed: deletableIds, disallowed: keptIds } =
+                splitIdsByPermission(rowsById, subtreeIds, actorUserId, isAdmin);
+
+            if (!isAdmin && keptIds && keptIds.length > 0) {
+                const safeParentId = rootParentId || null;
+                await updateByIdInBatches(
+                    `UPDATE pages SET parent_id = ?, updated_at = NOW() WHERE id IN`,
+                    keptIds,
+                    [safeParentId]
+                );
+            }
+
+            if (!deletableIds || deletableIds.length === 0) return;
+
+            await updateByIdInBatches(
+                `UPDATE pages SET deleted_at = NOW() WHERE id IN`,
+                deletableIds
             );
 
             // 보안: 휴지통 이동 시 기존 공개 발행 링크(베어러 토큰)가 남아있으면
             // 삭제된 페이지가 계속 외부에 노출될 수 있으므로 즉시 비활성화
             // (하위 페이지들도 동일 적용)
-            await pool.execute(
-                `UPDATE page_publish_links
-                 SET is_active = 0, updated_at = NOW()
-                 WHERE is_active = 1 AND page_id IN (${placeholders})`,
-                targetIds
+            await updateByIdInBatches(
+                `UPDATE page_publish_links SET is_active = 0, updated_at = NOW() WHERE is_active = 1 AND page_id IN`,
+                deletableIds
             );
         },
 

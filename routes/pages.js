@@ -538,11 +538,27 @@ module.exports = (dependencies) => {
             if (!page) return res.status(404).json({ error: "Not found" });
 
             const permission = await storagesRepo.getPermission(userId, page.storage_id);
-            if (!permission || !['EDIT', 'ADMIN'].includes(permission)) {
+            if (!permission) {
                 return res.status(403).json({ error: "이 페이지를 복구할 권한이 없습니다." });
             }
 
-            await pagesRepo.restorePageAndDescendants(id, userId);
+            const isOwnerOfPage = Number(page.user_id) === Number(userId);
+            const canRestore =
+                permission === 'ADMIN' ||
+                (permission === 'EDIT' && isOwnerOfPage);
+
+            if (!canRestore) {
+                return res.status(403).json({
+                    error: "이 페이지를 복구할 권한이 없습니다. (ADMIN 또는 본인 작성 페이지만 복구 가능)"
+                });
+            }
+
+            await pagesRepo.restorePageAndDescendants({
+                rootPageId: id,
+                storageId: page.storage_id,
+                actorUserId: userId,
+                isAdmin: permission === 'ADMIN'
+            });
 
             await pagesRepo.recordUpdateHistory({
                 userId,
@@ -629,7 +645,13 @@ module.exports = (dependencies) => {
             }
 
             // Soft delete: 자신과 모든 하위 페이지의 deleted_at 설정
-            await pagesRepo.softDeletePageAndDescendants(id, userId);
+            await pagesRepo.softDeletePageAndDescendants({
+                rootPageId: id,
+                storageId: existing.storage_id,
+                rootParentId: existing.parent_id || null,
+                actorUserId: userId,
+                isAdmin: permission === 'ADMIN'
+            });
 
             await pagesRepo.recordUpdateHistory({
                 userId,
