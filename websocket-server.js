@@ -24,6 +24,65 @@ const WS_RATE_LIMIT_MAX_CONNECTIONS = 10;
 const WS_MAX_MESSAGE_BYTES = 2 * 1024 * 1024;
 const WS_MAX_AWARENESS_UPDATE_BYTES = 32 * 1024;
 
+// ==================== WebSocket DoS 방어: 메시지 레이트/크기 제한 ====================
+// 연결 수 제한만으로는 1개 연결에서의 메시지 플러딩을 막기 어려움
+// WebSocket 메시지 처리(JSON.parse, base64 decode, Yjs applyUpdate, DB save)는 CPU/메모리 소비
+// (CWE-400 Uncontrolled Resource Consumption)
+const WS_MSG_RATE_WINDOW_MS = (() => {
+    const v = parseInt(process.env.WS_MSG_RATE_WINDOW_MS || "10000", 10);
+    return Number.isFinite(v) && v >= 1000 && v <= 600000 ? v : 10000;
+})();
+
+const WS_MSG_RATE_MAX = (() => {
+    const v = parseInt(process.env.WS_MSG_RATE_MAX || "400", 10);
+    return Number.isFinite(v) && v >= 20 && v <= 10000 ? v : 400;
+})();
+
+const WS_YJS_RATE_MAX = (() => {
+    const v = parseInt(process.env.WS_YJS_RATE_MAX || "200", 10);
+    return Number.isFinite(v) && v >= 10 && v <= 5000 ? v : 200;
+})();
+
+const WS_AWARENESS_RATE_MAX = (() => {
+    const v = parseInt(process.env.WS_AWARENESS_RATE_MAX || "300", 10);
+    return Number.isFinite(v) && v >= 10 && v <= 5000 ? v : 300;
+})();
+
+const WS_MAX_YJS_UPDATE_BYTES = (() => {
+    const v = parseInt(process.env.WS_MAX_YJS_UPDATE_BYTES || String(512 * 1024), 10);
+    return Number.isFinite(v) && v >= (32 * 1024) && v <= WS_MAX_MESSAGE_BYTES ? v : (512 * 1024);
+})();
+
+const WS_MAX_YJS_STATE_BYTES = (() => {
+    const v = parseInt(process.env.WS_MAX_YJS_STATE_BYTES || String(1024 * 1024), 10);
+    return Number.isFinite(v) && v >= (128 * 1024) && v <= (32 * 1024 * 1024) ? v : (1024 * 1024);
+})();
+
+const WS_MAX_YJS_UPDATE_B64_CHARS = Math.ceil(WS_MAX_YJS_UPDATE_BYTES / 3) * 4 + 8;
+const WS_MAX_AWARENESS_UPDATE_B64_CHARS = Math.ceil(WS_MAX_AWARENESS_UPDATE_BYTES / 3) * 4 + 8;
+
+function initWsMessageRateState(ws) {
+    ws._msgRate = { windowStart: Date.now(), total: 0, yjs: 0, awareness: 0, badJson: 0 };
+}
+
+function consumeWsMessageBudget(ws, kind) {
+    if (!ws || !ws._msgRate) return true;
+    const now = Date.now();
+    if (now - ws._msgRate.windowStart >= WS_MSG_RATE_WINDOW_MS) {
+        ws._msgRate.windowStart = now;
+        ws._msgRate.total = 0;
+        ws._msgRate.yjs = 0;
+        ws._msgRate.awareness = 0;
+        ws._msgRate.badJson = 0;
+    }
+    ws._msgRate.total++;
+    if (ws._msgRate.total > WS_MSG_RATE_MAX) return false;
+    if (kind === "yjs-update") { ws._msgRate.yjs++; if (ws._msgRate.yjs > WS_YJS_RATE_MAX) return false; }
+    if (kind === "awareness-update") { ws._msgRate.awareness++; if (ws._msgRate.awareness > WS_AWARENESS_RATE_MAX) return false; }
+    if (kind === "bad-json") { ws._msgRate.badJson++; if (ws._msgRate.badJson > 20) return false; }
+    return true;
+}
+
 // 권한 변경/회수 반영을 위한 주기적 재검증(밀리초)
 const WS_PERMISSION_REFRESH_MS = (() => {
     const n = Number.parseInt(process.env.WS_PERMISSION_REFRESH_MS || '5000', 10);
@@ -203,6 +262,11 @@ async function saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc) {
         let yjsStateToSave = null;
         if (!isEncrypted) {
             yjsStateToSave = Buffer.from(Y.encodeStateAsUpdate(ydoc));
+            // DoS/DB bloat 방지: yjs_state 저장 크기 상한
+            if (yjsStateToSave.length > WS_MAX_YJS_STATE_BYTES) {
+                // 너무 큰 상태는 저장하지 않음(협업 복원 기능 제한) — 대신 HTML/메타데이터 저장은 유지
+                yjsStateToSave = null;
+            }
         }
 
         await pool.execute(
@@ -455,8 +519,38 @@ function initWebSocketServer(server, sessions, pool, sanitizeHtmlContent, IS_PRO
 		    ws.userId = session.userId; ws.username = session.username; ws.sessionId = sessionId; ws.isAlive = true;
 			registerSessionConnection(sessionId, ws);
 		    ws.on('pong', () => { ws.isAlive = true; });
-			ws.on('message', async (msg) => {
-		        try { const data = JSON.parse(msg); await handleWebSocketMessage(ws, data, pool, sanitizeHtmlContent, getSessionFromId, pageSqlPolicy); } catch (e) { ws.send(JSON.stringify({ event: 'error', data: { message: 'Failed' } })); }
+            ws.on('error', () => { /* prevent unhandled errors */ });
+
+            // per-connection 메시지 레이트 리밋 상태 초기화
+            initWsMessageRateState(ws);
+
+			ws.on('message', async (msg, isBinary) => {
+		        try {
+                    // JSON only: 바이너리 프레임은 거부
+                    if (isBinary) {
+                        if (!consumeWsMessageBudget(ws, "bad-json")) { try { ws.close(1008, 'Rate limit exceeded'); } catch (_) {} }
+                        else { try { ws.close(1003, 'Binary not supported'); } catch (_) {} }
+                        return;
+                    }
+
+                    const text = (typeof msg === 'string') ? msg : (Buffer.isBuffer(msg) ? msg.toString('utf8') : String(msg));
+                    if (text.length > (WS_MAX_MESSAGE_BYTES + 1024)) { try { ws.close(1009, 'Message too big'); } catch (_) {} return; }
+
+                    let data;
+                    try { data = JSON.parse(text); }
+                    catch (_) {
+                        if (!consumeWsMessageBudget(ws, "bad-json")) { try { ws.close(1008, 'Rate limit exceeded'); } catch (_) {} }
+                        else { try { ws.send(JSON.stringify({ event: 'error', data: { message: 'Invalid message' } })); } catch (_) {} }
+                        return;
+                    }
+
+                    const kind = (data && typeof data.type === 'string') ? data.type : 'unknown';
+                    if (!consumeWsMessageBudget(ws, kind)) { try { ws.close(1008, 'Rate limit exceeded'); } catch (_) {} return; }
+
+                    await handleWebSocketMessage(ws, data, pool, sanitizeHtmlContent, getSessionFromId, pageSqlPolicy);
+                } catch (_) {
+                    try { ws.send(JSON.stringify({ event: 'error', data: { message: 'Failed' } })); } catch (_) {}
+                }
 		    });
 		    ws.send(JSON.stringify({ event: 'connected', data: { userId: session.userId, username: session.username } }));
       	} catch (err) { try { ws.close(1011, 'Error'); } catch (_) {} }
@@ -604,7 +698,12 @@ async function handleYjsUpdate(ws, payload, pool, sanitizeHtmlContent) {
         if (!['EDIT', 'ADMIN'].includes(freshPerm)) return;
 
         const ydoc = await loadOrCreateYjsDoc(pool, sanitizeHtmlContent, pageId);
-        Y.applyUpdate(ydoc, Buffer.from(update, 'base64'));
+        // DoS 방지: 업데이트 크기 제한 (base64 길이 + 디코딩 후 바이트)
+        if (update.length > WS_MAX_YJS_UPDATE_B64_CHARS) throw new Error('Update too large');
+        const updateBuf = Buffer.from(update, 'base64');
+        if (updateBuf.length > WS_MAX_YJS_UPDATE_BYTES) throw new Error('Update too large');
+
+        Y.applyUpdate(ydoc, updateBuf);
         wsBroadcastToPage(pageId, 'yjs-update', { update }, ws.userId);
         const doc = yjsDocuments.get(pageId);
         if (doc) { if (doc.saveTimeout) clearTimeout(doc.saveTimeout); doc.saveTimeout = setTimeout(() => { saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc).catch(e => {}); }, 1000); }
@@ -619,8 +718,12 @@ function isSubscribedToPage(ws, pageId) {
 }
 
 function handleAwarenessUpdate(ws, payload) {
-    const { pageId, awarenessUpdate } = payload;
-    if (!pageId || !isSubscribedToPage(ws, pageId)) return;
+    const { pageId, awarenessUpdate } = payload || {};
+    if (!pageId || typeof awarenessUpdate !== 'string' || !isSubscribedToPage(ws, pageId)) return;
+
+    // DoS 방지: awareness는 작아야 함(커서/선택 정보)
+    if (awarenessUpdate.length > WS_MAX_AWARENESS_UPDATE_B64_CHARS) return;
+
     wsBroadcastToPage(pageId, 'awareness-update', { awarenessUpdate, fromUserId: ws.userId }, ws.userId);
 }
 

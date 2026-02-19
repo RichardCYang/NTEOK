@@ -28,6 +28,10 @@ let yjsPmPlugins = [];				// y-prosemirror(동시편집) 플러그인 추적/해
 let yjsPmPluginKeys = new Set();	// y-prosemirror(동시편집) 플러그인 중복 확인용
 
 // 커서 공유 상태
+// 서버와 동일한 상한(기본값). 운영에서 서버(.env) 값 변경 시 함께 맞추는 것을 권장
+const WS_MAX_YJS_UPDATE_BYTES = 512 * 1024;        // 512KB
+const WS_MAX_AWARENESS_UPDATE_BYTES = 32 * 1024;   // 32KB
+
 const cursorState = {
     awareness: null,			// Awareness 인스턴스
     remoteCursors: new Map(),	// clientId -> DOM element
@@ -406,6 +410,13 @@ export function syncEditorFromMetadata() {
 function sendYjsUpdate(pageId, update) {
     if (!ws || ws.readyState !== WebSocket.OPEN) {
         console.warn('[WS] WebSocket이 연결되지 않았습니다.');
+        return;
+    }
+
+    // 서버에서 거부될 수준의 큰 update는 클라이언트에서 선제 차단(협업 끊김/재연결 UX 완화)
+    if (update && (update.byteLength || update.length) && (update.byteLength || update.length) > WS_MAX_YJS_UPDATE_BYTES) {
+        console.warn('[WS] yjs-update too large; blocked on client');
+        showInfo('너무 큰 편집 내용은 실시간 협업 전송이 제한됩니다. (분할/축소 후 다시 시도)');
         return;
     }
 
@@ -1069,6 +1080,10 @@ function handleAwarenessChange({ added, updated, removed }, origin) {
  */
 function sendAwarenessUpdate(update) {
     if (!currentPageId || !ws || ws.readyState !== WebSocket.OPEN) return;
+
+    // awareness는 커서/선택 정보이므로 크기가 커지면 무시(협업 자체는 유지)
+    if (update && (update.byteLength || update.length) && (update.byteLength || update.length) > WS_MAX_AWARENESS_UPDATE_BYTES)
+        return;
 
 	const base64Update = uint8ToBase64(update);
 
