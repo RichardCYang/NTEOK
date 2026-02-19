@@ -22,7 +22,7 @@ import {
     bindModalOverlayClick
 } from './ui-utils.js';
 import * as api from './api-utils.js';
-import { sanitizeEditorHtml } from './sanitize.js';
+import { sanitizeEditorHtml, htmlToPlainText } from './sanitize.js';
 import { initEditor, bindToolbar, bindSlashKeyHandlers, updateToolbarState } from './editor.js';
 import {
     initPagesManager,
@@ -439,9 +439,8 @@ async function performSearch(query) {
             titleToSearch = page.title || '';
             const content = page.content || '';
 
-            const tempDiv = document.createElement('div');
-            tempDiv.innerHTML = content;
-            const textContent = tempDiv.textContent || '';
+            // 보안: innerHTML로 사용자 콘텐츠를 파싱하지 않음 (DOM 기반 XSS 방어)
+            const textContent = htmlToPlainText(content, { maxLength: 20000 });
 
             const fullText = titleToSearch + ' ' + textContent;
             shouldInclude = fullText.toLowerCase().includes(queryLower);

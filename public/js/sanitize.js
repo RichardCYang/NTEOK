@@ -86,3 +86,32 @@ export function sanitizeEditorHtml(html) {
 	if (!html || typeof html !== 'string') return html;
 	return DOMPurify.sanitize(html, EDITOR_PURIFY_CONFIG);
 }
+
+/**
+ * 안전한 HTML → Plain text 변환기
+ * - innerHTML 같은 위험한 sink를 사용하지 않음
+ * - DOMParser는 스크립트를 실행하거나 서브리소스를 로드하지 않는 inert 파싱을 제공
+ * - 검색/미리보기 생성 등, 사용자 콘텐츠를 텍스트로만 쓰고 싶을 때 사용
+ */
+export function htmlToPlainText(html, { maxLength = 0 } = {}) {
+	if (!html || typeof html !== 'string') return '';
+
+	// 과도한 입력으로 브라우저가 멈추는 것을 방지 (방어적 제한)
+	const HARD_LIMIT = 2_000_000; // 2MB
+	const input = html.length > HARD_LIMIT ? html.slice(0, HARD_LIMIT) : html;
+
+	try {
+		const parser = new DOMParser();
+		const doc = parser.parseFromString(input, 'text/html');
+		let out = (doc.body && doc.body.textContent) ? doc.body.textContent : '';
+		out = out.replace(/\s+/g, ' ').trim();
+		if (maxLength > 0 && out.length > maxLength) return out.slice(0, maxLength);
+		return out;
+	} catch {
+		// 최후의 fallback: 태그 제거(보수적)
+		let out = input.replace(/<[^>]*>/g, ' ');
+		out = out.replace(/\s+/g, ' ').trim();
+		if (maxLength > 0 && out.length > maxLength) return out.slice(0, maxLength);
+		return out;
+	}
+}

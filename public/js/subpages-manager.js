@@ -4,6 +4,7 @@
  */
 
 import { secureFetch, escapeHtml, escapeHtmlAttr } from './ui-utils.js';
+import { htmlToPlainText } from './sanitize.js';
 
 let state = null;
 
@@ -165,10 +166,8 @@ function generatePreview(htmlContent, isEncrypted) {
         return '';
     }
 
-    // HTML 태그 제거
-    const tempDiv = document.createElement('div');
-    tempDiv.innerHTML = htmlContent;
-    const textContent = tempDiv.textContent || tempDiv.innerText || '';
+    // 보안: innerHTML 사용 금지 → inert 파싱으로 plain text만 추출
+    const textContent = htmlToPlainText(htmlContent, { maxLength: 5000 });
 
     // 첫 80자로 제한 (한 줄로 표시)
     const preview = textContent.trim().substring(0, 80);
