@@ -173,7 +173,13 @@ module.exports = (dependencies) => {
     function makePinnedLookup(address, family) {
         return (hostname, options, callback) => {
             const cb = typeof options === "function" ? options : callback;
-            process.nextTick(() => cb(null, address, family));
+            const opts = typeof options === "object" ? options : {};
+
+            if (opts.all) {
+                process.nextTick(() => cb(null, [{ address, family }]));
+            } else {
+                process.nextTick(() => cb(null, address, family));
+            }
         };
     }
 
