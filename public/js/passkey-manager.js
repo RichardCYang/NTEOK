@@ -113,7 +113,7 @@ async function loadPasskeyList() {
                         ${pk.lastUsed ? `· 마지막 사용: ${new Date(pk.lastUsed).toLocaleDateString('ko-KR')}` : ''}
                     </div>
                 </div>
-                <button type="button" class="delete-passkey-btn" data-id="${pk.id}" style="padding: 6px 12px; background: #ef4444; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 12px;">
+                <button type="button" class="delete-passkey-btn" data-id="${escapeHtmlAttr(pk.id)}" style="padding: 6px 12px; background: #ef4444; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 12px;">
                     삭제
                 </button>
             </div>

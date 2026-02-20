@@ -200,16 +200,22 @@ async function handlePageListClick(event, state) {
         const isAdmin = state.currentStoragePermission === 'ADMIN';
         const canDelete = isAdmin || (state.currentStoragePermission === 'EDIT' && isOwner);
 
-        const menuItems = `
-            <button data-action="set-icon" data-page-id="${escapeHtml(pageId)}">
-                <i class="fa-solid fa-icons"></i> 아이콘 설정
-            </button>
-            ${canDelete ? `
-            <button data-action="delete-page" data-page-id="${escapeHtml(pageId)}">
-                <i class="fa-regular fa-trash-can"></i> 페이지 삭제
-            </button>
-            ` : ''}
-        `;
+        const menuItems = [
+            {
+                action: "set-icon",
+                label: "아이콘 설정",
+                icon: "fa-solid fa-icons",
+                dataset: { pageId: pageId }
+            }
+        ];
+        if (canDelete) {
+            menuItems.push({
+                action: "delete-page",
+                label: "페이지 삭제",
+                icon: "fa-regular fa-trash-can",
+                dataset: { pageId: pageId }
+            });
+        }
         showContextMenu(pageMenuBtn, menuItems);
         return;
     }

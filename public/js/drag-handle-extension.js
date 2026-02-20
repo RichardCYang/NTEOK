@@ -435,17 +435,11 @@ export const DragHandle = Extension.create({
                         if (!editorView.editable) return;
                         if (!currentBlockNode || currentBlockPos === null) return;
 
-                        const menuItems = `
-                            <button data-action="block-move-up">
-                                <i class="fa-solid fa-arrow-up"></i> 위로 이동
-                            </button>
-                            <button data-action="block-move-down">
-                                <i class="fa-solid fa-arrow-down"></i> 아래로 이동
-                            </button>
-                            <button data-action="block-delete" class="danger">
-                                <i class="fa-solid fa-trash-can"></i> 삭제
-                            </button>
-                        `;
+                        const menuItems = [
+                            { action: "block-move-up", label: "위로 이동", icon: "fa-solid fa-arrow-up" },
+                            { action: "block-move-down", label: "아래로 이동", icon: "fa-solid fa-arrow-down" },
+                            { action: "block-delete", label: "삭제", icon: "fa-solid fa-trash-can", className: "danger" }
+                        ];
 
                         showContextMenu(trigger, menuItems);
 

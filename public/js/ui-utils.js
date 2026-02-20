@@ -124,6 +124,11 @@ export function openDropdown(menu, trigger) {
 
 /**
  * Context Menu 표시
+ * 보안 개선: innerHTML 기반 메뉴 렌더링 제거 (DOM XSS 방지)
+ * menuItems 형식:
+ *   [
+ *     { action: "delete-page", label: "페이지 삭제", icon: "fa-regular fa-trash-can", className: "danger", dataset: { pageId: "..." } }
+ *   ]
  */
 export function showContextMenu(triggerBtn, menuItems) {
     const contextMenu = document.querySelector("#context-menu");
@@ -131,8 +136,65 @@ export function showContextMenu(triggerBtn, menuItems) {
 
     if (!contextMenu || !contextMenuContent) return;
 
-    // 메뉴 내용 설정
-    contextMenuContent.innerHTML = menuItems;
+    // 보안: innerHTML 사용 금지 → DOM API로 안전하게 생성
+    contextMenuContent.textContent = "";
+
+    // 문자열이 들어오면 (구버전 호출부) 안전을 위해 텍스트로만 표시
+    // (아이콘/HTML은 깨지지만 XSS 방지 우선)
+    if (typeof menuItems === "string") {
+        const warn = document.createElement("div");
+        warn.style.padding = "10px";
+        warn.style.fontSize = "12px";
+        warn.style.color = "#b91c1c";
+        warn.textContent = "[SECURITY] Deprecated menuItems string detected. Please migrate to array format.";
+        contextMenuContent.appendChild(warn);
+
+        const pre = document.createElement("pre");
+        pre.style.whiteSpace = "pre-wrap";
+        pre.style.wordBreak = "break-word";
+        pre.style.padding = "10px";
+        pre.style.margin = "0";
+        pre.textContent = menuItems;
+        contextMenuContent.appendChild(pre);
+    } else if (Array.isArray(menuItems)) {
+        menuItems.forEach((item) => {
+            const btn = document.createElement("button");
+            btn.type = "button";
+
+            if (item.action) btn.dataset.action = String(item.action);
+            if (item.className) btn.className = String(item.className);
+
+            // dataset 추가 주입 (pageId 등)
+            if (item.dataset && typeof item.dataset === "object") {
+                Object.entries(item.dataset).forEach(([k, v]) => {
+                    // dataset key sanitize (알파/숫자/하이픈/언더스코어만)
+                    const safeKey = String(k).replace(/[^a-zA-Z0-9_-]/g, "");
+                    btn.dataset[safeKey] = String(v);
+                });
+            }
+
+            // 아이콘
+            if (item.icon) {
+                const iEl = document.createElement("i");
+                // icon class sanitize (기본 허용 문자만)
+                iEl.className = String(item.icon).replace(/[^a-zA-Z0-9 _-]/g, "").trim();
+                iEl.style.marginRight = "8px";
+                btn.appendChild(iEl);
+            }
+
+            // 라벨
+            const label = document.createElement("span");
+            label.textContent = item.label ? String(item.label) : "";
+            btn.appendChild(label);
+
+            contextMenuContent.appendChild(btn);
+        });
+    } else {
+        const fallback = document.createElement("div");
+        fallback.style.padding = "10px";
+        fallback.textContent = "Invalid context menu items.";
+        contextMenuContent.appendChild(fallback);
+    }
 
     // 버튼 위치 계산
     const rect = triggerBtn.getBoundingClientRect();

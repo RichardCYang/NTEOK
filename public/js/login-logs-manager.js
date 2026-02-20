@@ -165,7 +165,7 @@ function renderLoginLogsTable(logs) {
             <tr>
                 <td>${formatDateTime(log.created_at)}</td>
                 <td>${escapeHtml(log.ip_address)}</td>
-                <td>${log.port}</td>
+                <td>${escapeHtml(String(log.port))}</td>
                 <td>${escapeHtml(location)}</td>
                 <td>${statusBadge}</td>
                 <td>

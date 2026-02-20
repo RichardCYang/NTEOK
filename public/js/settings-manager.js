@@ -800,7 +800,7 @@ function updateSelectedCountriesSummary() {
 
         summary.innerHTML = `
             <div style="margin-bottom: 4px;"><strong>${selectedCount}개 국가 선택됨</strong></div>
-            <div style="color: #888; font-size: 12px; max-height: 60px; overflow-y: auto;">${countryNames.join(', ')}</div>
+            <div style="color: #888; font-size: 12px; max-height: 60px; overflow-y: auto;">${escapeHtml(countryNames.join(', '))}</div>
         `;
     }
 }
@@ -867,10 +867,10 @@ function renderCountryList(countries, selectedCountries) {
 
         label.innerHTML = `
             <input type="checkbox"
-                   value="${country.code}"
+                   value="${escapeHtmlAttr(country.code)}"
                    ${isChecked ? 'checked' : ''}
                    style="margin-right: 8px;">
-            <span>${country.name} (${country.code})</span>
+            <span>${escapeHtml(country.name)} (${escapeHtml(country.code)})</span>
         `;
 
         // 체크박스 변경 시 요약 업데이트
