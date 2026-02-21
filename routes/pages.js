@@ -1153,6 +1153,13 @@ module.exports = (dependencies) => {
         const urlStr = (typeof req.query.url === "string") ? req.query.url : "";
         if (!urlStr) return res.status(400).end();
 
+        // URL 문자열 기반 1차 SVG 사전 차단
+        // fetch 전에 차단하여 불필요한 외부 요청 및 MIME 스니핑 우회 시도 방지
+        const urlStrLower = urlStr.toLowerCase();
+        if (urlStrLower.includes(".svg") || urlStrLower.includes("image/svg") || urlStrLower.includes("svg+xml")) {
+            return res.status(415).end();
+        }
+
         const IMAGE_PROXY_TIMEOUT_MS = (() => {
             const n = Number.parseInt(process.env.IMAGE_PROXY_TIMEOUT_MS || "10000", 10);
             if (!Number.isFinite(n)) return 10000;
@@ -1260,11 +1267,13 @@ module.exports = (dependencies) => {
                 'Content-Type': contentType || 'application/octet-stream',
                 'X-Content-Type-Options': 'nosniff',
                 // 보안: 이미지 프록시 URL을 사용자가 직접 열어도 문서 컨텍스트에서 스크립트가 못 돌게 강제
-                // (SVG를 차단하더라도, 혹시 모를 타입 혼동/브라우저 동작 차이를 방어적으로 커버)
-                'Content-Security-Policy': "default-src 'none'; sandbox",
+                // sandbox + 명시적 지시어로 SVG 우회/브라우저 동작 차이를 방어 (Defense-in-Depth)
+                'Content-Security-Policy': "default-src 'none'; sandbox; script-src 'none'; style-src 'none'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
                 'Cross-Origin-Resource-Policy': 'same-origin',
-                // 인증이 필요한 프록시이므로 shared cache 저장 방지(선호: private/no-store)
-                'Cache-Control': 'private, max-age=86400'
+                // 인증 API 프록시 응답은 shared cache/브라우저 캐시 저장 자체를 금지
+                'Cache-Control': 'private, no-store',
+                // 외부로 Referer 헤더가 노출되지 않도록 차단
+                'Referrer-Policy': 'no-referrer'
             });
 
             let seen = 0;
