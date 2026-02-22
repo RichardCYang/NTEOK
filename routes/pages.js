@@ -515,23 +515,105 @@ module.exports = (dependencies) => {
     router.patch("/reorder", authMiddleware, async (req, res) => {
         const { storageId, pageIds, parentId } = req.body;
         const userId = req.user.id;
+
+        // 보안: 대량 변경 API는 반드시 객체 단위 권한(Object-level auth)을 다시 강제해야 함
+        // - storage 권한(EDIT/ADMIN)이 있어도, 특정 페이지는 is_encrypted=1 + share_allowed=0 정책으로 비가시일 수 있음
+        // - (특히) 과거에 접근 가능했던 페이지의 ID를 알고 있는 협업자가, 접근이 회수된 뒤에도
+        //   이 엔드포인트를 통해 sort_order를 변경하는 무단 변경(Broken Access Control)을 막기 위함
         try {
+            if (typeof storageId !== "string" || !storageId.trim())
+                return res.status(400).json({ error: "storageId required" });
+
+            if (!Array.isArray(pageIds) || pageIds.length === 0)
+                return res.status(400).json({ error: "pageIds required" });
+
+            // DoS 방지: 한 번에 너무 많은 업데이트 금지
+            const MAX_REORDER_PAGES = Number(process.env.MAX_REORDER_PAGES || 2000);
+            if (pageIds.length > MAX_REORDER_PAGES)
+                return res.status(413).json({ error: `Too many pageIds (max ${MAX_REORDER_PAGES})` });
+
+            // 입력 정규화 + 중복/이상치 차단
+            const normalizedIds = [];
+            const seen = new Set();
+            for (const raw of pageIds) {
+                if (typeof raw !== "string") return res.status(400).json({ error: "Invalid pageId" });
+                const pid = raw.trim();
+                if (!pid || pid.length > 64) return res.status(400).json({ error: "Invalid pageId" });
+                if (seen.has(pid)) return res.status(400).json({ error: "Duplicate pageId" });
+                seen.add(pid);
+                normalizedIds.push(pid);
+            }
+
             const permission = await storagesRepo.getPermission(userId, storageId);
             if (!permission || !['EDIT', 'ADMIN'].includes(permission)) {
                 return res.status(403).json({ error: "이 저장소의 페이지 순서를 변경할 권한이 없습니다." });
             }
-            for (let i = 0; i < pageIds.length; i++) { await pool.execute(`UPDATE pages SET sort_order=?, updated_at=NOW() WHERE id=? AND storage_id=?`, [i * 10, pageIds[i], storageId]); }
+
+            // (선택) parentId가 있으면, 해당 parent 페이지도 보이는지 확인
+            if (parentId) {
+                const parent = await pagesRepo.getPageByIdForUser({ userId, pageId: parentId });
+                if (!parent || String(parent.storage_id) !== String(storageId))
+                    return res.status(404).json({ error: "Not found" });
+            }
+
+            // 핵심: 요청에 포함된 모든 pageId가 현재 사용자에게 보이는 페이지인지 DB에서 재검증
+            const vis = (pageSqlPolicy && typeof pageSqlPolicy.andVisible === "function")
+                ? pageSqlPolicy.andVisible({ alias: "p", viewerUserId: userId })
+                : { sql: "AND NOT (p.is_encrypted = 1 AND p.share_allowed = 0 AND p.user_id != ?)", params: [userId] };
+
+            const placeholders = normalizedIds.map(() => "?").join(",");
+            const [visibleRows] = await pool.execute(
+                `SELECT p.id
+                   FROM pages p
+              LEFT JOIN storage_shares ss
+                     ON p.storage_id = ss.storage_id
+                    AND ss.shared_with_user_id = ?
+                  WHERE p.storage_id = ?
+                    AND p.deleted_at IS NULL
+                    AND (p.user_id = ? OR ss.storage_id IS NOT NULL)
+                    ${vis.sql}
+                    AND p.id IN (${placeholders})`,
+                [userId, storageId, userId, ...vis.params, ...normalizedIds]
+            );
+
+            const allowed = new Set((visibleRows || []).map(r => String(r.id)));
+            if (allowed.size !== normalizedIds.length) {
+                // 존재/권한 여부를 섞어 404로 통일 (enumeration 완화)
+                return res.status(404).json({ error: "Not found" });
+            }
+
+            // 일관성: 트랜잭션으로 sort_order 일괄 적용
+            const conn = await pool.getConnection();
+            try {
+                await conn.beginTransaction();
+                for (let i = 0; i < normalizedIds.length; i++) {
+                    const pid = normalizedIds[i];
+                    await conn.execute(
+                        `UPDATE pages SET sort_order=?, updated_at=NOW() WHERE id=? AND storage_id=?`,
+                        [i * 10, pid, storageId]
+                    );
+                }
+                await conn.commit();
+            } catch (e) {
+                try { await conn.rollback(); } catch (_) {}
+                throw e;
+            } finally {
+                try { conn.release(); } catch (_) {}
+            }
 
             await pagesRepo.recordUpdateHistory({
                 userId,
                 storageId,
                 action: 'REORDER_PAGES',
-                details: { parentId, count: pageIds.length }
+                details: { parentId, count: normalizedIds.length }
             });
 
-            wsBroadcastToStorage(storageId, 'pages-reordered', { parentId, pageIds }, userId);
+            wsBroadcastToStorage(storageId, 'pages-reordered', { parentId, pageIds: normalizedIds }, userId);
             res.json({ ok: true });
-        } catch (e) { logError("PATCH /api/pages/reorder", e); res.status(500).json({ error: "Failed" }); }
+        } catch (e) {
+            logError("PATCH /api/pages/reorder", e);
+            res.status(500).json({ error: "Failed" });
+        }
     });
 
     // 페이지 복구
