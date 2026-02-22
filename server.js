@@ -1836,70 +1836,72 @@ app.get('/imgs/:userId/:filename', authMiddleware, async (req, res) => {
         const escapeLike = (s) => String(s).replace(/[\\%_]/g, (m) => `\\${m}`);
         const likePattern = `%${escapeLike(imageUrl)}%`;
 
-                        // 이미지가 포함된 페이지가 공유되었는지 확인
-                        const [rows] = await pool.execute(
-                            `SELECT p.id
-                                FROM pages p
-                                JOIN storages s ON p.storage_id = s.id
-                                LEFT JOIN storage_shares ss_cur ON s.id = ss_cur.storage_id AND ss_cur.shared_with_user_id = ?
-                                WHERE p.content LIKE ? ESCAPE '\\\\'
-                                AND (s.user_id = ? OR ss_cur.shared_with_user_id IS NOT NULL)
-                                -- 보안패치: 암호화 + 공유불가 페이지의 자산은
-                                -- 페이지 본문 접근이 차단된 사용자(컬렉션 소유자 포함)에게도 노출되면 안 됨
-                                AND NOT (p.is_encrypted = 1 AND p.share_allowed = 0 AND p.user_id != ?)
-                                -- 보안패치: 파일 소유자와 참조하는 페이지 소유자를 반드시 일치시킴
-                                AND p.user_id = ?
-                                LIMIT 1`,
-                            [currentUserId, likePattern, currentUserId, currentUserId, requestedUserId]
-                        );
+        // 이미지가 포함된 페이지가 공유되었는지 확인
+        const [rows] = await pool.execute(
+            `SELECT p.id
+                FROM pages p
+                JOIN storages s ON p.storage_id = s.id
+                LEFT JOIN storage_shares ss_cur ON s.id = ss_cur.storage_id AND ss_cur.shared_with_user_id = ?
+                WHERE p.content LIKE ? ESCAPE '\\\\'
+                AND (s.user_id = ? OR ss_cur.shared_with_user_id IS NOT NULL)
+                -- 보안패치: 암호화 + 공유불가 페이지의 자산은
+                -- 페이지 본문 접근이 차단된 사용자(컬렉션 소유자 포함)에게도 노출되면 안 됨
+                AND NOT (p.is_encrypted = 1 AND p.share_allowed = 0 AND p.user_id != ?)
+                -- 보안패치: 파일 소유자와 참조하는 페이지 소유자를 반드시 일치시킴
+                AND p.user_id = ?
+                LIMIT 1`,
+            [currentUserId, likePattern, currentUserId, currentUserId, requestedUserId]
+        );
 
-                        if (rows.length > 0) {
-                            // 공유받은 페이지의 이미지 - 접근 허용
-                            return sendSafeImage(res, filePath);
-                        }
+        if (rows.length > 0) {
+            // 공유받은 페이지의 이미지 - 접근 허용
+            return sendSafeImage(res, filePath);
+        }
 
-                        // 보안: 실시간 동기화 중인(Yjs) 문서의 내용도 확인
-                        // DB 저장 지연(약 1초)으로 인해 협업자가 이미지를 즉시 로드하지 못하는 문제 해결
-                        for (const [pageId, connections] of wsConnections.pages) {
-                            // 현재 사용자가 이 페이지를 구독 중인지 확인
-                            const isSubscribed = Array.from(connections).some(c => c.userId === currentUserId);
-                            if (isSubscribed) {
-                                const docInfo = yjsDocuments.get(pageId);
-                                if (docInfo) {
-                                    // [핵심 패치] Yjs fallback이 권한 우회 통로가 되지 않도록
-                                    // - "요청한 이미지 소유자(requestedUserId)"와
-                                    //   "구독 중인 페이지의 소유자(docInfo.ownerUserId)"가 반드시 일치해야 함
-                                    // - 이 검증이 없으면 공격자가 자기 페이지에 피해자 이미지 URL 문자열만 넣고
-                                    //   피해자 이미지를 무단으로 가져갈 수 있음(IDOR/Broken Access Control)
-                                    if (!Number.isFinite(docInfo.ownerUserId) || Number(docInfo.ownerUserId) !== requestedUserId) {
-                                        continue;
-                                    }
+        // 보안: 실시간 동기화 중인(Yjs) 문서의 내용도 확인
+        // DB 저장 지연(약 1초)으로 인해 협업자가 이미지를 즉시 로드하지 못하는 문제 해결
+        for (const [pageId, connections] of wsConnections.pages) {
+            // 현재 사용자가 이 페이지를 구독 중인지(그리고 연결 메타가 있는지) 확인
+            const myConn = Array.from(connections).find(c => c.userId === currentUserId);
+            if (!myConn) continue;
 
-                                    // (선택) 암호화 + 공유불가 페이지 자산 우회 노출 방지
-                                    // - subscribe-page는 encrypted 협업을 차단하지만,
-                                    //   혹시라도 doc가 남아있는 경우를 방어적으로 막음
-                                    if (docInfo.isEncrypted === true && docInfo.shareAllowed === false && currentUserId !== requestedUserId) {
-                                        continue;
-                                    }
+            const docInfo = yjsDocuments.get(pageId);
+            if (!docInfo) continue;
 
-                                    const ydoc = docInfo.ydoc;
-                                    // HTML 스냅샷 확인
-                                    const content = ydoc.getMap('metadata').get('content') || '';
-                                    if (content.includes(imageUrl)) {
-                                        return sendSafeImage(res, filePath);
-                                    }
-                                    // HTML 스냅샷이 아직 업데이트 전이라면, Y.XmlFragment 직접 확인
-                                    // toString()은 전체 XML 구조를 반환하므로 속성(data-src)에 포함된 URL도 찾을 수 있음
-                                    const xmlContent = ydoc.getXmlFragment('prosemirror').toString();
-                                    if (xmlContent.includes(imageUrl)) {
-                                        return sendSafeImage(res, filePath);
-                                    }
-                                }
-                            }
-                        }
+            // 핵심: Yjs fallback이 권한 우회 통로가 되지 않도록 요청한
+            // 이미지 소유자(requestedUserId)와 구독 중인 페이지의 소유자(docInfo.ownerUserId)가 반드시 일치해야 함
+            // - 이 검증이 없으면 공격자가 자기 페이지에 피해자 이미지 URL 문자열만 넣고
+            // - 피해자 이미지를 무단으로 가져갈 수 있음(IDOR/Broken Access Control)
+            if (!Number.isFinite(docInfo.ownerUserId) || Number(docInfo.ownerUserId) !== requestedUserId)
+                continue;
 
-                        // 권한 없음
-                        console.warn(`[보안] 사용자 ${currentUserId}이(가) 권한 없이 이미지 접근 시도: ${imagePath}`);        return res.status(403).json({ error: '접근 권한이 없습니다.' });
+            // (방어 심층화) WS 연결이 알고 있는 storageId와 docInfo.storageId가 다르면 스킵
+            if (docInfo.storageId && myConn.storageId && String(docInfo.storageId) !== String(myConn.storageId))
+                continue;
+
+            // (선택) 암호화 + 공유불가 페이지 자산 우회 노출 방지
+            // - subscribe-page는 encrypted 협업을 차단하지만,
+            //   혹시라도 doc가 남아있는 경우를 방어적으로 막음
+            if (docInfo.isEncrypted === true && docInfo.shareAllowed === false && currentUserId !== requestedUserId)
+                continue;
+
+			const ydoc = docInfo.ydoc;
+
+            // HTML 스냅샷 확인
+            const content = ydoc.getMap('metadata').get('content') || '';
+            if (content.includes(imageUrl))
+                return sendSafeImage(res, filePath);
+
+			// HTML 스냅샷이 아직 업데이트 전이라면, Y.XmlFragment 직접 확인
+            // toString()은 전체 XML 구조를 반환하므로 속성(data-src)에 포함된 URL도 찾을 수 있음
+            const xmlContent = ydoc.getXmlFragment('prosemirror').toString();
+            if (xmlContent.includes(imageUrl))
+                return sendSafeImage(res, filePath);
+        }
+
+        // 권한 없음
+		console.warn(`[보안] 사용자 ${currentUserId}이(가) 권한 없이 이미지 접근 시도: ${imagePath}`);
+		return res.status(403).json({ error: '접근 권한이 없습니다.' });
 
     } catch (error) {
         logError('GET /imgs/:userId/:filename', error);
