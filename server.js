@@ -415,13 +415,57 @@ if (IS_PRODUCTION) {
 
 /**
  * DB 연결 설정 정보
+ *
+ * 보안: DB 자격증명에 기본값(root/admin 등)을 두면, 운영에서 환경변수 누락/오설정(NODE_ENV 누락 등)
+ * 상황에서 매우 쉽게 기본 자격증명으로 노출될 수 있음
+ *
+ * - 기본값 정책: fail-closed (환경변수 미설정 시 즉시 종료)
+ * - 로컬 개발 편의: ALLOW_INSECURE_DB_DEFAULTS=true 를 명시적으로 켠 경우에만,
+ *   그리고 DB_HOST가 localhost 계열일 때에만 예전 기본값(root/admin/nteok)을 허용
  */
+const ALLOW_INSECURE_DB_DEFAULTS = String(process.env.ALLOW_INSECURE_DB_DEFAULTS || '').toLowerCase() === 'true';
+
+if (ALLOW_INSECURE_DB_DEFAULTS && IS_PRODUCTION) {
+    console.error("🛑 [보안] 프로덕션에서는 ALLOW_INSECURE_DB_DEFAULTS=true 를 사용할 수 없습니다.");
+    process.exit(1);
+}
+
+function envOrDie(name, { defaultValue, allowInsecureDev = false } = {}) {
+    const raw = process.env[name];
+    const v = (raw === undefined || raw === null) ? "" : String(raw).trim();
+    if (v) return v;
+
+    if (allowInsecureDev && ALLOW_INSECURE_DB_DEFAULTS) return defaultValue;
+
+    console.error("🛑 [보안] 필수 환경변수가 누락되었습니다:", name);
+    console.error("   - 해결: .env 또는 배포 환경변수에 값을 설정하세요.");
+    console.error("   - (로컬 개발만) ALLOW_INSECURE_DB_DEFAULTS=true 로 기존 기본값을 명시적으로 허용할 수 있습니다. (비권장)");
+    process.exit(1);
+}
+
+const DB_HOST = envOrDie("DB_HOST", { defaultValue: "localhost", allowInsecureDev: true });
+const DB_USER = envOrDie("DB_USER", { defaultValue: "root", allowInsecureDev: true });
+const DB_PASSWORD = envOrDie("DB_PASSWORD", { defaultValue: "admin", allowInsecureDev: true });
+const DB_NAME = envOrDie("DB_NAME", { defaultValue: "nteok", allowInsecureDev: true });
+
+// 방어: insecure defaults는 로컬호스트 DB에서만 허용
+if (ALLOW_INSECURE_DB_DEFAULTS) {
+    const h = String(DB_HOST || "").toLowerCase();
+    const isLocalDb = (h === "localhost" || h === "127.0.0.1" || h === "::1");
+    if (!isLocalDb) {
+        console.error("🛑 [보안] ALLOW_INSECURE_DB_DEFAULTS=true 는 로컬 DB(localhost)에서만 허용됩니다.");
+        console.error(`   현재 DB_HOST="${DB_HOST}"`);
+        process.exit(1);
+    }
+    console.warn("⚠️  [SECURITY] ALLOW_INSECURE_DB_DEFAULTS=true (로컬 개발용) — 기본 DB 자격증명(root/admin)을 사용합니다. 운영에서는 절대 사용하지 마세요.");
+}
+
 const DB_CONFIG = {
-    host: process.env.DB_HOST || "localhost",
+    host: DB_HOST,
     port: process.env.DB_PORT ? Number(process.env.DB_PORT) : 3306,
-    user: process.env.DB_USER || "root",
-    password: process.env.DB_PASSWORD || "admin",
-    database: process.env.DB_NAME || "nteok",
+    user: DB_USER,
+    password: DB_PASSWORD,
+    database: DB_NAME,
     charset: "utf8mb4",
     waitForConnections: true,
     connectionLimit: 10,
