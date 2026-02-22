@@ -9,6 +9,31 @@ const { URL } = require("url");
 const { formatDateForDb } = require("./network-utils");
 const { validateAndNormalizeIcon } = require("./utils/icon-utils");
 
+// WebSocket 입력 정화: Prototype Pollution 방어
+// HTTP(body) 미들웨어(server.js)는 REST API 요청만 처리하므로,
+// WebSocket 메시지(JSON.parse 결과)에는 별도 위험 키 제거가 필수
+// __proto__/constructor/prototype이 own-property로 존재하면
+// Object.assign/라이브러리 merge 경로에서 프로토타입 오염(CWE-1321) + DoS 유발 가능
+const DANGEROUS_OBJECT_KEYS = new Set(["__proto__", "prototype", "constructor"]);
+
+function stripDangerousKeysDeep(value) {
+    if (!value || typeof value !== "object") return value;
+    if (Array.isArray(value)) {
+        for (let i = 0; i < value.length; i++) {
+            value[i] = stripDangerousKeysDeep(value[i]);
+        }
+        return value;
+    }
+    for (const k of Object.keys(value)) {
+        if (DANGEROUS_OBJECT_KEYS.has(k)) {
+            delete value[k];
+            continue;
+        }
+        value[k] = stripDangerousKeysDeep(value[k]);
+    }
+    return value;
+}
+
 const wsConnections = {
     pages: new Map(),
     storages: new Map(),
@@ -377,7 +402,9 @@ function wsBroadcastToStorage(storageId, event, data, excludeUserId = null, opti
 				return true;
  			});
  			if (filtered.length === 0) return;
- 			payloadData = Object.assign({}, data, { pageIds: filtered });
+ 			// Object.assign은 [[Set]]을 사용하여 __proto__ setter를 호출할 수 있으므로
+ 			// spread 연산자([[Define]] 사용)로 대체 — 프로토타입 오염 경로 제거
+ 			payloadData = { ...data, pageIds: filtered };
   		}
         try { if (conn.ws.readyState === WebSocket.OPEN) conn.ws.send(JSON.stringify({ event, data: payloadData })); } catch (error) {}
     });
@@ -541,6 +568,15 @@ function initWebSocketServer(server, sessions, pool, sanitizeHtmlContent, IS_PRO
                     catch (_) {
                         if (!consumeWsMessageBudget(ws, "bad-json")) { try { ws.close(1008, 'Rate limit exceeded'); } catch (_) {} }
                         else { try { ws.send(JSON.stringify({ event: 'error', data: { message: 'Invalid message' } })); } catch (_) {} }
+                        return;
+                    }
+
+                    // WebSocket 입력은 HTTP 미들웨어를 거치지 않으므로
+                    // JSON.parse 직후 __proto__/constructor/prototype 위험 키 제거 필수
+                    // (Object.assign/라이브러리 merge 경로에서 프로토타입 오염 차단)
+                    data = stripDangerousKeysDeep(data);
+                    if (!data || typeof data !== "object") {
+                        try { ws.send(JSON.stringify({ event: 'error', data: { message: 'Invalid message' } })); } catch (_) {}
                         return;
                     }
 
