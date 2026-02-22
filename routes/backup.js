@@ -786,8 +786,15 @@ ${JSON.stringify(pageMetadata, null, 2)}
             storages.forEach(stg => storageMap.set(stg.id, stg));
 
             // 각 저장소의 메타데이터 파일 추가
+            // 보안: ZIP 엔트리 이름에 .. 같은 dot-segment가 들어가면
+            // 사용자가 백업 ZIP을 OS/unzip 도구로 풀 때 Zip Slip(경로 순회)로 이어질 수 있음
+            // -> 사람이 읽기 쉬운 이름 + 고유 ID를 섞어 충돌/우회 모두 방지
             for (const storage of storages) {
-                const storageFolderName = sanitizeFilename(storage.name);
+                const storageFolderName = makeSafeZipFolderName({
+                    label: storage.name,
+                    stableId: storage.id,
+                    fallback: 'storage'
+                });
                 const storageMetadata = {
                     id: storage.id,
                     name: storage.name,
@@ -807,8 +814,16 @@ ${JSON.stringify(pageMetadata, null, 2)}
                 const storage = storageMap.get(page.storage_id);
                 if (!storage) continue;
 
-                const storageFolderName = sanitizeFilename(storage.name);
-                const pageFileName = sanitizeFilename(page.title || 'untitled');
+                const storageFolderName = makeSafeZipFolderName({
+                    label: storage.name,
+                    stableId: storage.id,
+                    fallback: 'storage'
+                });
+                const pageFileName = makeSafeZipFileBaseName({
+                    label: page.title || 'untitled',
+                    stableId: page.id,
+                    fallback: 'page'
+                });
 
                 const publishInfo = publishMap.get(page.id);
                 const pageData = {
@@ -1055,10 +1070,58 @@ ${JSON.stringify(pageMetadata, null, 2)}
     });
 
     /**
-     * 파일명 정리 (특수문자 제거)
+     * ZIP 엔트리 경로 세그먼트 안전 정규화
+     * 보안: 공격자가 storage/page 이름에 .. 같은 dot-segment를 넣으면
+     * ZIP 엔트리: pages/../<file>.html 형태가 만들어져 추출 시 의도치 않은 경로로 쓰일 수 있음 (Zip Slip / Path Traversal)
+     * 따라서: (1) path separator 제거, (2) dot-only segment 차단,
+     *         (3) 끝 공백/점 제거(Windows 호환), (4) 충돌 방지를 위해 안정적 ID를 suffix로 부여
      */
-    function sanitizeFilename(name) {
-        return name.replace(/[<>:"/\\|?*]/g, '_').substring(0, 100);
+    function sanitizeZipPathSegment(raw, { fallback = 'item', maxLen = 80 } = {}) {
+        const s0 = String(raw ?? '').normalize('NFKC');
+
+        // 제어문자 제거
+        let s = s0.replace(/[\u0000-\u001F\u007F]/g, '');
+
+        // (POSIX/Windows/유니코드 유사 구분자) 경로 구분자 제거
+        s = s.replace(/[\\/\u2215\u2044\u29F8\uFF0F\uFF3C]/g, '_');
+
+        // ZIP/Windows에서 문제되는 예약 문자 제거
+        s = s.replace(/[<>:"|?*]/g, '_');
+
+        // 공백 정리
+        s = s.trim().replace(/\s+/g, ' ');
+
+        // Windows: 끝의 공백/점은 경로 해석이 바뀌거나 충돌을 만들 수 있음
+        s = s.replace(/[ .]+$/g, '');
+
+        // dot-segment 차단 ("." / ".." / "..." 같은 값)
+        if (!s || /^\.+$/.test(s) || s === '.' || s === '..')
+            s = fallback;
+
+        // 길이 제한
+        if (s.length > maxLen)
+            s = s.slice(0, maxLen);
+
+        // 남아있는 .. 패턴(단독 세그먼트로 해석될 소지) 제거
+        // 일부 unzip 도구의 구현 차이를 고려해 완화
+        s = s.replace(/(^|\s)\.\.(\s|$)/g, '_');
+
+        // 비어있으면 fallback
+        return s || fallback;
+    }
+
+    function makeSafeZipFolderName({ label, stableId, fallback }) {
+        const base = sanitizeZipPathSegment(label, { fallback, maxLen: 48 });
+        const id = sanitizeZipPathSegment(String(stableId || ''), { fallback: 'id', maxLen: 32 });
+        // 폴더명은 충돌 가능성이 높으므로 ID suffix를 강제
+        return `${base}-${id}`;
+    }
+
+    function makeSafeZipFileBaseName({ label, stableId, fallback }) {
+        const base = sanitizeZipPathSegment(label, { fallback, maxLen: 64 });
+        const id = sanitizeZipPathSegment(String(stableId || ''), { fallback: 'id', maxLen: 24 });
+        // 파일명도 중복(동일 제목) 가능 → ID suffix로 덮어쓰기 방지
+        return `${base}-${id}`;
     }
 
     return router;
