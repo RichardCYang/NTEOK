@@ -83,6 +83,22 @@ const WS_MAX_YJS_STATE_BYTES = (() => {
     return Number.isFinite(v) && v >= (128 * 1024) && v <= (32 * 1024 * 1024) ? v : (1024 * 1024);
 })();
 
+/**
+ * Yjs 문서 크기(추정치) 상한
+ * - encodeStateAsUpdate()는 문서 크기/히스토리에 비례해 CPU/메모리를 크게 소모할 수 있음
+ * - 악성 협업자가 과도한 업데이트/삭제를 유도하면 서버가 OOM/응답불가(DoS)에 빠질 수 있음 (CWE-400)
+ */
+const WS_MAX_DOC_EST_BYTES = (() => {
+    const def = Math.max(WS_MAX_YJS_STATE_BYTES * 8, 8 * 1024 * 1024); // 기본: 8MB 또는 state 저장 상한의 8배
+    const v = parseInt(process.env.WS_MAX_DOC_EST_BYTES || String(def), 10);
+    if (!Number.isFinite(v)) return def;
+    return Math.max(512 * 1024, Math.min(64 * 1024 * 1024, v)); // 512KB~64MB
+})();
+
+function byteLenUtf8(value) {
+    try { return Buffer.byteLength(String(value ?? ''), 'utf8'); } catch { return 0; }
+}
+
 const WS_MAX_YJS_UPDATE_B64_CHARS = Math.ceil(WS_MAX_YJS_UPDATE_BYTES / 3) * 4 + 8;
 const WS_MAX_AWARENESS_UPDATE_B64_CHARS = Math.ceil(WS_MAX_AWARENESS_UPDATE_BYTES / 3) * 4 + 8;
 
@@ -175,6 +191,26 @@ function wsCloseConnectionsForSession(sessionId, code = 1008, reason = 'Session 
         try { if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) ws.close(code, reason); } catch (err) {}
     }
     wsConnections.sessions.delete(sessionId);
+}
+
+/**
+ * 특정 페이지에 연결된 모든 WebSocket을 강제 종료 (문서 비대화 DoS 방어)
+ */
+function wsCloseConnectionsForPage(pageId, code = 1009, reason = 'Document too large') {
+    const pid = String(pageId || '');
+    const conns = wsConnections.pages.get(pid);
+    if (!conns || conns.size === 0) {
+        if (yjsDocuments.has(pid)) yjsDocuments.delete(pid);
+        return;
+    }
+
+    for (const c of Array.from(conns)) {
+        try { c.ws.send(JSON.stringify({ event: 'collab-reset', data: { pageId: pid, reason } })); } catch (_) {}
+        try { c.ws.close(code, reason); } catch (_) {}
+    }
+
+    wsConnections.pages.delete(pid);
+    if (yjsDocuments.has(pid)) yjsDocuments.delete(pid);
 }
 
 function getUserColor(userId) { return USER_COLORS[userId % USER_COLORS.length]; }
@@ -284,14 +320,23 @@ async function saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc) {
         // - 페이지 암호화의 핵심은 서버/DB 어디에도 평문이 남지 않게 하는 것
         // - 암호화 페이지에 대한 WS 구독은 이미 차단하지만(실시간 협업 미지원)
         //   경쟁 조건/레거시 문서 객체가 남아 있는 경우 저장 타이밍에 평문이 영구 저장될 수 있음
+        // DoS 방지: 큰 문서는 encodeStateAsUpdate 자체를 호출하지 않음 (CWE-400)
+        // - encodeStateAsUpdate는 문서 크기/히스토리에 비례해 CPU/메모리 스파이크 유발 가능
+        // - approxBytes가 저장 상한을 이미 초과한 경우 인코딩 자체를 건너뜀
         let yjsStateToSave = null;
         if (!isEncrypted) {
-            yjsStateToSave = Buffer.from(Y.encodeStateAsUpdate(ydoc));
-            // DoS/DB bloat 방지: yjs_state 저장 크기 상한
-            if (yjsStateToSave.length > WS_MAX_YJS_STATE_BYTES) {
-                // 너무 큰 상태는 저장하지 않음(협업 복원 기능 제한) — 대신 HTML/메타데이터 저장은 유지
-                yjsStateToSave = null;
+            const meta = yjsDocuments.get(pageId);
+            const approx = meta?.approxBytes;
+            if (Number.isFinite(approx) && approx <= WS_MAX_YJS_STATE_BYTES) {
+                try {
+                    yjsStateToSave = Buffer.from(Y.encodeStateAsUpdate(ydoc));
+                    // DoS/DB bloat 방지: 실제 인코딩 크기도 재확인
+                    if (yjsStateToSave.length > WS_MAX_YJS_STATE_BYTES) yjsStateToSave = null;
+                } catch (_) {
+                    yjsStateToSave = null;
+                }
             }
+            // approx 미설정(undefined/NaN)이거나 상한 초과 시: HTML snapshot 저장만 유지
         }
 
         await pool.execute(
@@ -354,6 +399,8 @@ async function loadOrCreateYjsDoc(pool, sanitizeHtmlContent, pageId) {
             ydoc,
             lastAccess: Date.now(),
             saveTimeout: null,
+            // 추정 크기(대략): yjs_state + HTML snapshot 크기 기반 (DoS 방어용)
+            approxBytes: (Buffer.isBuffer(page.yjs_state) ? page.yjs_state.length : 0) + byteLenUtf8(_safeHtml),
             ownerUserId: Number(page.user_id),
             storageId: String(page.storage_id),
             isEncrypted: page.is_encrypted === 1,
@@ -365,6 +412,7 @@ async function loadOrCreateYjsDoc(pool, sanitizeHtmlContent, pageId) {
         ydoc,
         lastAccess: Date.now(),
         saveTimeout: null,
+        approxBytes: 0,
         ownerUserId: null,
         storageId: null,
         isEncrypted: false,
@@ -659,13 +707,37 @@ async function handleSubscribePage(ws, payload, pool, sanitizeHtmlContent, pageS
             return;
         }
 
+        const ydoc = await loadOrCreateYjsDoc(pool, sanitizeHtmlContent, pageId);
+
+        // DoS 방어: approxBytes 기반 문서 크기 사전 검사 (CWE-400)
+        const meta = yjsDocuments.get(pageId);
+        if (meta && Number.isFinite(meta.approxBytes) && meta.approxBytes > WS_MAX_DOC_EST_BYTES) {
+            wsCloseConnectionsForPage(pageId, 1009, 'Document too large - collaboration reset');
+            return;
+        }
+
         if (!wsConnections.pages.has(pageId)) wsConnections.pages.set(pageId, new Set());
         const conns = wsConnections.pages.get(pageId);
-        for (const c of Array.from(conns)) { if (c.userId === userId && c.ws !== ws) { conns.delete(c); try { c.ws.close(1008, 'Duplicate'); } catch (e) {} } }
+        for (const c of Array.from(conns)) {
+            if (c.userId === userId && c.ws !== ws) { conns.delete(c); try { c.ws.close(1008, 'Duplicate'); } catch (_) {} }
+        }
         const color = getUserColor(userId);
         conns.add({ ws, userId, username: ws.username, color, permission, storageId: page.storage_id, permCheckedAt: Date.now() });
-        const ydoc = await loadOrCreateYjsDoc(pool, sanitizeHtmlContent, pageId);
-        ws.send(JSON.stringify({ event: 'init', data: { state: Buffer.from(Y.encodeStateAsUpdate(ydoc)).toString('base64'), userId, username: ws.username, color, permission } }));
+
+        // init 상태 인코딩 (실제 크기 재확인 + OOM 방어)
+        let stateB64 = '';
+        try {
+            const stateBuf = Buffer.from(Y.encodeStateAsUpdate(ydoc));
+            if (stateBuf.length > WS_MAX_DOC_EST_BYTES) {
+                wsCloseConnectionsForPage(pageId, 1009, 'Document too large - collaboration reset');
+                return;
+            }
+            stateB64 = stateBuf.toString('base64');
+        } catch (_) {
+            ws.send(JSON.stringify({ event: 'error', data: { message: 'Failed to init document' } }));
+            return;
+        }
+        ws.send(JSON.stringify({ event: 'init', data: { state: stateB64, userId, username: ws.username, color, permission } }));
         wsBroadcastToPage(pageId, 'user-joined', { userId, username: ws.username, color, permission }, userId);
     } catch (e) { ws.send(JSON.stringify({ event: 'error', data: { message: 'Failed' } })); }
 }
@@ -758,9 +830,24 @@ async function handleYjsUpdate(ws, payload, pool, sanitizeHtmlContent) {
             }
         }
 
-        Y.applyUpdate(ydoc, updateBuf);
-        wsBroadcastToPage(pageId, 'yjs-update', { update }, ws.userId);
+        // DoS 방어: 업데이트 적용 전 누적 크기 검사 (CWE-400)
         const doc = yjsDocuments.get(pageId);
+        if (doc) {
+            const cur = Number.isFinite(doc.approxBytes) ? doc.approxBytes : 0;
+            const next = cur + updateBuf.length;
+            if (next > WS_MAX_DOC_EST_BYTES) {
+                // HTML snapshot만 저장하고 협업 세션 리셋
+                try { await saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc); } catch (_) {}
+                wsCloseConnectionsForPage(pageId, 1009, 'Document too large - collaboration reset');
+                return;
+            }
+        }
+
+        Y.applyUpdate(ydoc, updateBuf);
+        // approxBytes 갱신 (누적 추정 크기)
+        if (doc) doc.approxBytes = (Number.isFinite(doc.approxBytes) ? doc.approxBytes : 0) + updateBuf.length;
+
+        wsBroadcastToPage(pageId, 'yjs-update', { update }, ws.userId);
         if (doc) { if (doc.saveTimeout) clearTimeout(doc.saveTimeout); doc.saveTimeout = setTimeout(() => { saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc).catch(e => {}); }, 1000); }
     } catch (e) {}
 }
