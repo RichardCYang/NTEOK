@@ -14,7 +14,7 @@ function toThemeMeta(file) {
 }
 
 module.exports = function(dependencies) {
-    const { express, authMiddleware, themeUpload } = dependencies;
+    const { express, authMiddleware } = dependencies;
     const router = express.Router();
 
     router.get('/', authMiddleware, (req, res) => {
@@ -32,16 +32,6 @@ module.exports = function(dependencies) {
                 .map(toThemeMeta);
 
             res.json(themeFiles);
-        });
-    });
-
-    router.post('/upload', authMiddleware, themeUpload.single('themeFile'), (req, res) => {
-        if (!req.file) {
-            return res.status(400).json({ error: '파일이 업로드되지 않았습니다.' });
-        }
-        res.json({
-            message: '테마가 성공적으로 업로드되었습니다.',
-            theme: toThemeMeta(req.file.filename)
         });
     });
 

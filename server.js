@@ -2123,41 +2123,6 @@ const editorImageUpload = multer({
     }
 });
 
-// 테마 업로드를 위한 multer 설정
-const themeStorage = multer.diskStorage({
-    destination: (req, file, cb) => {
-        const themesDir = path.join(__dirname, 'themes');
-        fs.mkdirSync(themesDir, { recursive: true });
-        cb(null, themesDir);
-    },
-    filename: (req, file, cb) => {
-		/**
-	 	 * 보안: 업로드 파일명 충돌로 기존 테마(예: default.css)를 덮어쓰는 취약점 방지
-	     * - 원본 파일명은 표시용으로만 쓰고, 실제 저장 파일명은 랜덤 suffix를 붙여 유일하게 만든다
-	     * - OWASP/PortSwigger 권고: 업로드 파일 rename하여 충돌/overwrite 방지
-	     */
-	    const rawBase = path.basename(file.originalname, path.extname(file.originalname));
-	    const safeBase = (rawBase || 'theme').replace(/[^a-zA-Z0-9-]/g, '').toLowerCase() || 'theme';
-	    const suffix = crypto.randomBytes(8).toString('hex'); // 16진수 문자
-	    cb(null, `${safeBase}-${suffix}.css`);
-    }
-});
-
-const themeUpload = multer({
-    storage: themeStorage,
-    limits: { fileSize: 100 * 1024 }, // 100KB
-    fileFilter: (req, file, cb) => {
-        const allowedTypes = /css/;
-        const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
-        const mimetype = file.mimetype === 'text/css';
-        if (extname && mimetype) {
-            cb(null, true);
-        } else {
-            cb(new Error('CSS 파일만 업로드 가능합니다.'));
-        }
-    }
-});
-
 // 파일 블록 업로드를 위한 multer 설정
 const paperclipStorage = multer.diskStorage({
     destination: (req, file, cb) => {
@@ -2205,7 +2170,7 @@ function getSessionFromId(sessionId) {
         await initDb();
 
         // 필수 업로드 폴더 생성
-        const uploadDirs = ['covers', 'imgs', 'paperclip', 'themes'];
+        const uploadDirs = ['covers', 'imgs', 'paperclip'];
         uploadDirs.forEach(dir => {
             const dirPath = path.join(__dirname, dir);
             if (!fs.existsSync(dirPath)) {
@@ -2283,7 +2248,6 @@ function getSessionFromId(sessionId) {
             BASE_URL,
             coverUpload,
             editorImageUpload,
-            themeUpload,
             fileUpload,
             path,
             fs,

@@ -59,7 +59,6 @@ module.exports = (dependencies) => {
         generatePublishToken,
         coverUpload,
         editorImageUpload,
-        themeUpload,
         fileUpload,
         path,
         fs,

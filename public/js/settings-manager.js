@@ -336,8 +336,6 @@ export function bindSettingsModal() {
     const importBackupBtn = document.querySelector("#import-backup-btn");
     const importBackupInput = document.querySelector("#import-backup-input");
     const themeSelect = document.querySelector("#settings-theme-select");
-    const themeUploadBtn = document.querySelector("#theme-upload-btn");
-    const themeUploadInput = document.querySelector("#theme-upload-input");
 
     if (settingsBtn) {
         settingsBtn.addEventListener("click", () => {
@@ -366,22 +364,6 @@ export function bindSettingsModal() {
     if (themeSelect) {
         themeSelect.addEventListener('change', (e) => {
             applyTheme(e.target.value);
-        });
-    }
-
-    if (themeUploadBtn) {
-        themeUploadBtn.addEventListener('click', () => {
-            themeUploadInput.click();
-        });
-    }
-
-    if (themeUploadInput) {
-        themeUploadInput.addEventListener('change', async (e) => {
-            const file = e.target.files[0];
-            if (file) {
-                await uploadTheme(file);
-                themeUploadInput.value = ''; // Reset input
-            }
         });
     }
 
@@ -651,43 +633,6 @@ async function importBackup(file) {
     } catch (error) {
         console.error('백업 불러오기 실패:', error);
         alert(`백업 불러오기에 실패했습니다: ${error.message}`);
-    }
-}
-
-/**
- * 테마 파일 업로드
- */
-async function uploadTheme(file) {
-    if (!file || !file.name.endsWith('.css')) {
-        alert('CSS 파일만 선택할 수 있습니다.');
-        return;
-    }
-
-    try {
-        const formData = new FormData();
-        formData.append('themeFile', file);
-
-        const { secureFetch } = await import('./ui-utils.js');
-        const response = await secureFetch('/api/themes/upload', {
-            method: 'POST',
-            body: formData
-        });
-
-        if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(errorData.error || '테마 업로드 실패');
-        }
-
-        const result = await response.json();
-        console.log('테마 업로드 완료:', result);
-
-        // 다시 테마 목록을 불러와서 UI에 반영
-        await openSettingsModal();
-
-        alert(`테마 '${(result.theme && result.theme.name) ? result.theme.name : '업로드한 테마'}'이(가) 성공적으로 업로드되었습니다.`);
-    } catch (error) {
-        console.error('테마 업로드 실패:', error);
-        alert(`테마 업로드에 실패했습니다: ${error.message}`);
     }
 }
 
