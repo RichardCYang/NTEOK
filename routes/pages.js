@@ -117,6 +117,22 @@ module.exports = (dependencies) => {
     const usageCache = new Map(); // key=userId -> { bytes, ts }
     const USAGE_CACHE_TTL_MS = 30 * 1000;
 
+    /**
+     * 보안(중요): 업로드 quota 체크는 비동기 I/O(await) 사이에 레이스가 발생할 수 있음
+     * - 동시에 여러 업로드가 들어오면, 둘 다 캐시 기준으로 통과 → 총량 초과가 누락될 수 있음
+     * - userId 단위로 직렬화하여 TOCTOU/레이스를 방지
+     */
+    const quotaLocks = new Map(); // userId(string) -> Promise chain
+    function withQuotaLock(userId, fn) {
+        const key = String(userId);
+        const prev = quotaLocks.get(key) || Promise.resolve();
+        const next = prev.then(fn, fn);
+        quotaLocks.set(key, next.finally(() => {
+            if (quotaLocks.get(key) === next) quotaLocks.delete(key);
+        }));
+        return next;
+    }
+
     async function computeDirUsageBytes(dirPath) {
         let total = 0;
         try {
@@ -134,34 +150,69 @@ module.exports = (dependencies) => {
     }
 
     async function enforceUploadQuotaOrThrow(userId, newFilePath) {
-        // 보안: paperclip, imgs, covers 세 곳의 용량을 모두 합산하여 사용자 총 할당량(Quota) 체크
-        const dirs = [
-            path.join(__dirname, "..", "paperclip", String(userId)),
-            path.join(__dirname, "..", "imgs", String(userId)),
-            path.join(__dirname, "..", "covers", String(userId))
-        ];
+        return withQuotaLock(userId, async () => {
+            // 보안: paperclip, imgs, covers 세 곳의 용량을 모두 합산하여 사용자 총 할당량(Quota) 체크
+            const dirs = [
+                path.join(__dirname, "..", "paperclip", String(userId)),
+                path.join(__dirname, "..", "imgs", String(userId)),
+                path.join(__dirname, "..", "covers", String(userId))
+            ];
 
-        const now = Date.now();
-        const cached = usageCache.get(userId);
-        if (cached && (now - cached.ts) < USAGE_CACHE_TTL_MS) {
-            if (cached.bytes > MAX_PAPERCLIP_BYTES_PER_USER)
+            // 방어 심층화: newFilePath는 반드시 해당 userId의 업로드 디렉터리 내부여야만 stat/unlink 수행
+            const bases = dirs.map(d => path.resolve(d) + path.sep);
+            const resolvedNew = newFilePath ? path.resolve(newFilePath) : "";
+            const isNewPathSafe =
+                resolvedNew &&
+                bases.some(b => resolvedNew.startsWith(b));
+
+            const safeUnlinkNewFile = () => {
+                if (!isNewPathSafe) return;
+                try { if (newFilePath && fs.existsSync(newFilePath)) fs.unlinkSync(newFilePath); } catch (_) {}
+            };
+
+            const now = Date.now();
+            const cached = usageCache.get(userId);
+
+            /**
+             * 취약점 수정(핵심):
+             * - 캐시 fast-path에서도 이번 업로드 파일 크기를 반영하여 projected total로 판정해야 함
+             * - 그렇지 않으면 TTL 동안 여러 업로드로 quota 우회 → 디스크 고갈(DoS)
+             */
+            if (cached && (now - cached.ts) < USAGE_CACHE_TTL_MS) {
+                let addedBytes = 0;
+                if (isNewPathSafe) {
+                    try {
+                        const st = await fs.promises.stat(newFilePath);
+                        if (st && typeof st.size === "number" && st.size > 0) addedBytes = st.size;
+                    } catch (_) {}
+                }
+
+                const projected = (cached.bytes || 0) + addedBytes;
+                if (projected > MAX_PAPERCLIP_BYTES_PER_USER) {
+                    safeUnlinkNewFile();
+                    usageCache.delete(userId);
+                    throw new Error("UPLOAD_QUOTA_EXCEEDED");
+                }
+
+                // 캐시를 누적 갱신하여 TTL 동안 연속 업로드도 정확히 제한
+                usageCache.set(userId, { bytes: projected, ts: now });
+                return;
+            }
+
+            let totalBytes = 0;
+            for (const d of dirs) {
+                totalBytes += await computeDirUsageBytes(d);
+            }
+            usageCache.set(userId, { bytes: totalBytes, ts: now });
+
+            if (totalBytes > MAX_PAPERCLIP_BYTES_PER_USER) {
+                // quota 초과 시 방금 업로드한 파일은 즉시 삭제
+                safeUnlinkNewFile();
+                // 캐시 무효화 (다음 요청 때 다시 계산하도록)
+                usageCache.delete(userId);
                 throw new Error("UPLOAD_QUOTA_EXCEEDED");
-            return;
-        }
-
-        let totalBytes = 0;
-        for (const d of dirs) {
-            totalBytes += await computeDirUsageBytes(d);
-        }
-        usageCache.set(userId, { bytes: totalBytes, ts: now });
-
-        if (totalBytes > MAX_PAPERCLIP_BYTES_PER_USER) {
-            // quota 초과 시 방금 업로드한 파일은 즉시 삭제
-            try { if (newFilePath && fs.existsSync(newFilePath)) fs.unlinkSync(newFilePath); } catch (_) {}
-            // 캐시 무효화 (다음 요청 때 다시 계산하도록)
-            usageCache.delete(userId);
-            throw new Error("UPLOAD_QUOTA_EXCEEDED");
-        }
+            }
+        });
     }
 
     /**
