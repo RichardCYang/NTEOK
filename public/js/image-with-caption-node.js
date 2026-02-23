@@ -3,7 +3,52 @@
  * 캡션 기능이 있는 이미지 노드
  */
 
+// 보안: 협업(WebSocket/Yjs) 업데이트는 서버 저장 전에 다른 클라이언트로 즉시 전파될 수 있으므로,
+// NodeView에서 사용하는 URL(src)은 렌더링 시점에도 반드시 검증해야 함
+import { sanitizeHttpHref } from './url-utils.js';
+
 const Node = Tiptap.Core.Node;
+
+function sanitizeImageSrc(raw) {
+    if (typeof raw !== 'string') return null;
+    const v = raw.trim();
+    if (!v) return null;
+
+    // protocol-relative URL(//evil.com) 차단
+    if (v.startsWith('//')) return null;
+
+    // data:, javascript:, file: 등 위험 스킴 차단 + 제어문자 차단
+    const safe = sanitizeHttpHref(v, {
+        allowRelative: true,
+        addHttpsIfMissing: false,
+        maxLen: 2048
+    });
+
+    if (!safe) return null;
+    if (safe.startsWith('#')) return null; // 이미지에 fragment-only는 무의미
+
+    // 절대 URL은 same-origin만 허용 (외부 오리진 차단)
+    if (/^https?:/i.test(safe)) {
+        try {
+            const u = new URL(safe);
+            if (u.origin !== window.location.origin) return null;
+            return u.toString();
+        } catch {
+            return null;
+        }
+    }
+
+    // 상대경로는 필요한 범위만 허용 (정책에 맞게 확장 가능)
+    if (safe.startsWith('/')) {
+        const ok =
+            safe.startsWith('/imgs/') ||
+            safe.startsWith('/covers/') ||
+            safe.startsWith('/api/pages/proxy/image');
+        return ok ? safe : null;
+    }
+
+    return null;
+}
 
 export const ImageWithCaption = Node.create({
     name: 'imageWithCaption',
@@ -45,13 +90,16 @@ export const ImageWithCaption = Node.create({
                     const dataAlign = element.getAttribute('data-align');
 
                     if (dataSrc) {
-                        return {
-                            src: dataSrc,
-                            alt: dataAlt || '',
-                            caption: dataCaption || '',
-                            width: dataWidth || '100%',
-                            align: dataAlign || 'center'
-                        };
+                        const safeDataSrc = sanitizeImageSrc(dataSrc);
+                        if (safeDataSrc) {
+                            return {
+                                src: safeDataSrc,
+                                alt: dataAlt || '',
+                                caption: dataCaption || '',
+                                width: dataWidth || '100%',
+                                align: dataAlign || 'center'
+                            };
+                        }
                     }
 
                     // DOM 구조에서 읽기 (NodeView에서 생성된 경우)
@@ -59,8 +107,9 @@ export const ImageWithCaption = Node.create({
                     const captionDiv = element.querySelector('.image-caption');
                     const captionInput = element.querySelector('.image-caption-input');
 
+                    const safeImgSrc = sanitizeImageSrc(img?.getAttribute('src') || '');
                     return {
-                        src: img?.getAttribute('src') || null,
+                        src: safeImgSrc,
                         alt: img?.getAttribute('alt') || '',
                         caption: captionDiv?.textContent || captionInput?.value || '',
                         width: element.style.width || '100%',
@@ -72,12 +121,13 @@ export const ImageWithCaption = Node.create({
     },
 
     renderHTML({ node, HTMLAttributes }) {
+        const safeSrc = sanitizeImageSrc(node.attrs.src || '') || '';
         return [
             'figure',
             {
                 ...HTMLAttributes,
                 'data-type': 'image-with-caption',
-                'data-src': node.attrs.src,
+                'data-src': safeSrc,
                 'data-alt': node.attrs.alt || '',
                 'data-caption': node.attrs.caption || '',
                 'data-width': node.attrs.width || '100%',
@@ -91,7 +141,7 @@ export const ImageWithCaption = Node.create({
                 [
                     'img',
                     {
-                        'src': node.attrs.src,
+                        'src': safeSrc,
                         'alt': node.attrs.alt || '',
                         'class': 'caption-image'
                     }
@@ -236,7 +286,7 @@ export const ImageWithCaption = Node.create({
 
             // 이미지
             const img = document.createElement('img');
-            img.src = node.attrs.src;
+            img.src = sanitizeImageSrc(node.attrs.src || '') || '';
             img.alt = node.attrs.alt || '';
             img.className = 'caption-image';
 
@@ -427,11 +477,12 @@ export const ImageWithCaption = Node.create({
                         catch { return url; }
                     };
 
-                    const updatedSrc = normalizeUrl(updatedNode.attrs.src);
+                    const updatedSafe = sanitizeImageSrc(updatedNode.attrs.src || '') || '';
+                    const updatedSrc = normalizeUrl(updatedSafe);
                     const currentSrc = normalizeUrl(img.src);
 
                     if (updatedSrc !== currentSrc) {
-                        img.src = updatedNode.attrs.src;
+                        img.src = updatedSafe;
                         img.alt = updatedNode.attrs.alt || '';
                     }
 
@@ -493,10 +544,12 @@ export const ImageWithCaption = Node.create({
     addCommands() {
         return {
             setImageWithCaption: (options) => ({ commands }) => {
+                const safeSrc = sanitizeImageSrc(options?.src || '');
+                if (!safeSrc) return false;
                 return commands.insertContent({
                     type: this.name,
                     attrs: {
-                        src: options.src,
+                        src: safeSrc,
                         alt: options.alt || '',
                         caption: options.caption || '',
                         width: options.width || '100%',

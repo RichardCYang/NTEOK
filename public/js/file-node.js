@@ -18,7 +18,11 @@ export const FileBlock = Node.create({
     addAttributes() {
         return {
             src: {
-                default: null
+                default: null,
+                parseHTML: element => {
+                    const src = element.getAttribute('data-src');
+                    return sanitizeHttpHref(src, { allowRelative: true, addHttpsIfMissing: false }) || null;
+                }
             },
             filename: {
                 default: null
@@ -34,8 +38,10 @@ export const FileBlock = Node.create({
             {
                 tag: 'div[data-type="file-block"]',
                 getAttrs: (element) => {
+                    const src = element.getAttribute('data-src');
+                    const safeSrc = sanitizeHttpHref(src, { allowRelative: true, addHttpsIfMissing: false }) || null;
                     return {
-                        src: element.getAttribute('data-src'),
+                        src: safeSrc,
                         filename: element.getAttribute('data-filename'),
                         size: parseInt(element.getAttribute('data-size') || '0', 10)
                     };
@@ -45,12 +51,13 @@ export const FileBlock = Node.create({
     },
 
     renderHTML({ node, HTMLAttributes }) {
+        const safeSrc = sanitizeHttpHref(node.attrs.src, { allowRelative: true, addHttpsIfMissing: false }) || null;
         return [
             'div',
             {
                 ...HTMLAttributes,
                 'data-type': 'file-block',
-                'data-src': node.attrs.src,
+                'data-src': safeSrc,
                 'data-filename': node.attrs.filename,
                 'data-size': node.attrs.size,
                 'class': 'file-block-wrapper'
@@ -342,10 +349,11 @@ export const FileBlock = Node.create({
     addCommands() {
         return {
             setFileBlock: (options) => ({ commands }) => {
+                const safeSrc = sanitizeHttpHref(options?.src, { allowRelative: true, addHttpsIfMissing: false }) || null;
                 return commands.insertContent({
                     type: this.name,
                     attrs: {
-                        src: options?.src || null,
+                        src: safeSrc,
                         filename: options?.filename || null,
                         size: options?.size || 0
                     }

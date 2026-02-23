@@ -422,10 +422,12 @@ export const YoutubeBlock = Node.create({
     addCommands() {
         return {
             setYoutubeBlock: (options) => ({ commands }) => {
+                const normalized = normalizeYouTubeEmbedUrl(options?.src || '');
+                if (!normalized) return false;
                 return commands.insertContent({
                     type: this.name,
                     attrs: {
-                        src: options.src,
+                        src: normalized,
                         caption: options.caption || ''
                     }
                 });

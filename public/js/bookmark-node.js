@@ -32,9 +32,13 @@ export const BookmarkBlock = Node.create({
         return {
             url: {
                 default: '',
-                parseHTML: element => element.getAttribute('data-url') || '',
+                parseHTML: element => {
+                    const raw = element.getAttribute('data-url') || '';
+                    return sanitizeHttpHref(raw, { allowRelative: false }) || '';
+                },
                 renderHTML: attributes => {
-                    return { 'data-url': attributes.url };
+                    const safe = sanitizeHttpHref(attributes.url, { allowRelative: false }) || '';
+                    return { 'data-url': safe };
                 }
             },
             title: {
@@ -53,9 +57,13 @@ export const BookmarkBlock = Node.create({
             },
             thumbnail: {
                 default: '',
-                parseHTML: element => element.getAttribute('data-thumbnail') || '',
+                parseHTML: element => {
+                    const raw = element.getAttribute('data-thumbnail') || '';
+                    return sanitizeHttpHref(raw, { allowRelative: false }) || '';
+                },
                 renderHTML: attributes => {
-                    return { 'data-thumbnail': attributes.thumbnail };
+                    const safe = sanitizeHttpHref(attributes.thumbnail, { allowRelative: false }) || '';
+                    return { 'data-thumbnail': safe };
                 }
             }
         };
@@ -70,6 +78,8 @@ export const BookmarkBlock = Node.create({
     },
 
     renderHTML({ node, HTMLAttributes }) {
+        const safeUrl = sanitizeHttpHref(node.attrs.url, { allowRelative: false }) || '';
+        const safeThumbnail = sanitizeHttpHref(node.attrs.thumbnail, { allowRelative: false }) || '';
         // Tiptap의 HTMLAttributes와 커스텀 속성을 병합하여 반환
         return [
             'div',
@@ -79,10 +89,10 @@ export const BookmarkBlock = Node.create({
                 'class': 'bookmark-block',
                 // 아래 속성들은 HTMLAttributes에 이미 포함되어 있을 수 있지만, 
                 // 명시적으로 한 번 더 확인하여 저장 보장
-                'data-url': node.attrs.url || '',
+                'data-url': safeUrl,
                 'data-title': node.attrs.title || '',
                 'data-description': node.attrs.description || '',
-                'data-thumbnail': node.attrs.thumbnail || ''
+                'data-thumbnail': safeThumbnail
             }
         ];
     },
@@ -449,10 +459,11 @@ export const BookmarkBlock = Node.create({
     addCommands() {
         return {
             setBookmarkBlock: (url = '') => ({ commands }) => {
+                const safeUrl = sanitizeHttpHref(url, { allowRelative: false }) || '';
                 return commands.insertContent({
                     type: this.name,
                     attrs: {
-                        url,
+                        url: safeUrl,
                         title: '',
                         description: '',
                         thumbnail: ''

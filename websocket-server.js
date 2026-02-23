@@ -739,6 +739,22 @@ async function handleYjsUpdate(ws, payload, pool, sanitizeHtmlContent) {
         const updateBuf = Buffer.from(update, 'base64');
         if (updateBuf.length > WS_MAX_YJS_UPDATE_BYTES) throw new Error('Update too large');
 
+        // 보안: 협업 업데이트에 위험 URI 패턴이 포함되면 즉시 거부 (DOM XSS/DoS 방어)
+        // - Yjs update는 바이너리지만, 문자열(URI)이 그대로 포함되는 경우가 많아 최소 차단선으로 유효
+        const BAD = [
+            Buffer.from('javascript:', 'utf8'),
+            Buffer.from('data:', 'utf8'),
+            Buffer.from('vbscript:', 'utf8'),
+            Buffer.from('file:', 'utf8')
+        ];
+
+        for (const sig of BAD) {
+            if (updateBuf.indexOf(sig) !== -1) {
+                try { ws.close(1008, 'Blocked unsafe update'); } catch (_) {}
+                return;
+            }
+        }
+
         Y.applyUpdate(ydoc, updateBuf);
         wsBroadcastToPage(pageId, 'yjs-update', { update }, ws.userId);
         const doc = yjsDocuments.get(pageId);
