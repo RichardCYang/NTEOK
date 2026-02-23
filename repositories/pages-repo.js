@@ -238,7 +238,7 @@ module.exports = ({ pool, pageSqlPolicy }) => {
                 );
             }
 
-            if (!deletableIds || deletableIds.length === 0) return;
+            if (!deletableIds || deletableIds.length === 0) return { deletedPageIds: [], keptPageIds: keptIds || [] };
 
             await updateByIdInBatches(
                 `UPDATE pages SET deleted_at = NOW() WHERE id IN`,
@@ -252,6 +252,8 @@ module.exports = ({ pool, pageSqlPolicy }) => {
                 `UPDATE page_publish_links SET is_active = 0, updated_at = NOW() WHERE is_active = 1 AND page_id IN`,
                 deletableIds
             );
+
+            return { deletedPageIds: deletableIds, keptPageIds: keptIds || [] };
         },
 
         /**

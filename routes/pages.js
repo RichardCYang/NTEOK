@@ -818,13 +818,51 @@ module.exports = (dependencies) => {
             }
 
             // Soft delete: 자신과 모든 하위 페이지의 deleted_at 설정
-            await pagesRepo.softDeletePageAndDescendants({
+            const delResult = await pagesRepo.softDeletePageAndDescendants({
                 rootPageId: id,
                 storageId: existing.storage_id,
                 rootParentId: existing.parent_id || null,
                 actorUserId: userId,
                 isAdmin: permission === 'ADMIN'
             });
+
+            const deletedPageIds = Array.isArray(delResult?.deletedPageIds) && delResult.deletedPageIds.length
+                ? delResult.deletedPageIds
+                : [id];
+
+            for (const pid of deletedPageIds) {
+                // 메모리에 로드된 Yjs 문서 정리
+                try {
+                    const docInfo = yjsDocuments.get(pid);
+                    if (docInfo?.ydoc) {
+                        // DB에 최종 상태 저장 (선택: 삭제 직전 상태 보존)
+                        await saveYjsDocToDatabase(pool, sanitizeHtmlContent, pid, docInfo.ydoc);
+                    }
+                } catch (_) {}
+
+                try {
+                    yjsDocuments.delete(pid);
+                } catch (_) {}
+
+                // 실시간 구독(WebSocket) 정리
+                try {
+                    const conns = wsConnections?.pages?.get(pid);
+                    if (conns && conns.size) {
+                        // 구독자들에게 페이지 삭제 알림 전송 (클라이언트 UI 반영용)
+                        try { wsBroadcastToPage(pid, 'page-deleted', { pageId: pid }); } catch (_) {}
+
+                        // 연결 강제 종료 (Broken Access Control 차단)
+                        for (const c of Array.from(conns)) {
+                            try {
+                                if (c.ws) {
+                                    c.ws.close(1008, 'Page deleted');
+                                }
+                            } catch (_) {}
+                        }
+                        wsConnections.pages.delete(pid);
+                    }
+                } catch (_) {}
+            }
 
             await pagesRepo.recordUpdateHistory({
                 userId,
@@ -1146,7 +1184,7 @@ module.exports = (dependencies) => {
             // 보안: 업로드 총량 강제 (디스크 고갈 DoS 방지)
             try {
                 // editor-image는 imgs 디렉토리에 저장되지만, paperclip 기준으로 quota를 통합 적용하거나
-                // enforceUploadQuotaOrThrow를 그대로 호출 (내부적으로 paperclip을 보더라도 
+                // enforceUploadQuotaOrThrow를 그대로 호출 (내부적으로 paperclip을 보더라도
                 // 동일한 userId별 자원 정책의 일환으로 작동)
                 await enforceUploadQuotaOrThrow(userId, req.file.path);
             } catch (e) {

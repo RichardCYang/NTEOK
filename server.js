@@ -1828,6 +1828,7 @@ app.get('/covers/:userId/:filename', authMiddleware, async (req, res) => {
                LEFT JOIN storage_shares ss_cur
                  ON s.id = ss_cur.storage_id AND ss_cur.shared_with_user_id = ?
               WHERE p.cover_image = ?
+                AND p.deleted_at IS NULL
                 -- 보안패치: 파일 소유자와 참조하는 페이지 소유자 일치
                 AND p.user_id = ?
                 -- 보안패치: 암호화 + 공유불가 페이지 자산은 타 사용자에게 노출 금지
@@ -1906,6 +1907,7 @@ app.get('/imgs/:userId/:filename', authMiddleware, async (req, res) => {
                 JOIN storages s ON p.storage_id = s.id
                 LEFT JOIN storage_shares ss_cur ON s.id = ss_cur.storage_id AND ss_cur.shared_with_user_id = ?
                 WHERE p.content LIKE ? ESCAPE '\\\\'
+                AND p.deleted_at IS NULL
                 AND (s.user_id = ? OR ss_cur.shared_with_user_id IS NOT NULL)
                 -- 보안패치: 암호화 + 공유불가 페이지의 자산은
                 -- 페이지 본문 접근이 차단된 사용자(컬렉션 소유자 포함)에게도 노출되면 안 됨
@@ -2032,6 +2034,7 @@ app.get('/paperclip/:userId/:filename', authMiddleware, async (req, res) => {
                 JOIN storages s ON p.storage_id = s.id
                 LEFT JOIN storage_shares ss_cur ON s.id = ss_cur.storage_id AND ss_cur.shared_with_user_id = ?
                 WHERE p.content LIKE ? ESCAPE '\\\\'
+                AND p.deleted_at IS NULL
                 AND (s.user_id = ? OR ss_cur.shared_with_user_id IS NOT NULL)
                 -- 보안패치: 암호화 + 공유불가 페이지의 첨부파일은
                 -- 페이지 본문 접근이 차단된 사용자에게 우회적으로 다운로드되면 안 됨

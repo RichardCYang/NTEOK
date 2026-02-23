@@ -317,7 +317,8 @@ async function loadOrCreateYjsDoc(pool, sanitizeHtmlContent, pageId) {
         `SELECT title, content, icon, sort_order, parent_id, yjs_state,
                 user_id, storage_id, is_encrypted, share_allowed
          FROM pages
-         WHERE id = ?`,
+         WHERE id = ?
+           AND deleted_at IS NULL`,
         [pageId]
     );
 
@@ -626,7 +627,9 @@ async function handleSubscribePage(ws, payload, pool, sanitizeHtmlContent, pageS
         const [rows] = await pool.execute(
             `SELECT p.id, p.user_id, p.is_encrypted, p.share_allowed, p.storage_id
              FROM pages p
-             WHERE p.id = ?${vis.sql}`,
+             WHERE p.id = ?
+               AND p.deleted_at IS NULL
+             ${vis.sql}`,
             [pageId, ...vis.params]
         );
 
