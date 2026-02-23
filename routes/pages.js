@@ -80,6 +80,92 @@ module.exports = (dependencies) => {
     }
 
     /**
+     * ============================================================
+     * 보안: 업로드 총량 + 횟수 제한 (CWE-400 / OWASP API4)
+     * ------------------------------------------------------------
+     * 문제: 단건 파일 크기만 제한되어 있고, 총량/횟수 제한이 없어
+     *      디스크 고갈(DoS)이 가능함
+     * 해결:
+     *  - userId 기준 업로드 레이트리밋
+     *  - userId 기준 디렉터리 총량 quota 강제
+     * ============================================================
+     */
+
+    // 환경변수로 조정 가능 (기본값: 1GB)
+    const MAX_PAPERCLIP_BYTES_PER_USER = (() => {
+        const raw = String(process.env.MAX_PAPERCLIP_BYTES_PER_USER || '').trim().toLowerCase();
+        if (!raw) return 1024 * 1024 * 1024; // 1GB
+        const m = raw.match(/^(\d+(?:\.\d+)?)\s*(b|kb|mb|gb)?$/);
+        if (!m) return 1024 * 1024 * 1024;
+        const n = Number(m[1]);
+        const unit = m[2] || 'b';
+        const mul = unit === 'gb' ? 1024**3 : unit === 'mb' ? 1024**2 : unit === 'kb' ? 1024 : 1;
+        // 50MB~20GB 범위로 클램핑 (최소 50MB, 최대 20GB)
+        return Math.max(50 * 1024 * 1024, Math.min(20 * 1024**3, Math.floor(n * mul)));
+    })();
+
+    // 업로드 요청 횟수 제한 (기본: 60회/시간)
+    const fileUploadLimiter = rateLimit({
+        windowMs: 60 * 60 * 1000,
+        max: Number.parseInt(process.env.FILE_UPLOAD_MAX_PER_HOUR || "60", 10),
+        standardHeaders: true,
+        legacyHeaders: false,
+        keyGenerator: (req) => req.user?.id ? `user:${req.user.id}` : `ip:${getClientIp(req)}`,
+        handler: (_req, res) => res.status(429).json({ error: "업로드 요청이 너무 많습니다. 잠시 후 다시 시도해주세요." })
+    });
+
+    // 디렉터리 사용량 캐시(성능)
+    const usageCache = new Map(); // key=userId -> { bytes, ts }
+    const USAGE_CACHE_TTL_MS = 30 * 1000;
+
+    async function computeDirUsageBytes(dirPath) {
+        let total = 0;
+        try {
+            const items = await fs.promises.readdir(dirPath, { withFileTypes: true });
+            for (const it of items) {
+                if (!it.isFile()) continue;
+                const fp = path.join(dirPath, it.name);
+                try {
+                    const st = await fs.promises.stat(fp);
+                    total += st.size;
+                } catch (_) {}
+            }
+        } catch (_) {}
+        return total;
+    }
+
+    async function enforceUploadQuotaOrThrow(userId, newFilePath) {
+        // 보안: paperclip, imgs, covers 세 곳의 용량을 모두 합산하여 사용자 총 할당량(Quota) 체크
+        const dirs = [
+            path.join(__dirname, "..", "paperclip", String(userId)),
+            path.join(__dirname, "..", "imgs", String(userId)),
+            path.join(__dirname, "..", "covers", String(userId))
+        ];
+
+        const now = Date.now();
+        const cached = usageCache.get(userId);
+        if (cached && (now - cached.ts) < USAGE_CACHE_TTL_MS) {
+            if (cached.bytes > MAX_PAPERCLIP_BYTES_PER_USER)
+                throw new Error("UPLOAD_QUOTA_EXCEEDED");
+            return;
+        }
+
+        let totalBytes = 0;
+        for (const d of dirs) {
+            totalBytes += await computeDirUsageBytes(d);
+        }
+        usageCache.set(userId, { bytes: totalBytes, ts: now });
+
+        if (totalBytes > MAX_PAPERCLIP_BYTES_PER_USER) {
+            // quota 초과 시 방금 업로드한 파일은 즉시 삭제
+            try { if (newFilePath && fs.existsSync(newFilePath)) fs.unlinkSync(newFilePath); } catch (_) {}
+            // 캐시 무효화 (다음 요청 때 다시 계산하도록)
+            usageCache.delete(userId);
+            throw new Error("UPLOAD_QUOTA_EXCEEDED");
+        }
+    }
+
+    /**
      * 보안: 암호화(is_encrypted=1) + 공유불가(share_allowed=0) 페이지는 작성자만 접근 가능해야 함
      * - 기존에는 일부 Write 엔드포인트가 pool.execute("SELECT * FROM pages WHERE id=?")로 직접 로드하여
      * - pageSqlPolicy(가시성 정책)를 우회 → 권한우회(Broken Access Control) 발생
@@ -827,7 +913,7 @@ module.exports = (dependencies) => {
         }
     });
 
-    router.post("/:id/cover", authMiddleware, coverUpload.single('cover'), async (req, res) => {
+    router.post("/:id/cover", authMiddleware, fileUploadLimiter, coverUpload.single('cover'), async (req, res) => {
         const id = req.params.id;
         const userId = req.user.id;
         if (!req.file) return res.status(400).json({ error: "No file uploaded" });
@@ -847,6 +933,18 @@ module.exports = (dependencies) => {
 
             const sig = await assertImageFileSignature(req.file.path);
             normalizeUploadedImageFile(req.file, sig.ext);
+
+            // 보안: 업로드 총량 강제 (디스크 고갈 DoS 방지)
+            try {
+                // cover 이미지는 covers 디렉토리에 저장되지만, paperclip 기준으로 quota를 통합 적용할 수도 있음
+                // 여기서는 paperclip/ userId 디렉토리와 cover/ userId 디렉토리를 각각 관리하거나
+                // enforceUploadQuotaOrThrow가 paperclip을 체크하므로, cover도 동일한 userId별 자원 정책 적용
+                await enforceUploadQuotaOrThrow(userId, req.file.path);
+            } catch (e) {
+                if (String(e?.message) === "UPLOAD_QUOTA_EXCEEDED")
+                    return res.status(413).json({ error: "업로드 용량 제한을 초과했습니다. (파일 정리 후 다시 시도해주세요)" });
+                throw e;
+            }
 
             const coverPath = `${userId}/${req.file.filename}`;
             await pool.execute(`UPDATE pages SET cover_image=?, cover_position=50, updated_at=NOW() WHERE id=?`, [coverPath, id]);
@@ -900,7 +998,7 @@ module.exports = (dependencies) => {
         }
     });
 
-    router.post("/:id/file", authMiddleware, fileUpload.single('file'), async (req, res) => {
+    router.post("/:id/file", authMiddleware, fileUploadLimiter, fileUpload.single('file'), async (req, res) => {
         const id = req.params.id;
         const userId = req.user.id;
         if (!req.file) return res.status(400).json({ error: "No file uploaded" });
@@ -925,6 +1023,15 @@ module.exports = (dependencies) => {
             if (isImageExt) {
                 const sig = await assertImageFileSignature(req.file.path).catch(() => null);
                 if (sig) normalizeUploadedImageFile(req.file, sig.ext);
+            }
+
+            // 보안: 업로드 총량 강제 (디스크 고갈 DoS 방지)
+            try {
+                await enforceUploadQuotaOrThrow(userId, req.file.path);
+            } catch (e) {
+                if (String(e?.message) === "UPLOAD_QUOTA_EXCEEDED")
+                    return res.status(413).json({ error: "업로드 용량 제한을 초과했습니다. (첨부파일 정리 후 다시 시도해주세요)" });
+                throw e;
             }
 
             const fileUrl = `/paperclip/${userId}/${req.file.filename}`;
@@ -1016,7 +1123,7 @@ module.exports = (dependencies) => {
         }
     });
 
-    router.post("/:id/editor-image", authMiddleware, editorImageUpload.single('image'), async (req, res) => {
+    router.post("/:id/editor-image", authMiddleware, fileUploadLimiter, editorImageUpload.single('image'), async (req, res) => {
         const id = req.params.id;
         const userId = req.user.id;
         if (!req.file) return res.status(400).json({ error: "No file uploaded" });
@@ -1036,6 +1143,18 @@ module.exports = (dependencies) => {
 
             const sig = await assertImageFileSignature(req.file.path);
             normalizeUploadedImageFile(req.file, sig.ext);
+
+            // 보안: 업로드 총량 강제 (디스크 고갈 DoS 방지)
+            try {
+                // editor-image는 imgs 디렉토리에 저장되지만, paperclip 기준으로 quota를 통합 적용하거나
+                // enforceUploadQuotaOrThrow를 그대로 호출 (내부적으로 paperclip을 보더라도 
+                // 동일한 userId별 자원 정책의 일환으로 작동)
+                await enforceUploadQuotaOrThrow(userId, req.file.path);
+            } catch (e) {
+                if (String(e?.message) === "UPLOAD_QUOTA_EXCEEDED")
+                    return res.status(413).json({ error: "업로드 용량 제한을 초과했습니다. (이미지 정리 후 다시 시도해주세요)" });
+                throw e;
+            }
 
             const imageUrl = `/imgs/${userId}/${req.file.filename}`;
             res.json({ url: imageUrl });
