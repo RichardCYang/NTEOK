@@ -28,7 +28,7 @@ export async function checkPublishStatus(pageId) {
     if (!pageId) return;
 
     try {
-        const res = await fetch(`/api/pages/${encodeURIComponent(pageId)}/publish`);
+        const res = await secureFetch(`/api/pages/${encodeURIComponent(pageId)}/publish`);
         if (!res.ok) {
             console.log("발행 상태 확인 실패:", res.status);
             publishState.published = false;

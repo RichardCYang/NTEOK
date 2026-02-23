@@ -2,7 +2,7 @@
  * 패스키 관리 모듈
  */
 
-import { escapeHtml } from './ui-utils.js';
+import { escapeHtml, escapeHtmlAttr, secureFetch } from './ui-utils.js';
 import { hideParentModalForChild, restoreParentModalFromChild } from './modal-parent-manager.js';
 
 // SimpleWebAuthn 동적 import
@@ -20,23 +20,12 @@ async function loadSimpleWebAuthn() {
     }
 }
 
-function getCookie(name) {
-    const value = `; ${document.cookie}`;
-    const parts = value.split(`; ${name}=`);
-    if (parts.length === 2) {
-        return parts.pop().split(';').shift();
-    }
-    return null;
-}
-
 export async function updatePasskeyStatus() {
     try {
-        const csrfToken = getCookie('nteok_csrf');
-        const response = await fetch('/api/passkey/status', {
+        const response = await secureFetch('/api/passkey/status', {
             method: 'GET',
             headers: {
                 'Content-Type': 'application/json',
-                'X-CSRF-Token': csrfToken
             }
         });
 
@@ -80,12 +69,10 @@ export function closePasskeyManageModal() {
 
 async function loadPasskeyList() {
     try {
-        const csrfToken = getCookie('nteok_csrf');
-        const response = await fetch('/api/passkey/status', {
+        const response = await secureFetch('/api/passkey/status', {
             method: 'GET',
             headers: {
                 'Content-Type': 'application/json',
-                'X-CSRF-Token': csrfToken
             }
         });
 
@@ -135,12 +122,10 @@ async function loadPasskeyList() {
 
 async function deletePasskey(passkeyId) {
     try {
-        const csrfToken = getCookie('nteok_csrf');
-        const response = await fetch(`/api/passkey/${passkeyId}`, {
+        const response = await secureFetch(`/api/passkey/${passkeyId}`, {
             method: 'DELETE',
             headers: {
                 'Content-Type': 'application/json',
-                'X-CSRF-Token': csrfToken
             }
         });
 
@@ -195,12 +180,10 @@ export async function registerPasskey() {
 
     try {
         // 1. 서버에서 등록 옵션 가져오기
-        const csrfToken = getCookie('nteok_csrf');
-        const optionsRes = await fetch('/api/passkey/register/options', {
+        const optionsRes = await secureFetch('/api/passkey/register/options', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'X-CSRF-Token': csrfToken
             }
         });
 
@@ -216,11 +199,10 @@ export async function registerPasskey() {
         const credential = await webAuthn.startRegistration(options);
 
         // 3. 서버에서 등록 검증
-        const verifyRes = await fetch('/api/passkey/register/verify', {
+        const verifyRes = await secureFetch('/api/passkey/register/verify', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'X-CSRF-Token': csrfToken
             },
             body: JSON.stringify({
                 credential: credential,

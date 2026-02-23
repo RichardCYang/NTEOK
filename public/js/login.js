@@ -40,14 +40,13 @@ async function handleLogin(event) {
     }
 
     try {
-        // 보안: CSRF 토큰 추가 (일관성 유지)
-        const options = window.csrfUtils.addCsrfHeader({
+        const options = {
             method: "POST",
             headers: {
                 "Content-Type": "application/json"
             },
             body: JSON.stringify({ username, password })
-        });
+        };
 
         const res = await secureFetch("/api/auth/login", options);
 
@@ -142,7 +141,7 @@ async function verifyTotpLogin() {
     }
 
     try {
-    	const options = window.csrfUtils.addCsrfHeader({
+    	const options = {
 	        method: "POST",
 	        headers: {
 	            "Content-Type": "application/json"
@@ -151,9 +150,9 @@ async function verifyTotpLogin() {
 	            token: code,
 	            tempSessionId: currentTempSessionId
 	        })
-	    });
+	    };
 
-        const response = await fetch("/api/totp/verify-login", options);
+        const response = await secureFetch("/api/totp/verify-login", options);
         const data = await response.json();
 
         if (!response.ok) {
@@ -182,7 +181,7 @@ async function useBackupCode() {
     }
 
     try {
-    	const options = window.csrfUtils.addCsrfHeader({
+    	const options = {
 	        method: "POST",
 	        headers: {
 	            "Content-Type": "application/json"
@@ -191,9 +190,9 @@ async function useBackupCode() {
 	            backupCode: backupCode.trim(),
 	            tempSessionId: currentTempSessionId
 	        })
-	    });
+	    };
 
-        const response = await fetch("/api/totp/verify-backup-code", options);
+        const response = await secureFetch("/api/totp/verify-backup-code", options);
         const data = await response.json();
 
         if (!response.ok) {
@@ -319,13 +318,13 @@ async function startPasskeyAuth() {
 
     try {
         // 서버에서 인증 옵션 가져오기
-        const optionsReq = window.csrfUtils.addCsrfHeader({
+        const optionsReq = {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ tempSessionId: currentTempSessionId })
-        });
+        };
 
-        const optionsRes = await fetch("/api/passkey/authenticate/options", optionsReq);
+        const optionsRes = await secureFetch("/api/passkey/authenticate/options", optionsReq);
         if (!optionsRes.ok) {
             const errorData = await optionsRes.json();
             throw new Error(errorData.error || "인증 옵션을 가져올 수 없습니다.");
@@ -338,16 +337,16 @@ async function startPasskeyAuth() {
         const credential = await webAuthn.startAuthentication(options);
 
         // 서버에서 인증 검증
-        const verifyReq = window.csrfUtils.addCsrfHeader({
+        const verifyReq = {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
                 credential: credential,
                 tempSessionId: currentTempSessionId
             })
-        });
+        };
 
-        const verifyRes = await fetch("/api/passkey/authenticate/verify", verifyReq);
+        const verifyRes = await secureFetch("/api/passkey/authenticate/verify", verifyReq);
         if (!verifyRes.ok) {
             const errorData = await verifyRes.json();
             throw new Error(errorData.error || "인증에 실패했습니다.");
@@ -388,13 +387,13 @@ async function handlePasskeyLogin(event) {
         // 아이디가 입력되지 않은 경우: Userless 인증 (Discoverable Credentials)
         if (!username) {
             // 서버에서 userless 패스키 로그인 옵션 가져오기
-            const optionsReq = window.csrfUtils.addCsrfHeader({
+            const optionsReq = {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({})
-            });
+            };
 
-            optionsRes = await fetch("/api/passkey/login/userless/options", optionsReq);
+            optionsRes = await secureFetch("/api/passkey/login/userless/options", optionsReq);
             if (!optionsRes.ok) {
                 const errorData = await optionsRes.json();
                 errorEl.textContent = errorData.error || "패스키 로그인을 시작할 수 없습니다.";
@@ -406,13 +405,13 @@ async function handlePasskeyLogin(event) {
         } else {
             // 아이디가 입력된 경우: username 기반 인증
             // 서버에서 패스키 로그인 옵션 가져오기
-            const optionsReq = window.csrfUtils.addCsrfHeader({
+            const optionsReq = {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ username })
-            });
+            };
 
-            optionsRes = await fetch("/api/passkey/login/options", optionsReq);
+            optionsRes = await secureFetch("/api/passkey/login/options", optionsReq);
             if (!optionsRes.ok) {
                 const errorData = await optionsRes.json();
                 errorEl.textContent = errorData.error || "패스키 로그인을 시작할 수 없습니다.";
@@ -438,16 +437,16 @@ async function handlePasskeyLogin(event) {
             ? "/api/passkey/login/verify"
             : "/api/passkey/login/userless/verify";
 
-        const verifyReq = window.csrfUtils.addCsrfHeader({
+        const verifyReq = {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
                 credential: credential,
                 tempSessionId: tempSessionId
             })
-        });
+        };
 
-        const verifyRes = await fetch(verifyEndpoint, verifyReq);
+        const verifyRes = await secureFetch(verifyEndpoint, verifyReq);
         if (!verifyRes.ok) {
             const errorData = await verifyRes.json();
 

@@ -311,14 +311,17 @@ class CryptoManager {
         this.clearKey();
 
         // 로그아웃 API 호출
-        fetch('/api/auth/logout', { method: 'POST' })
+        const options = window.csrfUtils ? window.csrfUtils.addCsrfHeader({ method: 'POST' }) : { method: 'POST' };
+        if (!options.credentials) options.credentials = 'same-origin';
+        
+        fetch('/api/auth/logout', options)
             .then(() => {
                 alert('보안을 위해 15분 동안 활동이 없어 자동 로그아웃되었습니다.');
-                window.location.href = '/login';
+                window.location.href = '/login.html';
             })
             .catch(error => {
                 console.error('자동 로그아웃 중 오류:', error);
-                window.location.href = '/login';
+                window.location.href = '/login.html';
             });
     }
 

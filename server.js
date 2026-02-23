@@ -249,7 +249,26 @@ const IS_HTTPS_BASE_URL = (() => {
  */
 const REQUIRE_HTTPS = String(process.env.REQUIRE_HTTPS || '').toLowerCase() === 'true';
 
-const COOKIE_SECURE = IS_HTTPS_BASE_URL || REQUIRE_HTTPS;
+/**
+ * 기존 구현은 BASE_URL이 https:// 인지에 따라 COOKIE_SECURE를 결정
+ * 그런데 실제 배포에서는(리버스 프록시/TLS 종단) BASE_URL 설정이 누락/오류인 경우가 흔하고,
+ * 그 경우 세션/CSRF 쿠키가 Secure 없이 발급되어
+ *  - 평문(HTTP) 채널로 쿠키가 전송될 위험
+ *  - __Host- 접두사를 못 써서, 서브도메인에서 Domain 쿠키를 주입하는 cookie tossing (세션 고정) 위험
+ *
+ * 운영(PROD)에서는 기본적으로 Secure 쿠키를 fail-closed로 강제
+ * 정말로 예외가 필요하면 ALLOW_INSECURE_COOKIES=true 로 명시적으로 해제
+ */
+const ALLOW_INSECURE_COOKIES = String(process.env.ALLOW_INSECURE_COOKIES || '').toLowerCase() === 'true';
+const FORCE_SECURE_COOKIES = (() => {
+    const raw = String(process.env.FORCE_SECURE_COOKIES || '').toLowerCase();
+    if (raw === 'true') return true;
+    if (raw === 'false') return false;
+    // 기본값: 운영에서는 강제, 개발에서는 BASE_URL/REQUIRE_HTTPS에 따름
+    return IS_PRODUCTION;
+})();
+
+const COOKIE_SECURE = (!ALLOW_INSECURE_COOKIES) && (FORCE_SECURE_COOKIES || IS_HTTPS_BASE_URL || REQUIRE_HTTPS);
 
 // 보안: __Host- prefix 적용 (Secure + Path=/ + No Domain)
 // - HTTPS 환경일 때만 적용 가능 (prefix 요구사항)

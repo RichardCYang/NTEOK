@@ -4,6 +4,7 @@
  */
 
 import { hideParentModalForChild, restoreParentModalFromChild } from './modal-parent-manager.js';
+import { secureFetch } from './ui-utils.js';
 
 // 페이지네이션 설정
 const LOGS_PER_PAGE = 20;
@@ -84,9 +85,8 @@ function parseUserAgent(userAgent) {
  */
 async function loadLoginLogsStats() {
     try {
-        const response = await fetch('/api/auth/login-logs/stats', {
-            method: 'GET',
-            credentials: 'include'
+        const response = await secureFetch('/api/auth/login-logs/stats', {
+            method: 'GET'
         });
 
         if (!response.ok) {
@@ -117,9 +117,8 @@ async function loadLoginLogsStats() {
 async function loadLoginLogs(page = 1) {
     try {
         const offset = (page - 1) * LOGS_PER_PAGE;
-        const response = await fetch(`/api/auth/login-logs?limit=${LOGS_PER_PAGE}&offset=${offset}`, {
-            method: 'GET',
-            credentials: 'include'
+        const response = await secureFetch(`/api/auth/login-logs?limit=${LOGS_PER_PAGE}&offset=${offset}`, {
+            method: 'GET'
         });
 
         if (!response.ok) {

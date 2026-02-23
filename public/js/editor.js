@@ -2544,14 +2544,11 @@ async function handlePaddingChange(paddingValue) {
 
     // 서버에 저장
     try {
-        const csrfToken = window.csrfUtils?.getCsrfToken();
-        const res = await fetch(`/api/pages/${state.currentPageId}`, {
+        const res = await secureFetch(`/api/pages/${state.currentPageId}`, {
             method: 'PUT',
             headers: {
                 'Content-Type': 'application/json',
-                'X-CSRF-Token': csrfToken
             },
-            credentials: 'include',
             body: JSON.stringify({ horizontalPadding: padding })
         });
 

@@ -1,5 +1,5 @@
 import { sanitizeHttpHref } from './url-utils.js';
-import { escapeHtml, addIcon } from './ui-utils.js';
+import { escapeHtml, addIcon, secureFetch } from './ui-utils.js';
 import { loadAndRenderComments, initCommentsManager } from './comments-manager.js';
 import DOMPurify from 'dompurify';
 
@@ -330,7 +330,7 @@ function renderCheckboxes(container) {
         }
 
         // 페이지 데이터 로드
-        const response = await fetch(`/api/shared/page/${encodeURIComponent(token)}`);
+        const response = await secureFetch(`/api/shared/page/${encodeURIComponent(token)}`);
         if (!response.ok) {
             throw new Error('페이지를 찾을 수 없습니다.');
         }

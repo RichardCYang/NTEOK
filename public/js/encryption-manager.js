@@ -106,7 +106,7 @@ export async function handleEncryption(event) {
 
     try {
         // 1. 현재 페이지 가져오기
-        const res = await fetch(`/api/pages/${encodeURIComponent(state.currentEncryptingPageId)}`);
+        const res = await secureFetch(`/api/pages/${encodeURIComponent(state.currentEncryptingPageId)}`);
         if (!res.ok) {
             throw new Error("HTTP " + res.status);
         }
@@ -259,7 +259,7 @@ export async function handleDecryption(event) {
         stopPageSync();
 
         // 페이지 데이터 가져오기 (encryptionSalt, encryptedContent)
-        const res = await fetch(`/api/pages/${encodeURIComponent(page.id)}`);
+        const res = await secureFetch(`/api/pages/${encodeURIComponent(page.id)}`);
         if (!res.ok) {
             throw new Error("페이지를 불러올 수 없습니다.");
         }

@@ -1,6 +1,7 @@
 /**
  * 계정 관리 모듈
  */
+import { secureFetch } from './ui-utils.js';
 
 /**
  * CSRF 쿠키 가져오기
@@ -86,12 +87,10 @@ export async function confirmDeleteAccount() {
     }
 
     try {
-        const csrfToken = getCookie('nteok_csrf');
-        const response = await fetch('/api/auth/account', {
+        const response = await secureFetch('/api/auth/account', {
             method: 'DELETE',
             headers: {
                 'Content-Type': 'application/json',
-                'X-CSRF-Token': csrfToken
             },
             body: JSON.stringify({ password, confirmText })
         });

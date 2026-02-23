@@ -3,30 +3,17 @@
  */
 
 import { hideParentModalForChild, restoreParentModalFromChild } from './modal-parent-manager.js';
-
-/**
- * CSRF 쿠키 가져오기
- */
-function getCookie(name) {
-    const value = `; ${document.cookie}`;
-    const parts = value.split(`; ${name}=`);
-    if (parts.length === 2) {
-        return parts.pop().split(';').shift();
-    }
-    return null;
-}
+import { secureFetch, escapeHtml } from './ui-utils.js';
 
 /**
  * TOTP 상태 업데이트
  */
 export async function updateTotpStatus() {
     try {
-        const csrfToken = getCookie('nteok_csrf');
-        const response = await fetch('/api/totp/status', {
+        const response = await secureFetch('/api/totp/status', {
             method: 'GET',
             headers: {
                 'Content-Type': 'application/json',
-                'X-CSRF-Token': csrfToken
             }
         });
 
@@ -85,12 +72,10 @@ export async function openTotpSetupModal() {
     } else {
         // TOTP 설정 시작
         try {
-            const csrfToken = getCookie('nteok_csrf');
-            const response = await fetch('/api/totp/setup', {
+            const response = await secureFetch('/api/totp/setup', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'X-CSRF-Token': csrfToken
                 }
             });
 
@@ -176,12 +161,10 @@ export async function verifyTotpSetup() {
     }
 
     try {
-        const csrfToken = getCookie('nteok_csrf');
-        const response = await fetch('/api/totp/verify-setup', {
+        const response = await secureFetch('/api/totp/verify-setup', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'X-CSRF-Token': csrfToken
             },
             body: JSON.stringify({ token: code })
         });
@@ -203,7 +186,7 @@ export async function verifyTotpSetup() {
 
         if (backupCodesEl && data.backupCodes) {
             backupCodesEl.innerHTML = data.backupCodes
-                .map(code => `<div>${code}</div>`)
+                .map(c => `<div>${escapeHtml(String(c))}</div>`)
                 .join('');
         }
 
@@ -251,12 +234,10 @@ export async function disableTotp() {
     }
 
     try {
-        const csrfToken = getCookie('nteok_csrf');
-        const response = await fetch('/api/totp/disable', {
+        const response = await secureFetch('/api/totp/disable', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'X-CSRF-Token': csrfToken
             },
             body: JSON.stringify({ password })
         });
