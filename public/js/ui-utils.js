@@ -86,14 +86,24 @@ export function addIcon(button, icon) {
  * 에디터에 에러 메시지 표시
  */
 export function showErrorInEditor(message, editor) {
-    const escapedMessage = escapeHtml(message);
+    const safeMessage = message || '오류가 발생했습니다.';
 
     if (editor) {
+        // Tiptap 에디터 내부: setContent는 이미 HTML을 다루지만, 
+        // 여기서 message를 직접 태그와 합치지 않고 안전하게 처리
+        // (Tiptap setContent는 내부적으로 HTML 파싱을 수행하므로, 
+        //  텍스트로 취급하고 싶다면 textContent 컨텍스트를 유지하거나 별도 sanitize 필요)
+        const escapedMessage = escapeHtml(safeMessage);
         editor.commands.setContent(`<p style="color: red;">${escapedMessage}</p>`, { emitUpdate: false });
     } else {
         const el = document.querySelector("#editor");
         if (el) {
-            el.innerHTML = `<p style="color: red;">${escapedMessage}</p>`;
+            // 보안: innerHTML 사용 중단 -> DOM API로 안전하게 생성
+            el.textContent = '';
+            const p = document.createElement('p');
+            p.style.color = 'red';
+            p.textContent = safeMessage;
+            el.appendChild(p);
         }
     }
 }

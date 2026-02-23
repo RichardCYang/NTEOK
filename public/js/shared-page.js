@@ -433,17 +433,47 @@ function renderCheckboxes(container) {
     } catch (error) {
         console.error('페이지 로드 오류:', error);
         const editorEl = document.getElementById('page-editor');
-        editorEl.innerHTML = `
-            <div class="shared-page-error">
-                <div class="shared-page-error-message">
-                    <p><i class="fa-solid fa-exclamation-circle"></i></p>
-                    <p>${error.message || '페이지를 불러올 수 없습니다.'}</p>
-                    <p style="font-size: 13px; margin-top: 16px; color: #6b7280;">
-                        <a href="/" style="color: #2d5f5d; text-decoration: underline;">홈으로 돌아가기</a>
-                    </p>
-                </div>
-            </div>
-        `;
+
+        // 보안: error.message는 (직/간접적으로) 사용자 제어 문자열이 섞일 수 있으므로
+        // innerHTML로 주입하면 DOM XSS/HTML Injection Sink가 됨
+        // 안전한 방식: DOM API + textContent 사용
+        const msg = (error && typeof error.message === 'string' && error.message)
+            ? error.message
+            : '페이지를 불러올 수 없습니다.';
+
+        editorEl.textContent = '';
+
+        const wrap = document.createElement('div');
+        wrap.className = 'shared-page-error';
+        const box = document.createElement('div');
+        box.className = 'shared-page-error-message';
+
+        const iconP = document.createElement('p');
+        const iconI = document.createElement('i');
+        iconI.className = 'fa-solid fa-exclamation-circle';
+        iconP.appendChild(iconI);
+
+        const msgP = document.createElement('p');
+        msgP.textContent = msg;
+
+        const linkP = document.createElement('p');
+        linkP.style.fontSize = '13px';
+        linkP.style.marginTop = '16px';
+        linkP.style.color = '#6b7280';
+
+        const a = document.createElement('a');
+        a.href = '/';
+        a.textContent = '홈으로 돌아가기';
+        a.style.color = '#2d5f5d';
+        a.style.textDecoration = 'underline';
+        linkP.appendChild(a);
+
+        box.appendChild(iconP);
+        box.appendChild(msgP);
+        box.appendChild(linkP);
+        wrap.appendChild(box);
+        editorEl.appendChild(wrap);
+
         editorEl.classList.remove('shared-page-loading');
     }
 })();
