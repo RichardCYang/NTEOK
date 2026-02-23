@@ -244,7 +244,31 @@ function normalizePaperclipRef(ref) {
     return `${userIdRaw}/${filenameRaw}`;
 }
 
-function extractFilesFromContent(content) {
+/**
+ * 보안(중요): paperclip 참조는 항상 해당 페이지 소유자의 디렉터리만 대상으로 해야 함
+ *
+ * 취약점 배경:
+ * - 기존 cleanupOrphanedFiles는 ref("<userId>/<filename>")의 userId가 누구인지와 무관하게,
+ *   다른 페이지에서 더 이상 참조되지 않는다는 조건만 만족하면 paperclip 디렉터리에서 파일을 삭제하였음
+ * - 악의적 협업자(동일 저장소의 EDIT/ADMIN 권한)는 Yjs 업데이트를 통해 본인 페이지에
+ *   타 사용자(userId)의 /paperclip URL을 삽입/삭제하는 방식으로, 해당 사용자의 고아(orphan) 첨부 파일을
+ *   임의로 삭제할 수 있었음(무단 파기/데이터 손실)
+ *
+ * 완화:
+ * - ref의 userId가 pageOwnerUserId와 일치하는 경우에만 추적/정리 대상으로 포함
+ * - DB 조회(참조 여부 확인)도 동일 소유자의 pages로 범위를 제한
+ */
+function normalizePaperclipRefForOwner(ref, pageOwnerUserId) {
+    const normalized = normalizePaperclipRef(ref);
+    if (!normalized) return null;
+    const [uid] = normalized.split('/');
+    if (!uid) return null;
+    const ownerIdStr = String(pageOwnerUserId ?? '').trim();
+    if (!ownerIdStr || uid !== ownerIdStr) return null;
+    return normalized;
+}
+
+function extractFilesFromContent(content, pageOwnerUserId = null) {
     const files = [];
     if (!content) return files;
 
@@ -253,33 +277,46 @@ function extractFilesFromContent(content) {
     const fileRegex = /<div[^>]*data-type=["']file-block["'][^>]*data-src=["']\/paperclip\/([^"']+)["'][^>]*>/gi;
     let match;
     while ((match = fileRegex.exec(String(content))) !== null) {
-        const ref = normalizePaperclipRef(match[1]);
+        const ref = (pageOwnerUserId !== null && pageOwnerUserId !== undefined)
+            ? normalizePaperclipRefForOwner(match[1], pageOwnerUserId)
+            : normalizePaperclipRef(match[1]);
         if (ref) files.push(ref);
     }
     return files;
 }
 
-async function cleanupOrphanedFiles(pool, filePaths, excludePageId) {
+async function cleanupOrphanedFiles(pool, filePaths, excludePageId, pageOwnerUserId) {
     if (!filePaths || filePaths.length === 0) return;
 
     const fs = require('fs');
     const path = require('path');
-    const baseDir = path.resolve(__dirname, 'paperclip') + path.sep;
+    // 특정 사용자 디렉터리로 scope를 제한 (타 사용자 파일 임의 삭제 방지)
+    const ownerIdStr = String(pageOwnerUserId ?? '').trim();
+    if (!ownerIdStr || !/^\d{1,12}$/.test(ownerIdStr)) return;
+    const baseDir = path.resolve(__dirname, 'paperclip', ownerIdStr) + path.sep;
 
     // LIKE 패턴에서 와일드카드(% _) 오인 방지
     const escapeLike = (s) => String(s).replace(/[\\%_]/g, (m) => '\\\\' + m);
 
     for (const ref of filePaths) {
         try {
-            const normalized = normalizePaperclipRef(ref);
+            const normalized = normalizePaperclipRefForOwner(ref, ownerIdStr);
             if (!normalized) continue;
 
             const fileUrl = `/paperclip/${normalized}`;
             const likePattern = `%${escapeLike(fileUrl)}%`;
 
+            // 동일 사용자(페이지 소유자) 범위 내에서만 참조 여부 확인
+            // - 다른 사용자가 우연히 동일 문자열을 포함했는지 여부는 중요하지 않음
+            // - 그리고 다른 사용자의 pages를 스캔하면, 악의적 협업자가 문자열 조작으로
+            //   의도치 않은 삭제/보존을 유도할 여지가 생김
             const [rows] = await pool.execute(
-                `SELECT COUNT(*) as count FROM pages WHERE content LIKE ? ESCAPE '\\\\' AND id != ?`,
-                [likePattern, excludePageId]
+                `SELECT COUNT(*) as count
+                   FROM pages
+                  WHERE user_id = ?
+                    AND content LIKE ? ESCAPE '\\\\'
+                    AND id != ?`,
+                [ownerIdStr, likePattern, excludePageId]
             );
             if (!rows || !rows[0] || rows[0].count > 0) continue;
 
@@ -308,12 +345,13 @@ async function saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc) {
 
         const [existingRows] = await pool.execute('SELECT content, is_encrypted, user_id FROM pages WHERE id = ?', [pageId]);
         const isEncrypted = (existingRows.length > 0 && existingRows[0].is_encrypted === 1);
+        const pageOwnerUserId = (existingRows.length > 0 ? existingRows[0].user_id : null);
         let finalContent = content;
         let oldFiles = [];
         if (existingRows.length > 0) {
             const existing = existingRows[0];
             if (existing.is_encrypted === 1) finalContent = '';
-            else oldFiles = extractFilesFromContent(existing.content);
+            else oldFiles = extractFilesFromContent(existing.content, pageOwnerUserId);
         }
 
         // 보안: 암호화된 페이지는 yjs_state에 문서 스냅샷(평문)이 남을 수 있으므로 DB에 저장하지 않음
@@ -345,9 +383,9 @@ async function saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc) {
         );
 
         if (existingRows.length > 0 && existingRows[0].is_encrypted === 0) {
-            const newFiles = extractFilesFromContent(content);
+            const newFiles = extractFilesFromContent(content, pageOwnerUserId);
             const deletedFiles = oldFiles.filter(f => !newFiles.includes(f));
-            if (deletedFiles.length > 0) cleanupOrphanedFiles(pool, deletedFiles, pageId).catch(e => {});
+            if (deletedFiles.length > 0) cleanupOrphanedFiles(pool, deletedFiles, pageId, pageOwnerUserId).catch(e => {});
         }
     } catch (error) { throw error; }
 }
