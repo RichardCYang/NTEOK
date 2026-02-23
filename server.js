@@ -8,7 +8,12 @@ const cookieParser = require("cookie-parser");
 const crypto = require("crypto");
 const expressRateLimit = require("express-rate-limit");
 const rateLimit = expressRateLimit.rateLimit || expressRateLimit;
-const DOMPurify = require("isomorphic-dompurify");
+const _isoDomPurify = require("isomorphic-dompurify");
+// v3+는 default export + named clearWindow 제공 (CJS 호환)
+const DOMPurify = _isoDomPurify?.default || _isoDomPurify;
+const clearDomPurifyWindow = typeof _isoDomPurify?.clearWindow === "function"
+    ? _isoDomPurify.clearWindow.bind(_isoDomPurify)
+    : null;
 const speakeasy = require("speakeasy");
 const QRCode = require("qrcode");
 const Y = require("yjs");
@@ -20,9 +25,6 @@ const fs = require("fs");
 const compression = require("compression");
 const { installDomPurifySecurityHooks, assertImageFileSignature } = require("./security-utils");
 const ipKeyGenerator = expressRateLimit.ipKeyGenerator || (expressRateLimit.default && expressRateLimit.default.ipKeyGenerator);
-
-// DOMPurify 보안 훅 설치 (target=_blank에 rel=noopener/noreferrer 강제 등)
-installDomPurifySecurityHooks(DOMPurify);
 
 // DOMPurify 추가 방어: data-url/data-thumbnail 스킴 검증
 // 북마크 블록은 data-url/data-thumbnail에 URL을 저장했다가, 클라이언트에서 <a href> / 이미지 프록시로 승격
@@ -104,65 +106,104 @@ function normalizeYouTubeEmbedUrl(value) {
     return out.toString();
 }
 
-if (typeof DOMPurify?.addHook === "function") {
-    DOMPurify.addHook("uponSanitizeAttribute", (_node, hookEvent) => {
-        const name = String(hookEvent?.attrName || "").toLowerCase();
-        if (name === "data-url" || name === "data-thumbnail") {
-            if (!isSafeHttpUrlOrRelative(String(hookEvent.attrValue || ""))) {
-                hookEvent.keepAttr = false;
-                hookEvent.forceKeepAttr = false;
-            }
-        }
-
-        // data-src는 DOMPurify 기본 URI 검증 대상이 아니므로 별도 검증 필요
-        // - file-block: data-src를 클릭 시 window.open()에 사용(저장형 XSS/피싱 sink)
-        // - image-with-caption: data-src를 img.src로 승격
-        // - youtube-block: data-src를 iframe.src로 승격 (도메인/형식 엄격 검증)
-        if (name === "data-src") {
-            const nodeType = String(_node?.getAttribute?.('data-type') || '').toLowerCase();
-            const raw = String(hookEvent.attrValue || "");
-
-            // YouTube는 허용 도메인/경로로 정규화 (fail-closed)
-            if (nodeType === "youtube-block" || nodeType === "youtube") {
-                const safe = normalizeYouTubeEmbedUrl(raw);
-                if (!safe) {
+// DOMPurify 정책/훅 재적용 함수 — clearWindow() 이후에도 반드시 다시 호출해야 함
+function applyDomPurifyPolicy() {
+    try {
+        if (typeof DOMPurify.removeAllHooks === "function") DOMPurify.removeAllHooks();
+        if (typeof DOMPurify.clearConfig === "function") DOMPurify.clearConfig();
+    } catch (_) {}
+    // target=_blank rel=noopener/noreferrer 강제 훅
+    installDomPurifySecurityHooks(DOMPurify);
+    // data-url/data-thumbnail/data-src 스킴 검증 훅
+    if (typeof DOMPurify?.addHook === "function") {
+        DOMPurify.addHook("uponSanitizeAttribute", (_node, hookEvent) => {
+            const name = String(hookEvent?.attrName || "").toLowerCase();
+            if (name === "data-url" || name === "data-thumbnail") {
+                if (!isSafeHttpUrlOrRelative(String(hookEvent.attrValue || ""))) {
                     hookEvent.keepAttr = false;
                     hookEvent.forceKeepAttr = false;
-                } else {
-                    hookEvent.attrValue = safe;
                 }
-                return;
             }
 
-            // 일반적인 data-src는 http(s) 또는 안전한 상대경로만 허용
-            if (!isSafeHttpUrlOrRelative(raw)) {
-                hookEvent.keepAttr = false;
-                hookEvent.forceKeepAttr = false;
-                return;
-            }
+            // data-src는 DOMPurify 기본 URI 검증 대상이 아니므로 별도 검증 필요
+            // - file-block: data-src를 클릭 시 window.open()에 사용(저장형 XSS/피싱 sink)
+            // - image-with-caption: data-src를 img.src로 승격
+            // - youtube-block: data-src를 iframe.src로 승격 (도메인/형식 엄격 검증)
+            if (name === "data-src") {
+                const nodeType = String(_node?.getAttribute?.('data-type') || '').toLowerCase();
+                const raw = String(hookEvent.attrValue || "");
 
-            // file-block는 내부 첨부(/paperclip/<userId>/<storedFilename>)만 허용
-            // - 과거처럼 "/paperclip/" prefix만 확인하면 "/paperclip/../server.js" 같은 경로 조작이 가능
-            // - storedFilename은 서버가 생성한 안전한 파일명(디렉터리 구분자/.. 없음)이어야 함
-            if (nodeType === "file-block") {
-                // 프로토콜/스킴 공격(//evil.com) 차단은 위 isSafeHttpUrlOrRelative에서 처리
-                // 여기서는 path traversal 방지 목적의 엄격 allowlist 적용
-                const m = raw.match(/^\/paperclip\/(\d{1,12})\/([A-Za-z0-9][A-Za-z0-9._-]{0,199})$/);
-                if (!m) {
+                // YouTube는 허용 도메인/경로로 정규화 (fail-closed)
+                if (nodeType === "youtube-block" || nodeType === "youtube") {
+                    const safe = normalizeYouTubeEmbedUrl(raw);
+                    if (!safe) {
+                        hookEvent.keepAttr = false;
+                        hookEvent.forceKeepAttr = false;
+                    } else {
+                        hookEvent.attrValue = safe;
+                    }
+                    return;
+                }
+
+                // 일반적인 data-src는 http(s) 또는 안전한 상대경로만 허용
+                if (!isSafeHttpUrlOrRelative(raw)) {
                     hookEvent.keepAttr = false;
                     hookEvent.forceKeepAttr = false;
                     return;
                 }
-                const filename = m[2];
-                // 이중 점(../, ..\) 및 제어문자 등 추가 방어
-                if (!filename || filename.includes('..') || /[\x00-\x1F\x7F]/.test(filename)) {
-                    hookEvent.keepAttr = false;
-                    hookEvent.forceKeepAttr = false;
-                    return;
+
+                // file-block는 내부 첨부(/paperclip/<userId>/<storedFilename>)만 허용
+                // - 과거처럼 "/paperclip/" prefix만 확인하면 "/paperclip/../server.js" 같은 경로 조작이 가능
+                // - storedFilename은 서버가 생성한 안전한 파일명(디렉터리 구분자/.. 없음)이어야 함
+                if (nodeType === "file-block") {
+                    // 프로토콜/스킴 공격(//evil.com) 차단은 위 isSafeHttpUrlOrRelative에서 처리
+                    // 여기서는 path traversal 방지 목적의 엄격 allowlist 적용
+                    const m = raw.match(/^\/paperclip\/(\d{1,12})\/([A-Za-z0-9][A-Za-z0-9._-]{0,199})$/);
+                    if (!m) {
+                        hookEvent.keepAttr = false;
+                        hookEvent.forceKeepAttr = false;
+                        return;
+                    }
+                    const filename = m[2];
+                    // 이중 점(../, ..\) 및 제어문자 등 추가 방어
+                    if (!filename || filename.includes('..') || /[\x00-\x1F\x7F]/.test(filename)) {
+                        hookEvent.keepAttr = false;
+                        hookEvent.forceKeepAttr = false;
+                        return;
+                    }
                 }
             }
-        }
-    });
+        });
+    }
+}
+
+// 서버 시작 시 DOMPurify 정책/훅 초기 설치
+applyDomPurifyPolicy();
+
+// DoS 완화: sanitize 호출이 누적될 때마다 주기적으로 clearWindow()로 jsdom window를 재생성해
+// isomorphic-dompurify 2.x 계열의 unbounded memory growth + progressive slowdown 문제를 억제.
+// (v3.0.0 릴리스 노트: clearWindow()로 "long-running Node.js processes" 메모리 누수 해결)
+const DOMPURIFY_CLEAR_EVERY_CALLS = (() => {
+    const n = Number.parseInt(process.env.DOMPURIFY_CLEAR_EVERY_CALLS || "2000", 10);
+    return Number.isFinite(n) ? Math.max(200, Math.min(200000, n)) : 2000;
+})();
+
+let _dompurifyCallCount = 0;
+let _dompurifyClearing = false;
+
+function maybeRecycleDomPurify() {
+    if (!clearDomPurifyWindow) return;
+    _dompurifyCallCount++;
+    if (_dompurifyCallCount < DOMPURIFY_CLEAR_EVERY_CALLS) return;
+    if (_dompurifyClearing) return;
+    _dompurifyClearing = true;
+    try {
+        _dompurifyCallCount = 0;
+        clearDomPurifyWindow();
+        applyDomPurifyPolicy(); // clearWindow 이후 훅/설정 반드시 재설치
+    } finally {
+        _dompurifyClearing = false;
+    }
 }
 
 if (typeof ipKeyGenerator !== "function")
@@ -638,6 +679,7 @@ function sanitizeInput(input) {
     if (typeof input !== 'string') {
         return input;
     }
+    maybeRecycleDomPurify();
     // DOMPurify를 사용하여 모든 태그를 제거 (Text만 남김)
     return DOMPurify.sanitize(input, {
         ALLOWED_TAGS: [], // 허용할 태그 없음
@@ -782,6 +824,7 @@ function sanitizeHtmlContent(html) {
 
 	// DOMPurify로 안전한 HTML만 허용(예외는 폴백)
 	try {
+		maybeRecycleDomPurify();
 		return DOMPurify.sanitize(prefiltered, {
 	        ALLOWED_TAGS: [
 	            'p', 'br', 'strong', 'em', 'u', 's', 'code', 'pre',
