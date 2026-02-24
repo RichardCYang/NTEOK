@@ -195,24 +195,36 @@ function getClientIpFromRequest(req) {
     const remote = normalizeIp(req?.socket?.remoteAddress || req?.connection?.remoteAddress || req?.ip);
     const mode = (process.env.TRUST_PROXY || 'auto').toLowerCase();
     const trustedProxyCidrs = parseTrustedProxyCidrsFromEnv();
+    const isProduction = String(process.env.NODE_ENV || '').toLowerCase() === 'production';
 
     // 완전 비활성화 모드: 어떤 경우에도 forwarded 헤더를 신뢰하지 않음
     if (mode === 'off' || mode === 'false' || mode === '0')
         return remote || 'unknown';
 
-    // 완전 활성화 모드(비추천): forwarded 헤더를 무조건 신뢰
-    // - 운영에서는 가능하면 쓰지 말고, TRUST_PROXY_CIDRS로 프록시를 명시적으로 제한하세요.
-    if (mode === 'on' || mode === 'true' || mode === '1')
-        return extractForwardedClientIp(req) || remote || 'unknown';
+    // 보안: 무조건 신뢰 모드 제거 -> X-Forwarded-For/X-Real-IP는 클라이언트가 임의로 보낼 수 있으므로,
+    // 신뢰 프록시(루프백 또는 TRUST_PROXY_CIDRS)에 의해 전달된 경우에만 사용해야 함
+    // 과거 호환을 위해 on/true/1 값이 들어와도 auto처럼 처리(=fail-safe)
+    // 운영 환경에서는 경고 로그를 남겨 잘못된 설정을 눈에 띄게 함
+    let effectiveMode = mode;
+    if (mode === 'on' || mode === 'true' || mode === '1') {
+        effectiveMode = 'auto';
+        if (isProduction) {
+            console.warn(
+                '[보안] TRUST_PROXY=on(true/1)은 X-Forwarded-* 헤더 스푸핑으로 이어질 수 있어 비활성화되었습니다. ' +
+                'TRUST_PROXY=auto + TRUST_PROXY_CIDRS 사용을 권장합니다.'
+            );
+        }
+    }
 
     // auto 모드:
     // 1) remote가 loopback이면(같은 머신 프록시) forwarded 헤더 사용
     // 2) remote가 TRUST_PROXY_CIDRS에 포함되면 forwarded 헤더 사용
+    // (effectiveMode는 현재 off 또는 auto만 유효)
     const isTrustedProxy =
         (remote && isLoopbackIp(remote)) ||
         (remote && isIpInCidrs(remote, trustedProxyCidrs));
 
-    if (isTrustedProxy)
+    if (effectiveMode === 'auto' && isTrustedProxy)
         return extractForwardedClientIp(req) || remote || 'unknown';
 
     // direct 접속 또는 신뢰되지 않은 프록시: remoteAddress 사용
