@@ -69,44 +69,66 @@ module.exports = (dependencies) => {
         getClientIpFromRequest
 	} = dependencies;
 
+    // 주의: 이 동기화는 특정 사용자(pageOwnerUserId)의 첨부 레지스트리 slice만 갱신함
+    // 따라서 삭제 쿼리도 반드시 owner_user_id 범위로 제한해야 타 사용자 레코드를 건드리지 않음
     async function syncPageFileRefs(pageId, pageOwnerUserId, content) {
         if (!content) return;
         try {
-            const newFiles = extractFilesFromContent(content, pageOwnerUserId);
+            const ownerId = Number(pageOwnerUserId);
+            if (!Number.isFinite(ownerId)) throw new Error('Invalid pageOwnerUserId');
+
+            const newFiles = extractFilesFromContent(content, ownerId);
 
             // 신규 파일 등록 (INSERT IGNORE)
             for (const file of newFiles) {
                 const parts = file.ref.split('/');
-                const ownerId = parseInt(parts[0], 10);
+                const fileOwnerId = parseInt(parts[0], 10);
                 const filename = parts[1];
-                if (ownerId === pageOwnerUserId) {
+                if (fileOwnerId === ownerId) {
                     await pool.execute(
                         `INSERT IGNORE INTO page_file_refs (page_id, owner_user_id, stored_filename, file_type, created_at)
                          VALUES (?, ?, ?, ?, NOW())`,
-                        [pageId, ownerId, filename, file.type]
+                        [pageId, fileOwnerId, filename, file.type]
                     );
                 }
             }
 
             // 이 페이지에서 더 이상 참조되지 않는 레지스트리 제거
+            // 중요: 현재 동기화 대상(ownerId)의 레코드만 제거해야 타 사용자 첨부 레지스트리를 보호함
             const currentPaperclipFiles = newFiles.filter(f => f.type === 'paperclip').map(f => f.ref.split('/')[1]);
             if (currentPaperclipFiles.length > 0) {
                 await pool.execute(
-                    `DELETE FROM page_file_refs WHERE page_id = ? AND file_type = 'paperclip' AND stored_filename NOT IN (${currentPaperclipFiles.map(() => '?').join(',')})`,
-                    [pageId, ...currentPaperclipFiles]
+                    `DELETE FROM page_file_refs
+                      WHERE page_id = ?
+                        AND owner_user_id = ?
+                        AND file_type = 'paperclip'
+                        AND stored_filename NOT IN (${currentPaperclipFiles.map(() => '?').join(',')})`,
+                    [pageId, ownerId, ...currentPaperclipFiles]
                 );
             } else {
-                await pool.execute(`DELETE FROM page_file_refs WHERE page_id = ? AND file_type = 'paperclip'`, [pageId]);
+                await pool.execute(
+                    `DELETE FROM page_file_refs
+                      WHERE page_id = ? AND owner_user_id = ? AND file_type = 'paperclip'`,
+                    [pageId, ownerId]
+                );
             }
 
             const currentImgsFiles = newFiles.filter(f => f.type === 'imgs').map(f => f.ref.split('/')[1]);
             if (currentImgsFiles.length > 0) {
                 await pool.execute(
-                    `DELETE FROM page_file_refs WHERE page_id = ? AND file_type = 'imgs' AND stored_filename NOT IN (${currentImgsFiles.map(() => '?').join(',')})`,
-                    [pageId, ...currentImgsFiles]
+                    `DELETE FROM page_file_refs
+                      WHERE page_id = ?
+                        AND owner_user_id = ?
+                        AND file_type = 'imgs'
+                        AND stored_filename NOT IN (${currentImgsFiles.map(() => '?').join(',')})`,
+                    [pageId, ownerId, ...currentImgsFiles]
                 );
             } else {
-                await pool.execute(`DELETE FROM page_file_refs WHERE page_id = ? AND file_type = 'imgs'`, [pageId]);
+                await pool.execute(
+                    `DELETE FROM page_file_refs
+                      WHERE page_id = ? AND owner_user_id = ? AND file_type = 'imgs'`,
+                    [pageId, ownerId]
+                );
             }
         } catch (regErr) {
             logError('syncPageFileRefs 실패', regErr);

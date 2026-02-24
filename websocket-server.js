@@ -479,24 +479,41 @@ async function saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc) {
                 }
 
                 // 이 페이지에서 더 이상 참조되지 않는 레지스트리 제거
+                // 중요: pageOwnerUserId scope만 삭제해야 타 사용자 첨부 레지스트리를 건드리지 않음
                 const currentPaperclipFiles = newFiles.filter(f => f.type === 'paperclip').map(f => f.ref.split('/')[1]);
                 if (currentPaperclipFiles.length > 0) {
                     await pool.execute(
-                        `DELETE FROM page_file_refs WHERE page_id = ? AND file_type = 'paperclip' AND stored_filename NOT IN (${currentPaperclipFiles.map(() => '?').join(',')})`,
-                        [pageId, ...currentPaperclipFiles]
+                        `DELETE FROM page_file_refs
+                          WHERE page_id = ?
+                            AND owner_user_id = ?
+                            AND file_type = 'paperclip'
+                            AND stored_filename NOT IN (${currentPaperclipFiles.map(() => '?').join(',')})`,
+                        [pageId, pageOwnerUserId, ...currentPaperclipFiles]
                     );
                 } else {
-                    await pool.execute(`DELETE FROM page_file_refs WHERE page_id = ? AND file_type = 'paperclip'`, [pageId]);
+                    await pool.execute(
+                        `DELETE FROM page_file_refs
+                          WHERE page_id = ? AND owner_user_id = ? AND file_type = 'paperclip'`,
+                        [pageId, pageOwnerUserId]
+                    );
                 }
 
                 const currentImgsFiles = newFiles.filter(f => f.type === 'imgs').map(f => f.ref.split('/')[1]);
                 if (currentImgsFiles.length > 0) {
                     await pool.execute(
-                        `DELETE FROM page_file_refs WHERE page_id = ? AND file_type = 'imgs' AND stored_filename NOT IN (${currentImgsFiles.map(() => '?').join(',')})`,
-                        [pageId, ...currentImgsFiles]
+                        `DELETE FROM page_file_refs
+                          WHERE page_id = ?
+                            AND owner_user_id = ?
+                            AND file_type = 'imgs'
+                            AND stored_filename NOT IN (${currentImgsFiles.map(() => '?').join(',')})`,
+                        [pageId, pageOwnerUserId, ...currentImgsFiles]
                     );
                 } else {
-                    await pool.execute(`DELETE FROM page_file_refs WHERE page_id = ? AND file_type = 'imgs'`, [pageId]);
+                    await pool.execute(
+                        `DELETE FROM page_file_refs
+                          WHERE page_id = ? AND owner_user_id = ? AND file_type = 'imgs'`,
+                        [pageId, pageOwnerUserId]
+                    );
                 }
             } catch (regErr) {
                 console.error('보안 레지스트리 동기화 실패 (비치명적):', regErr);
