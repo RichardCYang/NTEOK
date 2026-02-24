@@ -933,6 +933,49 @@ async function ensureActivePageAccess(pool, pageSqlPolicy, pageId, myConn, opts 
     return { ok: true, permission: freshPerm, page };
 }
 
+// 보안(방어-in-depth): Yjs metadata 의 parentId 도 객체 단위 권한 + 저장소 일치 검증
+// - REST 경로 검증만으로는 직접 WebSocket/Yjs 업데이트 조작을 막을 수 없음
+async function validateYjsParentAssignment(pool, pageSqlPolicy, {
+    viewerUserId,
+    pageId,
+    pageStorageId,
+    candidateParentId
+}) {
+    if (candidateParentId == null || candidateParentId === "")
+        return { ok: true, parentId: null };
+
+    if (typeof candidateParentId !== "string")
+        return { ok: false, reason: "invalid-parent-type" };
+
+    const parentId = candidateParentId.trim();
+    if (!parentId || parentId.length > 64)
+        return { ok: false, reason: "invalid-parent-format" };
+
+    if (parentId === pageId)
+        return { ok: false, reason: "self-parent" };
+
+    const vis = (pageSqlPolicy && typeof pageSqlPolicy.andVisible === 'function')
+        ? pageSqlPolicy.andVisible({ alias: 'p', viewerUserId })
+        : { sql: ' AND NOT (p.is_encrypted = 1 AND p.share_allowed = 0 AND p.user_id != ?)', params: [viewerUserId] };
+
+    const [rows] = await pool.execute(
+        `SELECT p.id, p.storage_id
+           FROM pages p
+           LEFT JOIN storage_shares ss ON p.storage_id = ss.storage_id AND ss.shared_with_user_id = ?
+          WHERE p.id = ?
+            AND p.deleted_at IS NULL
+            AND (p.user_id = ? OR ss.storage_id IS NOT NULL)
+            ${vis.sql}`,
+        [viewerUserId, parentId, viewerUserId, ...vis.params]
+    );
+
+    if (!rows.length) return { ok: false, reason: "parent-not-visible" };
+    if (String(rows[0].storage_id) !== String(pageStorageId))
+        return { ok: false, reason: "cross-storage-parent" };
+
+    return { ok: true, parentId };
+}
+
 async function handleYjsUpdate(ws, payload, pool, sanitizeHtmlContent, pageSqlPolicy) {
 	const { pageId, update } = payload || {};
 	try {
@@ -995,6 +1038,26 @@ async function handleYjsUpdate(ws, payload, pool, sanitizeHtmlContent, pageSqlPo
         Y.applyUpdate(ydoc, updateBuf);
         // approxBytes 갱신 (누적 추정 크기)
         if (doc) doc.approxBytes = (Number.isFinite(doc.approxBytes) ? doc.approxBytes : 0) + updateBuf.length;
+
+        // 보안: 협업 metadata.parentId 에 대한 서버측 재검증 (BOLA 방어)
+        try {
+            const yMeta = ydoc.getMap('metadata');
+            const requestedParentId = yMeta.get('parentId') ?? null;
+            const parentCheck = await validateYjsParentAssignment(pool, pageSqlPolicy, {
+                viewerUserId: ws.userId,
+                pageId,
+                pageStorageId: access.page.storage_id,
+                candidateParentId: requestedParentId
+            });
+            if (!parentCheck.ok) {
+                // 악성/비정상 parentId 는 저장되지 않도록 즉시 무효화
+                yMeta.set('parentId', null);
+                try { ws.close(1008, 'Invalid parent assignment'); } catch (_) {}
+                return;
+            }
+            if ((requestedParentId || null) !== (parentCheck.parentId || null))
+                yMeta.set('parentId', parentCheck.parentId);
+        } catch (_) { return; }
 
         wsBroadcastToPage(pageId, 'yjs-update', { update }, ws.userId);
         if (doc) { if (doc.saveTimeout) clearTimeout(doc.saveTimeout); doc.saveTimeout = setTimeout(() => { saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc).catch(e => {}); }, 1000); }

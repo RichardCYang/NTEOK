@@ -611,6 +611,35 @@ module.exports = (dependencies) => {
         } catch (error) { logError("GET /api/pages/:id", error); res.status(500).json({ error: "Failed" }); }
     });
 
+    // 보안: parentId는 객체 ID이므로 저장소 권한만으로 충분하지 않음
+    // - 현재 사용자에게 보이는 페이지인지(객체 단위 권한)
+    // - 같은 저장소인지(교차 저장소 참조 금지)
+    async function validateParentForCreate({ userId, storageId, parentId }) {
+        if (parentId == null) return { ok: true, parentId: null };
+        if (typeof parentId !== "string") return { ok: false, status: 400, error: "Invalid parentId" };
+
+        const normalizedParentId = parentId.trim();
+        if (!normalizedParentId || normalizedParentId.length > 64)
+            return { ok: false, status: 400, error: "Invalid parentId" };
+
+        // pagesRepo.getPageByIdForUser 는 pageSqlPolicy 를 통해 가시성(암호화/비공개 포함)까지 반영
+        const parent = await pagesRepo.getPageByIdForUser({ userId, pageId: normalizedParentId });
+        if (!parent) {
+            // 존재 여부/권한 여부를 구분하지 않아 정보 누출 방지
+            return { ok: false, status: 404, error: "Parent page not found" };
+        }
+
+        if (String(parent.storage_id) !== String(storageId)) {
+            // 교차 저장소 부모 연결 금지 (무결성 + 테넌트 격리)
+            return { ok: false, status: 404, error: "Parent page not found" };
+        }
+
+        if (parent.deleted_at)
+            return { ok: false, status: 404, error: "Parent page not found" };
+
+        return { ok: true, parentId: normalizedParentId };
+    }
+
     router.post("/", authMiddleware, async (req, res) => {
         const title = sanitizeInput(String(req.body.title || "제목 없음").trim());
         const storageId = req.body.storageId;
@@ -624,7 +653,16 @@ module.exports = (dependencies) => {
             if (!permission || !['EDIT', 'ADMIN'].includes(permission))
                 return res.status(403).json({ error: "이 저장소에 페이지를 생성할 권한이 없습니다." });
 
-            const parentId = req.body.parentId || null;
+            const parentCheck = await validateParentForCreate({
+                userId,
+                storageId,
+                parentId: req.body.parentId ?? null
+            });
+
+            if (!parentCheck.ok)
+                return res.status(parentCheck.status).json({ error: parentCheck.error });
+
+            const parentId = parentCheck.parentId;
             const sortOrder = req.body.sortOrder || 0;
             const isEncrypted = req.body.isEncrypted === true ? 1 : 0;
             const salt = req.body.encryptionSalt || null;
