@@ -700,9 +700,39 @@ module.exports = (dependencies) => {
 
             const title = req.body.title !== undefined ? sanitizeInput(req.body.title) : existing.title;
             const isEncrypted = req.body.isEncrypted !== undefined ? (req.body.isEncrypted ? 1 : 0) : existing.is_encrypted;
-            const salt = req.body.encryptionSalt || existing.encryption_salt;
-            const encContent = req.body.encryptedContent || existing.encrypted_content;
-            const content = isEncrypted ? '' : (req.body.content !== undefined ? sanitizeHtmlContent(req.body.content) : existing.content);
+            const encryptionStateChanged = Number(existing.is_encrypted) !== Number(isEncrypted);
+
+            const hasEncryptionSalt = Object.prototype.hasOwnProperty.call(req.body, "encryptionSalt");
+            const hasEncryptedContent = Object.prototype.hasOwnProperty.call(req.body, "encryptedContent");
+
+            let salt;
+            let encContent;
+
+            if (Number(isEncrypted) === 1) {
+                // 암호화 페이지: 명시적으로 전달된 값만 반영, 없으면 기존값 유지
+                // (|| 사용 금지: '' 같은 falsy 값 때문에 기존값으로 되돌아가는 버그 방지)
+                salt = hasEncryptionSalt ? req.body.encryptionSalt : existing.encryption_salt;
+                encContent = hasEncryptedContent ? req.body.encryptedContent : existing.encrypted_content;
+
+                // 상태 전환(평문 -> 암호화) 시에는 암호문/솔트가 반드시 있어야 함
+                if (encryptionStateChanged && (!hasEncryptionSalt || !hasEncryptedContent))
+                    return res.status(400).json({ error: "암호화 전환 시 encryptionSalt와 encryptedContent가 필요합니다." });
+
+                // 기본 타입 검증 (프로토콜에 맞게 길이/포맷 검증 추가 권장)
+                if (salt != null && typeof salt !== "string")
+                    return res.status(400).json({ error: "유효하지 않은 encryptionSalt 형식" });
+
+                if (encContent != null && typeof encContent !== "string")
+                    return res.status(400).json({ error: "유효하지 않은 encryptedContent 형식" });
+            } else {
+                // 보안: 평문 페이지로 저장될 때는 암호화 잔존 데이터 완전 제거
+                salt = null;
+                encContent = null;
+            }
+
+            const content = isEncrypted
+                ? ''
+                : (req.body.content !== undefined ? sanitizeHtmlContent(req.body.content) : existing.content);
             const icon = req.body.icon !== undefined ? validateAndNormalizeIcon(req.body.icon) : existing.icon;
             const hPadding = req.body.horizontalPadding !== undefined ? req.body.horizontalPadding : existing.horizontal_padding;
             const nowStr = formatDateForDb(new Date());
@@ -712,7 +742,6 @@ module.exports = (dependencies) => {
             // - yjs_state는 협업 편집 상태(전체 문서 스냅샷)를 그대로 담을 수 있어(평문 잔존) 암호화 보안을 훼손
             // - 따라서 (1) 콘텐츠가 직접 업데이트되거나, (2) 암호화 상태가 바뀌거나, (3) 암호화 상태인 경우에는
             //   yjs_state를 항상 초기화하고, 서버 메모리의 Yjs 문서도 drop
-            const encryptionStateChanged = Number(existing.is_encrypted) !== Number(isEncrypted);
             const shouldResetYjsState = (req.body.content !== undefined) || encryptionStateChanged || (Number(isEncrypted) === 1);
             if (shouldResetYjsState) {
                 sql += `, yjs_state=NULL`;

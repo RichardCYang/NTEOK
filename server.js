@@ -1244,6 +1244,19 @@ async function initDb() {
         ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
     `);
 
+    // 보안 취약점 수정 (Data Remanence): 평문 페이지에 남아있는 암호화 잔존 컬럼 제거
+    try {
+        await pool.execute(`
+            UPDATE pages
+            SET encryption_salt = NULL,
+                encrypted_content = NULL
+            WHERE is_encrypted = 0
+              AND (encryption_salt IS NOT NULL OR encrypted_content IS NOT NULL)
+        `);
+    } catch (e) {
+        console.error("[Security Cleanup] Failed to clean up stale encryption data:", e.message);
+    }
+
     // pages 테이블에 deleted_at 컬럼 추가 (하위 호환성)
     try {
         await pool.execute(`ALTER TABLE pages ADD COLUMN deleted_at DATETIME NULL`);

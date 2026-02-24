@@ -1031,8 +1031,8 @@ ${JSON.stringify(pageMetadata, null, 2)}
                 // allowlist 검증을 적용하여 속성 탈출/DOM XSS 위험을 제거
                 const safeIcon = validateAndNormalizeIcon(pageData.icon);
                 const safeContent = pageData.isEncrypted ? '' : sanitizeHtmlContent(pageData.content || '<p></p>');
-                const safeEncryptionSalt = pageData.encryptionSalt || null;
-                const safeEncryptedContent = pageData.encryptedContent || null;
+                const safeEncryptionSalt = pageData.isEncrypted ? (pageData.encryptionSalt || null) : null;
+                const safeEncryptedContent = pageData.isEncrypted ? (pageData.encryptedContent || null) : null;
 
                 await connection.execute(
                     `INSERT INTO pages (id, user_id, storage_id, title, content, encryption_salt, encrypted_content,
