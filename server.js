@@ -1508,7 +1508,7 @@ async function initDb() {
         if (refCountRows[0].cnt === 0) {
             console.log('보안 레지스트리 백필 시작...');
             const [pages] = await pool.execute("SELECT id, user_id, content FROM pages WHERE is_encrypted = 0 AND deleted_at IS NULL");
-            
+
             for (const page of pages) {
                 if (!page.content) continue;
 
@@ -2084,25 +2084,35 @@ app.get('/imgs/:userId/:filename', authMiddleware, async (req, res) => {
 
 			const ydoc = docInfo.ydoc;
 
+            // 보안: Yjs fallback에서도 정당한 첨부 레지스트리(page_file_refs) 검증을 동일하게 강제
+            // - 문자열 포함 여부만으로는 위조 URL 삽입(BOLA/IDOR)을 막을 수 없음
+            let hasVerifiedImgRef = null; // null = 아직 미조회, boolean = 조회 완료
+            const ensureVerifiedImgRef = async () => {
+                if (hasVerifiedImgRef !== null) return hasVerifiedImgRef;
+                const [refRows] = await pool.execute(
+                    `SELECT id FROM page_file_refs
+                      WHERE page_id = ? AND owner_user_id = ? AND stored_filename = ? AND file_type = 'imgs'
+                      LIMIT 1`,
+                    [pageId, requestedUserId, sanitizedFilename]
+                );
+                hasVerifiedImgRef = refRows.length > 0;
+                return hasVerifiedImgRef;
+            };
+
             // HTML 스냅샷 확인
             const content = ydoc.getMap('metadata').get('content') || '';
             if (content.includes(imageUrl)) {
-                // 보안: Yjs fallback에서도 레지스트리를 확인하여 위조 방지
-                const [refRows] = await pool.execute(
-                    `SELECT id FROM page_file_refs 
-                      WHERE page_id = ? AND owner_user_id = ? AND stored_filename = ? AND file_type = 'imgs'`,
-                    [pageId, requestedUserId, sanitizedFilename]
-                );
-                if (refRows.length > 0) {
+                if (await ensureVerifiedImgRef())
                     return sendSafeImage(res, filePath);
-                }
             }
 
 			// HTML 스냅샷이 아직 업데이트 전이라면, Y.XmlFragment 직접 확인
             // toString()은 전체 XML 구조를 반환하므로 속성(data-src)에 포함된 URL도 찾을 수 있음
             const xmlContent = ydoc.getXmlFragment('prosemirror').toString();
-            if (xmlContent.includes(imageUrl))
-                return sendSafeImage(res, filePath);
+            if (xmlContent.includes(imageUrl)) {
+                if (await ensureVerifiedImgRef())
+                    return sendSafeImage(res, filePath);
+            }
         }
 
         // 권한 없음
@@ -2221,7 +2231,7 @@ app.get('/paperclip/:userId/:filename', authMiddleware, async (req, res) => {
             if (content.includes(fileUrlPart)) {
                 // 보안: Yjs fallback에서도 레지스트리를 확인하여 위조 방지
                 const [refRows] = await pool.execute(
-                    `SELECT id FROM page_file_refs 
+                    `SELECT id FROM page_file_refs
                       WHERE page_id = ? AND owner_user_id = ? AND stored_filename = ? AND file_type = 'paperclip'`,
                     [pageId, requestedUserId, sanitizedFilename]
                 );
