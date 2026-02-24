@@ -55,6 +55,7 @@ module.exports = (dependencies) => {
         generatePageId,
         formatDateForDb,
         wsBroadcastToStorage,
+        wsCloseConnectionsForPage,
         logError,
         generatePublishToken,
         coverUpload,
@@ -635,6 +636,11 @@ module.exports = (dependencies) => {
             sql += ` WHERE id=?`; params.push(id);
             await pool.execute(sql, params);
 
+            // 보안: 페이지 암호화 정책 변경 시 기존 page WebSocket 구독 즉시 강제 종료
+            // - yjsDocuments.delete()만으론 이미 열려 있는 WS 연결이 살아남아 TOCTOU 권한 우회 가능
+            if (encryptionStateChanged && typeof wsCloseConnectionsForPage === 'function')
+                wsCloseConnectionsForPage(id, 1008, 'Page access policy changed');
+
             await pagesRepo.recordUpdateHistory({
                 userId,
                 storageId: existing.storage_id,
@@ -643,7 +649,10 @@ module.exports = (dependencies) => {
                 details: { title }
             });
 
-            wsBroadcastToStorage(existing.storage_id, 'metadata-change', { pageId: id, field: 'title', value: title }, null, { pageVisibility: wsPageVisibilityFromRow(existing) });
+            // 보안: 브로드캐스트 필터링은 업데이트 후 가시성 상태 기준으로 수행
+            // - 업데이트 전(existing) 상태를 쓰면 정책 전환 타이밍에 잘못된 대상에게 알림이 전파될 수 있음
+            const updatedVis = wsPageVisibilityFromRow({ ...existing, is_encrypted: Number(isEncrypted) });
+            wsBroadcastToStorage(existing.storage_id, 'metadata-change', { pageId: id, field: 'title', value: title }, null, { pageVisibility: updatedVis });
             res.json({ id, title, updatedAt: new Date().toISOString() });
         } catch (e) { logError("PUT /api/pages/:id", e); res.status(500).json({ error: "Failed" }); }
     });

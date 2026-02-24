@@ -695,8 +695,8 @@ async function handleWebSocketMessage(ws, data, pool, sanitizeHtmlContent, getSe
         case 'subscribe-storage': await handleSubscribeStorage(ws, payload, pool); break;
         case 'unsubscribe-storage': handleUnsubscribeStorage(ws, payload); break;
         case 'subscribe-user': handleSubscribeUser(ws, payload); break;
-        case 'yjs-update': await handleYjsUpdate(ws, payload, pool, sanitizeHtmlContent); break;
-        case 'awareness-update': handleAwarenessUpdate(ws, payload); break;
+        case 'yjs-update': await handleYjsUpdate(ws, payload, pool, sanitizeHtmlContent, pageSqlPolicy); break;
+        case 'awareness-update': await handleAwarenessUpdate(ws, payload, pool, pageSqlPolicy); break;
     }
 }
 
@@ -824,7 +824,59 @@ function handleSubscribeUser(ws, payload) {
     wsConnections.users.get(ws.userId).add({ ws, sessionId: ws.sessionId });
 }
 
-async function handleYjsUpdate(ws, payload, pool, sanitizeHtmlContent) {
+/**
+ * 보안: 페이지 구독을 즉시 취소하고 클라이언트에 통지
+ */
+function revokePageSubscription(ws, pageId, conns, myConn, reason = 'Access revoked') {
+    try {
+        if (conns && myConn) conns.delete(myConn);
+        if (conns && conns.size === 0) wsConnections.pages.delete(pageId);
+        ws.send(JSON.stringify({ event: 'access-revoked', data: { pageId, reason } }));
+    } catch (_) {}
+}
+
+/**
+ * 보안: 메시지 수신 시점에 페이지 가시성 + 암호화 상태 + 저장소 권한을 재검증
+ * - 구독 이후 정책이 바뀌어도 즉시 반영 (Complete Mediation)
+ */
+async function ensureActivePageAccess(pool, pageSqlPolicy, pageId, myConn) {
+    if (!myConn) return { ok: false, reason: 'not-subscribed' };
+
+    const userId = myConn.userId;
+    const vis = (pageSqlPolicy && typeof pageSqlPolicy.andVisible === 'function')
+        ? pageSqlPolicy.andVisible({ alias: 'p', viewerUserId: userId })
+        : { sql: ' AND NOT (p.is_encrypted = 1 AND p.share_allowed = 0 AND p.user_id != ?)', params: [userId] };
+
+    const [rows] = await pool.execute(
+        `SELECT p.id, p.user_id, p.is_encrypted, p.share_allowed, p.storage_id
+           FROM pages p
+          WHERE p.id = ?
+            AND p.deleted_at IS NULL
+            ${vis.sql}`,
+        [pageId, ...vis.params]
+    );
+
+    if (!rows.length)
+        return { ok: false, reason: 'page-not-visible' };
+
+    const page = rows[0];
+
+    // 구독 이후 storageId가 변경됐을 수 있으므로 최신화
+    myConn.storageId = page.storage_id;
+
+    // 저장소 권한 재검증
+    const freshPerm = await refreshConnPermission(pool, myConn);
+    if (!freshPerm)
+        return { ok: false, reason: 'storage-access-revoked' };
+
+    // 암호화 페이지는 실시간 협업 금지 정책 유지
+    if (Number(page.is_encrypted) === 1)
+        return { ok: false, reason: 'encrypted-page-no-realtime' };
+
+    return { ok: true, permission: freshPerm, page };
+}
+
+async function handleYjsUpdate(ws, payload, pool, sanitizeHtmlContent, pageSqlPolicy) {
 	const { pageId, update } = payload || {};
 	try {
         if (!pageId || typeof update !== 'string' || !isSubscribedToPage(ws, pageId)) return;
@@ -834,15 +886,14 @@ async function handleYjsUpdate(ws, payload, pool, sanitizeHtmlContent) {
         const myConn = Array.from(conns).find(c => c.ws === ws);
         if (!myConn) return;
 
-        // 권한 재검증(권한 회수/다운그레이드 즉시 반영)
-        const freshPerm = await refreshConnPermission(pool, myConn);
-        if (!freshPerm) {
-            // 접근 회수: 페이지 구독에서 제거하고 클라이언트에 통지
-            conns.delete(myConn);
-            if (conns.size === 0) wsConnections.pages.delete(pageId);
-            try { ws.send(JSON.stringify({ event: 'access-revoked', data: { pageId } })); } catch (e) {}
+        // 보안: 메시지 단위로 페이지 가시성 + 암호화 상태 + 저장소 권한 재검증
+        // - 구독 이후 페이지가 암호화/비공개로 전환되어도 즉시 차단 (Complete Mediation)
+        const access = await ensureActivePageAccess(pool, pageSqlPolicy, pageId, myConn);
+        if (!access.ok) {
+            revokePageSubscription(ws, pageId, conns, myConn, access.reason);
             return;
         }
+        const freshPerm = access.permission;
 
         if (!['EDIT', 'ADMIN'].includes(freshPerm)) return;
 
@@ -897,9 +948,26 @@ function isSubscribedToPage(ws, pageId) {
     return false;
 }
 
-function handleAwarenessUpdate(ws, payload) {
+async function handleAwarenessUpdate(ws, payload, pool, pageSqlPolicy) {
     const { pageId, awarenessUpdate } = payload || {};
     if (!pageId || typeof awarenessUpdate !== 'string' || !isSubscribedToPage(ws, pageId)) return;
+
+    const conns = wsConnections.pages.get(pageId);
+    if (!conns) return;
+    const myConn = Array.from(conns).find(c => c.ws === ws);
+    if (!myConn) return;
+
+    // 보안: awareness도 메시지 단위 권한 재검증
+    // - 권한 회수 후 커서/선택 영역 presence 정보 누출 차단 (CWE-285)
+    try {
+        const access = await ensureActivePageAccess(pool, pageSqlPolicy, pageId, myConn);
+        if (!access.ok) {
+            revokePageSubscription(ws, pageId, conns, myConn, access.reason);
+            return;
+        }
+    } catch (_) {
+        return;
+    }
 
     // DoS 방지: awareness는 작아야 함(커서/선택 정보)
     if (awarenessUpdate.length > WS_MAX_AWARENESS_UPDATE_B64_CHARS) return;
@@ -964,4 +1032,4 @@ function wsKickUserFromStorage(storageId, targetUserId, closeCode = 1008, reason
     if (userConns) for (const c of Array.from(userConns)) { try { c.ws.close(closeCode, reason); } catch (e) {} }
 }
 
-module.exports = { initWebSocketServer, wsBroadcastToPage, wsBroadcastToStorage, wsBroadcastToUser, startRateLimitCleanup, startInactiveConnectionsCleanup, wsConnections, yjsDocuments, saveYjsDocToDatabase, wsCloseConnectionsForSession, wsKickUserFromStorage };
+module.exports = { initWebSocketServer, wsBroadcastToPage, wsBroadcastToStorage, wsBroadcastToUser, startRateLimitCleanup, startInactiveConnectionsCleanup, wsConnections, yjsDocuments, saveYjsDocToDatabase, wsCloseConnectionsForSession, wsCloseConnectionsForPage, wsKickUserFromStorage };

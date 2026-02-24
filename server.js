@@ -237,6 +237,7 @@ const {
     yjsDocuments,
 	saveYjsDocToDatabase,
 	wsCloseConnectionsForSession,
+    wsCloseConnectionsForPage,
     wsKickUserFromStorage
 } = require("./websocket-server");
 
@@ -2277,6 +2278,7 @@ function getSessionFromId(sessionId) {
             wsBroadcastToStorage,
 			wsBroadcastToUser,
 			wsCloseConnectionsForSession,
+            wsCloseConnectionsForPage,
             wsKickUserFromStorage,
             saveYjsDocToDatabase,
             yjsDocuments,
