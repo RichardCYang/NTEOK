@@ -287,25 +287,42 @@ module.exports = ({ pool, pageSqlPolicy }) => {
                         );
                     },
             
-                    /**
-                     * 업데이트 히스토리 조회
-                     */
-                    async getUpdateHistory({ userId, storageId, limit = 50 }) {
-                        // 내가 접근 가능한 저장소의 히스토리만 조회 (소유 또는 공유)
-                        const [rows] = await pool.execute(
-                            `SELECT h.*, u.username, p.title as page_title
-                             FROM updates_history h
-                             INNER JOIN users u ON h.user_id = u.id
-                             LEFT JOIN pages p ON h.page_id = p.id
-                             LEFT JOIN storage_shares ss ON h.storage_id = ss.storage_id AND ss.shared_with_user_id = ?
-                             INNER JOIN storages s ON h.storage_id = s.id
-                             WHERE h.storage_id = ? AND (s.user_id = ? OR ss.storage_id IS NOT NULL)
-                             ORDER BY h.created_at DESC
-                             LIMIT ?`,
-                            [userId, storageId, userId, limit]
-                        );
-                        return rows || [];
-                    }
-                };
-            };
-            
+        /**
+         * 업데이트 히스토리 조회
+         */
+        async getUpdateHistory({ userId, storageId, limit = 50 }) {
+            // 보안: 히스토리 API에서도 페이지 단위 가시성 정책을 동일하게 적용해야 함
+            // 그렇지 않으면 공유 저장소의 READ 협업자가 비공개/암호화 페이지의 제목/메타를
+            // updates_history + pages 조인 결과로 추론할 수 있음 (BOLA/Access Control 누락)
+            const vis = pageSqlPolicy.visiblePredicate({ alias: "p", viewerUserId: userId });
+
+            // 내가 접근 가능한 저장소의 히스토리만 조회 (소유 또는 공유)
+            const [rows] = await pool.execute(
+                `SELECT h.*, u.username, p.title as page_title
+                 FROM updates_history h
+                 INNER JOIN users u ON h.user_id = u.id
+                 LEFT JOIN pages p ON h.page_id = p.id
+                 LEFT JOIN storage_shares ss ON h.storage_id = ss.storage_id AND ss.shared_with_user_id = ?
+                 INNER JOIN storages s ON h.storage_id = s.id
+                 WHERE h.storage_id = ? AND (s.user_id = ? OR ss.storage_id IS NOT NULL)
+                   AND (
+                        h.page_id IS NULL
+                        OR (
+                            p.id IS NOT NULL
+                            AND ${vis.sql}
+                        )
+                   )
+                 ORDER BY h.created_at DESC
+                 LIMIT ?`,
+                [
+                    userId,          // ss.shared_with_user_id
+                    storageId,       // h.storage_id
+                    userId,          // s.user_id
+                    ...vis.params,   // p.user_id != ? (viewer)
+                    limit
+                ]
+            );
+            return rows || [];
+        }
+    };
+};            
