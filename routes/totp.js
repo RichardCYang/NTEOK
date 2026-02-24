@@ -594,15 +594,40 @@ module.exports = (dependencies) => {
                 return res.status(401).json({ error: "잘못된 백업 코드입니다." });
             }
 
-            // 성공 시 실패 카운터 제거
-            clearTotpFailures(accountKey);
-
             const now = new Date();
             const nowStr = formatDateForDb(now);
-            await pool.execute(
-                "UPDATE backup_codes SET used = 1, used_at = ? WHERE id = ?",
-                [nowStr, validCodeId]
+
+            // 보안(TOCTOU Race Condition 방지):
+            // - 백업 코드는 1회용이어야 하므로 소비(mark used)는 원자적으로 수행해야 함
+            // - 동시 요청이 들어와도 정확히 1개만 성공해야 함
+            const [consumeResult] = await pool.execute(
+                `UPDATE backup_codes
+                 SET used = 1, used_at = ?
+                 WHERE id = ? AND user_id = ? AND used = 0`,
+                [nowStr, validCodeId, userId]
             );
+
+            // 이미 다른 요청이 먼저 소비했거나(경합), 재사용 시도인 경우
+            if (!consumeResult || Number(consumeResult.affectedRows || 0) !== 1) {
+                // 실패 누적 처리 (재사용/경합도 인증 실패로 취급)
+                recordTotpFailure(accountKey);
+
+                await recordLoginAttempt(pool, {
+                    userId,
+                    username,
+                    ipAddress: getClientIp(req),
+                    port: req.connection.remotePort || 0,
+                    success: false,
+                    failureReason: '백업 코드 재사용 또는 동시 사용 경합 감지',
+                    userAgent: req.headers['user-agent'] || null
+                });
+
+                // 계정/코드 존재 여부 노출 최소화를 위해 기존과 동일한 일반 오류 사용
+                return res.status(401).json({ error: "잘못된 백업 코드입니다." });
+            }
+
+            // 성공 시 실패 카운터 제거 (반드시 원자적 소비 성공 이후에)
+            clearTotpFailures(accountKey);
 
             // 세션 생성
             const sessionResult = createSession({
