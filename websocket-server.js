@@ -99,6 +99,70 @@ function byteLenUtf8(value) {
     try { return Buffer.byteLength(String(value ?? ''), 'utf8'); } catch { return 0; }
 }
 
+/**
+ * 보안: 실시간 Yjs 업데이트를 본 문서에 적용하기 전에 복제본에 먼저 적용해 검증
+ * - 서버가 클라이언트 정화/검증에 의존하지 않도록 함 (CWE-602)
+ * - 브로드캐스트 전에 위험 HTML/비정상 metadata 상태를 차단
+ */
+function cloneYDocForValidation(srcYDoc) {
+    const cloned = new Y.Doc();
+    // 현재 상태를 스냅샷으로 복제
+    Y.applyUpdate(cloned, Y.encodeStateAsUpdate(srcYDoc));
+    return cloned;
+}
+
+function validateRealtimeYjsCandidate(candidateYDoc, sanitizeHtmlContent) {
+    try {
+        const yMeta = candidateYDoc.getMap('metadata');
+
+        // title
+        if (yMeta.has('title')) {
+            const title = yMeta.get('title');
+            if (typeof title !== 'string') return { ok: false, code: 1008, reason: 'Invalid title type' };
+            if (byteLenUtf8(title) > 512) return { ok: false, code: 1009, reason: 'Title too large' };
+        }
+
+        // icon (서버 규칙과 동일 검증)
+        if (yMeta.has('icon')) {
+            const rawIcon = yMeta.get('icon');
+            const normalized = validateAndNormalizeIcon(rawIcon);
+            // null 허용(비우기) / 문자열이면 normalize 결과와 정합성 체크
+            if (rawIcon != null && typeof rawIcon !== 'string')
+                return { ok: false, code: 1008, reason: 'Invalid icon type' };
+
+            if (typeof rawIcon === 'string' && normalized !== rawIcon.trim())
+                return { ok: false, code: 1008, reason: 'Invalid icon value' };
+        }
+
+        // parentId 기본 타입 제한 (세부 접근통제는 기존 validateYjsParentAssignment가 담당)
+        if (yMeta.has('parentId')) {
+            const parentId = yMeta.get('parentId');
+            if (!(parentId == null || typeof parentId === 'string'))
+                return { ok: false, code: 1008, reason: 'Invalid parentId type' };
+
+            if (typeof parentId === 'string' && byteLenUtf8(parentId) > 128)
+                return { ok: false, code: 1008, reason: 'Invalid parentId' };
+        }
+
+        // content 저장 시점에만 sanitize 하지 말고 실시간 경로에서도 동일 기준 적용
+        if (yMeta.has('content')) {
+            const rawContent = yMeta.get('content');
+            if (typeof rawContent !== 'string') return { ok: false, code: 1008, reason: 'Invalid content type' };
+            if (byteLenUtf8(rawContent) > (2 * 1024 * 1024))
+                return { ok: false, code: 1009, reason: 'Content too large' };
+
+            const sanitized = sanitizeHtmlContent(rawContent);
+            // 정화 결과가 달라지면 서버 관점에서 위험/비정상 입력으로 간주하여 거부
+            if (sanitized !== rawContent)
+                return { ok: false, code: 1008, reason: 'Unsafe content' };
+        }
+
+        return { ok: true };
+    } catch (_) {
+        return { ok: false, code: 1008, reason: 'Invalid Yjs state' };
+    }
+}
+
 const WS_MAX_YJS_UPDATE_B64_CHARS = Math.ceil(WS_MAX_YJS_UPDATE_BYTES / 3) * 4 + 8;
 const WS_MAX_AWARENESS_UPDATE_B64_CHARS = Math.ceil(WS_MAX_AWARENESS_UPDATE_BYTES / 3) * 4 + 8;
 
@@ -1035,6 +1099,24 @@ async function handleYjsUpdate(ws, payload, pool, sanitizeHtmlContent, pageSqlPo
             }
         }
 
+        // 보안: 본 문서 적용/브로드캐스트 전에 복제본에 먼저 적용하여 서버측 의미론 검증 수행
+        // (클라이언트 검증 우회 + 단순 문자열 필터 우회 방지)
+        try {
+            const probe = cloneYDocForValidation(ydoc);
+            Y.applyUpdate(probe, updateBuf);
+
+            const sem = validateRealtimeYjsCandidate(probe, sanitizeHtmlContent);
+            if (!sem.ok) {
+                try { ws.close(sem.code || 1008, sem.reason || 'Rejected invalid update'); } catch (_) {}
+                return;
+            }
+        } catch (_) {
+            // malformed / pathological update 등
+            try { ws.close(1008, 'Malformed Yjs update'); } catch (_) {}
+            return;
+        }
+
+        // 검증 통과 후에만 실제 문서에 적용
         Y.applyUpdate(ydoc, updateBuf);
         // approxBytes 갱신 (누적 추정 크기)
         if (doc) doc.approxBytes = (Number.isFinite(doc.approxBytes) ? doc.approxBytes : 0) + updateBuf.length;
