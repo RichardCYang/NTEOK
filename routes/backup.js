@@ -16,6 +16,55 @@ const pipelineAsync = promisify(pipeline);
 const { validateAndNormalizeIcon } = require('../utils/icon-utils.js');
 
 /**
+ * 보안: 안전한 JSON 파서 -> 백업 ZIP/HTML 내부의 JSON은 신뢰할 수 없는 입력
+ * - __proto__/constructor/prototype 키는 프로토타입 오염(Prototype Pollution)의 대표적인 트리거
+ * - JSON.parse 결과를 다른 객체와 병합(Object.assign/spread/merge)하거나, 일부 라이브러리가
+ *   내부적으로 merge를 수행할 때 예기치 않은 동작/DoS/권한 우회로 이어질 수 있음
+ *
+ * 참고:
+ * - OWASP Prototype Pollution Prevention Cheat Sheet
+ * - CWE-1321 (Improperly Controlled Modification of Object Prototype Attributes)
+ */
+const DANGEROUS_OBJECT_KEYS = new Set(["__proto__", "prototype", "constructor"]);
+
+function stripDangerousKeys(value, seen = new WeakSet()) {
+    if (!value || typeof value !== "object") return;
+    if (seen.has(value)) return;
+    seen.add(value);
+
+    if (Array.isArray(value)) {
+        for (const item of value) stripDangerousKeys(item, seen);
+        return;
+    }
+
+    for (const key of Object.keys(value)) {
+        if (DANGEROUS_OBJECT_KEYS.has(key)) {
+            delete value[key];
+            continue;
+        }
+        stripDangerousKeys(value[key], seen);
+    }
+}
+
+function safeJsonParse(text, context = "json") {
+    // reviver 단계에서 위험 키를 제거(가능한 한 빨리 제거)
+    // 혹시 남아있을 수 있는 구조를 방어적으로 재귀 삭제
+    try {
+        const obj = JSON.parse(text, (k, v) => {
+            if (DANGEROUS_OBJECT_KEYS.has(k)) return undefined;
+            return v;
+        });
+        if (obj && typeof obj === 'object') {
+            stripDangerousKeys(obj);
+        }
+        return obj;
+    } catch (e) {
+        console.warn(`[safeJsonParse] 파싱 실패 (${context}):`, e.message);
+        return null;
+    }
+}
+
+/**
  * Backup Routes
  *
  * 이 파일은 백업 관련 라우트를 처리합니다.
@@ -632,12 +681,16 @@ ${JSON.stringify(pageMetadata, null, 2)}
             if (metadataScript) {
                 try {
                     const metadataText = metadataScript.textContent?.trim();
-                    if (metadataText) {
-                        metadata = JSON.parse(metadataText);
+                    // 보안: 메타데이터 길이 제한 (DoS 완화)
+                    if (metadataText && metadataText.length < 1024 * 1024) {
+                        // 보안: 백업 HTML 내부 JSON은 신뢰 불가 -> prototype pollution 트리거 키 제거
+                        metadata = safeJsonParse(metadataText, 'nteok-metadata');
                         console.log('[메타데이터 파싱 성공]', {
                             coverImage: metadata?.coverImage,
                             isCoverImage: metadata?.isCoverImage
                         });
+                    } else if (metadataText) {
+                        console.warn('[메타데이터 파싱 거부]: 데이터가 너무 큽니다.');
                     }
                 } catch (e) {
                     console.warn('[메타데이터 파싱 실패]:', e.message, 'Content:', metadataScript.textContent?.substring(0, 200));
@@ -906,7 +959,10 @@ ${JSON.stringify(pageMetadata, null, 2)}
 
             for (const entry of workspaceEntries) {
                 if (entry.isDirectory || !entry.entryName.endsWith('.json')) continue;
-                const metadata = JSON.parse(entry.data.toString('utf8'));
+                // 보안: 백업 ZIP 내부 JSON은 신뢰 불가 -> prototype pollution 트리거 키 제거
+                const metadata = safeJsonParse(entry.data.toString('utf8'), entry.entryName);
+                if (!metadata) continue;
+
                 const nowStr = formatDateForDb(new Date());
                 const storageId = 'stg-' + Date.now() + '-' + crypto.randomBytes(4).toString('hex');
 
