@@ -64,9 +64,54 @@ module.exports = (dependencies) => {
         path,
         fs,
         yjsDocuments,
+        extractFilesFromContent,
         isPrivateOrLocalIP,
         getClientIpFromRequest
 	} = dependencies;
+
+    async function syncPageFileRefs(pageId, pageOwnerUserId, content) {
+        if (!content) return;
+        try {
+            const newFiles = extractFilesFromContent(content, pageOwnerUserId);
+
+            // 신규 파일 등록 (INSERT IGNORE)
+            for (const file of newFiles) {
+                const parts = file.ref.split('/');
+                const ownerId = parseInt(parts[0], 10);
+                const filename = parts[1];
+                if (ownerId === pageOwnerUserId) {
+                    await pool.execute(
+                        `INSERT IGNORE INTO page_file_refs (page_id, owner_user_id, stored_filename, file_type, created_at)
+                         VALUES (?, ?, ?, ?, NOW())`,
+                        [pageId, ownerId, filename, file.type]
+                    );
+                }
+            }
+
+            // 이 페이지에서 더 이상 참조되지 않는 레지스트리 제거
+            const currentPaperclipFiles = newFiles.filter(f => f.type === 'paperclip').map(f => f.ref.split('/')[1]);
+            if (currentPaperclipFiles.length > 0) {
+                await pool.execute(
+                    `DELETE FROM page_file_refs WHERE page_id = ? AND file_type = 'paperclip' AND stored_filename NOT IN (${currentPaperclipFiles.map(() => '?').join(',')})`,
+                    [pageId, ...currentPaperclipFiles]
+                );
+            } else {
+                await pool.execute(`DELETE FROM page_file_refs WHERE page_id = ? AND file_type = 'paperclip'`, [pageId]);
+            }
+
+            const currentImgsFiles = newFiles.filter(f => f.type === 'imgs').map(f => f.ref.split('/')[1]);
+            if (currentImgsFiles.length > 0) {
+                await pool.execute(
+                    `DELETE FROM page_file_refs WHERE page_id = ? AND file_type = 'imgs' AND stored_filename NOT IN (${currentImgsFiles.map(() => '?').join(',')})`,
+                    [pageId, ...currentImgsFiles]
+                );
+            } else {
+                await pool.execute(`DELETE FROM page_file_refs WHERE page_id = ? AND file_type = 'imgs'`, [pageId]);
+            }
+        } catch (regErr) {
+            logError('syncPageFileRefs 실패', regErr);
+        }
+    }
 
     function getClientIp(req) {
         return (
@@ -576,9 +621,9 @@ module.exports = (dependencies) => {
         const nowStr = formatDateForDb(now);
         try {
             const permission = await storagesRepo.getPermission(userId, storageId);
-            if (!permission || !['EDIT', 'ADMIN'].includes(permission)) {
+            if (!permission || !['EDIT', 'ADMIN'].includes(permission))
                 return res.status(403).json({ error: "이 저장소에 페이지를 생성할 권한이 없습니다." });
-            }
+
             const parentId = req.body.parentId || null;
             const sortOrder = req.body.sortOrder || 0;
             const isEncrypted = req.body.isEncrypted === true ? 1 : 0;
@@ -588,6 +633,9 @@ module.exports = (dependencies) => {
             if (isEncrypted && (!salt || !encContent)) return res.status(400).json({ error: "Encryption fields missing" });
             await pool.execute(`INSERT INTO pages (id, user_id, parent_id, title, content, sort_order, created_at, updated_at, storage_id, is_encrypted, encryption_salt, encrypted_content) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                 [id, userId, parentId, title, content, sortOrder, nowStr, nowStr, storageId, isEncrypted, salt, encContent]);
+
+            if (!isEncrypted && content)
+                await syncPageFileRefs(id, userId, content);
 
             await pagesRepo.recordUpdateHistory({
                 userId,
@@ -609,9 +657,8 @@ module.exports = (dependencies) => {
             if (!existing) return;
 
             const permission = await storagesRepo.getPermission(userId, existing.storage_id);
-            if (!permission || !['EDIT', 'ADMIN'].includes(permission)) {
+            if (!permission || !['EDIT', 'ADMIN'].includes(permission))
                 return res.status(403).json({ error: "이 페이지를 수정할 권한이 없습니다." });
-            }
 
             const title = req.body.title !== undefined ? sanitizeInput(req.body.title) : existing.title;
             const isEncrypted = req.body.isEncrypted !== undefined ? (req.body.isEncrypted ? 1 : 0) : existing.is_encrypted;
@@ -633,8 +680,12 @@ module.exports = (dependencies) => {
                 sql += `, yjs_state=NULL`;
                 if (yjsDocuments && yjsDocuments.has(id)) yjsDocuments.delete(id);
             }
+
             sql += ` WHERE id=?`; params.push(id);
             await pool.execute(sql, params);
+
+            if (!isEncrypted && content)
+                await syncPageFileRefs(id, userId, content);
 
             // 보안: 페이지 암호화 정책 변경 시 기존 page WebSocket 구독 즉시 강제 종료
             // - yjsDocuments.delete()만으론 이미 열려 있는 WS 연결이 살아남아 TOCTOU 권한 우회 가능
@@ -1133,6 +1184,16 @@ module.exports = (dependencies) => {
 
             const fileUrl = `/paperclip/${userId}/${req.file.filename}`;
 
+            // 보안: 첨부파일-페이지 정당 참조 레지스트리 등록
+            // - 다운로드 권한 검증 시 본문 문자열 LIKE 만으로 판단하면 위조 가능(IDOR/BOLA)
+            // - 서버가 업로드 성공 시점에만 레지스트리를 기록하여 정당한 첨부를 증명
+            await pool.execute(
+                `INSERT IGNORE INTO page_file_refs
+                    (page_id, owner_user_id, stored_filename, file_type, created_at)
+                 VALUES (?, ?, ?, 'paperclip', NOW())`,
+                [id, userId, req.file.filename]
+            );
+
             res.json({
                 url: fileUrl,
                 filename: req.file.originalname,
@@ -1213,6 +1274,13 @@ module.exports = (dependencies) => {
                 if (st.isFile()) fs.unlinkSync(targetPath);
             }
 
+            // 보안: 레지스트리에서도 제거
+            await pool.execute(
+                `DELETE FROM page_file_refs
+                  WHERE page_id = ? AND owner_user_id = ? AND stored_filename = ? AND file_type = 'paperclip'`,
+                [id, userId, filename]
+            );
+
             res.json({ ok: true });
         } catch (error) {
             logError("DELETE /api/pages/:id/file-cleanup", error);
@@ -1254,6 +1322,17 @@ module.exports = (dependencies) => {
             }
 
             const imageUrl = `/imgs/${userId}/${req.file.filename}`;
+
+            // 보안: 이미지-페이지 정당 참조 레지스트리 등록
+            // - 다운로드 권한 검증 시 본문 문자열 LIKE 만으로 판단하면 위조 가능(IDOR/BOLA)
+            // - 서버가 업로드 성공 시점에만 레지스트리를 기록하여 정당한 첨부를 증명
+            await pool.execute(
+                `INSERT IGNORE INTO page_file_refs
+                    (page_id, owner_user_id, stored_filename, file_type, created_at)
+                 VALUES (?, ?, ?, 'imgs', NOW())`,
+                [id, userId, req.file.filename]
+            );
+
             res.json({ url: imageUrl });
         } catch (error) {
             if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);

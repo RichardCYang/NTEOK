@@ -238,7 +238,8 @@ const {
 	saveYjsDocToDatabase,
 	wsCloseConnectionsForSession,
     wsCloseConnectionsForPage,
-    wsKickUserFromStorage
+    wsKickUserFromStorage,
+    extractFilesFromContent
 } = require("./websocket-server");
 
 const app = express();
@@ -1456,6 +1457,32 @@ async function initDb() {
     `);
 
     // ============================================================
+    // 첨부파일 참조 레지스트리 (보안: 문자열 위조 기반 IDOR/BOLA 방지)
+    // - page_id: 어떤 페이지에 정당하게 연결된 첨부인지
+    // - owner_user_id: 파일 실제 저장 소유자 (paperclip/<userId>/...)
+    // - stored_filename: 서버 저장 파일명
+    // - file_type: 파일 유형 ('paperclip', 'imgs')
+    // ============================================================
+    await pool.execute(`
+        CREATE TABLE IF NOT EXISTS page_file_refs (
+            id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            page_id VARCHAR(64) NOT NULL,
+            owner_user_id INT NOT NULL,
+            stored_filename VARCHAR(200) NOT NULL,
+            file_type ENUM('paperclip', 'imgs') NOT NULL DEFAULT 'paperclip',
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+            UNIQUE KEY uq_page_file_ref (page_id, owner_user_id, stored_filename, file_type),
+            KEY idx_page_file_lookup (owner_user_id, stored_filename, page_id),
+
+            CONSTRAINT fk_page_file_refs_page
+              FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE,
+            CONSTRAINT fk_page_file_refs_owner
+              FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE
+        ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
+    `);
+
+    // ============================================================
     // 성능 최적화: 데이터베이스 인덱스 추가
     // ============================================================
 
@@ -1470,6 +1497,55 @@ async function initDb() {
         if (error.code !== 'ER_DUP_KEYNAME') {
             console.warn('pages 인덱스 생성 중 경고:', error.message);
         }
+    }
+
+    // ============================================================
+    // 기존 데이터 보안 레지스트리 백필 (마이그레이션)
+    // - 기존 pages.content 에 있는 참조를 page_file_refs 에 등록 (BOLA/IDOR 방지용 베이스라인)
+    // ============================================================
+    try {
+        const [refCountRows] = await pool.execute("SELECT COUNT(*) AS cnt FROM page_file_refs");
+        if (refCountRows[0].cnt === 0) {
+            console.log('보안 레지스트리 백필 시작...');
+            const [pages] = await pool.execute("SELECT id, user_id, content FROM pages WHERE is_encrypted = 0 AND deleted_at IS NULL");
+            
+            for (const page of pages) {
+                if (!page.content) continue;
+
+                // paperclip 추출 (예: /paperclip/1/file.txt)
+                const paperclipRe = /\/paperclip\/(\d+)\/([A-Za-z0-9._-]+)/g;
+                let match;
+                while ((match = paperclipRe.exec(page.content)) !== null) {
+                    const ownerId = parseInt(match[1], 10);
+                    const filename = match[2];
+                    // 보안 규칙: 파일 소유자와 페이지 소유자가 일치하는 경우만 정당 참조로 간주
+                    if (ownerId === page.user_id) {
+                        await pool.execute(
+                            `INSERT IGNORE INTO page_file_refs (page_id, owner_user_id, stored_filename, file_type, created_at)
+                             VALUES (?, ?, ?, 'paperclip', NOW())`,
+                            [page.id, ownerId, filename]
+                        );
+                    }
+                }
+
+                // imgs 추출 (예: /imgs/1/image.png)
+                const imgsRe = /\/imgs\/(\d+)\/([A-Za-z0-9._-]+)/g;
+                while ((match = imgsRe.exec(page.content)) !== null) {
+                    const ownerId = parseInt(match[1], 10);
+                    const filename = match[2];
+                    if (ownerId === page.user_id) {
+                        await pool.execute(
+                            `INSERT IGNORE INTO page_file_refs (page_id, owner_user_id, stored_filename, file_type, created_at)
+                             VALUES (?, ?, ?, 'imgs', NOW())`,
+                            [page.id, ownerId, filename]
+                        );
+                    }
+                }
+            }
+            console.log('✓ 보안 레지스트리 백필 완료');
+        }
+    } catch (error) {
+        console.error('보안 레지스트리 백필 중 오류:', error);
     }
 
     // pages 테이블 인덱스 (사용자별 최신 페이지 조회 최적화)
@@ -1944,13 +2020,17 @@ app.get('/imgs/:userId/:filename', authMiddleware, async (req, res) => {
         const escapeLike = (s) => String(s).replace(/[\\%_]/g, (m) => `\\${m}`);
         const likePattern = `%${escapeLike(imageUrl)}%`;
 
-        // 이미지가 포함된 페이지가 공유되었는지 확인
+        // 보안: 서버가 기록한 첨부 레지스트리(page_file_refs) + 페이지 접근권한 + 본문 참조 존재를 함께 검증
         const [rows] = await pool.execute(
             `SELECT p.id
-                FROM pages p
+                FROM page_file_refs pfr
+                JOIN pages p ON p.id = pfr.page_id
                 JOIN storages s ON p.storage_id = s.id
                 LEFT JOIN storage_shares ss_cur ON s.id = ss_cur.storage_id AND ss_cur.shared_with_user_id = ?
-                WHERE p.content LIKE ? ESCAPE '\\\\'
+                WHERE pfr.owner_user_id = ?
+                AND pfr.stored_filename = ?
+                AND pfr.file_type = 'imgs'
+                AND p.content LIKE ? ESCAPE '\\\\'
                 AND p.deleted_at IS NULL
                 AND (s.user_id = ? OR ss_cur.shared_with_user_id IS NOT NULL)
                 -- 보안패치: 암호화 + 공유불가 페이지의 자산은
@@ -1959,7 +2039,15 @@ app.get('/imgs/:userId/:filename', authMiddleware, async (req, res) => {
                 -- 보안패치: 파일 소유자와 참조하는 페이지 소유자를 반드시 일치시킴
                 AND p.user_id = ?
                 LIMIT 1`,
-            [currentUserId, likePattern, currentUserId, currentUserId, requestedUserId]
+            [
+                currentUserId,       -- ss_cur.shared_with_user_id
+                requestedUserId,     -- pfr.owner_user_id
+                sanitizedFilename,   -- pfr.stored_filename
+                likePattern,         -- p.content LIKE
+                currentUserId,       -- s.user_id = ?
+                currentUserId,       -- p.user_id != ? (encrypted/share_allowed 보정)
+                requestedUserId      -- p.user_id = ?
+            ]
         );
 
         if (rows.length > 0) {
@@ -1998,8 +2086,17 @@ app.get('/imgs/:userId/:filename', authMiddleware, async (req, res) => {
 
             // HTML 스냅샷 확인
             const content = ydoc.getMap('metadata').get('content') || '';
-            if (content.includes(imageUrl))
-                return sendSafeImage(res, filePath);
+            if (content.includes(imageUrl)) {
+                // 보안: Yjs fallback에서도 레지스트리를 확인하여 위조 방지
+                const [refRows] = await pool.execute(
+                    `SELECT id FROM page_file_refs 
+                      WHERE page_id = ? AND owner_user_id = ? AND stored_filename = ? AND file_type = 'imgs'`,
+                    [pageId, requestedUserId, sanitizedFilename]
+                );
+                if (refRows.length > 0) {
+                    return sendSafeImage(res, filePath);
+                }
+            }
 
 			// HTML 스냅샷이 아직 업데이트 전이라면, Y.XmlFragment 직접 확인
             // toString()은 전체 XML 구조를 반환하므로 속성(data-src)에 포함된 URL도 찾을 수 있음
@@ -2071,13 +2168,17 @@ app.get('/paperclip/:userId/:filename', authMiddleware, async (req, res) => {
         const escapeLike = (s) => String(s).replace(/[\\%_]/g, (m) => `\\${m}`);
         const likePattern = `%${escapeLike(fileUrlPart)}%`;
 
-        // 파일이 포함된 페이지가 공유되었는지 확인
+        // 보안: 서버가 기록한 첨부 레지스트리(page_file_refs) + 페이지 접근권한 + 본문 참조 존재를 함께 검증
         const [rows] = await pool.execute(
             `SELECT p.id
-                FROM pages p
+                FROM page_file_refs pfr
+                JOIN pages p ON p.id = pfr.page_id
                 JOIN storages s ON p.storage_id = s.id
                 LEFT JOIN storage_shares ss_cur ON s.id = ss_cur.storage_id AND ss_cur.shared_with_user_id = ?
-                WHERE p.content LIKE ? ESCAPE '\\\\'
+                WHERE pfr.owner_user_id = ?
+                AND pfr.stored_filename = ?
+                AND pfr.file_type = 'paperclip'
+                AND p.content LIKE ? ESCAPE '\\\\'
                 AND p.deleted_at IS NULL
                 AND (s.user_id = ? OR ss_cur.shared_with_user_id IS NOT NULL)
                 -- 보안패치: 암호화 + 공유불가 페이지의 첨부파일은
@@ -2086,13 +2187,49 @@ app.get('/paperclip/:userId/:filename', authMiddleware, async (req, res) => {
                 -- 보안패치: 파일 소유자 == 참조 페이지 소유자
                 AND p.user_id = ?
                 LIMIT 1`,
-            [currentUserId, likePattern, currentUserId, currentUserId, requestedUserId]
+            [
+                currentUserId,       -- ss_cur.shared_with_user_id
+                requestedUserId,     -- pfr.owner_user_id
+                sanitizedFilename,   -- pfr.stored_filename
+                likePattern,         -- p.content LIKE
+                currentUserId,       -- s.user_id = ?
+                currentUserId,       -- p.user_id != ? (encrypted/share_allowed 보정)
+                requestedUserId      -- p.user_id = ?
+            ]
         );
 
         if (rows.length > 0) {
             // 공유받은 페이지의 파일 - 접근 허용 (다운로드)
 			const downloadName = getDownloadName();
 			return sendSafeDownload(res, filePath, downloadName);
+        }
+
+        // 보안: 실시간 동기화 중인(Yjs) 문서의 내용도 확인 (DB 저장 지연 약 1초 대응)
+        for (const [pageId, connections] of wsConnections.pages) {
+            const myConn = Array.from(connections).find(c => c.userId === currentUserId);
+            if (!myConn) continue;
+
+            const docInfo = yjsDocuments.get(pageId);
+            if (!docInfo) continue;
+
+            // 핵심: 소유자 일치 검증 (IDOR 방어)
+            if (!Number.isFinite(docInfo.ownerUserId) || Number(docInfo.ownerUserId) !== requestedUserId)
+                continue;
+
+            const ydoc = docInfo.ydoc;
+            const content = ydoc.getMap('metadata').get('content') || '';
+            if (content.includes(fileUrlPart)) {
+                // 보안: Yjs fallback에서도 레지스트리를 확인하여 위조 방지
+                const [refRows] = await pool.execute(
+                    `SELECT id FROM page_file_refs 
+                      WHERE page_id = ? AND owner_user_id = ? AND stored_filename = ? AND file_type = 'paperclip'`,
+                    [pageId, requestedUserId, sanitizedFilename]
+                );
+                if (refRows.length > 0) {
+                    const downloadName = getDownloadName();
+                    return sendSafeDownload(res, filePath, downloadName);
+                }
+            }
         }
 
         // 권한 없음
@@ -2280,6 +2417,7 @@ function getSessionFromId(sessionId) {
 			wsCloseConnectionsForSession,
             wsCloseConnectionsForPage,
             wsKickUserFromStorage,
+            extractFilesFromContent,
             saveYjsDocToDatabase,
             yjsDocuments,
             authLimiter,

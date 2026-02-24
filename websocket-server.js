@@ -272,15 +272,25 @@ function extractFilesFromContent(content, pageOwnerUserId = null) {
     const files = [];
     if (!content) return files;
 
-    // data-src="/paperclip/<userId>/<filename>" 형태만 추출
-    // (파일명/유저ID allowlist 적용; path traversal 시도는 무시)
+    // paperclip 추출: data-src="/paperclip/<userId>/<filename>" (file-block)
     const fileRegex = /<div[^>]*data-type=["']file-block["'][^>]*data-src=["']\/paperclip\/([^"']+)["'][^>]*>/gi;
     let match;
     while ((match = fileRegex.exec(String(content))) !== null) {
         const ref = (pageOwnerUserId !== null && pageOwnerUserId !== undefined)
             ? normalizePaperclipRefForOwner(match[1], pageOwnerUserId)
             : normalizePaperclipRef(match[1]);
-        if (ref) files.push(ref);
+        if (ref) files.push({ type: 'paperclip', ref });
+    }
+
+    // imgs 추출: src="/imgs/<userId>/<filename>" (img tags, image-with-caption 등)
+    // - userId가 pageOwnerUserId와 일치하는 경우만 수집 (보안 규칙 준수)
+    const imgRegex = /src=["']\/imgs\/(\d+)\/([A-Za-z0-9._-]+)["']/gi;
+    while ((match = imgRegex.exec(String(content))) !== null) {
+        const ownerId = parseInt(match[1], 10);
+        const filename = match[2];
+        if (pageOwnerUserId === null || pageOwnerUserId === undefined || ownerId === pageOwnerUserId) {
+            files.push({ type: 'imgs', ref: `${ownerId}/${filename}`, filename });
+        }
     }
     return files;
 }
@@ -298,8 +308,12 @@ async function cleanupOrphanedFiles(pool, filePaths, excludePageId, pageOwnerUse
     // LIKE 패턴에서 와일드카드(% _) 오인 방지
     const escapeLike = (s) => String(s).replace(/[\\%_]/g, (m) => '\\\\' + m);
 
-    for (const ref of filePaths) {
+    for (const item of filePaths) {
         try {
+            // 현재 orphan cleanup은 paperclip 만 대상으로 함 (imgs는 별도 정책 필요)
+            if (item.type !== 'paperclip') continue;
+            const ref = item.ref;
+
             const normalized = normalizePaperclipRefForOwner(ref, ownerIdStr);
             if (!normalized) continue;
 
@@ -307,9 +321,6 @@ async function cleanupOrphanedFiles(pool, filePaths, excludePageId, pageOwnerUse
             const likePattern = `%${escapeLike(fileUrl)}%`;
 
             // 동일 사용자(페이지 소유자) 범위 내에서만 참조 여부 확인
-            // - 다른 사용자가 우연히 동일 문자열을 포함했는지 여부는 중요하지 않음
-            // - 그리고 다른 사용자의 pages를 스캔하면, 악의적 협업자가 문자열 조작으로
-            //   의도치 않은 삭제/보존을 유도할 여지가 생김
             const [rows] = await pool.execute(
                 `SELECT COUNT(*) as count
                    FROM pages
@@ -384,7 +395,50 @@ async function saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc) {
 
         if (existingRows.length > 0 && existingRows[0].is_encrypted === 0) {
             const newFiles = extractFilesFromContent(content, pageOwnerUserId);
-            const deletedFiles = oldFiles.filter(f => !newFiles.includes(f));
+
+            // 보안: 정당 참조 레지스트리(page_file_refs) 동기화
+            // - 실시간 편집 중 새로 추가된 첨부파일이나 이미지를 등록
+            // - 페이지에서 제거된 파일은 이 페이지와의 매핑 정보를 레지스트리에서 제거
+            try {
+                // 신규 파일 등록 (INSERT IGNORE)
+                for (const file of newFiles) {
+                    const parts = file.ref.split('/');
+                    const ownerId = parseInt(parts[0], 10);
+                    const filename = parts[1];
+                    if (ownerId === pageOwnerUserId) {
+                        await pool.execute(
+                            `INSERT IGNORE INTO page_file_refs (page_id, owner_user_id, stored_filename, file_type, created_at)
+                             VALUES (?, ?, ?, ?, NOW())`,
+                            [pageId, ownerId, filename, file.type]
+                        );
+                    }
+                }
+
+                // 이 페이지에서 더 이상 참조되지 않는 레지스트리 제거
+                const currentPaperclipFiles = newFiles.filter(f => f.type === 'paperclip').map(f => f.ref.split('/')[1]);
+                if (currentPaperclipFiles.length > 0) {
+                    await pool.execute(
+                        `DELETE FROM page_file_refs WHERE page_id = ? AND file_type = 'paperclip' AND stored_filename NOT IN (${currentPaperclipFiles.map(() => '?').join(',')})`,
+                        [pageId, ...currentPaperclipFiles]
+                    );
+                } else {
+                    await pool.execute(`DELETE FROM page_file_refs WHERE page_id = ? AND file_type = 'paperclip'`, [pageId]);
+                }
+
+                const currentImgsFiles = newFiles.filter(f => f.type === 'imgs').map(f => f.ref.split('/')[1]);
+                if (currentImgsFiles.length > 0) {
+                    await pool.execute(
+                        `DELETE FROM page_file_refs WHERE page_id = ? AND file_type = 'imgs' AND stored_filename NOT IN (${currentImgsFiles.map(() => '?').join(',')})`,
+                        [pageId, ...currentImgsFiles]
+                    );
+                } else {
+                    await pool.execute(`DELETE FROM page_file_refs WHERE page_id = ? AND file_type = 'imgs'`, [pageId]);
+                }
+            } catch (regErr) {
+                console.error('보안 레지스트리 동기화 실패 (비치명적):', regErr);
+            }
+
+            const deletedFiles = oldFiles.filter(f => !newFiles.some(nf => nf.ref === f.ref));
             if (deletedFiles.length > 0) cleanupOrphanedFiles(pool, deletedFiles, pageId, pageOwnerUserId).catch(e => {});
         }
     } catch (error) { throw error; }
@@ -1038,4 +1092,4 @@ function wsKickUserFromStorage(storageId, targetUserId, closeCode = 1008, reason
     if (userConns) for (const c of Array.from(userConns)) { try { c.ws.close(closeCode, reason); } catch (e) {} }
 }
 
-module.exports = { initWebSocketServer, wsBroadcastToPage, wsBroadcastToStorage, wsBroadcastToUser, startRateLimitCleanup, startInactiveConnectionsCleanup, wsConnections, yjsDocuments, saveYjsDocToDatabase, wsCloseConnectionsForSession, wsCloseConnectionsForPage, wsKickUserFromStorage };
+module.exports = { initWebSocketServer, wsBroadcastToPage, wsBroadcastToStorage, wsBroadcastToUser, startRateLimitCleanup, startInactiveConnectionsCleanup, wsConnections, yjsDocuments, saveYjsDocToDatabase, wsCloseConnectionsForSession, wsCloseConnectionsForPage, wsKickUserFromStorage, extractFilesFromContent };
