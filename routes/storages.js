@@ -163,7 +163,7 @@ module.exports = (dependencies) => {
             const storages = await storagesRepo.listStoragesForUser(userId);
             // 소유한 저장소만 카운트
             const ownedStorages = storages.filter(s => s.is_owner);
-            
+
             // 삭제하려는 저장소가 소유한 것이고, 소유한 게 하나뿐이라면 삭제 방지
             const storageToDelete = storages.find(s => s.id === storageId);
             if (storageToDelete && storageToDelete.is_owner && ownedStorages.length <= 1) {
@@ -232,14 +232,17 @@ module.exports = (dependencies) => {
             const storageId = req.params.id;
             const { targetUserId, permission } = req.body;
 
-            if (!targetUserId) {
+            if (!targetUserId)
                 return res.status(400).json({ error: '참여할 사용자를 지정해주세요.' });
-            }
+
+            // 권한값 방어적 검증/정규화 (권한 오타/임의 문자열 저장 방지)
+            const normalizedPermission = String(permission || 'READ').toUpperCase();
+            if (!['READ', 'EDIT'].includes(normalizedPermission))
+                return res.status(400).json({ error: '유효하지 않은 권한입니다. (READ 또는 EDIT)' });
 
             const storage = await storagesRepo.getStorageByIdForUser(userId, storageId);
-            if (!storage || !storage.is_owner) {
+            if (!storage || !storage.is_owner)
                 return res.status(403).json({ error: '참여자를 관리할 권한이 없습니다.' });
-            }
 
             const now = new Date();
             const nowStr = formatDateForDb(now);
@@ -248,10 +251,19 @@ module.exports = (dependencies) => {
                 storageId,
                 ownerUserId: userId,
                 sharedWithUserId: targetUserId,
-                permission: permission || 'READ',
+                permission: normalizedPermission,
                 createdAt: nowStr,
                 updatedAt: nowStr
             });
+
+            // 보안: addCollaborator는 ON DUPLICATE KEY UPDATE를 사용하므로
+            // 참여자 추가뿐 아니라 권한 변경(예: EDIT -> READ)도 담당
+            // 기존 WebSocket 연결이 살아 있으면 권한 캐시/지연 반영으로 쓰기 지속이 가능하므로
+            // 즉시 연결을 끊어 재연결 + 재권한 검사 강제
+            try {
+                if (typeof wsKickUserFromStorage === 'function')
+                    wsKickUserFromStorage(storageId, targetUserId, 1008, 'Storage permission changed');
+            } catch (e) {}
 
             res.json({ success: true });
         } catch (error) {

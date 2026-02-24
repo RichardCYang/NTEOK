@@ -807,11 +807,11 @@ function handleUnsubscribeStorage(ws, payload) {
     if (conns) { conns.forEach(c => { if (c.ws === ws) conns.delete(c); }); if (conns.size === 0) wsConnections.storages.delete(storageId); }
 }
 
-async function refreshConnPermission(pool, conn) {
+async function refreshConnPermission(pool, conn, { force = false } = {}) {
     if (!conn || !conn.storageId) return conn?.permission || null;
     const now = Date.now();
     const last = conn.permCheckedAt || 0;
-    if (now - last < WS_PERMISSION_REFRESH_MS) return conn.permission;
+    if (!force && now - last < WS_PERMISSION_REFRESH_MS) return conn.permission;
 
     const fresh = await getStoragePermission(pool, conn.userId, conn.storageId);
     conn.permCheckedAt = now;
@@ -839,7 +839,7 @@ function revokePageSubscription(ws, pageId, conns, myConn, reason = 'Access revo
  * 보안: 메시지 수신 시점에 페이지 가시성 + 암호화 상태 + 저장소 권한을 재검증
  * - 구독 이후 정책이 바뀌어도 즉시 반영 (Complete Mediation)
  */
-async function ensureActivePageAccess(pool, pageSqlPolicy, pageId, myConn) {
+async function ensureActivePageAccess(pool, pageSqlPolicy, pageId, myConn, opts = {}) {
     if (!myConn) return { ok: false, reason: 'not-subscribed' };
 
     const userId = myConn.userId;
@@ -865,7 +865,10 @@ async function ensureActivePageAccess(pool, pageSqlPolicy, pageId, myConn) {
     myConn.storageId = page.storage_id;
 
     // 저장소 권한 재검증
-    const freshPerm = await refreshConnPermission(pool, myConn);
+    // - 쓰기 경로(yjs-update)는 캐시를 우회해 즉시 반영(권한 하향/회수 레이스 방지)
+    const freshPerm = await refreshConnPermission(pool, myConn, {
+        force: Boolean(opts.forcePermissionRefresh)
+    });
     if (!freshPerm)
         return { ok: false, reason: 'storage-access-revoked' };
 
@@ -888,7 +891,10 @@ async function handleYjsUpdate(ws, payload, pool, sanitizeHtmlContent, pageSqlPo
 
         // 보안: 메시지 단위로 페이지 가시성 + 암호화 상태 + 저장소 권한 재검증
         // - 구독 이후 페이지가 암호화/비공개로 전환되어도 즉시 차단 (Complete Mediation)
-        const access = await ensureActivePageAccess(pool, pageSqlPolicy, pageId, myConn);
+        // - 쓰기 경로(yjs-update)는 캐시를 우회해 즉시 반영(권한 하향/회수 레이스 방지)
+        const access = await ensureActivePageAccess(pool, pageSqlPolicy, pageId, myConn, {
+            forcePermissionRefresh: true
+        });
         if (!access.ok) {
             revokePageSubscription(ws, pageId, conns, myConn, access.reason);
             return;
