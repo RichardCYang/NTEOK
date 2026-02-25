@@ -208,6 +208,18 @@ async function handlePageListClick(event, state) {
                 dataset: { pageId: pageId }
             }
         ];
+
+        // 편집 권한이 있는 경우 이름 변경 추가
+        const canEdit = state.currentStoragePermission === 'EDIT' || state.currentStoragePermission === 'ADMIN';
+        if (canEdit) {
+            menuItems.push({
+                action: "rename-page",
+                label: "이름 변경",
+                icon: "fa-solid fa-pen",
+                dataset: { pageId: pageId }
+            });
+        }
+
         if (canDelete) {
             menuItems.push({
                 action: "delete-page",
@@ -235,6 +247,24 @@ async function handlePageListClick(event, state) {
                 renderPageList();
             } catch (e) {
                 alert("삭제 실패: " + e.message);
+            }
+        } else if (action === "rename-page") {
+            const page = state.pages.find(p => p.id === pageId);
+            const newTitle = prompt("새 페이지 제목을 입력하세요:", page ? page.title : "");
+            if (newTitle && newTitle.trim() && (!page || newTitle.trim() !== page.title)) {
+                try {
+                    await api.put("/api/pages/" + encodeURIComponent(pageId), { title: newTitle.trim() });
+                    // 로컬 상태 업데이트
+                    if (page) page.title = newTitle.trim();
+                    // 현재 열려있는 페이지라면 제목 입력 필드도 업데이트
+                    if (state.currentPageId === pageId) {
+                        const titleInput = document.querySelector("#page-title-input");
+                        if (titleInput) titleInput.value = newTitle.trim();
+                    }
+                    renderPageList();
+                } catch (e) {
+                    alert("이름 변경 실패: " + e.message);
+                }
             }
         } else if (action === "set-icon") {
             showIconPickerModal(pageId);

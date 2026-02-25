@@ -41,6 +41,9 @@ export function initStoragesManager(appState, onStorageSelected) {
             item.innerHTML = `
                 <div class="storage-item-actions">
                     ${isOwner ? `
+                        <button class="storage-action-btn rename-btn" title="이름 변경" data-id="${safeStorageId}">
+                            <i class="fa-solid fa-pen"></i>
+                        </button>
                         <button class="storage-action-btn collab-btn" title="참여자 관리" data-id="${safeStorageId}">
                             <i class="fa-solid fa-user-group"></i>
                         </button>
@@ -66,10 +69,37 @@ export function initStoragesManager(appState, onStorageSelected) {
             `;
             
             item.addEventListener('click', (e) => {
-                // 삭제/참여자 버튼 클릭 시 이벤트 전파 방지
+                // 삭제/참여자/이름변경 버튼 클릭 시 이벤트 전파 방지
                 if (e.target.closest('.storage-action-btn')) return;
                 selectStorage(storage.id);
             });
+
+            if (isOwner) {
+                const renameBtn = item.querySelector('.rename-btn');
+                renameBtn.addEventListener('click', async (e) => {
+                    e.stopPropagation();
+                    const newName = prompt('저장소의 새 이름을 입력하세요:', storage.name);
+                    if (!newName || !newName.trim() || newName === storage.name) return;
+
+                    showLoadingOverlay();
+                    try {
+                        await api.put(`/api/storages/${storage.id}`, { name: newName.trim() });
+                        storage.name = newName.trim();
+                        renderStorages(appState.storages);
+                    } catch (error) {
+                        console.error('저장소 이름 변경 실패:', error);
+                        alert(error.message || '저장소 이름 변경에 실패했습니다.');
+                    } finally {
+                        hideLoadingOverlay();
+                    }
+                });
+
+                const collabBtn = item.querySelector('.collab-btn');
+                collabBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    showCollaboratorsModal(storage);
+                });
+            }
 
             const deleteBtn = item.querySelector('.delete-btn');
             deleteBtn.addEventListener('click', async (e) => {
@@ -102,14 +132,6 @@ export function initStoragesManager(appState, onStorageSelected) {
                 }
             });
 
-            if (isOwner) {
-                const collabBtn = item.querySelector('.collab-btn');
-                collabBtn.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    showCollaboratorsModal(storage);
-                });
-            }
-            
             storageList.appendChild(item);
         });
     }
