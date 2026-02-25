@@ -1,9 +1,64 @@
 const express = require('express');
 const router = express.Router();
 const crypto = require('crypto');
+const erl = require('express-rate-limit');
+const rateLimit = erl.rateLimit || erl;
+const { ipKeyGenerator } = erl;
 
 module.exports = (dependencies) => {
-    const { storagesRepo, bootstrapRepo, authMiddleware, toIsoString, logError, formatDateForDb, wsKickUserFromStorage } = dependencies;
+    const {
+        storagesRepo,
+        bootstrapRepo,
+        authMiddleware,
+        toIsoString,
+        logError,
+        formatDateForDb,
+        wsKickUserFromStorage,
+        getClientIpFromRequest
+    } = dependencies;
+
+    // 회원가입 username 정책과 유사하게 검색어도 제한 (검색 오용/열거 완화)
+    const USER_SEARCH_CONTROL_CHARS_RE = /[\u0000-\u001F\u007F]/;
+    const USER_SEARCH_SAFE_RE = /^[가-힣A-Za-z0-9._-]+$/u;
+
+    function normalizeUserSearchQuery(input) {
+        if (typeof input !== 'string') return null;
+
+        // 유니코드 정규화로 혼동 문자/우회 가능성 축소
+        const normalized = (typeof input.normalize === 'function'
+            ? input.normalize('NFKC')
+            : input
+        ).trim();
+
+        // 기존 2자 -> 3자로 상향 (열거 난이도 증가)
+        if (normalized.length < 3 || normalized.length > 64) return null;
+        if (USER_SEARCH_CONTROL_CHARS_RE.test(normalized)) return null;
+        if (!USER_SEARCH_SAFE_RE.test(normalized)) return null;
+
+        return normalized;
+    }
+
+    // 참여자 검색 API 전용 rate limit
+    // - 인증 사용자라도 자동화로 전체 계정 수집/대량 스캔 방지
+    const collaboratorUserSearchLimiter = rateLimit({
+        windowMs: 60 * 1000, // 1분
+        max: 30,             // 사용자+IP 기준 분당 30회
+        standardHeaders: true,
+        legacyHeaders: false,
+        keyGenerator: (req) => {
+            const rawIp = (typeof getClientIpFromRequest === 'function'
+                ? getClientIpFromRequest(req)
+                : (req.ip || '')
+            ) || '0.0.0.0';
+
+            const ipPart = ipKeyGenerator(rawIp);
+            const userPart = req.user?.id ? String(req.user.id) : 'anon';
+            return `${userPart}:${ipPart}`;
+        },
+        message: {
+            error: '사용자 검색 요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.'
+        }
+    });
 
     // 저장형 XSS/HTML 엔티티 우회 방어:
     // storage 이름은 여러 화면에서 표시되므로, < > & 및 제어문자를 금지하고 길이를 제한
@@ -187,14 +242,17 @@ module.exports = (dependencies) => {
     /**
      * 참여자 추가를 위한 사용자 검색
      */
-    router.get('/users/search', authMiddleware, async (req, res) => {
+    router.get('/users/search', authMiddleware, collaboratorUserSearchLimiter, async (req, res) => {
         try {
-            const query = req.query.q;
-            if (!query || query.trim().length < 2) {
+            const normalizedQuery = normalizeUserSearchQuery(req.query.q);
+            if (!normalizedQuery) {
                 return res.json([]);
             }
 
-            const users = await dependencies.usersRepo.searchUsers(query.trim(), req.user.id);
+            const users = await dependencies.usersRepo.searchUsers(
+                normalizedQuery,
+                req.user.id
+            );
             res.json(users);
         } catch (error) {
             logError('GET /api/storages/users/search', error);

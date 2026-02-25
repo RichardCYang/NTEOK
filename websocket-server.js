@@ -370,7 +370,7 @@ async function cleanupOrphanedFiles(pool, filePaths, excludePageId, pageOwnerUse
     const baseDir = path.resolve(__dirname, 'paperclip', ownerIdStr) + path.sep;
 
     // LIKE 패턴에서 와일드카드(% _) 오인 방지
-    const escapeLike = (s) => String(s).replace(/[\\%_]/g, (m) => '\\\\' + m);
+    const escapeLike = (s) => String(s).replace(/[\\%_]/g, (m) => '\\' + m);
 
     for (const item of filePaths) {
         try {
