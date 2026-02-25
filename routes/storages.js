@@ -300,8 +300,8 @@ module.exports = (dependencies) => {
 
             // 권한값 방어적 검증/정규화 (권한 오타/임의 문자열 저장 방지)
             const normalizedPermission = String(permission || 'READ').toUpperCase();
-            if (!['READ', 'EDIT'].includes(normalizedPermission))
-                return res.status(400).json({ error: '유효하지 않은 권한입니다. (READ 또는 EDIT)' });
+            if (!['READ', 'EDIT', 'ADMIN'].includes(normalizedPermission))
+                return res.status(400).json({ error: '유효하지 않은 권한입니다. (READ, EDIT 또는 ADMIN)' });
 
             const storage = await storagesRepo.getStorageByIdForUser(userId, storageId);
             if (!storage || !storage.is_owner)
