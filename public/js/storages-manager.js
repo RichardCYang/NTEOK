@@ -143,7 +143,11 @@ export function initStoragesManager(appState, onStorageSelected) {
             renderCollaborators(collaborators);
         } catch (error) {
             console.error('참여자 로드 실패:', error);
-            collabList.innerHTML = '<div style="text-align: center; padding: 20px; color: #ef4444;">로드 실패</div>';
+            if (error.status === 403) {
+                collabList.innerHTML = '<div style="text-align: center; padding: 20px; color: #ef4444;">참여자 목록을 조회할 권한이 없습니다.</div>';
+            } else {
+                collabList.innerHTML = '<div style="text-align: center; padding: 20px; color: #ef4444;">로드 실패</div>';
+            }
         }
     }
 
@@ -171,7 +175,6 @@ export function initStoragesManager(appState, onStorageSelected) {
             item.innerHTML = `
                 <div class="collaborator-info">
                     <span class="collaborator-name">${safeCollabName}</span>
-                    <span class="collaborator-meta">${new Date(collab.created_at).toLocaleDateString()}</span>
                 </div>
                 <div class="collaborator-actions">
                     <span class="collaborator-permission-badge">${safePermissionLabel}</span>

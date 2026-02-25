@@ -273,6 +273,11 @@ module.exports = (dependencies) => {
                 return res.status(404).json({ error: '저장소를 찾을 수 없습니다.' });
             }
 
+            // 보안: 저장소 소유자만 참여자 목록을 조회할 수 있도록 제한 (Broken Access Control 방어)
+            if (!storage.is_owner) {
+                return res.status(403).json({ error: '참여자 목록을 조회할 권한이 없습니다.' });
+            }
+
             const collaborators = await storagesRepo.listCollaborators(storageId);
             res.json(collaborators);
         } catch (error) {

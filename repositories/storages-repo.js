@@ -47,11 +47,11 @@ module.exports = ({ pool }) => {
          */
         async listCollaborators(storageId) {
             const [rows] = await pool.execute(
-                `SELECT ss.shared_with_user_id as id, u.username, ss.permission, ss.created_at
+                `SELECT ss.shared_with_user_id as id, u.username, ss.permission
                  FROM storage_shares ss
                  JOIN users u ON ss.shared_with_user_id = u.id
                  WHERE ss.storage_id = ?
-                 ORDER BY ss.created_at ASC`,
+                 ORDER BY u.username ASC`,
                 [storageId]
             );
             return rows;
