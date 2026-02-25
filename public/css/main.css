@@ -4776,7 +4776,8 @@ body {
     gap: 12px;
 }
 
-.collaborator-permission-badge {
+.collaborator-permission-badge,
+.collaborator-permission-select {
     font-size: 11px;
     padding: 3px 10px;
     border-radius: 20px;
@@ -4784,6 +4785,12 @@ body {
     color: var(--font-color);
     font-weight: 700;
     border: 1px solid var(--border-color);
+    cursor: pointer;
+    outline: none;
+}
+
+.collaborator-permission-select:focus {
+    border-color: var(--point-color);
 }
 
 .collaborator-remove-btn {

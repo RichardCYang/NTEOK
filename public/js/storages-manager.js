@@ -31,6 +31,7 @@ export function initStoragesManager(appState, onStorageSelected) {
             
             const date = new Date(storage.createdAt || storage.created_at).toLocaleDateString();
             const isOwner = storage.is_owner === 1 || storage.is_owner === true;
+            const isAdmin = isOwner || storage.permission === 'ADMIN';
             
             // 보안: innerHTML 템플릿에 들어가는 값은 반드시 이스케이프 처리
             // - storage.name / storage.owner_name 은 DB에 저장되는 사용자 입력이므로 신뢰할 수 없음
@@ -44,9 +45,13 @@ export function initStoragesManager(appState, onStorageSelected) {
                         <button class="storage-action-btn rename-btn" title="이름 변경" data-id="${safeStorageId}">
                             <i class="fa-solid fa-pen"></i>
                         </button>
+                    ` : ''}
+                    ${isAdmin ? `
                         <button class="storage-action-btn collab-btn" title="참여자 관리" data-id="${safeStorageId}">
                             <i class="fa-solid fa-user-group"></i>
                         </button>
+                    ` : ''}
+                    ${isOwner ? `
                         <button class="storage-action-btn delete-btn delete" title="저장소 삭제" data-id="${safeStorageId}">
                             <i class="fa-regular fa-trash-can"></i>
                         </button>
@@ -74,8 +79,8 @@ export function initStoragesManager(appState, onStorageSelected) {
                 selectStorage(storage.id);
             });
 
-            if (isOwner) {
-                const renameBtn = item.querySelector('.rename-btn');
+            const renameBtn = item.querySelector('.rename-btn');
+            if (renameBtn) {
                 renameBtn.addEventListener('click', async (e) => {
                     e.stopPropagation();
                     const newName = prompt('저장소의 새 이름을 입력하세요:', storage.name);
@@ -93,8 +98,10 @@ export function initStoragesManager(appState, onStorageSelected) {
                         hideLoadingOverlay();
                     }
                 });
+            }
 
-                const collabBtn = item.querySelector('.collab-btn');
+            const collabBtn = item.querySelector('.collab-btn');
+            if (collabBtn) {
                 collabBtn.addEventListener('click', (e) => {
                     e.stopPropagation();
                     showCollaboratorsModal(storage);
@@ -184,27 +191,40 @@ export function initStoragesManager(appState, onStorageSelected) {
             const item = document.createElement('div');
             item.className = 'collaborator-item';
             
-            const permissionLabel = {
-                'READ': '읽기',
-                'EDIT': '편집',
-                'ADMIN': '관리'
-            }[collab.permission] || collab.permission;
-
             // 보안: 사용자명/권한 문자열은 신뢰할 수 없으므로 HTML 이스케이프
             const safeCollabName = escapeHtml(collab.username || '');
-            const safePermissionLabel = escapeHtml(permissionLabel || '');
+            const safeCollabId = escapeHtmlAttr(collab.id);
 
             item.innerHTML = `
                 <div class="collaborator-info">
                     <span class="collaborator-name">${safeCollabName}</span>
                 </div>
                 <div class="collaborator-actions">
-                    <span class="collaborator-permission-badge">${safePermissionLabel}</span>
+                    <select class="collaborator-permission-select" data-user-id="${safeCollabId}">
+                        <option value="READ" ${collab.permission === 'READ' ? 'selected' : ''}>읽기</option>
+                        <option value="EDIT" ${collab.permission === 'EDIT' ? 'selected' : ''}>편집</option>
+                        <option value="ADMIN" ${collab.permission === 'ADMIN' ? 'selected' : ''}>관리</option>
+                    </select>
                     <button class="collaborator-remove-btn" title="삭제">
                         <i class="fa-solid fa-user-minus"></i>
                     </button>
                 </div>
             `;
+
+            const permissionSelect = item.querySelector('.collaborator-permission-select');
+            permissionSelect.addEventListener('change', async () => {
+                const newPermission = permissionSelect.value;
+                try {
+                    await api.post(`/api/storages/${currentManagingStorage.id}/collaborators`, {
+                        targetUserId: collab.id,
+                        permission: newPermission
+                    });
+                } catch (error) {
+                    alert('권한 수정 실패: ' + error.message);
+                    // 실패 시 원래 값으로 복구하기 위해 목록 재요청
+                    loadCollaborators();
+                }
+            });
 
             item.querySelector('.collaborator-remove-btn').addEventListener('click', async () => {
                 if (!confirm(`'${collab.username}' 님을 저장소에서 제외하시겠습니까?`)) return;

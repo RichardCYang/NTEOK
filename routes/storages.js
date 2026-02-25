@@ -275,8 +275,8 @@ module.exports = (dependencies) => {
                 return res.status(404).json({ error: '저장소를 찾을 수 없습니다.' });
             }
 
-            // 보안: 저장소 소유자만 참여자 목록을 조회할 수 있도록 제한 (Broken Access Control 방어)
-            if (!storage.is_owner) {
+            // 보안: 저장소 소유자 또는 관리 권한(ADMIN)이 있는 사용자만 참여자 목록을 조회할 수 있도록 함
+            if (!storage.is_owner && storage.permission !== 'ADMIN') {
                 return res.status(403).json({ error: '참여자 목록을 조회할 권한이 없습니다.' });
             }
 
@@ -306,7 +306,7 @@ module.exports = (dependencies) => {
                 return res.status(400).json({ error: '유효하지 않은 권한입니다. (READ, EDIT 또는 ADMIN)' });
 
             const storage = await storagesRepo.getStorageByIdForUser(userId, storageId);
-            if (!storage || !storage.is_owner)
+            if (!storage || (!storage.is_owner && storage.permission !== 'ADMIN'))
                 return res.status(403).json({ error: '참여자를 관리할 권한이 없습니다.' });
 
             const now = new Date();
@@ -314,7 +314,7 @@ module.exports = (dependencies) => {
 
             await storagesRepo.addCollaborator({
                 storageId,
-                ownerUserId: userId,
+                ownerUserId: storage.owner_id,
                 sharedWithUserId: targetUserId,
                 permission: normalizedPermission,
                 createdAt: nowStr,
@@ -347,7 +347,7 @@ module.exports = (dependencies) => {
             const targetUserId = req.params.targetUserId;
 
             const storage = await storagesRepo.getStorageByIdForUser(userId, storageId);
-            if (!storage || !storage.is_owner) {
+            if (!storage || (!storage.is_owner && storage.permission !== 'ADMIN')) {
                 return res.status(403).json({ error: '참여자를 관리할 권한이 없습니다.' });
             }
 
