@@ -266,8 +266,11 @@ export function clearCurrentPage() {
     const subpagesContainer = document.querySelector("#subpages-container");
     if (subpagesContainer) subpagesContainer.innerHTML = "";
     
-    const commentsContainer = document.querySelector("#comments-list");
-    if (commentsContainer) commentsContainer.innerHTML = "";
+    const commentsContainer = document.querySelector("#page-comments-section");
+    if (commentsContainer) {
+        commentsContainer.innerHTML = "";
+        commentsContainer.classList.add("hidden");
+    }
     
     updatePublishButton();
 }
@@ -336,7 +339,7 @@ export async function loadPage(id) {
         startPageSync(page.id, page.isEncrypted || false);
         await checkPublishStatus(page.id);
         await loadAndRenderSubpages(page.id);
-        if (window.loadAndRenderComments) await window.loadAndRenderComments(page.id);
+        await loadAndRenderComments(page.id);
 
         if (window.innerWidth <= 768) closeSidebar();
     } catch (error) {
