@@ -374,6 +374,60 @@ module.exports = (dependencies) => {
         return u.protocol === "https:" ? 443 : 80;
     }
 
+    // ===== SSRF 방어 강화: 기능별 Host Allowlist (Fail-Closed) =====
+    // 북마크 예시: BOOKMARK_METADATA_HOST_ALLOWLIST=example.com,*.trusted-site.com
+    // 이미지 예시: IMAGE_PROXY_HOST_ALLOWLIST=images.example.com,*.cdn.example.net
+    // 패턴 규칙:
+    // - exact: example.com
+    // - suffix wildcard: *.example.com  (하위 도메인만 허용, apex 미포함)
+    function parseHostAllowlist(envName) {
+        return String(process.env[envName] || "")
+            .split(",")
+            .map(v => v.trim().toLowerCase())
+            .filter(Boolean);
+    }
+
+    const BOOKMARK_METADATA_HOST_ALLOWLIST = parseHostAllowlist("BOOKMARK_METADATA_HOST_ALLOWLIST");
+    const IMAGE_PROXY_HOST_ALLOWLIST = parseHostAllowlist("IMAGE_PROXY_HOST_ALLOWLIST");
+
+    function hostMatchesAllowlist(hostname, patterns) {
+        const h = String(hostname || "").toLowerCase();
+        if (!h) return false;
+        for (const p of patterns) {
+            if (p.startsWith("*.")) {
+                const base = p.slice(2);
+                // *.example.com 은 foo.example.com 허용, example.com 은 불허
+                if (base && h.length > base.length && h.endsWith("." + base)) return true;
+            } else {
+                if (h === p) return true;
+            }
+        }
+        return false;
+    }
+
+    function getFeatureHostAllowlist(feature) {
+        if (feature === "bookmark-metadata") return BOOKMARK_METADATA_HOST_ALLOWLIST;
+        if (feature === "image-proxy") return IMAGE_PROXY_HOST_ALLOWLIST;
+        return [];
+    }
+
+    function enforceOutboundHostPolicy(u, feature) {
+        const hostname = String(u?.hostname || "").toLowerCase();
+        if (!hostname) throw new Error("Invalid hostname");
+
+        // 기능별 allowlist 미설정 시 차단 (Fail-Closed)
+        const patterns = getFeatureHostAllowlist(feature);
+        if (!Array.isArray(patterns) || patterns.length === 0)
+            throw new Error(`Outbound host allowlist is not configured for ${feature}`);
+
+        // IP literal 직접 입력은 차단 (공격 표면 축소)
+        if (net.isIP(hostname))
+            throw new Error("IP literal hosts are not allowed");
+
+        if (!hostMatchesAllowlist(hostname, patterns))
+            throw new Error("Host is not allowed");
+    }
+
     function makePinnedLookup(address, family) {
         return (hostname, options, callback) => {
             const cb = typeof options === "function" ? options : callback;
@@ -387,7 +441,7 @@ module.exports = (dependencies) => {
         };
     }
 
-    async function validateOutboundUrl(urlStr) {
+    async function validateOutboundUrl(urlStr, feature = "generic") {
         if (typeof urlStr !== "string") throw new Error("Invalid URL");
         const trimmed = urlStr.trim();
         if (!trimmed) throw new Error("Invalid URL");
@@ -409,6 +463,12 @@ module.exports = (dependencies) => {
 
         const hostname = u.hostname;
         if (!hostname) throw new Error("Invalid hostname");
+
+        // 보안: 기능별 host allowlist 우선 적용
+        // - public 인터넷 전체를 허용하지 않고, 필요한 도메인만 허용
+        // - SSRF/open proxy 성격 제거
+        if (feature === "bookmark-metadata" || feature === "image-proxy")
+            enforceOutboundHostPolicy(u, feature);
 
         const ipFamily = net.isIP(hostname);
         if (ipFamily) {
@@ -459,7 +519,7 @@ module.exports = (dependencies) => {
         let current = urlStr;
 
         for (let i = 0; i <= METADATA_MAX_REDIRECTS; i++) {
-            const { url, lookup } = await validateOutboundUrl(current);
+            const { url, lookup } = await validateOutboundUrl(current, "bookmark-metadata");
 
             const result = await new Promise((resolve, reject) => {
                 const protocol = url.protocol === "https:" ? https : http;
@@ -1685,7 +1745,7 @@ module.exports = (dependencies) => {
             let current = urlCandidate;
 
             for (let i = 0; i <= IMAGE_PROXY_MAX_REDIRECTS; i++) {
-                const { url, lookup } = await validateOutboundUrl(current);
+                const { url, lookup } = await validateOutboundUrl(current, "image-proxy");
                 const protocol = url.protocol === "https:" ? https : http;
 
                 const proxyRes = await new Promise((resolve, reject) => {
@@ -1798,6 +1858,9 @@ module.exports = (dependencies) => {
                 msg.includes('Invalid URL') ||
                 msg.includes('Only http/https') ||
                 msg.includes('Userinfo') ||
+                msg.includes('Host is not allowed') ||
+                msg.includes('allowlist is not configured') ||
+                msg.includes('IP literal hosts are not allowed') ||
                 msg.includes('Port is not allowed') ||
                 msg.includes('Private/local IP') ||
                 msg.includes('Failed to resolve')
