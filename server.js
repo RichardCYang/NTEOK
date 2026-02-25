@@ -2053,13 +2053,13 @@ app.get('/imgs/:userId/:filename', authMiddleware, async (req, res) => {
                 AND p.user_id = ?
                 LIMIT 1`,
             [
-                currentUserId,       -- ss_cur.shared_with_user_id
-                requestedUserId,     -- pfr.owner_user_id
-                sanitizedFilename,   -- pfr.stored_filename
-                likePattern,         -- p.content LIKE
-                currentUserId,       -- s.user_id = ?
-                currentUserId,       -- p.user_id != ? (encrypted/share_allowed 보정)
-                requestedUserId      -- p.user_id = ?
+                currentUserId,       // ss_cur.shared_with_user_id
+                requestedUserId,     // pfr.owner_user_id
+                sanitizedFilename,   // pfr.stored_filename
+                likePattern,         // p.content LIKE
+                currentUserId,       // s.user_id = ?
+                currentUserId,       // p.user_id != ? (encrypted/share_allowed 보정)
+                requestedUserId      // p.user_id = ?
             ]
         );
 
@@ -2211,13 +2211,13 @@ app.get('/paperclip/:userId/:filename', authMiddleware, async (req, res) => {
                 AND p.user_id = ?
                 LIMIT 1`,
             [
-                currentUserId,       -- ss_cur.shared_with_user_id
-                requestedUserId,     -- pfr.owner_user_id
-                sanitizedFilename,   -- pfr.stored_filename
-                likePattern,         -- p.content LIKE
-                currentUserId,       -- s.user_id = ?
-                currentUserId,       -- p.user_id != ? (encrypted/share_allowed 보정)
-                requestedUserId      -- p.user_id = ?
+                currentUserId,       // ss_cur.shared_with_user_id
+                requestedUserId,     // pfr.owner_user_id
+                sanitizedFilename,   // pfr.stored_filename
+                likePattern,         // p.content LIKE
+                currentUserId,       // s.user_id = ?
+                currentUserId,       // p.user_id != ? (encrypted/share_allowed 보정)
+                requestedUserId      // p.user_id = ?
             ]
         );
 
