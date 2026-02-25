@@ -74,7 +74,8 @@ export const CalendarBlock = Node.create({
     },
 
     addNodeView() {
-        return ({ node, editor, getPos }) => {
+        return (viewProps) => {
+            let { node, editor, getPos } = viewProps;
             const wrapper = document.createElement('div');
             wrapper.className = 'calendar-block-wrapper';
             wrapper.contentEditable = 'false';
@@ -86,13 +87,22 @@ export const CalendarBlock = Node.create({
             let currentAlign = node.attrs.align || 'center';
             let currentViewDate = new Date(selectedDateStr);
             currentViewDate.setDate(1);
-
-            let memoTimeout = null;
+            let lastIsEditable = editor.isEditable;
 
             // Alignment Menu
             const alignMenu = document.createElement('div');
             alignMenu.className = 'calendar-align-menu';
-            alignMenu.style.display = editor.isEditable ? 'flex' : 'none';
+            
+            const updateVisibility = () => {
+                const isEditable = editor.isEditable;
+                alignMenu.style.display = isEditable ? 'flex' : 'none';
+                if (resizeHandle) resizeHandle.style.display = isEditable ? 'block' : 'none';
+                
+                // 메모장 편집 가능 여부 업데이트
+                wrapper.querySelectorAll('.calendar-day-memo').forEach(memo => {
+                    memo.contentEditable = isEditable ? 'true' : 'false';
+                });
+            };
 
             const createAlignIcon = (align) => {
                 const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -113,19 +123,24 @@ export const CalendarBlock = Node.create({
             const createAlignButton = (align, title) => {
                 const button = document.createElement('button');
                 button.className = 'align-button';
+                button.setAttribute('data-align', align);
                 button.type = 'button';
                 button.title = title;
                 button.appendChild(createAlignIcon(align));
                 if (currentAlign === align) button.classList.add('active');
                 button.onclick = (e) => {
                     e.preventDefault(); e.stopPropagation();
+                    if (!editor.isEditable) return;
+                    
                     currentAlign = align;
                     wrapper.setAttribute('data-align', align);
                     alignMenu.querySelectorAll('.align-button').forEach(btn => btn.classList.remove('active'));
                     button.classList.add('active');
                     if (typeof getPos === 'function') {
                         const pos = getPos();
-                        editor.view.dispatch(editor.view.state.tr.setNodeMarkup(pos, null, { ...node.attrs, align }));
+                        const currentNode = editor.state.doc.nodeAt(pos);
+                        const attrs = currentNode ? currentNode.attrs : node.attrs;
+                        editor.view.dispatch(editor.view.state.tr.setNodeMarkup(pos, null, { ...attrs, align }));
                     }
                 };
                 return button;
@@ -136,6 +151,10 @@ export const CalendarBlock = Node.create({
             alignMenu.appendChild(createAlignButton('right', '오른쪽 정렬'));
             wrapper.appendChild(alignMenu);
 
+            const resizeHandle = document.createElement('div');
+            resizeHandle.className = 'calendar-resize-handle';
+            wrapper.appendChild(resizeHandle);
+
             const renderCalendar = () => {
                 // 입력 중일 때는 전체 재렌더링 차단 (포커스 유지 핵심)
                 if (document.activeElement && document.activeElement.classList.contains('calendar-day-memo') && wrapper.contains(document.activeElement)) {
@@ -143,7 +162,7 @@ export const CalendarBlock = Node.create({
                 }
 
                 Array.from(wrapper.childNodes).forEach(child => {
-                    if (child !== alignMenu && !child.classList?.contains('calendar-resize-handle')) {
+                    if (child !== alignMenu && child !== resizeHandle) {
                         wrapper.removeChild(child);
                     }
                 });
@@ -221,7 +240,9 @@ export const CalendarBlock = Node.create({
                             selectedDateStr = dateStr;
                             if (typeof getPos === 'function') {
                                 const pos = getPos();
-                                editor.view.dispatch(editor.view.state.tr.setNodeMarkup(pos, null, { ...node.attrs, selectedDate: dateStr }));
+                                const currentNode = editor.state.doc.nodeAt(pos);
+                                const attrs = currentNode ? currentNode.attrs : node.attrs;
+                                editor.view.dispatch(editor.view.state.tr.setNodeMarkup(pos, null, { ...attrs, selectedDate: dateStr }));
                             }
                         }
                     };
@@ -248,7 +269,9 @@ export const CalendarBlock = Node.create({
                             memos[dateStr] = newText;
                             if (typeof getPos === 'function') {
                                 const pos = getPos();
-                                editor.view.dispatch(editor.view.state.tr.setNodeMarkup(pos, null, { ...node.attrs, memos }));
+                                const currentNode = editor.state.doc.nodeAt(pos);
+                                const attrs = currentNode ? currentNode.attrs : node.attrs;
+                                editor.view.dispatch(editor.view.state.tr.setNodeMarkup(pos, null, { ...attrs, memos }));
                             }
                         }
                     };
@@ -275,7 +298,9 @@ export const CalendarBlock = Node.create({
                         currentViewDate.setDate(1);
                         if (typeof getPos === 'function') {
                             const pos = getPos();
-                            editor.view.dispatch(editor.view.state.tr.setNodeMarkup(pos, null, { ...node.attrs, selectedDate: todayStr }));
+                            const currentNode = editor.state.doc.nodeAt(pos);
+                            const attrs = currentNode ? currentNode.attrs : node.attrs;
+                            editor.view.dispatch(editor.view.state.tr.setNodeMarkup(pos, null, { ...attrs, selectedDate: todayStr }));
                         }
                         renderCalendar();
                     }
@@ -285,17 +310,13 @@ export const CalendarBlock = Node.create({
                 wrapper.appendChild(footer);
             };
 
-            const resizeHandle = document.createElement('div');
-            resizeHandle.className = 'calendar-resize-handle';
-            resizeHandle.style.display = editor.isEditable ? 'block' : 'none';
-            wrapper.appendChild(resizeHandle);
-
             let isResizing = false;
             let startX = 0;
             let startWidth = 0;
 
             const onResizeStart = (e) => {
                 e.preventDefault(); e.stopPropagation();
+                if (!editor.isEditable) return;
                 isResizing = true; startX = e.clientX;
                 startWidth = wrapper.offsetWidth;
                 document.addEventListener('mousemove', onResizeMove);
@@ -305,7 +326,7 @@ export const CalendarBlock = Node.create({
             const onResizeMove = (e) => {
                 if (!isResizing) return;
                 const deltaX = e.clientX - startX;
-                let newWidth = startWidth + deltaX * 2;
+                let newWidth = startWidth + (currentAlign === 'center' ? deltaX * 2 : deltaX);
                 const editorElement = document.querySelector('#editor .ProseMirror');
                 const maxWidth = editorElement ? editorElement.offsetWidth : 1000;
                 newWidth = Math.max(300, Math.min(newWidth, maxWidth));
@@ -319,17 +340,35 @@ export const CalendarBlock = Node.create({
                 wrapper.style.userSelect = '';
                 if (typeof getPos === 'function') {
                     const pos = getPos();
-                    editor.view.dispatch(editor.view.state.tr.setNodeMarkup(pos, null, { ...node.attrs, width: wrapper.style.width }));
+                    const currentNode = editor.state.doc.nodeAt(pos);
+                    const attrs = currentNode ? currentNode.attrs : node.attrs;
+                    editor.view.dispatch(editor.view.state.tr.setNodeMarkup(pos, null, { ...attrs, width: wrapper.style.width }));
                 }
             };
             resizeHandle.addEventListener('mousedown', onResizeStart);
 
+            updateVisibility();
             renderCalendar();
+
+            // 편집 모드 변경 감지
+            const checkEditable = () => {
+                if (editor.isEditable !== lastIsEditable) {
+                    lastIsEditable = editor.isEditable;
+                    updateVisibility();
+                }
+            };
+            editor.on('transaction', checkEditable);
+
+            const observer = new MutationObserver(checkEditable);
+            if (editor.view && editor.view.dom) {
+                observer.observe(editor.view.dom, { attributes: true, attributeFilter: ['contenteditable'] });
+            }
 
             return {
                 dom: wrapper,
                 update(updatedNode) {
                     if (updatedNode.type.name !== node.type.name) return false;
+                    node = updatedNode;
                     
                     const oldSelected = selectedDateStr;
                     selectedDateStr = updatedNode.attrs.selectedDate;
@@ -349,22 +388,26 @@ export const CalendarBlock = Node.create({
                     if (!isResizing && updatedNode.attrs.width !== wrapper.style.width) {
                         wrapper.style.width = updatedNode.attrs.width;
                     }
+                    
+                    checkEditable();
                     return true;
                 },
                 selectNode() { wrapper.classList.add('ProseMirror-selectednode'); },
                 deselectNode() { wrapper.classList.remove('ProseMirror-selectednode'); },
                 ignoreMutation(mutation) {
-                    // 메모 영역 내부의 DOM 변화는 에디터가 무시하도록 설정 (우리가 직접 관리)
                     return mutation.target.classList.contains('calendar-day-memo') || mutation.target.parentNode?.classList.contains('calendar-day-memo');
                 },
                 stopEvent(event) {
                     const target = event.target;
-                    // 메모 영역이나 정렬 메뉴에서의 모든 이벤트는 에디터가 가로채지 못하게 함
                     const isInternalInteraction = target.classList.contains('calendar-day-memo') || 
                                                  target.closest('.calendar-align-menu') || 
                                                  target.closest('.calendar-nav');
                     if (isInternalInteraction) return true;
                     return false;
+                },
+                destroy() {
+                    editor.off('transaction', checkEditable);
+                    observer.disconnect();
                 }
             };
         };
