@@ -689,8 +689,30 @@ module.exports = (dependencies) => {
             const isEncrypted = req.body.isEncrypted === true ? 1 : 0;
             const salt = req.body.encryptionSalt || null;
             const encContent = req.body.encryptedContent || null;
+
+            if (isEncrypted) {
+                if (!salt || !encContent) return res.status(400).json({ error: "Encryption fields missing" });
+                
+                // 보안: 암호화 필드 형식 및 크기 검증 (Stored XSS 및 DoS 방어)
+                if (typeof salt !== "string" || salt.length > 512 || !/^[A-Za-z0-9+/=]*$/.test(salt))
+                    return res.status(400).json({ error: "유효하지 않은 encryptionSalt 형식" });
+
+                if (typeof encContent !== "string")
+                    return res.status(400).json({ error: "유효하지 않은 encryptedContent 형식" });
+                
+                if (encContent.length > 5 * 1024 * 1024)
+                    return res.status(400).json({ error: "encryptedContent가 너무 큽니다." });
+                
+                const isWellFormed = 
+                    /^SALT:[A-Za-z0-9+/=]+:ENC2:[A-Za-z0-9+/=]+$/.test(encContent) ||
+                    /^ENC1:[A-Za-z0-9+/=]+$/.test(encContent) ||
+                    /^[A-Za-z0-9+/=]+$/.test(encContent);
+                
+                if (!isWellFormed || /[\x00-\x1F\x7F]/.test(encContent))
+                    return res.status(400).json({ error: "encryptedContent 형식이 올바르지 않거나 허용되지 않는 문자가 포함되어 있습니다." });
+            }
+
             const content = isEncrypted ? '' : sanitizeHtmlContent(req.body.content || "<p></p>");
-            if (isEncrypted && (!salt || !encContent)) return res.status(400).json({ error: "Encryption fields missing" });
             await pool.execute(`INSERT INTO pages (id, user_id, parent_id, title, content, sort_order, created_at, updated_at, storage_id, is_encrypted, encryption_salt, encrypted_content) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                 [id, userId, parentId, title, content, sortOrder, nowStr, nowStr, storageId, isEncrypted, salt, encContent]);
 
@@ -740,12 +762,27 @@ module.exports = (dependencies) => {
                 if (encryptionStateChanged && (!hasEncryptionSalt || !hasEncryptedContent))
                     return res.status(400).json({ error: "암호화 전환 시 encryptionSalt와 encryptedContent가 필요합니다." });
 
-                // 기본 타입 검증 (프로토콜에 맞게 길이/포맷 검증 추가 권장)
-                if (salt != null && typeof salt !== "string")
-                    return res.status(400).json({ error: "유효하지 않은 encryptionSalt 형식" });
+                // 보안: 암호화 필드 형식 및 크기 검증 (Stored XSS 및 DoS 방어)
+                if (salt != null) {
+                    if (typeof salt !== "string" || salt.length > 512 || !/^[A-Za-z0-9+/=]*$/.test(salt))
+                        return res.status(400).json({ error: "유효하지 않은 encryptionSalt 형식" });
+                }
 
-                if (encContent != null && typeof encContent !== "string")
-                    return res.status(400).json({ error: "유효하지 않은 encryptedContent 형식" });
+                if (encContent != null) {
+                    if (typeof encContent !== "string")
+                        return res.status(400).json({ error: "유효하지 않은 encryptedContent 형식" });
+                    
+                    if (encContent.length > 5 * 1024 * 1024)
+                        return res.status(400).json({ error: "encryptedContent가 너무 큽니다." });
+                    
+                    const isWellFormed = 
+                        /^SALT:[A-Za-z0-9+/=]+:ENC2:[A-Za-z0-9+/=]+$/.test(encContent) ||
+                        /^ENC1:[A-Za-z0-9+/=]+$/.test(encContent) ||
+                        /^[A-Za-z0-9+/=]+$/.test(encContent);
+                    
+                    if (!isWellFormed || /[\x00-\x1F\x7F]/.test(encContent))
+                        return res.status(400).json({ error: "encryptedContent 형식이 올바르지 않거나 허용되지 않는 문자가 포함되어 있습니다." });
+                }
             } else {
                 // 보안: 평문 페이지로 저장될 때는 암호화 잔존 데이터 완전 제거
                 salt = null;

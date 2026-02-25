@@ -581,6 +581,25 @@ module.exports = (dependencies) => {
 	}
 
     /**
+     * 보안: JSON을 HTML <script> data block(type="application/json")에 안전하게 삽입
+     * - HTML 파서는 script 내용에서도 </script> 시퀀스를 종료 태그로 해석할 수 있음
+     * - 따라서 JSON.stringify() 결과를 그대로 넣으면 XSS(스크립트 태그 탈출) 가능
+     * - JSON 의미는 유지한 채(<, >, &, U+2028/U+2029)만 유니코드 이스케이프
+     *
+     * 참고 개념:
+     * - Rails json_escape와 동일 계열 방어 패턴
+     * - JSON.parse 결과는 원본과 동일해야 함
+     */
+    function stringifyJsonForHtmlScriptTag(value) {
+        return JSON.stringify(value, null, 2)
+            .replace(/</g, '\\u003C')
+            .replace(/>/g, '\\u003E')
+            .replace(/&/g, '\\u0026')
+            .replace(/\u2028/g, '\\u2028')
+            .replace(/\u2029/g, '\\u2029');
+    }
+
+    /**
      * 페이지 내용을 HTML로 변환
      */
     function convertPageToHTML(pageData) {
@@ -609,7 +628,7 @@ module.exports = (dependencies) => {
     <title>${escapeHtml(pageData.title)}</title>
     <!-- NTEOK Page Metadata (DO NOT MODIFY) -->
     <script type="application/json" id="nteok-metadata">
-${JSON.stringify(pageMetadata, null, 2)}
+${stringifyJsonForHtmlScriptTag(pageMetadata)}
     </script>
     <style>
         body {
