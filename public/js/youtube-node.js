@@ -104,7 +104,7 @@ export const YoutubeBlock = Node.create({
                 'data-align': node.attrs.align || 'center',
                 'data-caption': node.attrs.caption || '',
                 'class': 'youtube-block-wrapper',
-                'style': `width: ${node.attrs.width || '100%'}; margin: 0 auto;`
+                'style': `width: ${node.attrs.width || '100%'};`
             },
             [
                 'div',
@@ -137,11 +137,6 @@ export const YoutubeBlock = Node.create({
             wrapper.contentEditable = 'false';
             wrapper.style.width = node.attrs.width || '100%';
             wrapper.setAttribute('data-align', node.attrs.align || 'center');
-
-            // 정렬에 따른 마진 설정
-            if (node.attrs.align === 'center') wrapper.style.margin = '0 auto';
-            else if (node.attrs.align === 'right') wrapper.style.marginLeft = 'auto';
-            else wrapper.style.margin = '0';
 
             let currentWidth = node.attrs.width || '100%';
             let currentAlign = node.attrs.align || 'center';
@@ -230,10 +225,6 @@ export const YoutubeBlock = Node.create({
                         if (currentNode && currentNode.type.name === this.name) {
                             currentAlign = align;
                             wrapper.setAttribute('data-align', align);
-
-                            if (align === 'center') wrapper.style.margin = '0 auto';
-                            else if (align === 'right') wrapper.style.marginLeft = 'auto';
-                            else wrapper.style.margin = '0';
 
                             alignMenu.querySelectorAll('.align-button').forEach(btn => btn.classList.remove('active'));
                             button.classList.add('active');
@@ -389,9 +380,6 @@ export const YoutubeBlock = Node.create({
                     if (updatedNode.attrs.align !== currentAlign) {
                         currentAlign = updatedNode.attrs.align || 'center';
                         wrapper.setAttribute('data-align', currentAlign);
-                        if (currentAlign === 'center') wrapper.style.margin = '0 auto';
-                        else if (currentAlign === 'right') wrapper.style.marginLeft = 'auto';
-                        else wrapper.style.margin = '0';
 
                         alignMenu.querySelectorAll('.align-button').forEach(btn => {
                              if (btn.getAttribute('data-align') === currentAlign) btn.classList.add('active');
