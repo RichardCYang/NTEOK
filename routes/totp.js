@@ -41,6 +41,30 @@ function clearTotpFailures(accountKey) {
     totpLockMap.delete(accountKey);
 }
 
+function sanitizeTempSessionId(raw) {
+    if (typeof raw !== "string") return "";
+    return raw.trim().slice(0, 128);
+}
+
+function buildStable2FAAccountKeyFromTempSessionId(sessions, tempSessionId) {
+    const sid = sanitizeTempSessionId(tempSessionId);
+    if (!sid) return "unknown";
+
+    const s = sessions.get(sid);
+    // 유효한 2FA 임시 세션이면 pendingUserId 기반의 안정 키 사용
+    if (s && s.type === "2fa" && s.pendingUserId)
+        return `uid:${String(s.pendingUserId)}`;
+
+    // 유효하지 않은 tempSessionId 요청 남발 방어용 fallback (계정 보호 목적 아님)
+    return `tmp:${sid}`;
+}
+
+function buildStable2FAAccountKeyFromSession(tempSession) {
+    if (tempSession && tempSession.pendingUserId)
+        return `uid:${String(tempSession.pendingUserId)}`;
+    return "unknown";
+}
+
 /**
  * TOTP (2FA) Routes
  *
@@ -102,7 +126,12 @@ module.exports = (dependencies) => {
         message: { error: "TOTP 인증 시도가 너무 많습니다. 잠시 후 다시 시도해 주세요." },
         keyGenerator: (req) => {
             const body = req.body || {};
-            const accountKey = String(body.tempSessionId || "unknown").slice(0, 128);
+            // 보안: tempSessionId 자체가 아니라 tempSession에 매핑된 pendingUserId 기반으로 key 구성
+            // (새 tempSession 발급으로 limit reset 우회 방지)
+            const accountKey = buildStable2FAAccountKeyFromTempSessionId(
+                sessions,
+                body.tempSessionId
+            );
             const rawIp = getClientIp(req);
             const ipKey = rawIp && rawIp !== 'unknown' ? ipKeyGenerator(rawIp, RATE_LIMIT_IPV6_SUBNET) : "noip";
             return `totp:${accountKey}:${ipKey}`;
@@ -352,16 +381,6 @@ module.exports = (dependencies) => {
      */
     router.post("/verify-login", totpVerifyLimiter, requireSameOriginForAuth, async (req, res) => {
         const { token, tempSessionId } = req.body;
-        const accountKey = String(tempSessionId || "unknown").slice(0, 128);
-
-        // 계정 단위 잠금 체크
-        const lock = assertNotLocked(accountKey);
-        if (!lock.ok) {
-            return res.status(429).json({
-                error: "TOTP 인증 실패가 누적되어 잠시 잠금되었습니다.",
-                retryAfterMs: lock.retryAfterMs
-            });
-        }
 
         try {
             if (!token || !/^\d{6}$/.test(token))
@@ -373,6 +392,17 @@ module.exports = (dependencies) => {
             const tempSession = getValid2FATempSession(req, tempSessionId);
             if (!tempSession)
                 return res.status(400).json({ error: "세션이 만료되었습니다. 다시 로그인하세요." });
+
+            const accountKey = buildStable2FAAccountKeyFromSession(tempSession);
+
+            // 계정 단위 잠금 체크 (tempSessionId가 아니라 pendingUserId 기반)
+            const lock = assertNotLocked(accountKey);
+            if (!lock.ok) {
+                return res.status(429).json({
+                    error: "TOTP 인증 실패가 누적되어 잠시 잠금되었습니다.",
+                    retryAfterMs: lock.retryAfterMs
+                });
+            }
 
             const userId = tempSession.pendingUserId;
 
@@ -504,16 +534,6 @@ module.exports = (dependencies) => {
      */
     router.post("/verify-backup-code", totpVerifyLimiter, requireSameOriginForAuth, async (req, res) => {
         const { backupCode, tempSessionId } = req.body;
-        const accountKey = String(tempSessionId || "unknown").slice(0, 128);
-
-        // 계정 단위 잠금 체크
-        const lock = assertNotLocked(accountKey);
-        if (!lock.ok) {
-            return res.status(429).json({
-                error: "백업 코드 인증 실패가 누적되어 잠시 잠금되었습니다.",
-                retryAfterMs: lock.retryAfterMs
-            });
-        }
 
         try {
             if (!backupCode)
@@ -525,6 +545,17 @@ module.exports = (dependencies) => {
             const tempSession = getValid2FATempSession(req, tempSessionId);
             if (!tempSession)
                 return res.status(400).json({ error: "세션이 만료되었습니다. 다시 로그인하세요." });
+
+            const accountKey = buildStable2FAAccountKeyFromSession(tempSession);
+
+            // 계정 단위 잠금 체크 (tempSessionId가 아니라 pendingUserId 기반)
+            const lock = assertNotLocked(accountKey);
+            if (!lock.ok) {
+                return res.status(429).json({
+                    error: "백업 코드 인증 실패가 누적되어 잠시 잠금되었습니다.",
+                    retryAfterMs: lock.retryAfterMs
+                });
+            }
 
             const userId = tempSession.pendingUserId;
 
