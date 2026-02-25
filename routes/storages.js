@@ -165,6 +165,8 @@ module.exports = (dependencies) => {
 
             res.json({
                 ...storage,
+                is_owner: 1,
+                owner_name: req.user.username,
                 createdAt: now.toISOString(),
                 updatedAt: now.toISOString()
             });
