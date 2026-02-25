@@ -58,6 +58,26 @@ module.exports = (dependencies) => {
     }
     const USERNAME_CONTROL_CHARS_RE = /[\u0000-\u001F\u007F]/;
 
+    /**
+     * 로그인 타이밍 기반 사용자 열거(CWE-208) 완화용 더미 bcrypt 해시
+     * - 존재하지 않는 사용자일 때도 bcrypt.compare()를 1회 수행하여
+     *   존재함/존재하지 않음 경로의 처리 시간 차이를 줄임
+     * - 기본값은 cost=12 해시(서버 기본 BCRYPT_SALT_ROUNDS와 맞춤)
+     * - 운영 환경에서 BCRYPT_SALT_ROUNDS를 다르게 쓰는 경우, 동일 cost의 해시로
+     *   DUMMY_LOGIN_BCRYPT_HASH 환경변수를 설정하는 것을 권장
+     */
+    const DUMMY_LOGIN_BCRYPT_HASH =
+        process.env.DUMMY_LOGIN_BCRYPT_HASH ||
+        '$2b$12$IfuyBUTMgc9Y2heW2QrSjuqKjPP3nkXvKvTnSxfpVNIVqdzuXvbsS'; // "NTEOK::dummy-login-password"
+
+    async function consumeBcryptCostForTiming(password) {
+        try {
+            await bcrypt.compare(password, DUMMY_LOGIN_BCRYPT_HASH);
+        } catch (_) {
+            // 타이밍 완화용 방어 코드 실패가 로그인 동작 자체를 깨지 않도록 무시
+        }
+    }
+
     function getClientIp(req) {
         return (
             req.clientIp ||
@@ -146,6 +166,10 @@ module.exports = (dependencies) => {
             );
 
             if (!rows.length) {
+                // 보안: 타이밍 기반 사용자 열거 완화 -> 존재하지 않는 사용자여도 bcrypt 비용을 소모하여
+                // 존재하는 사용자(비밀번호 불일치) 경로와 처리 시간 차이를 줄임
+                await consumeBcryptCostForTiming(password);
+
                 // 로그인 로그 기록
                 await recordLoginAttempt(pool, {
                     userId: null,
