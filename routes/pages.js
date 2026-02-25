@@ -597,9 +597,44 @@ module.exports = (dependencies) => {
         throw new Error("Too many redirects");
     }
 
-    function blockCrossSiteFetch(req, res, next) {
+    // 인증이 필요한 outbound 프록시/메타데이터 엔드포인트 보호용:
+    // - same-site(서브도메인)는 SameSite 쿠키가 전송될 수 있으므로 허용하지 않음
+    // - same-origin만 허용
+    // - Fetch Metadata 미지원/누락 환경에서는 Origin/Referer로 보수적 fallback
+    function requireSameOriginForOutboundProxy(req, res, next) {
         const sfs = String(req.headers["sec-fetch-site"] || "").toLowerCase();
-        if (sfs && !["same-origin", "same-site", "none"].includes(sfs)) return res.status(403).json({ error: "Forbidden" });
+
+        // modern browsers: Sec-Fetch-Site는 브라우저가 세팅하는 forbidden header
+        if (sfs) {
+            if (sfs !== "same-origin")
+                return res.status(403).json({ error: "Forbidden" });
+            return next();
+        }
+
+        const expectedOrigin = `${req.protocol}://${req.get("host")}`;
+        const origin = String(req.headers.origin || "").trim();
+        const referer = String(req.headers.referer || "").trim();
+
+        const hasSameOrigin = (raw) => {
+            if (!raw) return false;
+            try {
+                const u = new URL(raw);
+                return u.origin === expectedOrigin;
+            } catch {
+                return false;
+            }
+        };
+
+        // 둘 다 없으면(구형/비정상 클라이언트) 보수적으로 차단
+        // 이 엔드포인트는 브라우저 앱 내부에서만 호출되므로 호환성 영향이 작음
+        if (!origin && !referer)
+            return res.status(403).json({ error: "Forbidden" });
+
+        if (origin && !hasSameOrigin(origin))
+            return res.status(403).json({ error: "Forbidden" });
+
+        if (referer && !hasSameOrigin(referer))
+            return res.status(403).json({ error: "Forbidden" });
         return next();
     }
 
@@ -1688,7 +1723,7 @@ module.exports = (dependencies) => {
      * 북마크 메타데이터 추출 (SSRF 방어 적용)
      * POST /api/pages/:id/bookmark-metadata
      */
-    router.post("/:id/bookmark-metadata", authMiddleware, outboundProxyLimiter, async (req, res) => {
+    router.post("/:id/bookmark-metadata", authMiddleware, requireSameOriginForOutboundProxy, outboundProxyLimiter, async (req, res) => {
         const { url } = req.body;
         const pageId = req.params.id;
         const userId = req.user.id;
@@ -1712,7 +1747,7 @@ module.exports = (dependencies) => {
      * 이미지 프록시 (SSRF 방어 및 CSP 우회용)
      * GET /api/pages/proxy/image?url=...
      */
-    router.get("/proxy/image", authMiddleware, outboundProxyLimiter, async (req, res) => {
+    router.get("/proxy/image", authMiddleware, requireSameOriginForOutboundProxy, outboundProxyLimiter, async (req, res) => {
         const urlStr = (typeof req.query.url === "string") ? req.query.url : "";
         if (!urlStr) return res.status(400).end();
 
