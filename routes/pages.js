@@ -322,8 +322,6 @@ module.exports = (dependencies) => {
 	}
 
     router.get("/covers/user", authMiddleware, async (req, res) => {
-
-    router.get("/covers/user", authMiddleware, async (req, res) => {
         const userId = req.user.id;
         try {
             const userCoversDir = path.join(__dirname, '..', 'covers', String(userId));

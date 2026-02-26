@@ -99,6 +99,9 @@ import { FileBlock } from './file-node.js';
 // CalendarBlock 노드 import
 import { CalendarBlock } from './calendar-node.js';
 
+// TabBlock / TabItem 노드 import
+import { TabBlock, TabItem } from './tab-node.js';
+
 // DragHandle extension import
 import { DragHandle } from './drag-handle-extension.js';
 
@@ -500,6 +503,15 @@ export const SLASH_ITEMS = [
         icon: "📅",
         command(editor) {
             editor.chain().focus().setCalendarBlock().run();
+        }
+    },
+    {
+        id: "tabView",
+        label: "탭뷰",
+        description: "탭 형식으로 내용을 정리하는 블록",
+        icon: "⊟",
+        command(editor) {
+            editor.chain().focus().setTabBlock().run();
         }
     }
 ];
@@ -1308,6 +1320,8 @@ export function initEditor() {
             YoutubeBlock,
             FileBlock,
             CalendarBlock,
+            TabItem,
+            TabBlock,
             DragHandle,
             ImagePaste,
             Placeholder.configure({
