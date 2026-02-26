@@ -47,8 +47,8 @@ export async function fetchPageList() {
         const url = `/api/pages?storageId=${encodeURIComponent(state.currentStorageId)}`;
         console.log(`페이지 목록 요청: GET ${url}`);
         const data = await api.get(url);
-        
-        applyPagesData(data);
+
+        applyPagesData(data, state.currentStorageIsEncrypted);
 
         if (!state.pages.length) {
             if (state.editor) {
@@ -356,14 +356,14 @@ export async function loadPage(id) {
         if (page.coverImage) showCover(page.coverImage, page.coverPosition || 50);
         else hideCover();
 
-        // 암호화된 페이지는 동기화 시 주의 필요 (평문 동기화 방지)
-        // 여기서는 E2EE 환경에서는 실시간 협업(Yjs)을 비활성화하거나 암호화된 상태로 해야 함.
-        // 현재 구현은 단순화를 위해 E2EE 페이지는 실시간 동기화 제외 또는 로컬 전용으로 처리
         if (!page.isEncrypted) {
-            startPageSync(page.id, false);
+            // 일반 페이지: 표준 Yjs 동기화
+            startPageSync(page.id, false, false);
+        } else if (state.currentStorageIsEncrypted && window.cryptoManager.getStorageKey()) {
+            // 저장소 E2EE 암호화 페이지: 클라이언트 사이드 암호화 실시간 협업
+            startPageSync(page.id, true, true);
         } else {
-            // 암호화 페이지는 Yjs 동기화 중단 (서버가 평문을 알면 안되므로)
-            // 추후 Yjs Webrtc Provider + Client-side Encryption 구현 필요
+            // 페이지 개별 암호화(비밀번호 설정): 서버 실시간 동기화 미지원
             stopPageSync();
         }
         

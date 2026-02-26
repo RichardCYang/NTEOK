@@ -1583,6 +1583,25 @@ async function initDb() {
         }
     }
 
+    // ============================================================
+    // 마이그레이션: 저장소 E2EE 페이지 share_allowed 정정
+    // - is_encrypted=1, encryption_salt IS NULL → 저장소 키로 암호화된 페이지
+    //   → 참여자에게 보여야 하므로 share_allowed=1 로 일괄 업데이트
+    // - is_encrypted=1, encryption_salt IS NOT NULL → 페이지 개별 암호화
+    //   → 이미 share_allowed=0 이어야 하므로 변경 없음 (WHERE 절로 제외)
+    // ============================================================
+    try {
+        const [migRows] = await pool.execute(
+            `UPDATE pages SET share_allowed = 1
+             WHERE is_encrypted = 1 AND encryption_salt IS NULL AND share_allowed = 0`
+        );
+        if (migRows.affectedRows > 0) {
+            console.log(`✓ E2EE 페이지 share_allowed 마이그레이션 완료 (${migRows.affectedRows}건 업데이트)`);
+        }
+    } catch (error) {
+        console.error('E2EE 페이지 share_allowed 마이그레이션 중 오류:', error);
+    }
+
     // users 가 하나도 없으면 기본 관리자 계정 생성
     const [userRows] = await pool.execute("SELECT COUNT(*) AS cnt FROM users");
     const userCount = userRows[0].cnt;

@@ -27,6 +27,10 @@ let updateTimeout = null;
 let yjsPmPlugins = [];				// y-prosemirror(동시편집) 플러그인 추적/해제용
 let yjsPmPluginKeys = new Set();	// y-prosemirror(동시편집) 플러그인 중복 확인용
 
+// E2EE (저장소 암호화) 동기화 상태
+let isE2eeSync = false;				// 현재 페이지가 E2EE 모드인지 여부
+let e2eeStatePushTimeout = null;	// 주기적 상태 스냅샷 서버 저장용 타이머
+
 // 커서 공유 상태
 // 서버와 동일한 상한(기본값). 운영에서 서버(.env) 값 변경 시 함께 맞추는 것을 권장
 const WS_MAX_YJS_UPDATE_BYTES = 512 * 1024;        // 512KB
@@ -208,11 +212,18 @@ function handleWebSocketMessage(message) {
         case 'init':
             handleInit(data);
             break;
+        case 'init-e2ee':
+            // async 핸들러 — Promise rejection은 catch로 처리
+            handleInitE2EE(data).catch(e => console.error('[E2EE] init 처리 오류:', e));
+            break;
         case 'reconnected':
             console.log('[WS] 재연결 완료 - 기존 상태 유지');
             break;
         case 'yjs-update':
             handleYjsUpdate(data);
+            break;
+        case 'yjs-update-e2ee':
+            handleYjsUpdateE2EEEvent(data).catch(e => console.error('[E2EE] update 처리 오류:', e));
             break;
         case 'user-joined':
             handleUserJoined(data);
@@ -248,13 +259,27 @@ function handleWebSocketMessage(message) {
 
 /**
  * 페이지 동기화 시작
+ * @param {string} pageId - 페이지 ID
+ * @param {boolean} isPageEncrypted - 페이지 is_encrypted 플래그
+ * @param {boolean} isStorageEncrypted - 페이지가 속한 저장소의 E2EE 여부
  */
-export async function startPageSync(pageId, isEncrypted) {
+export async function startPageSync(pageId, isPageEncrypted, isStorageEncrypted = false) {
     stopPageSync();
-    // 암호화 페이지는 동기화 비활성화
-    if (isEncrypted) {
-        showInfo('암호화된 페이지는 실시간 협업이 지원되지 않습니다.');
-        return;
+
+    if (isPageEncrypted) {
+        if (isStorageEncrypted) {
+            // 저장소 E2EE: 저장소 키가 메모리에 있는 경우만 허용
+            const storageKey = window.cryptoManager.getStorageKey();
+            if (!storageKey) {
+                showInfo('저장소 키가 없어 실시간 협업을 시작할 수 없습니다. 저장소를 다시 열어주세요.');
+                return;
+            }
+            isE2eeSync = true;
+        } else {
+            // 페이지 개별 암호화: 동기화 비활성화
+            showInfo('암호화된 페이지는 실시간 협업이 지원되지 않습니다.');
+            return;
+        }
     }
 
     // 기존 연결 정리
@@ -279,14 +304,18 @@ export async function startPageSync(pageId, isEncrypted) {
     // Yjs 변경 감지 → 서버 전송
     ydoc.on('update', (update, origin) => {
         // 로컬 변경사항만 서버로 전송 (remote는 제외)
-        if (origin !== 'remote') {
-            sendYjsUpdate(pageId, update);
+        if (origin !== 'remote' && origin !== 'seed') {
+            if (isE2eeSync) {
+                sendYjsUpdateE2EE(pageId, update);
+            } else {
+                sendYjsUpdate(pageId, update);
+            }
         }
     });
 }
 
 /**
- * 페이지 구독
+ * 페이지 구독 (일반 또는 E2EE 모드)
  */
 function subscribePage(pageId) {
     if (!ws || ws.readyState !== WebSocket.OPEN) {
@@ -294,8 +323,9 @@ function subscribePage(pageId) {
         return;
     }
 
+    const type = isE2eeSync ? 'subscribe-page-e2ee' : 'subscribe-page';
     ws.send(JSON.stringify({
-        type: 'subscribe-page',
+        type,
         payload: {
             pageId,
             isReconnect: false
@@ -310,6 +340,14 @@ export function stopPageSync() {
     const pageIdToUnsubscribe = currentPageId;
     currentPageId = null;
     state.currentPageId = null;
+
+    // E2EE 상태 정리
+    isE2eeSync = false;
+    if (e2eeStatePushTimeout) {
+        clearTimeout(e2eeStatePushTimeout);
+        e2eeStatePushTimeout = null;
+    }
+
 	detachYjsProsemirrorBinding();
 	// setupEditorBindingWithXmlFragment에서 붙인 스냅샷 핸들러 정리
 	if (state.editor && state.editor._snapshotHandler) {
@@ -484,6 +522,14 @@ function handleYjsUpdate(data) {
 function handleUserJoined(data) {
     try {
         showUserNotification(`${data.username}님이 입장했습니다.`, data.color);
+
+        // E2EE 모드: 새 참여자가 입장하면 현재 풀 스테이트를 update로 전송
+        // → 새 참여자가 서버 스냅샷보다 최신 상태를 받을 수 있게 함
+        if (isE2eeSync && currentPageId && ydoc) {
+            sendYjsFullStateAsUpdate(currentPageId).catch(e =>
+                console.error('[E2EE] 풀 스테이트 전송 오류:', e)
+            );
+        }
     } catch (error) {
         console.error('[WS] user-joined 처리 오류:', error);
     }
@@ -1235,5 +1281,194 @@ function removeCursor(clientId) {
     if (element) {
         element.remove();
         cursorState.remoteCursors.delete(clientId);
+    }
+}
+
+// ==================== E2EE (저장소 암호화) 실시간 협업 헬퍼 ====================
+
+/**
+ * Uint8Array/ArrayBuffer를 AES-GCM으로 암호화 (IV 앞에 붙임)
+ */
+async function encryptBytes(data, key) {
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const plainBytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+    const ciphertext = await crypto.subtle.encrypt(
+        { name: 'AES-GCM', iv, tagLength: 128 },
+        key,
+        plainBytes
+    );
+    const combined = new Uint8Array(12 + ciphertext.byteLength);
+    combined.set(iv, 0);
+    combined.set(new Uint8Array(ciphertext), 12);
+    return combined;
+}
+
+/**
+ * IV(앞 12바이트) + 암호문을 AES-GCM으로 복호화
+ */
+async function decryptBytes(combinedData, key) {
+    const combined = combinedData instanceof Uint8Array ? combinedData : new Uint8Array(combinedData);
+    const iv = combined.slice(0, 12);
+    const ciphertext = combined.slice(12);
+    const decrypted = await crypto.subtle.decrypt(
+        { name: 'AES-GCM', iv, tagLength: 128 },
+        key,
+        ciphertext
+    );
+    return new Uint8Array(decrypted);
+}
+
+/**
+ * E2EE 암호화 Yjs 증분 업데이트 전송
+ */
+async function sendYjsUpdateE2EE(pageId, update) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+    const storageKey = window.cryptoManager.getStorageKey();
+    if (!storageKey) {
+        console.warn('[E2EE] 저장소 키 없음 — 업데이트 전송 불가');
+        return;
+    }
+
+    if (update && (update.byteLength || update.length) > WS_MAX_YJS_UPDATE_BYTES) {
+        console.warn('[E2EE] yjs-update-e2ee 크기 초과 — 클라이언트 차단');
+        return;
+    }
+
+    try {
+        const encrypted = await encryptBytes(update, storageKey);
+        ws.send(JSON.stringify({
+            type: 'yjs-update-e2ee',
+            payload: { pageId, update: uint8ToBase64(encrypted) }
+        }));
+
+        // 편집 후 3초 디바운스 → 서버에 전체 상태 스냅샷 저장
+        scheduleE2EEStatePush(pageId);
+    } catch (e) {
+        console.error('[E2EE] 업데이트 암호화 실패:', e);
+    }
+}
+
+/**
+ * E2EE 전체 상태 서버 저장 예약 (디바운스)
+ * - 서버는 이 스냅샷을 늦게 입장하는 참여자의 초기 상태로 사용
+ */
+function scheduleE2EEStatePush(pageId) {
+    if (e2eeStatePushTimeout) return; // 이미 예약됨
+    e2eeStatePushTimeout = setTimeout(async () => {
+        e2eeStatePushTimeout = null;
+        await sendYjsStateE2EE(pageId);
+    }, 3000);
+}
+
+/**
+ * E2EE 전체 Yjs 상태를 서버에 저장 (늦은 참여자 초기 상태 제공)
+ */
+async function sendYjsStateE2EE(pageId) {
+    if (!ws || ws.readyState !== WebSocket.OPEN || !ydoc || !pageId) return;
+
+    const storageKey = window.cryptoManager.getStorageKey();
+    if (!storageKey) return;
+
+    try {
+        const stateUpdate = Y.encodeStateAsUpdate(ydoc);
+        const encrypted = await encryptBytes(stateUpdate, storageKey);
+        ws.send(JSON.stringify({
+            type: 'yjs-state-e2ee',
+            payload: { pageId, encryptedState: uint8ToBase64(encrypted) }
+        }));
+        console.log('[E2EE] 전체 상태 서버에 저장 완료');
+    } catch (e) {
+        console.error('[E2EE] 상태 저장 실패:', e);
+    }
+}
+
+/**
+ * E2EE 전체 상태를 update로 브로드캐스트 (새 참여자 실시간 동기화용)
+ * - user-joined 이벤트 수신 시 기존 참여자가 최신 상태를 전달
+ */
+async function sendYjsFullStateAsUpdate(pageId) {
+    if (!ws || ws.readyState !== WebSocket.OPEN || !ydoc || !pageId) return;
+
+    const storageKey = window.cryptoManager.getStorageKey();
+    if (!storageKey) return;
+
+    try {
+        const stateUpdate = Y.encodeStateAsUpdate(ydoc);
+        const encrypted = await encryptBytes(stateUpdate, storageKey);
+        ws.send(JSON.stringify({
+            type: 'yjs-update-e2ee',
+            payload: { pageId, update: uint8ToBase64(encrypted) }
+        }));
+        console.log('[E2EE] 풀 스테이트를 새 참여자에게 전달');
+    } catch (e) {
+        console.error('[E2EE] 풀 스테이트 전달 실패:', e);
+    }
+}
+
+/**
+ * E2EE init 이벤트 처리
+ * - 서버에서 암호화 상태(스냅샷)를 받아 복호화 후 Yjs 문서에 적용
+ * - 스냅샷이 없으면 현재 에디터 HTML로 Yjs 문서 초기화
+ */
+async function handleInitE2EE(data) {
+    try {
+        if (data.encryptedState) {
+            const storageKey = window.cryptoManager.getStorageKey();
+            if (!storageKey) {
+                console.warn('[E2EE] 저장소 키 없음 — init 상태 복호화 불가');
+            } else {
+                const combined = base64ToUint8(data.encryptedState);
+                const stateUpdate = await decryptBytes(combined, storageKey);
+                Y.applyUpdate(ydoc, stateUpdate, 'remote');
+                console.log('[E2EE] 서버 스냅샷 복호화 및 적용 완료');
+            }
+        }
+
+        // 서버 스냅샷이 없거나 fragment가 비어있으면 현재 에디터 HTML로 시드
+        seedYjsFromCurrentEditorHtmlIfNeeded();
+
+        // 사용자 정보 awareness 설정
+        if (cursorState.awareness && data.userId && data.username && data.color) {
+            cursorState.localUserId = data.userId;
+            cursorState.awareness.setLocalStateField('user', {
+                userId: data.userId,
+                username: data.username,
+                name: data.username,
+                color: data.color
+            });
+        }
+
+        // Yjs <-> ProseMirror 바인딩
+        setupEditorBindingWithXmlFragment();
+
+        // 서버에 현재 상태 스냅샷 저장 (늦은 참여자를 위한 초기 상태)
+        await sendYjsStateE2EE(currentPageId);
+
+        console.log('[E2EE] 초기화 완료');
+    } catch (error) {
+        console.error('[E2EE] init 처리 오류:', error);
+        // 오류 시에도 바인딩은 시도
+        try { seedYjsFromCurrentEditorHtmlIfNeeded(); } catch (_) {}
+        setupEditorBindingWithXmlFragment();
+    }
+}
+
+/**
+ * E2EE 암호화 Yjs 업데이트 수신 처리
+ */
+async function handleYjsUpdateE2EEEvent(data) {
+    try {
+        if (!ydoc) return;
+        const storageKey = window.cryptoManager.getStorageKey();
+        if (!storageKey) {
+            console.warn('[E2EE] 저장소 키 없음 — 업데이트 복호화 불가');
+            return;
+        }
+        const combined = base64ToUint8(data.update);
+        const stateUpdate = await decryptBytes(combined, storageKey);
+        Y.applyUpdate(ydoc, stateUpdate, 'remote');
+    } catch (error) {
+        console.error('[E2EE] 업데이트 복호화/적용 오류:', error);
     }
 }

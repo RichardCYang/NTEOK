@@ -810,8 +810,16 @@ module.exports = (dependencies) => {
             }
 
             const content = isEncrypted ? '' : sanitizeHtmlContent(req.body.content || "<p></p>");
-            await pool.execute(`INSERT INTO pages (id, user_id, parent_id, title, content, sort_order, created_at, updated_at, storage_id, is_encrypted, encryption_salt, encrypted_content) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                [id, userId, parentId, title, content, sortOrder, nowStr, nowStr, storageId, isEncrypted, salt, encContent]);
+
+            // share_allowed 결정:
+            // - 저장소 레벨 E2EE (encryptionSalt 없음): 저장소 참여자 모두 볼 수 있어야 함 → 1
+            //   (내용은 저장소 키 없이 복호화 불가 → 실질적 접근 제어는 클라이언트 측 암호화)
+            // - 페이지 개별 암호화 (encryptionSalt 있음): 페이지 비밀번호 소유자만 → 0
+            // - 평문: pageSqlPolicy에서 is_encrypted=1 조건 불충족 → 0이어도 무관
+            const shareAllowed = (isEncrypted && !salt) ? 1 : 0;
+
+            await pool.execute(`INSERT INTO pages (id, user_id, parent_id, title, content, sort_order, created_at, updated_at, storage_id, is_encrypted, encryption_salt, encrypted_content, share_allowed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [id, userId, parentId, title, content, sortOrder, nowStr, nowStr, storageId, isEncrypted, salt, encContent, shareAllowed]);
 
             if (!isEncrypted && content)
                 await syncPageFileRefs(id, userId, content);
@@ -892,8 +900,12 @@ module.exports = (dependencies) => {
             const icon = req.body.icon !== undefined ? validateAndNormalizeIcon(req.body.icon) : existing.icon;
             const hPadding = req.body.horizontalPadding !== undefined ? req.body.horizontalPadding : existing.horizontal_padding;
             const nowStr = formatDateForDb(new Date());
-            let sql = `UPDATE pages SET title=?, content=?, is_encrypted=?, encryption_salt=?, encrypted_content=?, icon=?, horizontal_padding=?, updated_at=?`;
-            const params = [title, content, isEncrypted, salt, encContent, icon, hPadding, nowStr];
+            // share_allowed 결정:
+            // - 저장소 레벨 E2EE (encryptionSalt 없음): 저장소 참여자 모두 볼 수 있어야 함 → 1
+            // - 페이지 개별 암호화 (encryptionSalt 있음): 페이지 비밀번호 소유자만 → 0
+            const shareAllowed = (Number(isEncrypted) === 1 && !salt) ? 1 : 0;
+            let sql = `UPDATE pages SET title=?, content=?, is_encrypted=?, encryption_salt=?, encrypted_content=?, icon=?, horizontal_padding=?, updated_at=?, share_allowed=?`;
+            const params = [title, content, isEncrypted, salt, encContent, icon, hPadding, nowStr, shareAllowed];
             // 보안: 암호화 페이지는 서버/DB 어디에도 평문이 남지 않아야 함
             // - yjs_state는 협업 편집 상태(전체 문서 스냅샷)를 그대로 담을 수 있어(평문 잔존) 암호화 보안을 훼손
             // - 따라서 (1) 콘텐츠가 직접 업데이트되거나, (2) 암호화 상태가 바뀌거나, (3) 암호화 상태인 경우에는

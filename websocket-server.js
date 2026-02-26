@@ -42,6 +42,10 @@ const wsConnections = {
 };
 
 const yjsDocuments = new Map();
+
+// E2EE 암호화 저장소 페이지의 encrypted Yjs state 보관 (서버는 평문 불가)
+// pageId -> { encryptedState: string (base64), storedAt: number }
+const yjsE2EEStates = new Map();
 const USER_COLORS = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A', '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E2', '#F8B195', '#C06C84'];
 const wsConnectionLimiter = new Map();
 const WS_RATE_LIMIT_WINDOW = 60 * 1000;
@@ -182,7 +186,7 @@ function consumeWsMessageBudget(ws, kind) {
     }
     ws._msgRate.total++;
     if (ws._msgRate.total > WS_MSG_RATE_MAX) return false;
-    if (kind === "yjs-update") { ws._msgRate.yjs++; if (ws._msgRate.yjs > WS_YJS_RATE_MAX) return false; }
+    if (kind === "yjs-update" || kind === "yjs-update-e2ee" || kind === "yjs-state-e2ee") { ws._msgRate.yjs++; if (ws._msgRate.yjs > WS_YJS_RATE_MAX) return false; }
     if (kind === "awareness-update") { ws._msgRate.awareness++; if (ws._msgRate.awareness > WS_AWARENESS_RATE_MAX) return false; }
     if (kind === "bad-json") { ws._msgRate.badJson++; if (ws._msgRate.badJson > 20) return false; }
     return true;
@@ -832,6 +836,10 @@ async function handleWebSocketMessage(ws, data, pool, sanitizeHtmlContent, getSe
         case 'subscribe-user': handleSubscribeUser(ws, payload); break;
         case 'yjs-update': await handleYjsUpdate(ws, payload, pool, sanitizeHtmlContent, pageSqlPolicy); break;
         case 'awareness-update': await handleAwarenessUpdate(ws, payload, pool, pageSqlPolicy); break;
+        // E2EE (저장소 암호화) 전용 핸들러
+        case 'subscribe-page-e2ee': await handleSubscribePageE2EE(ws, payload, pool, pageSqlPolicy); break;
+        case 'yjs-update-e2ee': await handleYjsUpdateE2EE(ws, payload, pool, pageSqlPolicy); break;
+        case 'yjs-state-e2ee': await handleYjsStateE2EE(ws, payload, pool, pageSqlPolicy); break;
     }
 }
 
@@ -925,6 +933,151 @@ function handleUnsubscribePage(ws, payload, pool, sanitizeHtmlContent) {
     }
 }
 
+// ==================== E2EE (저장소 레벨 암호화) 전용 핸들러 ====================
+
+/**
+ * E2EE 페이지 구독 핸들러
+ * - 저장소가 암호화된 경우에만 허용 (page.is_encrypted=1 AND storage.is_encrypted=1)
+ * - 서버는 암호문만 중계하며 내용을 알 수 없음 (True E2EE)
+ */
+async function handleSubscribePageE2EE(ws, payload, pool, pageSqlPolicy) {
+    const { pageId } = payload;
+    const userId = ws.userId;
+    try {
+        const vis = (pageSqlPolicy && typeof pageSqlPolicy.andVisible === 'function')
+            ? pageSqlPolicy.andVisible({ alias: 'p', viewerUserId: userId })
+            : { sql: ' AND NOT (p.is_encrypted = 1 AND p.share_allowed = 0 AND p.user_id != ?)', params: [userId] };
+
+        const [rows] = await pool.execute(
+            `SELECT p.id, p.user_id, p.is_encrypted, p.share_allowed, p.storage_id,
+                    s.is_encrypted AS storage_is_encrypted
+             FROM pages p
+             JOIN storages s ON p.storage_id = s.id
+             WHERE p.id = ?
+               AND p.deleted_at IS NULL
+             ${vis.sql}`,
+            [pageId, ...vis.params]
+        );
+
+        if (!rows.length) {
+            ws.send(JSON.stringify({ event: 'error', data: { message: 'Page not found' } }));
+            return;
+        }
+
+        const page = rows[0];
+
+        // 보안: 페이지와 저장소 모두 암호화된 경우에만 E2EE 구독 허용
+        if (page.is_encrypted !== 1 || page.storage_is_encrypted !== 1) {
+            ws.send(JSON.stringify({ event: 'error', data: { message: 'Page is not E2EE encrypted' } }));
+            return;
+        }
+
+        const permission = await getStoragePermission(pool, userId, page.storage_id);
+        if (!permission) {
+            ws.send(JSON.stringify({ event: 'error', data: { message: 'Page not found' } }));
+            return;
+        }
+
+        // 방어적 재검증
+        if (page.share_allowed === 0 && Number(page.user_id) !== Number(userId)) {
+            ws.send(JSON.stringify({ event: 'error', data: { message: 'Page not found' } }));
+            return;
+        }
+
+        if (!wsConnections.pages.has(pageId)) wsConnections.pages.set(pageId, new Set());
+        const conns = wsConnections.pages.get(pageId);
+        // 중복 연결 제거
+        for (const c of Array.from(conns)) {
+            if (c.userId === userId && c.ws !== ws) { conns.delete(c); try { c.ws.close(1008, 'Duplicate'); } catch (_) {} }
+        }
+        const color = getUserColor(userId);
+        // isE2ee: true — ensureActivePageAccess에서 E2EE 연결 허용 식별자
+        conns.add({ ws, userId, username: ws.username, color, permission, storageId: page.storage_id, permCheckedAt: Date.now(), isE2ee: true });
+
+        // 저장된 암호화 상태 전송 (있으면 최신 스냅샷 전달, 없으면 null)
+        const storedEntry = yjsE2EEStates.get(String(pageId));
+        const encryptedState = storedEntry ? storedEntry.encryptedState : null;
+
+        ws.send(JSON.stringify({
+            event: 'init-e2ee',
+            data: { encryptedState, userId, username: ws.username, color, permission }
+        }));
+
+        // 기존 참여자들에게 user-joined 알림 (그들이 최신 state를 새 참여자에게 전달)
+        wsBroadcastToPage(pageId, 'user-joined', { userId, username: ws.username, color, permission }, userId);
+    } catch (e) {
+        ws.send(JSON.stringify({ event: 'error', data: { message: 'Failed' } }));
+    }
+}
+
+/**
+ * E2EE Yjs 업데이트 중계 핸들러
+ * - 서버는 암호문을 검증하지 않고 단순 중계
+ * - 크기/권한 제한은 그대로 적용
+ */
+async function handleYjsUpdateE2EE(ws, payload, pool, pageSqlPolicy) {
+    const { pageId, update } = payload || {};
+    try {
+        if (!pageId || typeof update !== 'string' || !isSubscribedToPage(ws, pageId)) return;
+
+        const conns = wsConnections.pages.get(pageId);
+        const myConn = Array.from(conns).find(c => c.ws === ws);
+        if (!myConn || !myConn.isE2ee) return;
+
+        // 권한 재검증 (E2EE라도 편집 권한 필요)
+        const freshPerm = await refreshConnPermission(pool, myConn, { force: true });
+        if (!freshPerm) {
+            revokePageSubscription(ws, pageId, conns, myConn, 'storage-access-revoked');
+            return;
+        }
+        if (!['EDIT', 'ADMIN'].includes(freshPerm)) return;
+
+        // 크기 제한
+        if (update.length > WS_MAX_YJS_UPDATE_B64_CHARS) return;
+        const updateBuf = Buffer.from(update, 'base64');
+        if (updateBuf.length > WS_MAX_YJS_UPDATE_BYTES) return;
+
+        // 암호문 중계 (내용 검증 불가/불필요 — 서버는 키 없음)
+        wsBroadcastToPage(pageId, 'yjs-update-e2ee', { update }, ws.userId);
+    } catch (e) {}
+}
+
+/**
+ * E2EE 전체 상태 스냅샷 저장 핸들러
+ * - 클라이언트가 주기적으로 전체 암호화 상태를 서버에 저장 (늦게 입장하는 참여자를 위한 초기 상태)
+ * - 브로드캐스트 없음; 서버 내부 캐시에만 저장
+ */
+async function handleYjsStateE2EE(ws, payload, pool, pageSqlPolicy) {
+    const { pageId, encryptedState } = payload || {};
+    try {
+        if (!pageId || typeof encryptedState !== 'string' || !isSubscribedToPage(ws, pageId)) return;
+
+        const conns = wsConnections.pages.get(pageId);
+        const myConn = Array.from(conns).find(c => c.ws === ws);
+        if (!myConn || !myConn.isE2ee) return;
+
+        // 크기 제한 (state는 update보다 클 수 있으므로 state용 상한 적용)
+        const maxStateB64Chars = Math.ceil(WS_MAX_YJS_STATE_BYTES / 3) * 4 + 8;
+        if (encryptedState.length > maxStateB64Chars) return;
+
+        // 저장 (서버는 내용 모름 — 단순 보관)
+        yjsE2EEStates.set(String(pageId), { encryptedState, storedAt: Date.now() });
+    } catch (e) {}
+}
+
+/**
+ * 비활성 E2EE 상태 정리 (메모리 누수 방지)
+ */
+function cleanupInactiveE2EEStates() {
+    const now = Date.now();
+    const TIMEOUT = 24 * 60 * 60 * 1000; // 24시간 미접근 시 정리
+    yjsE2EEStates.forEach((entry, pageId) => {
+        if (now - entry.storedAt > TIMEOUT) {
+            yjsE2EEStates.delete(pageId);
+        }
+    });
+}
+
 async function handleSubscribeStorage(ws, payload, pool) {
     const { storageId } = payload;
     const userId = ws.userId;
@@ -1007,9 +1160,11 @@ async function ensureActivePageAccess(pool, pageSqlPolicy, pageId, myConn, opts 
     if (!freshPerm)
         return { ok: false, reason: 'storage-access-revoked' };
 
-    // 암호화 페이지는 실시간 협업 금지 정책 유지
-    if (Number(page.is_encrypted) === 1)
-        return { ok: false, reason: 'encrypted-page-no-realtime' };
+    // 암호화 페이지: E2EE 모드로 구독된 연결만 허용 (저장소 암호화), 그 외는 차단
+    if (Number(page.is_encrypted) === 1) {
+        if (!myConn.isE2ee)
+            return { ok: false, reason: 'encrypted-page-no-realtime' };
+    }
 
     return { ok: true, permission: freshPerm, page };
 }
@@ -1213,7 +1368,7 @@ function cleanupWebSocketConnection(ws, pool, sanitizeHtmlContent) {
 
 function startRateLimitCleanup() { return setInterval(() => { const now = Date.now(); wsConnectionLimiter.forEach((l, ip) => { if (now > l.resetTime) wsConnectionLimiter.delete(ip); }); }, 300000); }
 
-function startInactiveConnectionsCleanup(pool, sanitizeHtmlContent) { return setInterval(() => cleanupInactiveConnections(pool, sanitizeHtmlContent), 600000); }
+function startInactiveConnectionsCleanup(pool, sanitizeHtmlContent) { return setInterval(() => { cleanupInactiveConnections(pool, sanitizeHtmlContent); cleanupInactiveE2EEStates(); }, 600000); }
 
 
 
@@ -1254,4 +1409,4 @@ function wsKickUserFromStorage(storageId, targetUserId, closeCode = 1008, reason
     if (userConns) for (const c of Array.from(userConns)) { try { c.ws.close(closeCode, reason); } catch (e) {} }
 }
 
-module.exports = { initWebSocketServer, wsBroadcastToPage, wsBroadcastToStorage, wsBroadcastToUser, startRateLimitCleanup, startInactiveConnectionsCleanup, wsConnections, yjsDocuments, saveYjsDocToDatabase, wsCloseConnectionsForSession, wsCloseConnectionsForPage, wsKickUserFromStorage, extractFilesFromContent };
+module.exports = { initWebSocketServer, wsBroadcastToPage, wsBroadcastToStorage, wsBroadcastToUser, startRateLimitCleanup, startInactiveConnectionsCleanup, wsConnections, yjsDocuments, yjsE2EEStates, saveYjsDocToDatabase, wsCloseConnectionsForSession, wsCloseConnectionsForPage, wsKickUserFromStorage, extractFilesFromContent };
