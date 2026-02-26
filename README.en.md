@@ -17,7 +17,7 @@ Self-Hostable Web-Based Note-Taking Application
 ### Key Features
 
 - **Markdown Editor**: Tiptap-based block editor with various block type support
-- **Diverse Block Types**: Paragraph, heading, lists, checklist, image, code, math, board, bookmark, callout, toggle, YouTube embed, and more
+- **Diverse Block Types**: Paragraph, heading, lists, checklist, image, code, math, board, callout, toggle, YouTube embed, and more
 - **End-to-End Encryption**: AES-256-GCM client-side encryption
 - **Storage Sharing**: User collaboration and link sharing
 - **Hierarchical Structure**: Parent-child page relationships
@@ -42,13 +42,12 @@ Self-Hostable Web-Based Note-Taking Application
 - Account deletion
 
 ### Note Editing
-- **Block Types**: Paragraph, Heading (H1-H6), Lists (bullet/ordered), Image, Blockquote, Code block, Horizontal rule, LaTeX math, board, bookmark, callout, toggle, YouTube embed, and more
+- **Block Types**: Paragraph, Heading (H1-H6), Lists (bullet/ordered), Image, Blockquote, Code block, Horizontal rule, LaTeX math, board, callout, toggle, YouTube embed, and more
 - **Inline Formatting**: Bold, italic, strikethrough, text color
 - **Alignment Options**: Left, center, right, justify
 - **Image Features**: Image block alignment and caption support (captioned image block)
 - **Special Blocks**:
   - **Board View**: Display pages in card format
-  - **Bookmark**: Save external links and previews
   - **Callout**: Highlight messages and notifications
   - **Toggle**: Collapsible content sections
   - **YouTube**: Embed YouTube videos directly
@@ -428,7 +427,6 @@ NTEOK/
 │       ├── shared-page.js           # Public page view logic
 │       ├── login-logs-manager.js    # Login logs management
 │       ├── board-node.js            # Board view block
-│       ├── bookmark-node.js         # Bookmark block
 │       ├── callout-node.js          # Callout block
 │       ├── image-with-caption-node.js  # Image with caption block
 │       ├── math-node.js             # LaTeX math block
@@ -471,8 +469,6 @@ note-taking app, markdown editor, web notes, E2EE, end-to-end encryption, encryp
 - **Theme File Upload Validation Enhanced** - Implemented duplicate validation logic
 
 ### 2026-01-18 Bug Fixes
-
-- Restored bookmark information saving functionality
 
 ---
 

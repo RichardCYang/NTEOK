@@ -7,7 +7,7 @@ import * as api from './api-utils.js';
 
 // 아이콘 목록 정의
 const THEME_ICONS = [
-    'fa-solid fa-star', 'fa-solid fa-heart', 'fa-solid fa-flag', 'fa-solid fa-bookmark',
+    'fa-solid fa-star', 'fa-solid fa-heart', 'fa-solid fa-flag',
     'fa-solid fa-circle-check', 'fa-solid fa-circle-info', 'fa-solid fa-circle-exclamation', 'fa-solid fa-circle-xmark',
     'fa-solid fa-lightbulb', 'fa-solid fa-fire', 'fa-solid fa-bolt', 'fa-solid fa-bell',
     'fa-solid fa-user', 'fa-solid fa-users', 'fa-solid fa-calendar', 'fa-solid fa-clock',
@@ -21,7 +21,7 @@ const THEME_ICONS = [
 ];
 
 const COLOR_ICONS = [
-    '⭐', '❤️', '🚩', '🔖', '✅', 'ℹ️', '⚠️', '❌',
+    '⭐', '❤️', '🚩', '✅', 'ℹ️', '⚠️', '❌',
     '💡', '🔥', '⚡', '🔔', '👤', '👥', '📅', '⏰',
     '🏷️', '🎯', '🏆', '🎁', '🏠', '🔍', '⚙️', '🗑️',
     '📄', '📃', '📁', '📂', '🖼️', '🎬', '🎵', '🔗',

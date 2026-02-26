@@ -44,10 +44,6 @@ export const EXAMPLE_CONTENT = `
     <div data-type="math-block" data-latex="\\int_{a}^{b} x^2 dx = \\frac{b^3 - a^3}{3}"></div>
 
     <h2>4. 멀티미디어 및 링크</h2>
-    <div data-type="bookmark-container" data-title="유용한 링크" data-icon="🔖">
-        <div data-type="bookmark-block" data-url="https://github.com/nteok" data-title="NTEOK GitHub" data-description="프로젝트 소스 코드를 확인하세요." data-thumbnail=""></div>
-    </div>
-
     <p>이 외에도 <strong>보드 뷰</strong>, <strong>이미지</strong>, <strong>YouTube</strong> 등 다양한 블록을 활용해 보세요!</p>
 `;
 
@@ -84,9 +80,6 @@ import { MathBlock, MathInline } from './math-node.js';
 
 // ImageWithCaption 노드 import
 import { ImageWithCaption } from './image-with-caption-node.js';
-
-// BookmarkBlock 노드 import
-import { BookmarkBlock, BookmarkContainerBlock } from './bookmark-node.js';
 
 // CalloutBlock 노드 import
 import { CalloutBlock } from './callout-node.js';
@@ -459,15 +452,6 @@ export const SLASH_ITEMS = [
         command(editor) {
             // 빈 파일 블록 삽입 (Placeholder 상태로 렌더링됨)
             editor.chain().focus().setFileBlock().run();
-        }
-    },
-    {
-        id: "bookmark",
-        label: "북마크",
-        description: "웹 페이지 링크 카드들",
-        icon: "🔖",
-        command(editor) {
-            editor.chain().focus().setBookmarkContainer().run();
         }
     },
     {
@@ -1318,8 +1302,6 @@ export function initEditor() {
             MathBlock,
             MathInline,
             ImageWithCaption,
-            BookmarkContainerBlock,
-            BookmarkBlock,
             CalloutBlock,
             ToggleBlock,
             BoardBlock,

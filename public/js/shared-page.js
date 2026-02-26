@@ -72,7 +72,7 @@ function sanitizeSharedHtml(html) {
             'style', 'class', 'href', 'target', 'rel', 'data-type', 'data-latex',
             'colspan', 'rowspan', 'colwidth',
             'src', 'alt', 'data-src', 'data-alt', 'data-caption', 'data-width', 'data-align',
-            'data-url', 'data-title', 'data-description', 'data-thumbnail', 'data-id', 'data-icon',
+            'data-id', 'data-icon',
             'data-checked', 'type', 'checked', 'data-callout-type', 'data-content',
             'data-columns', 'data-is-open'
         ],
@@ -92,191 +92,6 @@ function buildSafeCoverUrl(ref) {
     if (filename.includes('..')) return null;
     if (!/\.(?:jpe?g|png|gif|webp)$/i.test(filename)) return null;
     return `/covers/${encodeURIComponent(scope)}/${encodeURIComponent(filename)}`;
-}
-
-/**
- * 북마크 블록 렌더링 함수
- * @param {HTMLElement} container - 렌더링 대상 컨테이너
- */
-function renderBookmarks(container) {
-    // 북마크 컨테이너 렌더링 (BookmarkContainerBlock)
-    container.querySelectorAll('[data-type="bookmark-container"]').forEach((el) => {
-        renderBookmarkContainer(el);
-    });
-
-    // 독립 북마크 블록 렌더링 (BookmarkBlock)
-    container.querySelectorAll('[data-type="bookmark-block"]').forEach((el) => {
-        renderBookmarkBlock(el);
-    });
-}
-
-/**
- * 북마크 컨테이너 렌더링
- */
-function renderBookmarkContainer(element) {
-    const icon = element.getAttribute('data-icon') || '🔖';
-    const title = element.getAttribute('data-title') || '북마크';
-
-    // 기존 내용 백업
-    const bookmarks = Array.from(element.querySelectorAll('[data-type="bookmark-block"]')).map(el => ({
-        url: el.getAttribute('data-url'),
-        title: el.getAttribute('data-title'),
-        description: el.getAttribute('data-description'),
-        thumbnail: el.getAttribute('data-thumbnail')
-    }));
-
-    // 컨테이너 재구성
-    element.innerHTML = '';
-    element.className = 'bookmark-container-wrapper';
-    element.setAttribute('data-type', 'bookmark-container');
-
-    // 헤더
-    const header = document.createElement('div');
-    header.className = 'bookmark-container-header';
-
-    const titleContainer = document.createElement('div');
-    titleContainer.className = 'bookmark-container-title-container';
-
-    const iconEl = document.createElement('div');
-    iconEl.className = 'bookmark-container-icon';
-    if (icon && icon.includes('fa-')) {
-        addIcon(iconEl, icon);
-    } else {
-        iconEl.textContent = icon;
-    }
-
-    const titleEl = document.createElement('div');
-    titleEl.className = 'bookmark-container-title';
-    titleEl.textContent = title;
-
-    titleContainer.appendChild(iconEl);
-    titleContainer.appendChild(titleEl);
-    header.appendChild(titleContainer);
-    element.appendChild(header);
-
-    // 콘텐츠
-    const content = document.createElement('div');
-    content.className = 'bookmark-container-content';
-
-    bookmarks.forEach(bookmark => {
-        const card = createBookmarkCard(bookmark);
-        content.appendChild(card);
-    });
-
-    element.appendChild(content);
-}
-
-/**
- * 독립 북마크 블록 렌더링
- */
-function renderBookmarkBlock(element) {
-    const bookmark = {
-        url: element.getAttribute('data-url'),
-        title: element.getAttribute('data-title'),
-        description: element.getAttribute('data-description'),
-        thumbnail: element.getAttribute('data-thumbnail')
-    };
-
-    const wrapper = document.createElement('div');
-    wrapper.className = 'bookmark-block-wrapper';
-    const card = createBookmarkCard(bookmark);
-    wrapper.appendChild(card);
-
-    element.replaceWith(wrapper);
-}
-
-/**
- * 북마크 카드 생성
- */
-function createBookmarkCard(bookmark) {
-    const card = document.createElement('a');
-    card.className = 'bookmark-card';
-    const safeHref = sanitizeHttpHref(bookmark.url || '', { allowRelative: false });
-    if (safeHref) {
-        card.href = safeHref;
-    } else {
-        // 위험/비정상 URL이면 네비게이션 차단
-        card.href = '#';
-        card.classList.add('bookmark-disabled');
-        card.addEventListener('click', (e) => e.preventDefault());
-    }
-    card.target = '_blank';
-    card.rel = 'noopener noreferrer';
-    card.style.color = 'inherit';
-
-    // 텍스트 정보
-    const textContainer = document.createElement('div');
-    textContainer.className = 'bookmark-text';
-
-    const titleElement = document.createElement('div');
-    titleElement.className = 'bookmark-title';
-    titleElement.textContent = bookmark.title || bookmark.url || '제목 없음';
-
-    const descElement = document.createElement('div');
-    descElement.className = 'bookmark-description';
-    descElement.textContent = bookmark.description || '';
-
-    const urlContainer = document.createElement('div');
-    urlContainer.className = 'bookmark-url';
-    urlContainer.textContent = safeHref || bookmark.url || '';
-
-    textContainer.appendChild(titleElement);
-    if (bookmark.description) {
-        textContainer.appendChild(descElement);
-    }
-    textContainer.appendChild(urlContainer);
-
-    card.appendChild(textContainer);
-
-    // 썸네일
-    const thumbnailContainer = document.createElement('div');
-    thumbnailContainer.className = 'bookmark-thumbnail';
-
-    if (bookmark.thumbnail) {
-        const thumbnail = document.createElement('img');
-        const safeThumb = sanitizeHttpHref(bookmark.thumbnail, { allowRelative: false });
-        if (safeThumb) {
-            const proxyUrl = `/api/pages/proxy/image?url=${encodeURIComponent(safeThumb)}`;
-            thumbnail.src = proxyUrl;
-        }
-        thumbnail.alt = bookmark.title || '';
-
-        thumbnail.onload = () => {
-            thumbnailContainer.classList.remove('error');
-        };
-
-        thumbnail.onerror = () => {
-            console.warn('[BookmarkBlock] 썸네일 로드 실패:', proxyUrl);
-            thumbnailContainer.classList.add('error');
-            thumbnail.style.display = 'none';
-        };
-
-        thumbnailContainer.appendChild(thumbnail);
-    } else {
-        thumbnailContainer.classList.add('error');
-    }
-
-    const errorMessage = document.createElement('div');
-    errorMessage.className = 'bookmark-thumbnail-error';
-    errorMessage.textContent = '이미지 없음';
-    thumbnailContainer.appendChild(errorMessage);
-
-    card.appendChild(thumbnailContainer);
-
-    return card;
-}
-
-/**
- * 북마크 이미지 프록시 처리
- */
-function processBookmarkImages(container) {
-    container.querySelectorAll('.bookmark-thumbnail img').forEach((img) => {
-        const currentSrc = img.src;
-        if (!currentSrc.includes('/api/pages/proxy/image')) {
-            const proxyUrl = `/api/pages/proxy/image?url=${encodeURIComponent(img.src)}`;
-            img.src = proxyUrl;
-        }
-    });
 }
 
 /**
@@ -370,9 +185,6 @@ function renderCheckboxes(container) {
         editorEl.innerHTML = sanitizeSharedHtml(data.content || '<p></p>');
         editorEl.classList.remove('shared-page-loading');
 
-        // 북마크 블록 렌더링
-        renderBookmarks(editorEl);
-
         // 체크박스 렌더링
         renderCheckboxes(editorEl);
 
@@ -422,9 +234,6 @@ function renderCheckboxes(container) {
                 }
             });
         }
-
-        // 북마크 이미지 프록시 처리
-        processBookmarkImages(editorEl);
 
         // 댓글 시스템 초기화 (게스트 모드)
         initCommentsManager({ currentUser: null });

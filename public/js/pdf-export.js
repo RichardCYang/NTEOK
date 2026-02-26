@@ -315,8 +315,6 @@ function createPDFContainer(pageData) {
             border-bottom: none !important;
         }
         #pdf-export-container [data-type="callout-block"],
-        #pdf-export-container [data-type="bookmark-block"],
-        #pdf-export-container [data-type="bookmark-container"],
         #pdf-export-container figure {
             margin: 20px 0;
         }
@@ -540,31 +538,6 @@ async function renderCustomBlocks(container) {
         }
     });
 
-    // 북마크 블록
-    const bookmarks = container.querySelectorAll('[data-type="bookmark-block"]');
-    bookmarks.forEach((el) => {
-        const url = el.getAttribute('data-url') || '';
-        const title = el.getAttribute('data-title') || url;
-        const description = el.getAttribute('data-description') || '';
-        const thumbnail = el.getAttribute('data-thumbnail') || '';
-
-        let thumbnailHTML = '';
-        if (thumbnail) {
-            thumbnailHTML = `<img src="${escapeHtmlAttr(getProxiedImageUrl(thumbnail))}" crossorigin="anonymous" style="width: 80px; height: 80px; object-fit: cover; border-radius: 4px; margin-left: 12px;">`;
-        }
-
-        el.innerHTML = `
-            <div style="border: 1px solid #ddd; border-radius: 8px; padding: 12px; margin: 10px 0; display: flex; align-items: center; background: #f9f9f9;">
-                <div style="flex: 1; min-width: 0;">
-                    <div style="font-weight: 600; margin-bottom: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(title)}</div>
-                    <div style="font-size: 12px; color: #666; margin-bottom: 4px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;">${escapeHtml(description)}</div>
-                    <div style="font-size: 11px; color: #999; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(url)}</div>
-                </div>
-                ${thumbnailHTML}
-            </div>
-        `;
-    });
-
     // Callout 블록
     const callouts = container.querySelectorAll('[data-type="callout-block"]');
     callouts.forEach((el) => {
@@ -754,8 +727,7 @@ async function renderCustomBlocks(container) {
 }
 
 function getProxiedImageUrl(url) {
-    if (!url || url.startsWith('/api/pages/proxy/image') || url.startsWith('data:') || url.startsWith('blob:')) return url;
-    return `/api/pages/proxy/image?url=${encodeURIComponent(url)}`;
+    return url;
 }
 
 /**

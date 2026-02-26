@@ -42,8 +42,7 @@ function sanitizeImageSrc(raw) {
     if (safe.startsWith('/')) {
         const ok =
             safe.startsWith('/imgs/') ||
-            safe.startsWith('/covers/') ||
-            safe.startsWith('/api/pages/proxy/image');
+            safe.startsWith('/covers/');
         return ok ? safe : null;
     }
 
