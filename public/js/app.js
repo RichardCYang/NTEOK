@@ -97,6 +97,10 @@ import {
     initTrashManager
 } from './trash-manager.js';
 import {
+    initIconPicker,
+    showIconPickerModal
+} from './icon-manager.js';
+import {
     exportPageToPDF
 } from './pdf-export.js';
 import {
@@ -344,6 +348,8 @@ async function init() {
         initPublishManager(appState);
         initSubpagesManager(appState);
         initCommentsManager(appState);
+        initIconPicker(appState);
+        appState.renderPageList = renderPageList;
 
         const storagesManager = initStoragesManager(appState, (data) => {
             if (data.permission) {
