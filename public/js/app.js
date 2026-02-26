@@ -352,27 +352,28 @@ async function init() {
         appState.renderPageList = renderPageList;
 
         const storagesManager = initStoragesManager(appState, (data) => {
-            if (data.permission) {
+            if (data.permission)
                 appState.currentStoragePermission = data.permission;
-            }
-            if (Array.isArray(data.pages)) {
-                applyPagesData(data.pages);
-            }
-            
+
+            if (data.isEncryptedStorage !== undefined)
+                appState.currentStorageIsEncrypted = data.isEncryptedStorage;
+
+            if (Array.isArray(data.pages))
+                applyPagesData(data.pages, data.isEncryptedStorage);
+
             // 저장소 전환 시 UI 초기화 및 권한 적용
             clearCurrentPage();
             renderPageList();
             startStorageSync(appState.currentStorageId);
 
             const first = appState.pages.find(p => !p.parentId) || appState.pages[0];
-            if (first) {
+            if (first)
                 loadPage(first.id);
-            }
         });
 
         initSearch();
         initEvent();
-        
+
         document.getElementById('quick-search-btn')?.addEventListener('click', () => {
             const modal = document.getElementById('quick-search-modal');
             toggleModal(modal, true);
@@ -410,7 +411,7 @@ async function init() {
             appState.storages = bootstrap.storages;
             storagesManager.show();
         }
-        
+
         // 초기 저장소 동기화 시작 (이미 선택된 경우 대비)
         if (appState.currentStorageId) {
             startStorageSync(appState.currentStorageId);
@@ -527,7 +528,7 @@ function displaySearchResults(results, query) {
             li.dataset.pageId = result.id;
 
             const iconClass = result.isEncrypted ? 'fa-solid fa-lock' : (result.icon || 'fa-regular fa-file-lines');
-            
+
             li.innerHTML = `
                 <i class="${escapeHtmlAttr(iconClass)}"></i>
                 <span class="search-result-title">${escapeHtml(result.title)}</span>
@@ -552,7 +553,7 @@ function hideSearchResults() {
     const searchResultsList = document.getElementById('search-results-list');
     const searchPlaceholder = document.getElementById('search-placeholder');
     const searchResultsHeader = document.getElementById('search-results-header');
-    
+
     if (searchResultsList) searchResultsList.innerHTML = '';
     if (searchPlaceholder) searchPlaceholder.style.display = 'block';
     if (searchResultsHeader) searchResultsHeader.style.display = 'none';

@@ -18,6 +18,7 @@ let state = {
     pages: [],
     currentStorageId: null,
     currentStoragePermission: null,
+    currentStorageIsEncrypted: false,
     expandedPages: new Set(),
     isWriteMode: false,
     currentPageIsEncrypted: false
@@ -28,6 +29,7 @@ let state = {
  */
 export function initPagesManager(appState) {
     state = appState;
+    if (state.currentStorageIsEncrypted === undefined) state.currentStorageIsEncrypted = false;
 }
 
 /**
@@ -63,10 +65,11 @@ export async function fetchPageList() {
     }
 }
 
-export function applyPagesData(data) {
+export function applyPagesData(data, isEncryptedStorage = false) {
     const pages = Array.isArray(data) ? data : [];
     state.pages.length = 0;
     state.pages.push(...pages);
+    state.currentStorageIsEncrypted = !!isEncryptedStorage;
 }
 
 /**
@@ -305,10 +308,27 @@ export async function loadPage(id) {
 
         let title = page.title || "";
         let content = page.content || "<p></p>";
+        let isDecrypted = false;
 
         if (page.isEncrypted) {
             state.currentPageIsEncrypted = true;
-            // TODO: 복호화 처리
+            const storageKey = window.cryptoManager.getStorageKey();
+            if (storageKey) {
+                try {
+                    // encrypted_content는 카멜케이스 변환에 따라 encryptedContent로 올 수 있음.
+                    // API 응답 확인 필요하지만 보통 JSON 응답은 encryptedContent
+                    const encrypted = page.encryptedContent || page.encrypted_content;
+                    if (encrypted) {
+                        content = await window.cryptoManager.decryptWithKey(encrypted, storageKey);
+                        isDecrypted = true;
+                    }
+                } catch (e) {
+                    console.error("Auto-decryption failed:", e);
+                    content = "<p style='color:red;'>[복호화 실패] 올바르지 않은 키입니다.</p>";
+                }
+            } else {
+                 content = "<p style='color:gray;'>[잠김] 이 페이지는 암호화되어 있습니다.</p>";
+            }
         } else {
             state.currentPageIsEncrypted = false;
         }
@@ -336,7 +356,17 @@ export async function loadPage(id) {
         if (page.coverImage) showCover(page.coverImage, page.coverPosition || 50);
         else hideCover();
 
-        startPageSync(page.id, page.isEncrypted || false);
+        // 암호화된 페이지는 동기화 시 주의 필요 (평문 동기화 방지)
+        // 여기서는 E2EE 환경에서는 실시간 협업(Yjs)을 비활성화하거나 암호화된 상태로 해야 함.
+        // 현재 구현은 단순화를 위해 E2EE 페이지는 실시간 동기화 제외 또는 로컬 전용으로 처리
+        if (!page.isEncrypted) {
+            startPageSync(page.id, false);
+        } else {
+            // 암호화 페이지는 Yjs 동기화 중단 (서버가 평문을 알면 안되므로)
+            // 추후 Yjs Webrtc Provider + Client-side Encryption 구현 필요
+            stopPageSync();
+        }
+        
         await checkPublishStatus(page.id);
         await loadAndRenderSubpages(page.id);
         await loadAndRenderComments(page.id);
@@ -359,9 +389,33 @@ export async function saveCurrentPage() {
     let content = sanitizeEditorHtml(state.editor.getHTML());
 
     try {
-        let body = { title, content, isEncrypted: false, storageId: state.currentStorageId };
+        const storageKey = window.cryptoManager.getStorageKey();
+        let body = { 
+            title, 
+            content, 
+            isEncrypted: false, 
+            storageId: state.currentStorageId 
+        };
         
-        // 암호화 처리 생략 (필요 시 유지)
+        // 저장소 레벨 암호화 강제 적용
+        if (state.currentStorageIsEncrypted) {
+            if (!storageKey) {
+                alert("암호화 키가 없어 저장할 수 없습니다. 저장소를 다시 열어주세요.");
+                return false;
+            }
+            // 암호화 수행
+            const encryptedContent = await window.cryptoManager.encryptWithKey(content, storageKey);
+            body.isEncrypted = true;
+            body.encryptedContent = encryptedContent;
+            body.content = ""; // 서버에는 평문 전송 안 함 (빈 문자열)
+        } else if (storageKey) {
+            // (참고) 일반 저장소인데 키가 있는 경우는 없어야 함 (selectStorage에서 clear하므로)
+            // 혹시라도 있다면 암호화해서 보낼 수도 있겠지만, 여기서는 저장소 속성을 따름
+        } else if (state.currentPageIsEncrypted) {
+            // 이미 암호화된 페이지인데 키가 없다면? (수정 불가 상태여야 함)
+            alert("암호화 키가 없어 저장할 수 없습니다.");
+            return false;
+        }
 
         const page = await api.put("/api/pages/" + encodeURIComponent(state.currentPageId), body);
 
@@ -395,6 +449,12 @@ export async function toggleEditMode() {
         btn.classList.remove("write-mode");
         // UI 아이콘 업데이트 등
     } else {
+        // 암호화 페이지인데 키가 없으면 편집 불가
+        if (state.currentPageIsEncrypted && !window.cryptoManager.getStorageKey()) {
+            alert("암호화된 페이지를 편집하려면 저장소 잠금을 해제해야 합니다.");
+            return;
+        }
+        
         state.isWriteMode = true;
         state.editor.setEditable(true);
         btn.classList.add("write-mode");
@@ -429,11 +489,29 @@ export function bindNewPageButton() {
         if (title === null) return;
 
         try {
-            const page = await api.post("/api/pages", {
+            const storageKey = window.cryptoManager.getStorageKey();
+            
+            // 암호화 저장소 검증
+            if (state.currentStorageIsEncrypted && !storageKey) {
+                alert("암호화 키가 없어 페이지를 생성할 수 없습니다. 저장소를 다시 열어주세요.");
+                return;
+            }
+
+            let body = {
                 title: title.trim() || "새 페이지",
                 content: "<p></p>",
-                storageId: state.currentStorageId
-            });
+                storageId: state.currentStorageId,
+                isEncrypted: false
+            };
+
+            if (state.currentStorageIsEncrypted) {
+                const encryptedContent = await window.cryptoManager.encryptWithKey("<p></p>", storageKey);
+                body.isEncrypted = true;
+                body.encryptedContent = encryptedContent;
+                body.content = "";
+            }
+
+            const page = await api.post("/api/pages", body);
 
             state.pages.unshift(page);
             state.currentPageId = page.id;

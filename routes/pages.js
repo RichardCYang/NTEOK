@@ -786,11 +786,13 @@ module.exports = (dependencies) => {
             const encContent = req.body.encryptedContent || null;
 
             if (isEncrypted) {
-                if (!salt || !encContent) return res.status(400).json({ error: "Encryption fields missing" });
+                if (!encContent) return res.status(400).json({ error: "Encryption fields missing" });
                 
                 // 보안: 암호화 필드 형식 및 크기 검증 (Stored XSS 및 DoS 방어)
-                if (typeof salt !== "string" || salt.length > 512 || !/^[A-Za-z0-9+/=]*$/.test(salt))
-                    return res.status(400).json({ error: "유효하지 않은 encryptionSalt 형식" });
+                if (salt) {
+                    if (typeof salt !== "string" || salt.length > 512 || !/^[A-Za-z0-9+/=]*$/.test(salt))
+                        return res.status(400).json({ error: "유효하지 않은 encryptionSalt 형식" });
+                }
 
                 if (typeof encContent !== "string")
                     return res.status(400).json({ error: "유효하지 않은 encryptedContent 형식" });
@@ -853,9 +855,9 @@ module.exports = (dependencies) => {
                 salt = hasEncryptionSalt ? req.body.encryptionSalt : existing.encryption_salt;
                 encContent = hasEncryptedContent ? req.body.encryptedContent : existing.encrypted_content;
 
-                // 상태 전환(평문 -> 암호화) 시에는 암호문/솔트가 반드시 있어야 함
-                if (encryptionStateChanged && (!hasEncryptionSalt || !hasEncryptedContent))
-                    return res.status(400).json({ error: "암호화 전환 시 encryptionSalt와 encryptedContent가 필요합니다." });
+                // 상태 전환(평문 -> 암호화) 시에는 최소한 암호문은 있어야 함 (솔트는 저장소 레벨일 경우 없을 수 있음)
+                if (encryptionStateChanged && !hasEncryptedContent)
+                    return res.status(400).json({ error: "암호화 전환 시 encryptedContent가 필요합니다." });
 
                 // 보안: 암호화 필드 형식 및 크기 검증 (Stored XSS 및 DoS 방어)
                 if (salt != null) {

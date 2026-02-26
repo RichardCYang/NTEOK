@@ -9,13 +9,76 @@ class CryptoManager {
         this.salt = null;
         this.password = null; // 메모리 전용 비밀번호 저장 (새로고침 시 삭제됨)
 
-        // 마스터 키 기반 자동 암호화 (신규)
-        this.masterKey = null; // 사용자 마스터 키 (로그인 비밀번호에서 유도)
-        this.masterKeySalt = null; // 마스터 키용 salt (사용자별 고정)
-        this.loginPassword = null; // 로그인 비밀번호 (세션 동안 유지)
+        // 저장소 레벨 암호화 키 (E2EE)
+        this.storageKey = null;
+        this.storageSalt = null;
+        this.storagePassword = null;
 
         this.inactivityTimer = null; // 자동 로그아웃 타이머
         this.INACTIVITY_TIMEOUT = 15 * 60 * 1000; // 15분 (밀리초)
+    }
+
+    /**
+     * 저장소 키 초기화 및 검증
+     * @param {string} password - 사용자 입력 비밀번호
+     * @param {string} saltBase64 - DB에 저장된 salt
+     * @param {string} checkBase64 - DB에 저장된 검증용 암호문 (VALID 문자열 암호화)
+     * @returns {Promise<boolean>} 성공 여부
+     */
+    async verifyAndSetStorageKey(password, saltBase64, checkBase64) {
+        try {
+            const salt = new Uint8Array(this.base64ToArrayBuffer(saltBase64));
+            const { key } = await this.deriveKeyFromPassword(password, salt);
+            
+            // 검증: "VALID" 문자열이 복호화되는지 확인
+            const decrypted = await this.decryptWithKey(checkBase64, key);
+            if (decrypted !== "VALID") {
+                return false;
+            }
+
+            this.storageKey = key;
+            this.storageSalt = salt;
+            this.storagePassword = password;
+            return true;
+        } catch (e) {
+            console.error("Storage key verification failed:", e);
+            return false;
+        }
+    }
+
+    /**
+     * 저장소 암호화 데이터 생성 (생성 시)
+     * @param {string} password 
+     * @returns {Promise<{salt: string, check: string}>}
+     */
+    async createStorageEncryptionData(password) {
+        const salt = window.crypto.getRandomValues(new Uint8Array(16));
+        const { key } = await this.deriveKeyFromPassword(password, salt);
+        
+        // "VALID" 문자열을 암호화하여 검증용 데이터 생성
+        const checkBase64 = await this.encryptWithKey("VALID", key);
+        const saltBase64 = this.arrayBufferToBase64(salt.buffer);
+        
+        return {
+            salt: saltBase64,
+            check: checkBase64
+        };
+    }
+
+    /**
+     * 저장소 키 삭제
+     */
+    clearStorageKey() {
+        this.storageKey = null;
+        this.storageSalt = null;
+        this.storagePassword = null;
+    }
+
+    /**
+     * 저장소 키 반환
+     */
+    getStorageKey() {
+        return this.storageKey;
     }
 
     /**

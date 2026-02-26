@@ -954,6 +954,128 @@
             </div>
         </div>
 
+        <!-- 저장소 생성 모달 -->
+        <div id="create-storage-modal" class="modal hidden">
+            <div class="modal-overlay"></div>
+            <div class="modal-content" style="max-width: 500px;">
+                <div class="modal-header">
+                    <h2>새 저장소 만들기</h2>
+                    <button id="close-create-storage-btn" class="modal-close-btn">
+                        <i class="fa-solid fa-xmark"></i>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <form id="create-storage-form">
+                        <div style="margin-bottom: 16px;">
+                            <label for="new-storage-name" style="display: block; margin-bottom: 8px; font-weight: 500;">
+                                저장소 이름
+                            </label>
+                            <input
+                                type="text"
+                                id="new-storage-name"
+                                class="settings-select"
+                                style="width: 100%; padding: 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px;"
+                                placeholder="예: 개인 노트"
+                                required
+                            />
+                        </div>
+                        
+                        <div style="margin-bottom: 16px; padding: 16px; background: #f9fafb; border-radius: 8px; border: 1px solid #e5e7eb;">
+                            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+                                <label for="new-storage-encrypt" style="font-weight: 600; display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                                    <input type="checkbox" id="new-storage-encrypt" style="width: 16px; height: 16px;">
+                                    <span>저장소 암호화 (E2EE)</span>
+                                </label>
+                                <i class="fa-solid fa-lock" style="color: #6b7280;"></i>
+                            </div>
+                            <p style="font-size: 13px; color: #6b7280; margin: 0 0 12px 0; line-height: 1.5;">
+                                저장소의 모든 페이지 내용을 암호화하여 저장합니다.<br>
+                                비밀번호를 분실하면 데이터를 절대 복구할 수 없습니다.
+                            </p>
+                            
+                            <div id="storage-password-fields" class="hidden">
+                                <div style="margin-bottom: 12px;">
+                                    <input
+                                        type="password"
+                                        id="new-storage-password"
+                                        class="settings-select"
+                                        style="width: 100%; padding: 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px;"
+                                        placeholder="비밀번호 (8자 이상)"
+                                        minlength="8"
+                                    />
+                                </div>
+                                <div>
+                                    <input
+                                        type="password"
+                                        id="new-storage-password-confirm"
+                                        class="settings-select"
+                                        style="width: 100%; padding: 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px;"
+                                        placeholder="비밀번호 확인"
+                                    />
+                                </div>
+                            </div>
+                        </div>
+
+                        <div id="create-storage-error" style="color: #ef4444; font-size: 12px; margin-bottom: 16px; min-height: 18px;"></div>
+                        
+                        <div style="display: flex; gap: 8px; justify-content: flex-end;">
+                            <button type="button" id="cancel-create-storage-btn" style="padding: 10px 20px; background: #6b7280; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px;">
+                                취소
+                            </button>
+                            <button type="submit" class="primary-button" style="padding: 10px 20px; font-size: 14px;">
+                                만들기
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- 저장소 잠금 해제 모달 -->
+        <div id="unlock-storage-modal" class="modal hidden">
+            <div class="modal-overlay"></div>
+            <div class="modal-content" style="max-width: 400px;">
+                <div class="modal-header">
+                    <h2>저장소 잠금 해제</h2>
+                    <button id="close-unlock-storage-btn" class="modal-close-btn">
+                        <i class="fa-solid fa-xmark"></i>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <div style="text-align: center; margin-bottom: 20px;">
+                        <div style="width: 60px; height: 60px; background: #f3f4f6; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 16px;">
+                            <i class="fa-solid fa-lock" style="font-size: 24px; color: #4b5563;"></i>
+                        </div>
+                        <h3 id="unlock-storage-name" style="margin: 0 0 8px 0; font-size: 18px; color: #111827;">저장소 이름</h3>
+                        <p style="margin: 0; font-size: 14px; color: #6b7280;">
+                            이 저장소에 접근하려면 비밀번호를 입력하세요.
+                        </p>
+                    </div>
+
+                    <form id="unlock-storage-form">
+                        <div style="margin-bottom: 16px;">
+                            <input
+                                type="password"
+                                id="unlock-storage-password"
+                                class="settings-select"
+                                style="width: 100%; padding: 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; text-align: center;"
+                                placeholder="비밀번호"
+                                required
+                                autofocus
+                            />
+                        </div>
+                        <div id="unlock-storage-error" style="color: #ef4444; font-size: 12px; margin-bottom: 16px; text-align: center; min-height: 18px;"></div>
+                        
+                        <div style="display: flex; gap: 8px;">
+                            <button type="submit" class="primary-button" style="width: 100%; padding: 12px; font-size: 14px;">
+                                잠금 해제
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
         <!-- 아이콘 선택 모달 -->
         <div id="icon-picker-modal" class="modal hidden">
             <div class="modal-overlay"></div>

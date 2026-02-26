@@ -32,9 +32,9 @@ export function initStoragesManager(appState, onStorageSelected) {
             const date = new Date(storage.createdAt || storage.created_at).toLocaleDateString();
             const isOwner = storage.is_owner === 1 || storage.is_owner === true;
             const isAdmin = isOwner || storage.permission === 'ADMIN';
+            const isEncrypted = !!(Number(storage.is_encrypted) === 1 || storage.isEncrypted);
             
             // 보안: innerHTML 템플릿에 들어가는 값은 반드시 이스케이프 처리
-            // - storage.name / storage.owner_name 은 DB에 저장되는 사용자 입력이므로 신뢰할 수 없음
             const safeStorageId = escapeHtmlAttr(storage.id);
             const safeStorageName = escapeHtml(storage.name || '');
             const safeOwnerName = escapeHtml(storage.owner_name || '');
@@ -61,12 +61,13 @@ export function initStoragesManager(appState, onStorageSelected) {
                         </button>
                     `}
                 </div>
-                <div class="storage-icon-wrapper">
-                    <i class="fa-solid fa-database"></i>
+                <div class="storage-icon-wrapper ${isEncrypted ? 'encrypted' : ''}">
+                    <i class="fa-solid ${isEncrypted ? 'fa-lock' : 'fa-database'}"></i>
                 </div>
                 <div class="storage-item-info">
                     <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 4px;">
                         <span class="storage-item-name">${safeStorageName}</span>
+                        ${isEncrypted ? `<span class="storage-item-encrypted-badge"><i class="fa-solid fa-shield-halved"></i> E2EE</span>` : ''}
                         ${!isOwner ? `<span class="storage-item-shared-badge">공유됨</span>` : ''}
                     </div>
                     <span class="storage-item-meta">${date}${!isOwner ? ` (${safeOwnerName})` : ''}</span>
@@ -311,15 +312,30 @@ export function initStoragesManager(appState, onStorageSelected) {
 
     // 저장소 선택
     async function selectStorage(storageId) {
+        // 보안: 저장소 진입 시 무조건 이전 키 삭제 (메모리 잔존 방지)
+        window.cryptoManager.clearStorageKey();
+
+        const storage = appState.storages.find(s => s.id === storageId);
+        if (!storage) return;
+
+        // 속성명 및 타입 호환성 체크 (DB snake_case, API camelCase, String/Number/Boolean 혼용 대응)
+        const isEncryptedStorage = !!(Number(storage.is_encrypted) === 1 || storage.isEncrypted === true || storage.isEncrypted === 1);
+
+        // 암호화된 저장소인 경우 잠금 해제 확인
+        if (isEncryptedStorage) {
+            const unlocked = await openUnlockStorageModal(storage);
+            if (!unlocked) return; // 취소거나 실패
+        }
+
         showLoadingOverlay();
         try {
             const data = await api.get(`/api/storages/${storageId}/data`);
             
-            const storage = appState.storages.find(s => s.id === storageId);
             const permission = (storage.is_owner === 1 || storage.is_owner === true) ? 'ADMIN' : storage.permission;
             
             appState.currentStorageId = storageId;
             appState.currentStoragePermission = permission;
+            appState.currentStorageIsEncrypted = isEncryptedStorage; // 상태 저장
             
             // 화면 전환
             storageScreen.classList.add('hidden');
@@ -327,7 +343,7 @@ export function initStoragesManager(appState, onStorageSelected) {
             
             // 콜백 호출 (컬렉션 및 페이지 데이터 전달)
             if (onStorageSelected) {
-                onStorageSelected({ ...data, permission });
+                onStorageSelected({ ...data, permission, isEncryptedStorage });
             }
         } catch (error) {
             console.error('저장소 데이터 로드 실패:', error);
@@ -337,19 +353,166 @@ export function initStoragesManager(appState, onStorageSelected) {
         }
     }
 
-    // 새 저장소 만들기
-    addStorageBtn.addEventListener('click', async () => {
-        const name = prompt('새 저장소 이름을 입력하세요:', '새 저장소');
-        if (!name || !name.trim()) return;
+    // --- 저장소 잠금 해제 모달 ---
+    const unlockModal = document.getElementById('unlock-storage-modal');
+    const unlockForm = document.getElementById('unlock-storage-form');
+    const unlockInput = document.getElementById('unlock-storage-password');
+    const unlockError = document.getElementById('unlock-storage-error');
+    const unlockName = document.getElementById('unlock-storage-name');
+    const closeUnlockBtn = document.getElementById('close-unlock-storage-btn');
+    
+    let unlockResolve = null;
+
+    function openUnlockStorageModal(storage) {
+        return new Promise((resolve) => {
+            unlockResolve = resolve;
+            unlockName.textContent = storage.name;
+            unlockInput.value = '';
+            unlockError.textContent = '';
+            unlockModal.classList.remove('hidden');
+            unlockInput.focus();
+            
+            // 모달 닫기 버튼 처리 (취소)
+            const closeHandler = () => {
+                unlockModal.classList.add('hidden');
+                cleanup();
+                resolve(false);
+            };
+            
+            // 이벤트 리스너 임시 등록
+            closeUnlockBtn.onclick = closeHandler;
+            
+            const submitHandler = async (e) => {
+                e.preventDefault();
+                const password = unlockInput.value;
+                if (!password) return;
+
+                unlockError.textContent = '확인 중...';
+                
+                // 암호 검증 및 키 설정
+                const success = await window.cryptoManager.verifyAndSetStorageKey(
+                    password,
+                    storage.encryption_salt,
+                    storage.encryption_check
+                );
+
+                if (success) {
+                    unlockModal.classList.add('hidden');
+                    cleanup();
+                    resolve(true);
+                } else {
+                    unlockError.textContent = '비밀번호가 올바르지 않습니다.';
+                    unlockInput.select();
+                }
+            };
+
+            unlockForm.onsubmit = submitHandler;
+
+            function cleanup() {
+                closeUnlockBtn.onclick = null;
+                unlockForm.onsubmit = null;
+            }
+        });
+    }
+
+    // --- 저장소 생성 모달 ---
+    const createModal = document.getElementById('create-storage-modal');
+    const createForm = document.getElementById('create-storage-form');
+    const createName = document.getElementById('new-storage-name');
+    const createEncrypt = document.getElementById('new-storage-encrypt');
+    const createPwFields = document.getElementById('storage-password-fields');
+    const createPw = document.getElementById('new-storage-password');
+    const createPwConfirm = document.getElementById('new-storage-password-confirm');
+    const createError = document.getElementById('create-storage-error');
+    const closeCreateBtn = document.getElementById('close-create-storage-btn');
+    const cancelCreateBtn = document.getElementById('cancel-create-storage-btn');
+
+    // 새 저장소 만들기 버튼
+    addStorageBtn.addEventListener('click', () => {
+        createName.value = '';
+        createEncrypt.checked = false;
+        createPwFields.classList.add('hidden');
+        createPw.value = '';
+        createPwConfirm.value = '';
+        createError.textContent = '';
+        createModal.classList.remove('hidden');
+        createName.focus();
+    });
+
+    createEncrypt.addEventListener('change', () => {
+        if (createEncrypt.checked) {
+            createPwFields.classList.remove('hidden');
+            createPw.setAttribute('required', 'true');
+            createPwConfirm.setAttribute('required', 'true');
+        } else {
+            createPwFields.classList.add('hidden');
+            createPw.removeAttribute('required');
+            createPwConfirm.removeAttribute('required');
+        }
+    });
+
+    function closeCreateModal() {
+        createModal.classList.add('hidden');
+    }
+
+    closeCreateBtn.addEventListener('click', closeCreateModal);
+    cancelCreateBtn.addEventListener('click', closeCreateModal);
+
+    createForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const name = createName.value.trim();
+        const isEncrypted = createEncrypt.checked;
+        
+        if (!name) return;
+
+        let encryptionSalt = null;
+        let encryptionCheck = null;
+
+        if (isEncrypted) {
+            const pw = createPw.value;
+            const pwConf = createPwConfirm.value;
+
+            if (pw.length < 8) {
+                createError.textContent = '비밀번호는 8자 이상이어야 합니다.';
+                return;
+            }
+            if (pw !== pwConf) {
+                createError.textContent = '비밀번호가 일치하지 않습니다.';
+                return;
+            }
+
+            // 암호화 데이터 생성
+            createError.style.color = '#3b82f6'; // 파란색 (진행 중)
+            createError.textContent = '강력한 암호화 키 생성 중...';
+            try {
+                const cryptoData = await window.cryptoManager.createStorageEncryptionData(pw);
+                encryptionSalt = cryptoData.salt;
+                encryptionCheck = cryptoData.check;
+            } catch (err) {
+                console.error("Crypto generation failed", err);
+                createError.style.color = '#ef4444'; // 빨간색 (에러)
+                createError.textContent = '암호화 설정 생성 실패';
+                return;
+            }
+        }
 
         showLoadingOverlay();
         try {
-            const newStorage = await api.post('/api/storages', { name: name.trim() });
+            const body = { 
+                name,
+                isEncrypted,
+                encryptionSalt,
+                encryptionCheck
+            };
+            
+            const newStorage = await api.post('/api/storages', body);
             appState.storages.push(newStorage);
             renderStorages(appState.storages);
+            closeCreateModal();
         } catch (error) {
             console.error('저장소 생성 실패:', error);
-            alert('저장소 생성에 실패했습니다.');
+            createError.style.color = '#ef4444'; // 빨간색 (에러)
+            createError.textContent = error.message || '저장소 생성에 실패했습니다.';
         } finally {
             hideLoadingOverlay();
         }

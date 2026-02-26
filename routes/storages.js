@@ -138,7 +138,7 @@ module.exports = (dependencies) => {
      */
     router.post('/', authMiddleware, async (req, res) => {
         try {
-            const { name } = req.body;
+            const { name, isEncrypted, encryptionSalt, encryptionCheck } = req.body;
             const check = validateStorageName(name);
             if (!check) {
                 return res.status(400).json({ error: '저장소 이름을 입력해주세요.' });
@@ -147,6 +147,17 @@ module.exports = (dependencies) => {
                 return res.status(400).json({ error: check.error });
             }
             const storageName = check.value;
+
+            // 암호화 저장소 생성 시 필수 필드 검증
+            if (isEncrypted) {
+                if (!encryptionSalt || !encryptionCheck) {
+                    return res.status(400).json({ error: '암호화 저장소 생성에 필요한 정보가 부족합니다.' });
+                }
+                // 간단한 형식 검증 (Base64 등)
+                if (typeof encryptionSalt !== 'string' || typeof encryptionCheck !== 'string') {
+                     return res.status(400).json({ error: '암호화 정보 형식이 올바르지 않습니다.' });
+                }
+            }
 
             const userId = req.user.id;
             const now = new Date();
@@ -160,11 +171,18 @@ module.exports = (dependencies) => {
                 name: storageName,
                 sortOrder,
                 createdAt: nowStr,
-                updatedAt: nowStr
+                updatedAt: nowStr,
+                isEncrypted: isEncrypted ? 1 : 0,
+                encryptionSalt: isEncrypted ? encryptionSalt : null,
+                encryptionCheck: isEncrypted ? encryptionCheck : null
             });
 
             res.json({
                 ...storage,
+                is_encrypted: isEncrypted ? 1 : 0,
+                isEncrypted: isEncrypted ? 1 : 0, // 하위 호환성 위해 둘 다 제공
+                encryption_salt: isEncrypted ? encryptionSalt : null,
+                encryption_check: isEncrypted ? encryptionCheck : null,
                 is_owner: 1,
                 owner_name: req.user.username,
                 createdAt: now.toISOString(),

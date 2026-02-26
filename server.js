@@ -1200,6 +1200,9 @@ async function initDb() {
             sort_order  INT          NOT NULL DEFAULT 0,
             created_at  DATETIME     NOT NULL,
             updated_at  DATETIME     NOT NULL,
+            is_encrypted TINYINT(1) NOT NULL DEFAULT 0,
+            encryption_salt VARCHAR(255) NULL,
+            encryption_check VARCHAR(512) NULL,
             CONSTRAINT fk_storages_user
                 FOREIGN KEY (user_id)
                 REFERENCES users(id)
@@ -1255,13 +1258,6 @@ async function initDb() {
         `);
     } catch (e) {
         console.error("[Security Cleanup] Failed to clean up stale encryption data:", e.message);
-    }
-
-    // pages 테이블에 deleted_at 컬럼 추가 (하위 호환성)
-    try {
-        await pool.execute(`ALTER TABLE pages ADD COLUMN deleted_at DATETIME NULL`);
-    } catch (e) {
-        // 이미 존재하면 무시
     }
 
     // storage_shares 테이블 생성

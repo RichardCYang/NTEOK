@@ -13,6 +13,7 @@ module.exports = ({ pool }) => {
         async listStoragesForUser(userId) {
             const [rows] = await pool.execute(
                 `SELECT s.id, s.name, s.sort_order, s.created_at, s.updated_at, s.user_id as owner_id,
+                        s.is_encrypted, s.encryption_salt, s.encryption_check,
                         u.username as owner_name,
                         CASE WHEN s.user_id = ? THEN 1 ELSE 0 END as is_owner,
                         ss.permission
@@ -32,6 +33,7 @@ module.exports = ({ pool }) => {
         async getStorageByIdForUser(userId, storageId) {
             const [rows] = await pool.execute(
                 `SELECT s.id, s.name, s.sort_order, s.created_at, s.updated_at, s.user_id as owner_id,
+                        s.is_encrypted, s.encryption_salt, s.encryption_check,
                         CASE WHEN s.user_id = ? THEN 1 ELSE 0 END as is_owner,
                         ss.permission
                  FROM storages s
@@ -92,13 +94,13 @@ module.exports = ({ pool }) => {
         /**
          * 저장소 생성
          */
-        async createStorage({ userId, id, name, sortOrder, createdAt, updatedAt }) {
+        async createStorage({ userId, id, name, sortOrder, createdAt, updatedAt, isEncrypted, encryptionSalt, encryptionCheck }) {
             await pool.execute(
-                `INSERT INTO storages (id, user_id, name, sort_order, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?)`,
-                [id, userId, name, sortOrder, createdAt, updatedAt]
+                `INSERT INTO storages (id, user_id, name, sort_order, created_at, updated_at, is_encrypted, encryption_salt, encryption_check)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [id, userId, name, sortOrder, createdAt, updatedAt, isEncrypted || 0, encryptionSalt || null, encryptionCheck || null]
             );
-            return { id, userId, name, sortOrder, createdAt, updatedAt };
+            return { id, userId, name, sortOrder, createdAt, updatedAt, isEncrypted, encryptionSalt, encryptionCheck };
         },
 
         /**
