@@ -311,7 +311,7 @@ export function initStoragesManager(appState, onStorageSelected) {
     });
 
     // 저장소 선택
-    async function selectStorage(storageId) {
+    async function selectStorage(storageId, skipHistory = false) {
         // 보안: 저장소 진입 시 무조건 이전 키 삭제 (메모리 잔존 방지)
         window.cryptoManager.clearStorageKey();
 
@@ -341,6 +341,11 @@ export function initStoragesManager(appState, onStorageSelected) {
             storageScreen.classList.add('hidden');
             appEl.classList.remove('hidden');
             
+            // 히스토리 관리
+            if (!skipHistory) {
+                history.pushState({ view: 'app', storageId }, '', window.location.pathname);
+            }
+
             // 콜백 호출 (컬렉션 및 페이지 데이터 전달)
             if (onStorageSelected) {
                 onStorageSelected({ ...data, permission, isEncryptedStorage });
@@ -529,14 +534,21 @@ export function initStoragesManager(appState, onStorageSelected) {
     });
 
     return {
-        show() {
+        show(skipHistory = false) {
             storageScreen.classList.remove('hidden');
             appEl.classList.add('hidden');
             renderStorages(appState.storages);
+            
+            if (!skipHistory) {
+                history.pushState({ view: 'storages' }, '', window.location.pathname);
+            }
         },
         hide() {
             storageScreen.classList.add('hidden');
             appEl.classList.remove('hidden');
+        },
+        selectStorage(storageId, skipHistory = false) {
+            return selectStorage(storageId, skipHistory);
         }
     };
 }

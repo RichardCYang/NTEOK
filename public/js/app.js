@@ -409,13 +409,30 @@ async function init() {
         if (bootstrap.user) applyCurrentUser(bootstrap.user);
         if (Array.isArray(bootstrap.storages)) {
             appState.storages = bootstrap.storages;
-            storagesManager.show();
+            // 초기 화면 설정 (히스토리에 남기지 않음/기존 항목 대체)
+            storagesManager.show(true);
+            history.replaceState({ view: 'storages' }, '', window.location.pathname);
         }
 
         // 초기 저장소 동기화 시작 (이미 선택된 경우 대비)
         if (appState.currentStorageId) {
             startStorageSync(appState.currentStorageId);
         }
+
+        // 브라우저 뒤로 가기/앞으로 가기 처리
+        window.addEventListener('popstate', (e) => {
+            if (!e.state) return;
+            
+            if (e.state.view === 'storages') {
+                storagesManager.show(true);
+            } else if (e.state.view === 'app' && e.state.storageId) {
+                if (appState.currentStorageId !== e.state.storageId) {
+                    storagesManager.selectStorage(e.state.storageId, true);
+                } else {
+                    storagesManager.hide(); // 이미 해당 저장소라면 화면만 전환 (사실 selectStorage 내부에서도 처리되지만 skipHistory가 중요)
+                }
+            }
+        });
     } catch (error) {
         console.error('Init error:', error);
     } finally {
