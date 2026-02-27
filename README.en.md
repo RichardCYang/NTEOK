@@ -17,7 +17,7 @@ Self-Hostable Web-Based Note-Taking Application
 ### Key Features
 
 - **Markdown Editor**: Tiptap-based block editor with various block type support
-- **Diverse Block Types**: Paragraph, heading, lists, checklist, image, code, math, board, callout, toggle, YouTube embed, and more
+- **Diverse Block Types**: Paragraph, heading, lists, checklist, image, code, math, board, callout, toggle, tab, file, calendar, YouTube embed, and more
 - **End-to-End Encryption**: AES-256-GCM client-side encryption
 - **Storage Sharing**: User collaboration and link sharing
 - **Hierarchical Structure**: Parent-child page relationships
@@ -42,7 +42,7 @@ Self-Hostable Web-Based Note-Taking Application
 - Account deletion
 
 ### Note Editing
-- **Block Types**: Paragraph, Heading (H1-H6), Lists (bullet/ordered), Image, Blockquote, Code block, Horizontal rule, LaTeX math, board, callout, toggle, YouTube embed, and more
+- **Block Types**: Paragraph, Heading (H1-H6), Lists (bullet/ordered), Image, Blockquote, Code block, Horizontal rule, LaTeX math, board, callout, toggle, tab, file, calendar, YouTube embed, and more
 - **Inline Formatting**: Bold, italic, strikethrough, text color
 - **Alignment Options**: Left, center, right, justify
 - **Image Features**: Image block alignment and caption support (captioned image block)
@@ -50,6 +50,9 @@ Self-Hostable Web-Based Note-Taking Application
   - **Board View**: Display pages in card format
   - **Callout**: Highlight messages and notifications
   - **Toggle**: Collapsible content sections
+  - **Tab**: Display content organized in multiple tabs
+  - **File**: Attach and download files
+  - **Calendar**: Display data in calendar format
   - **YouTube**: Embed YouTube videos directly
   - **Math**: LaTeX math formulas rendered with KaTeX
 - **Slash Commands**: Type `/` to switch block types
@@ -132,31 +135,23 @@ CREATE DATABASE nteok
   COLLATE utf8mb4_unicode_ci;
 ```
 
-### 2. Environment Configuration
+### 2. Environment Configuration (Setup Script)
 
-Create a `.env` file or set environment variables:
-
+Windows:
 ```bash
-# Basic Settings
-DB_HOST=localhost
-DB_PORT=3306
-DB_USER=root
-DB_PASSWORD=your_password
-DB_NAME=nteok
-PORT=3000
-ADMIN_USERNAME=admin
-ADMIN_PASSWORD=your_secure_password
-BCRYPT_SALT_ROUNDS=12
-
-# HTTPS Auto Certificate Settings (Optional)
-# Setting DuckDNS domain and token will automatically issue Let's Encrypt certificates.
-DUCKDNS_DOMAIN=your-domain.duckdns.org
-DUCKDNS_TOKEN=your-duckdns-token
-CERT_EMAIL=admin@example.com
-ENABLE_HTTP_REDIRECT=true
+setup.bat
 ```
 
-Refer to `.env.example` file for detailed environment variable descriptions.
+Linux/macOS:
+```bash
+chmod +x setup.sh
+./setup.sh
+```
+
+The script will interactively prompt for:
+- Database host, port, username, password
+- Admin account ID/password (auto-generated if not provided)
+- HTTPS settings (DuckDNS)
 
 ### 3. Install Dependencies and Run
 
@@ -169,11 +164,9 @@ Server runs at `http://localhost:3000`.
 
 ### 4. Initial Login
 
-Login with the admin account. **There is no default password** — the values from `.env` (`ADMIN_USERNAME` / `ADMIN_PASSWORD`) are used.
-- Username: `ADMIN_USERNAME` in `.env`
-- Password: `ADMIN_PASSWORD` in `.env`
+Login with the admin account configured by the setup script.
 
-> Security note: Set a strong password and rotate it immediately after the first login.
+> Security note: Set a strong password and rotate it as needed after the first login.
 
 ---
 
@@ -431,6 +424,9 @@ NTEOK/
 │       ├── image-with-caption-node.js  # Image with caption block
 │       ├── math-node.js             # LaTeX math block
 │       ├── toggle-node.js           # Toggle block
+│       ├── tab-node.js              # Tab view block
+│       ├── file-node.js             # File attachment block
+│       ├── calendar-node.js         # Calendar block
 │       ├── youtube-node.js          # YouTube embed block
 │       ├── modal-parent-manager.js  # Modal management
 │       ├── ui-utils.js              # UI utilities
@@ -461,14 +457,20 @@ note-taking app, markdown editor, web notes, E2EE, end-to-end encryption, encryp
 
 ## Recent Security Patches and Updates
 
+### 2026-02-27 Feature Additions
+
+- **Tab View Block** - Display content organized in multiple tabs
+- **File Block** - Attach and download files functionality
+- **Calendar Block** - Display data in calendar format
+- **WebRTC-based Real-time Sync** - Yjs synchronization support for encrypted storages
+- **.env Configuration Convenience** - Batch files/shell scripts for easy environment setup
+
 ### 2026-01-19 Security Patches
 
 - **Arbitrary File Deletion Vulnerability Fixed** - Enhanced file system access control
 - **SVG Script Execution Vulnerability Prevention** - SVG format forbidden during image upload
 - **CDN/ESM Module Integrity Verification** - Added SRI (Subresource Integrity) to defend against supply chain attacks
 - **Theme File Upload Validation Enhanced** - Implemented duplicate validation logic
-
-### 2026-01-18 Bug Fixes
 
 ---
 
