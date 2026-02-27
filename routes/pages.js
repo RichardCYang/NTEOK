@@ -6,6 +6,8 @@ const http = require("node:http");
 const https = require("node:https");
 const net = require("node:net");
 const ipaddr = require("ipaddr.js");
+const axios = require("axios");
+const cheerio = require("cheerio");
 const { assertImageFileSignature } = require("../security-utils.js");
 const { validateAndNormalizeIcon } = require("../utils/icon-utils.js");
 
@@ -66,7 +68,8 @@ module.exports = (dependencies) => {
         yjsDocuments,
         extractFilesFromContent,
         isPrivateOrLocalIP,
-        getClientIpFromRequest
+        getClientIpFromRequest,
+        outboundFetchLimiter
 	} = dependencies;
 
     // 주의: 이 동기화는 특정 사용자(pageOwnerUserId)의 첨부 레지스트리 slice만 갱신함
@@ -390,6 +393,115 @@ module.exports = (dependencies) => {
         } catch (e) {
             logError("GET /api/pages/trash", e);
             res.status(500).json({ error: "Failed" });
+        }
+    });
+
+    /**
+     * URL 메타데이터 가져오기 (Link Block용)
+     */
+    router.get("/fetch-metadata", authMiddleware, outboundFetchLimiter, async (req, res) => {
+        const { url } = req.query;
+        if (!url) return res.status(400).json({ error: "URL이 필요합니다." });
+
+        try {
+            // 1. URL 유효성 검사
+            let targetUrl;
+            try {
+                targetUrl = new URL(url);
+            } catch (e) {
+                return res.status(400).json({ error: "유효하지 않은 URL 형식입니다." });
+            }
+
+            if (!['http:', 'https:'].includes(targetUrl.protocol)) {
+                return res.status(400).json({ error: "HTTP/HTTPS 프로토콜만 허용됩니다." });
+            }
+
+            // 2. SSRF 방지: DNS 조회 및 IP 검증
+            const hostname = targetUrl.hostname;
+            const addresses = await dns.resolve4(hostname).catch(() => []);
+            if (addresses.length === 0) {
+                const v6 = await dns.resolve6(hostname).catch(() => []);
+                addresses.push(...v6);
+            }
+
+            if (addresses.length === 0) {
+                return res.status(400).json({ error: "호스트를 찾을 수 없습니다." });
+            }
+
+            for (const ip of addresses) {
+                if (isPrivateOrLocalIP(ip)) {
+                    return res.status(403).json({ error: "허용되지 않은 호스트입니다." });
+                }
+            }
+
+            // 3. 메타데이터 요청
+            const response = await axios.get(url, {
+                timeout: 5000,
+                maxContentLength: 2 * 1024 * 1024, // 2MB 제한
+                headers: {
+                    'User-Agent': 'NTEOK-Link-Preview/1.0',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
+                },
+                validateStatus: (status) => status < 400 // 4xx, 5xx 에러로 처리
+            });
+
+            if (typeof response.data !== 'string') {
+                 return res.status(400).json({ error: "HTML 콘텐츠가 아닙니다." });
+            }
+
+            const $ = cheerio.load(response.data);
+            const title = $('title').first().text() || $('meta[property="og:title"]').attr('content') || $('meta[name="twitter:title"]').attr('content') || targetUrl.hostname;
+            
+            // 파비콘 추출 강화: 다양한 rel 속성 대응
+            let favicon = null;
+            const faviconSelectors = [
+                'link[rel="apple-touch-icon"]',
+                'link[rel="apple-touch-icon-precomposed"]',
+                'link[rel="icon"]',
+                'link[rel="shortcut icon"]',
+                'link[rel="alternate icon"]'
+            ];
+            
+            for (const selector of faviconSelectors) {
+                const href = $(selector).attr('href');
+                if (href) {
+                    favicon = href;
+                    break;
+                }
+            }
+
+            // 파비콘이 없으면 기본 경로 시도
+            if (!favicon) {
+                favicon = '/favicon.ico';
+            }
+            
+            // Favicon URL 정규화
+            if (favicon && !favicon.startsWith('http') && !favicon.startsWith('data:')) {
+                if (favicon.startsWith('//')) {
+                    favicon = targetUrl.protocol + favicon;
+                } else if (favicon.startsWith('/')) {
+                    favicon = targetUrl.origin + favicon;
+                } else {
+                    const basePath = targetUrl.origin + targetUrl.pathname.substring(0, targetUrl.pathname.lastIndexOf('/') + 1);
+                    favicon = basePath + favicon;
+                }
+            }
+
+            res.json({
+                title: title.trim().substring(0, 500),
+                favicon: favicon,
+                url: url
+            });
+
+        } catch (error) {
+            if (error.code === 'ECONNABORTED') {
+                 return res.status(504).json({ error: "요청 시간이 초과되었습니다." });
+            }
+            if (error.response) {
+                return res.status(error.response.status).json({ error: `상대 서버 오류: ${error.response.status}` });
+            }
+            logError("GET /api/pages/fetch-metadata", error);
+            res.status(500).json({ error: "메타데이터를 가져오는데 실패했습니다." });
         }
     });
 

@@ -102,6 +102,9 @@ import { CalendarBlock } from './calendar-node.js';
 // TabBlock / TabItem 노드 import
 import { TabBlock, TabItem } from './tab-node.js';
 
+// BookmarkBlock 노드 import
+import { BookmarkBlock } from './bookmark-node.js';
+
 // DragHandle extension import
 import { DragHandle } from './drag-handle-extension.js';
 
@@ -494,6 +497,15 @@ export const SLASH_ITEMS = [
             } else {
                 alert("올바른 YouTube URL이 아닙니다.");
             }
+        }
+    },
+    {
+        id: "bookmark",
+        label: "링크 블록",
+        description: "웹 페이지 북마크 (제목, 파비콘 자동 추출)",
+        icon: "🔗",
+        command(editor) {
+            editor.chain().focus().setBookmarkBlock().run();
         }
     },
     {
@@ -1318,6 +1330,7 @@ export function initEditor() {
             ToggleBlock,
             BoardBlock,
             YoutubeBlock,
+            BookmarkBlock,
             FileBlock,
             CalendarBlock,
             TabItem,

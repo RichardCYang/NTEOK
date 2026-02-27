@@ -838,7 +838,7 @@ function sanitizeHtmlContent(html) {
 	            'img', 'figure',
 	            'label', 'input'
 	        ],
-	        ALLOWED_ATTR: ['style', 'class', 'href', 'target', 'rel', 'data-type', 'data-latex', 'colspan', 'rowspan', 'colwidth', 'src', 'alt', 'data-src', 'data-alt', 'data-caption', 'data-width', 'data-align', 'data-url', 'data-title', 'data-description', 'data-thumbnail', 'data-id', 'data-icon', 'data-checked', 'type', 'checked', 'data-callout-type', 'data-content', 'data-columns', 'data-is-open', 'data-selected-date', 'data-memos'],
+	        ALLOWED_ATTR: ['style', 'class', 'href', 'target', 'rel', 'data-type', 'data-latex', 'colspan', 'rowspan', 'colwidth', 'src', 'alt', 'data-src', 'data-alt', 'data-caption', 'data-width', 'data-align', 'data-url', 'data-title', 'data-favicon', 'data-description', 'data-thumbnail', 'data-id', 'data-icon', 'data-checked', 'type', 'checked', 'data-callout-type', 'data-content', 'data-columns', 'data-is-open', 'data-selected-date', 'data-memos'],
 	        ALLOW_DATA_ATTR: true,
 	        ALLOWED_URI_REGEXP: /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|cid|xmpp):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i
 	    });
@@ -1843,7 +1843,7 @@ app.use((req, res, next) => {
         `script-src 'nonce-${nonce}' 'strict-dynamic'; ` +
         "style-src 'self' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://fonts.googleapis.com 'unsafe-inline'; " +
         "font-src 'self' https://cdnjs.cloudflare.com https://fonts.gstatic.com; " +
-        "img-src 'self' data:; " +
+        "img-src 'self' data: https:; " +
         "connect-src 'self';"
     );
 

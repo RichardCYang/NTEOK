@@ -73,6 +73,7 @@ function sanitizeSharedHtml(html) {
             'colspan', 'rowspan', 'colwidth',
             'src', 'alt', 'data-src', 'data-alt', 'data-caption', 'data-width', 'data-align',
             'data-id', 'data-icon',
+            'data-url', 'data-title', 'data-favicon',
             'data-checked', 'type', 'checked', 'data-callout-type', 'data-content',
             'data-columns', 'data-is-open'
         ],
@@ -136,6 +137,60 @@ function renderCheckboxes(container) {
     });
 }
 
+/**
+ * 북마크(Link Block) 렌더링 함수
+ */
+function renderBookmarks(container) {
+    container.querySelectorAll('div[data-type="bookmark"]').forEach((el) => {
+        const url = el.getAttribute('data-url');
+        const title = el.getAttribute('data-title');
+        const favicon = el.getAttribute('data-favicon');
+
+        if (!url) return;
+
+        el.innerHTML = '';
+        el.className = 'bookmark-block';
+
+        const containerInner = document.createElement('div');
+        containerInner.className = 'bookmark-block-container';
+
+        const card = document.createElement('a');
+        card.href = url;
+        card.target = '_blank';
+        card.rel = 'noopener noreferrer';
+        card.className = 'bookmark-compact-link';
+
+        // 파비콘/아이콘 영역
+        if (favicon) {
+            const icon = document.createElement('img');
+            icon.src = favicon;
+            icon.className = 'bookmark-compact-favicon';
+            icon.alt = '';
+            icon.onerror = () => {
+                const fallbackIcon = document.createElement('i');
+                fallbackIcon.className = 'fa-solid fa-link bookmark-compact-icon';
+                if (card.contains(icon)) {
+                    card.replaceChild(fallbackIcon, icon);
+                }
+            };
+            card.appendChild(icon);
+        } else {
+            const icon = document.createElement('i');
+            icon.className = 'fa-solid fa-link bookmark-compact-icon';
+            card.appendChild(icon);
+        }
+
+        // 제목 영역
+        const titleEl = document.createElement('span');
+        titleEl.className = 'bookmark-compact-title';
+        titleEl.textContent = title || url;
+        card.appendChild(titleEl);
+
+        containerInner.appendChild(card);
+        el.appendChild(containerInner);
+    });
+}
+
 (async () => {
     try {
         // URL에서 토큰 추출
@@ -187,6 +242,9 @@ function renderCheckboxes(container) {
 
         // 체크박스 렌더링
         renderCheckboxes(editorEl);
+
+        // 북마크 렌더링
+        renderBookmarks(editorEl);
 
         // KaTeX 수식 렌더링
         if (window.katex) {
