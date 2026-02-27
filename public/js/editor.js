@@ -99,6 +99,9 @@ import { FileBlock } from './file-node.js';
 // CalendarBlock 노드 import
 import { CalendarBlock } from './calendar-node.js';
 
+// DatabaseBlock 노드 import
+import { DatabaseBlock } from './database-node.js';
+
 // TabBlock / TabItem 노드 import
 import { TabBlock, TabItem } from './tab-node.js';
 
@@ -515,6 +518,15 @@ export const SLASH_ITEMS = [
         icon: "📅",
         command(editor) {
             editor.chain().focus().setCalendarBlock().run();
+        }
+    },
+    {
+        id: "database",
+        label: "데이터베이스",
+        description: "행과 열로 구성된 데이터 테이블",
+        icon: "📊",
+        command(editor) {
+            editor.chain().focus().setDatabaseBlock().run();
         }
     },
     {
@@ -1333,6 +1345,7 @@ export function initEditor() {
             BookmarkBlock,
             FileBlock,
             CalendarBlock,
+            DatabaseBlock,
             TabItem,
             TabBlock,
             DragHandle,
