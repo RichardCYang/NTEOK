@@ -2556,6 +2556,9 @@ function getSessionFromId(sessionId) {
                 // 비활성 연결 정리 작업 시작
                 startInactiveConnectionsCleanup(pool, sanitizeHtmlContent);
 
+                // Graceful Shutdown 핸들러 등록
+                installGracefulShutdownHandlers(httpsServer, pool, sanitizeHtmlContent);
+
                 // HTTP -> HTTPS 리다이렉트 서버 (포트 80)
                 if (process.env.ENABLE_HTTP_REDIRECT === 'true') {
                     const HTTP_REDIRECT_PORT = 80;
@@ -2612,6 +2615,9 @@ function getSessionFromId(sessionId) {
 
                 // 비활성 연결 정리 작업 시작
                 startInactiveConnectionsCleanup(pool, sanitizeHtmlContent);
+
+                // Graceful Shutdown 핸들러 등록
+                installGracefulShutdownHandlers(httpServer, pool, sanitizeHtmlContent);
             }
         } else {
             // HTTPS 설정이 없는 경우 - HTTP 모드
@@ -2636,6 +2642,9 @@ function getSessionFromId(sessionId) {
 
             // 비활성 연결 정리 작업 시작
             startInactiveConnectionsCleanup(pool, sanitizeHtmlContent);
+
+            // Graceful Shutdown 핸들러 등록
+            installGracefulShutdownHandlers(httpServer, pool, sanitizeHtmlContent);
         }
 
     } catch (error) {

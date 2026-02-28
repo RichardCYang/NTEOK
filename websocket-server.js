@@ -236,6 +236,8 @@ function validateRealtimeYjsCandidate(candidateYDoc, sanitizeHtmlContent) {
 
 const WS_MAX_YJS_UPDATE_B64_CHARS = Math.ceil(WS_MAX_YJS_UPDATE_BYTES / 3) * 4 + 8;
 const WS_MAX_AWARENESS_UPDATE_B64_CHARS = Math.ceil(WS_MAX_AWARENESS_UPDATE_BYTES / 3) * 4 + 8;
+// Full-state(resync) payload upper bound (base64 chars)
+const WS_MAX_YJS_STATE_B64_CHARS = Math.ceil(WS_MAX_YJS_STATE_BYTES / 3) * 4 + 8;
 
 function initWsMessageRateState(ws) {
     ws._msgRate = { windowStart: Date.now(), total: 0, yjs: 0, awareness: 0, badJson: 0 };
@@ -253,7 +255,7 @@ function consumeWsMessageBudget(ws, kind) {
     }
     ws._msgRate.total++;
     if (ws._msgRate.total > WS_MSG_RATE_MAX) return false;
-    if (kind === "yjs-update" || kind === "yjs-update-e2ee" || kind === "yjs-state-e2ee") { ws._msgRate.yjs++; if (ws._msgRate.yjs > WS_YJS_RATE_MAX) return false; }
+    if (kind === "yjs-update" || kind === "yjs-state" || kind === "yjs-update-e2ee" || kind === "yjs-state-e2ee") { ws._msgRate.yjs++; if (ws._msgRate.yjs > WS_YJS_RATE_MAX) return false; }
     if (kind === "awareness-update") { ws._msgRate.awareness++; if (ws._msgRate.awareness > WS_AWARENESS_RATE_MAX) return false; }
     if (kind === "bad-json") { ws._msgRate.badJson++; if (ws._msgRate.badJson > 20) return false; }
     return true;
@@ -902,6 +904,7 @@ async function handleWebSocketMessage(ws, data, pool, sanitizeHtmlContent, getSe
         case 'unsubscribe-storage': handleUnsubscribeStorage(ws, payload); break;
         case 'subscribe-user': handleSubscribeUser(ws, payload); break;
         case 'yjs-update': await handleYjsUpdate(ws, payload, pool, sanitizeHtmlContent, pageSqlPolicy); break;
+        case 'yjs-state': await handleYjsState(ws, payload, pool, sanitizeHtmlContent, pageSqlPolicy); break;
         case 'awareness-update': await handleAwarenessUpdate(ws, payload, pool, pageSqlPolicy); break;
         // E2EE (저장소 암호화) 전용 핸들러
         case 'subscribe-page-e2ee': await handleSubscribePageE2EE(ws, payload, pool, pageSqlPolicy); break;
@@ -1435,6 +1438,117 @@ async function handleYjsUpdate(ws, payload, pool, sanitizeHtmlContent, pageSqlPo
         wsBroadcastToPage(pageId, 'yjs-update', { update }, ws.userId);
         if (doc) { if (doc.saveTimeout) clearTimeout(doc.saveTimeout); doc.saveTimeout = setTimeout(() => { saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc).catch(e => {}); }, 1000); }
     } catch (e) {}
+}
+
+async function handleYjsState(ws, payload, pool, sanitizeHtmlContent, pageSqlPolicy) {
+	const { pageId, state } = payload || {};
+	try {
+		if (!pageId || typeof state !== 'string' || !isSubscribedToPage(ws, pageId)) return;
+
+		// 권한 확인 (EDIT 또는 ADMIN)
+		const conns = wsConnections.pages.get(pageId);
+		const myConn = Array.from(conns).find(c => c.ws === ws);
+		if (!myConn) return;
+
+		// 보안: 메시지 단위 재검증
+		const access = await ensureActivePageAccess(pool, pageSqlPolicy, pageId, myConn, {
+			forcePermissionRefresh: true
+		});
+		if (!access.ok) {
+			revokePageSubscription(ws, pageId, conns, myConn, access.reason);
+			return;
+		}
+		const freshPerm = access.permission;
+		if (!['EDIT', 'ADMIN'].includes(freshPerm)) return;
+
+		// DoS 방지: State 크기 제한
+		if (state.length > WS_MAX_YJS_STATE_B64_CHARS) throw new Error('State too large');
+		const stateBuf = Buffer.from(state, 'base64');
+		if (stateBuf.length > WS_MAX_YJS_STATE_BYTES) throw new Error('State too large');
+
+		const ydoc = await loadOrCreateYjsDoc(pool, sanitizeHtmlContent, pageId);
+
+        // 보안: 협업 업데이트에 위험 URI 패턴이 포함되면 즉시 거부
+        const BAD = [
+            Buffer.from('javascript:', 'utf8'),
+            Buffer.from('data:', 'utf8'),
+            Buffer.from('vbscript:', 'utf8'),
+            Buffer.from('file:', 'utf8')
+        ];
+        for (const sig of BAD) {
+            if (stateBuf.indexOf(sig) !== -1) {
+                try { ws.close(1008, 'Blocked unsafe state'); } catch (_) {}
+                return;
+            }
+        }
+
+		// DoS 방어: 적용 후 예상 크기 확인 (여기선 state 자체가 전체이므로 stateBuf 길이와 비슷하거나 큼)
+		if (stateBuf.length > WS_MAX_DOC_EST_BYTES) {
+			wsCloseConnectionsForPage(pageId, 1009, 'Document too large - collaboration reset');
+			return;
+		}
+
+		// 보안: 복제본 검증 (Validation)
+		try {
+			// full-state는 applyUpdate 시 기존 상태와 병합됨.
+			// 악성 상태가 섞여 들어오는지 확인하기 위해 probe에 적용
+			const probe = cloneYDocForValidation(ydoc);
+			Y.applyUpdate(probe, stateBuf);
+
+			const sem = validateRealtimeYjsCandidate(probe, sanitizeHtmlContent);
+			if (!sem.ok) {
+				try { ws.close(sem.code || 1008, sem.reason || 'Rejected invalid state'); } catch (_) {}
+				return;
+			}
+		} catch (_) {
+			try { ws.close(1008, 'Malformed Yjs state'); } catch (_) {}
+			return;
+		}
+
+		// 검증 통과 -> 실제 적용
+		Y.applyUpdate(ydoc, stateBuf);
+
+		const doc = yjsDocuments.get(pageId);
+		// approxBytes 갱신: full state 적용 후엔 정확한 크기 알기 어려우므로 encode해서 측정하거나,
+		// 혹은 단순히 현재 크기에 더하는 건 부정확함.
+		// 하지만 Yjs 특성상 히스토리가 쌓이므로, stateBuf 크기만큼 늘어난다고 가정(보수적 접근)
+		if (doc) {
+			const cur = Number.isFinite(doc.approxBytes) ? doc.approxBytes : 0;
+			doc.approxBytes = Math.max(cur, stateBuf.length); // full state이므로 최소 이만큼은 됨
+		}
+
+        // 보안: parentId 검증
+        try {
+            const yMeta = ydoc.getMap('metadata');
+            const requestedParentId = yMeta.get('parentId') ?? null;
+            const parentCheck = await validateYjsParentAssignment(pool, pageSqlPolicy, {
+                viewerUserId: ws.userId,
+                pageId,
+                pageStorageId: access.page.storage_id,
+                candidateParentId: requestedParentId
+            });
+            if (!parentCheck.ok) {
+                yMeta.set('parentId', null);
+                try { ws.close(1008, 'Invalid parent assignment'); } catch (_) {}
+                return;
+            }
+            if ((requestedParentId || null) !== (parentCheck.parentId || null))
+                yMeta.set('parentId', parentCheck.parentId);
+        } catch (_) { return; }
+
+		// 다른 클라이언트에게 state 전송 (브로드캐스트)
+		// yjs-state 이벤트로 보냄 -> 클라이언트는 이를 받아 applyUpdate
+		wsBroadcastToPage(pageId, 'yjs-state', { state }, ws.userId);
+
+		if (doc) {
+			if (doc.saveTimeout) clearTimeout(doc.saveTimeout);
+			doc.saveTimeout = setTimeout(() => {
+				saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc).catch(e => {});
+			}, 1000);
+		}
+	} catch (e) {
+		console.error('[WS] handleYjsState error:', e);
+	}
 }
 
 function isSubscribedToPage(ws, pageId) {

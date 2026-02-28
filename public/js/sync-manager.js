@@ -27,6 +27,12 @@ let updateTimeout = null;
 let yjsPmPlugins = [];				// y-prosemirror(동시편집) 플러그인 추적/해제용
 let yjsPmPluginKeys = new Set();	// y-prosemirror(동시편집) 플러그인 중복 확인용
 
+// 네트워크 끊김/대용량 업데이트 등으로 인해 서버로 전송되지 못한 변경사항이 있으면
+// 재연결 후 full-state(resync)를 수행해 데이터 유실 방지
+// pageId -> boolean
+const resyncNeededByPage = new Map();
+let resyncDebounceTimer = null;
+
 // E2EE (저장소 암호화) 동기화 상태
 let isE2eeSync = false;				// 현재 페이지가 E2EE 모드인지 여부
 let e2eeStatePushTimeout = null;	// 주기적 상태 스냅샷 서버 저장용 타이머
@@ -35,6 +41,9 @@ let e2eeStatePushTimeout = null;	// 주기적 상태 스냅샷 서버 저장용 
 // 서버와 동일한 상한(기본값). 운영에서 서버(.env) 값 변경 시 함께 맞추는 것을 권장
 const WS_MAX_YJS_UPDATE_BYTES = 512 * 1024;        // 512KB
 const WS_MAX_AWARENESS_UPDATE_BYTES = 32 * 1024;   // 32KB
+
+// 서버 기본값(WS_MAX_YJS_STATE_BYTES)과 맞춰야 함
+const WS_MAX_YJS_STATE_BYTES = 1024 * 1024;        // 1MB
 
 const cursorState = {
     awareness: null,			// Awareness 인스턴스
@@ -75,6 +84,60 @@ function base64ToUint8(b64) {
 	for (let i = 0; i < bin.length; i++)
 		out[i] = bin.charCodeAt(i);
 	return out;
+}
+
+function markResyncNeeded(pageId) {
+	if (!pageId) return;
+	resyncNeededByPage.set(String(pageId), true);
+}
+
+function clearResyncNeeded(pageId) {
+	if (!pageId) return;
+	resyncNeededByPage.delete(String(pageId));
+}
+
+function isResyncNeeded(pageId) {
+	if (!pageId) return false;
+	return resyncNeededByPage.get(String(pageId)) === true;
+}
+
+function scheduleResync(pageId, delayMs = 350) {
+	markResyncNeeded(pageId);
+	if (resyncDebounceTimer) clearTimeout(resyncDebounceTimer);
+	resyncDebounceTimer = setTimeout(() => {
+		if (ws && ws.readyState === WebSocket.OPEN && ydoc && String(currentPageId) === String(pageId)) {
+			sendYjsState(pageId);
+		}
+	}, delayMs);
+}
+
+function sendYjsState(pageId) {
+	if (!pageId || !ydoc) return false;
+	if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+
+	try {
+		const stateUpdate = Y.encodeStateAsUpdate(ydoc);
+		if (stateUpdate && (stateUpdate.byteLength || stateUpdate.length) && (stateUpdate.byteLength || stateUpdate.length) > WS_MAX_YJS_STATE_BYTES) {
+			console.warn('[WS] yjs-state too large; cannot resync');
+			showInfo('문서가 너무 커서 전체 상태 동기화를 할 수 없습니다. (문서/첨부를 줄이거나 새 페이지로 분리해 주세요)');
+			return false;
+		}
+
+		ws.send(JSON.stringify({
+			type: 'yjs-state',
+			payload: {
+				pageId,
+				state: uint8ToBase64(stateUpdate)
+			}
+		}));
+
+		clearResyncNeeded(pageId);
+		return true;
+	} catch (e) {
+		console.error('[WS] yjs-state 전송 실패:', e);
+		markResyncNeeded(pageId);
+		return false;
+	}
 }
 
 
@@ -222,6 +285,9 @@ function handleWebSocketMessage(message) {
         case 'yjs-update':
             handleYjsUpdate(data);
             break;
+		case 'yjs-state':
+			handleYjsState(data);
+			break;
         case 'yjs-update-e2ee':
             handleYjsUpdateE2EEEvent(data).catch(e => console.error('[E2EE] update 처리 오류:', e));
             break;
@@ -355,9 +421,19 @@ export function stopPageSync() {
 		state.editor._snapshotHandler = null;
 	}
 
+	// 페이지를 떠나기 직전에 스냅샷(HTML)을 yMetadata에 강제 반영
+	// - debounce 타이밍(1s) 때문에 최종 변경사항이 서버로 전달되지 않으면
+	//   서버 DB content 스냅샷이 뒤처져 검색/백업/첨부 레지스트리 등에 영향
+	try { flushPendingUpdates(); } catch (_) {}
+
 	if (updateTimeout) {
 		clearTimeout(updateTimeout);
 		updateTimeout = null;
+	}
+
+	// 연결 끊김 중 편집(또는 대용량 변경)이 있었다면 unsubscribe 전에 full-state(resync) 1회 시도
+	if (pageIdToUnsubscribe && isResyncNeeded(pageIdToUnsubscribe)) {
+		sendYjsState(pageIdToUnsubscribe);
 	}
 
     if (pageIdToUnsubscribe && ws && ws.readyState === WebSocket.OPEN) {
@@ -447,26 +523,32 @@ export function syncEditorFromMetadata() {
  */
 function sendYjsUpdate(pageId, update) {
     if (!ws || ws.readyState !== WebSocket.OPEN) {
-        console.warn('[WS] WebSocket이 연결되지 않았습니다.');
+        markResyncNeeded(pageId);
+        console.warn('[WS] WebSocket이 연결되지 않았습니다. (resync 필요)');
         return;
     }
 
     // 서버에서 거부될 수준의 큰 update는 클라이언트에서 선제 차단(협업 끊김/재연결 UX 완화)
     if (update && (update.byteLength || update.length) && (update.byteLength || update.length) > WS_MAX_YJS_UPDATE_BYTES) {
-        console.warn('[WS] yjs-update too large; blocked on client');
-        showInfo('너무 큰 편집 내용은 실시간 협업 전송이 제한됩니다. (분할/축소 후 다시 시도)');
+        console.warn('[WS] yjs-update too large; fallback to yjs-state');
+        scheduleResync(pageId, 50);
         return;
     }
 
 	const base64Update = uint8ToBase64(update);
 
-    ws.send(JSON.stringify({
-        type: 'yjs-update',
-        payload: {
-            pageId,
-            update: base64Update
-        }
-    }));
+    try {
+        ws.send(JSON.stringify({
+            type: 'yjs-update',
+            payload: {
+                pageId,
+                update: base64Update
+            }
+        }));
+    } catch (e) {
+        console.error('[WS] yjs-update 전송 실패 (resync로 폴백):', e);
+        scheduleResync(pageId, 100);
+    }
 }
 
 /**
@@ -495,6 +577,14 @@ function handleInit(data) {
         // 진짜 동시편집 바인딩 (Y.XmlFragment <-> ProseMirror)
         setupEditorBindingWithXmlFragment();
 
+        if (isResyncNeeded(state.currentPageId)) {
+            console.warn('[WS] resync 수행: offline/large update로 인해 누락된 변경사항 보정');
+            setTimeout(() => {
+                if (String(currentPageId) === String(state.currentPageId))
+                    sendYjsState(state.currentPageId);
+            }, 0);
+        }
+
         console.log('[WS] 초기 상태 로드 완료');
     } catch (error) {
         console.error('[WS] 초기 상태 처리 오류:', error);
@@ -514,6 +604,16 @@ function handleYjsUpdate(data) {
     } catch (error) {
         console.error('[WS] Yjs 업데이트 처리 오류:', error);
     }
+}
+
+function handleYjsState(data) {
+	try {
+		if (!data || typeof data.state !== 'string') return;
+		const stateUpdate = base64ToUint8(data.state);
+		Y.applyUpdate(ydoc, stateUpdate, 'remote');
+	} catch (error) {
+		console.error('[WS] Yjs state 처리 오류:', error);
+	}
 }
 
 /**
