@@ -33,6 +33,10 @@ let yjsPmPluginKeys = new Set();	// y-prosemirror(동시편집) 플러그인 중
 const resyncNeededByPage = new Map();
 let resyncDebounceTimer = null;
 
+// 데이터 유실 방지: 즉시 저장(force-save) 요청에 대한 서버 ACK 대기 콜백
+// pageId -> { resolve, timer }
+const pendingForceSaves = new Map();
+
 // E2EE (저장소 암호화) 동기화 상태
 let isE2eeSync = false;				// 현재 페이지가 E2EE 모드인지 여부
 let e2eeStatePushTimeout = null;	// 주기적 상태 스냅샷 서버 저장용 타이머
@@ -185,6 +189,25 @@ export function initSyncManager(appState) {
     // Visibility API로 탭 전환 감지
     document.addEventListener('visibilitychange', handleVisibilityChange);
 
+    // 데이터 유실 방지: 탭 종료/브라우저 닫기 직전 미반영 변경분을 서버에 best-effort로 전달
+    window.addEventListener('pagehide', () => {
+        if (!state.currentPageId || isE2eeSync) return;
+        flushPendingUpdates();
+        sendPageSnapshotNow(state.currentPageId);
+        // waitForAck=false: 비동기 ACK 대기는 언로드 중 불가능
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            try {
+                ws.send(JSON.stringify({ type: 'force-save', payload: { pageId: state.currentPageId } }));
+            } catch (_) {}
+        }
+    }, { capture: true });
+
+    window.addEventListener('beforeunload', () => {
+        if (!state.currentPageId || isE2eeSync) return;
+        flushPendingUpdates();
+        sendPageSnapshotNow(state.currentPageId);
+    }, { capture: true });
+
     // WebSocket 연결
     connectWebSocket();
 }
@@ -314,6 +337,9 @@ function handleWebSocketMessage(message) {
             break;
         case 'awareness-update':
             handleRemoteAwarenessUpdate(data);
+            break;
+        case 'page-saved':
+            handlePageSaved(data);
             break;
         case 'error':
             console.error('[WS] 서버 오류:', data.message);
@@ -492,6 +518,77 @@ export function flushPendingUpdates() {
 
         updateTimeout = null;
     }
+}
+
+/**
+ * 데이터 유실 방지: 서버 force-save ACK 수신 처리
+ */
+function handlePageSaved(data) {
+    const pageId = data?.pageId ? String(data.pageId) : null;
+    if (!pageId) return;
+    const pending = pendingForceSaves.get(pageId);
+    if (pending) {
+        clearTimeout(pending.timer);
+        pendingForceSaves.delete(pageId);
+        pending.resolve({ ok: true, updatedAt: data.updatedAt });
+    }
+}
+
+/**
+ * 데이터 유실 방지: 탭 종료/페이지 이탈 직전 HTML 스냅샷을 서버로 전송 (best-effort)
+ * - E2EE 모드에서는 평문 HTML을 서버로 보내면 안 되므로 완전 차단
+ */
+function sendPageSnapshotNow(pageId) {
+    if (isE2eeSync) return false;
+    if (!pageId || !ws || ws.readyState !== WebSocket.OPEN) return false;
+    if (!state.editor || !yMetadata) return false;
+
+    const html = state.editor.getHTML();
+    if (!html) return false;
+    // 2MB 초과 시 서버가 어차피 거부하므로 전송하지 않음
+    if (new Blob([html]).size > 2 * 1024 * 1024) return false;
+
+    const titleInput = document.querySelector('#page-title-input');
+    const title = titleInput ? titleInput.value : undefined;
+
+    try {
+        ws.send(JSON.stringify({
+            type: 'page-snapshot',
+            payload: { pageId, html, ...(title ? { title } : {}) }
+        }));
+        return true;
+    } catch (_) {
+        return false;
+    }
+}
+
+/**
+ * 데이터 유실 방지: 즉시 DB 저장 요청 (WS force-save)
+ * - 비암호화 페이지의 Ctrl+S / 모드 전환 저장에 사용
+ * - includeSnapshot=true 이면 snapshot을 먼저 전송해 최신 HTML이 반영되도록 함
+ * - waitForAck=true 이면 'page-saved' 이벤트를 기다려 updatedAt을 반환 (최대 5초 타임아웃)
+ */
+export async function requestImmediateSave(pageId, { includeSnapshot = true, waitForAck = true } = {}) {
+    if (!pageId || !ws || ws.readyState !== WebSocket.OPEN) return null;
+    // E2EE 페이지는 snapshot 제외
+    if (isE2eeSync) includeSnapshot = false;
+    if (includeSnapshot) {
+        flushPendingUpdates();
+        sendPageSnapshotNow(pageId);
+    }
+    try {
+        ws.send(JSON.stringify({ type: 'force-save', payload: { pageId } }));
+    } catch (_) {
+        return null;
+    }
+    if (!waitForAck) return { ok: true };
+    return new Promise((resolve) => {
+        const timer = setTimeout(() => {
+            pendingForceSaves.delete(String(pageId));
+            resolve(null);
+        }, 5000);
+        pendingForceSaves.set(String(pageId), { resolve, timer });
+    });
 }
 
 /**

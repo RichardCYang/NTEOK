@@ -708,7 +708,23 @@ module.exports = (dependencies) => {
             const shouldResetYjsState = (req.body.content !== undefined) || encryptionStateChanged || (Number(isEncrypted) === 1);
             if (shouldResetYjsState) {
                 sql += `, yjs_state=NULL`;
+                // 중요: yjsDocuments 엔트리를 제거할 때 pending saveTimeout이 남아있으면
+                // REST 저장 이후에도 타이머 콜백이 실행되어 오래된 Yjs 상태가 DB를 덮어씌울 수 있음
+                // (데이터 유실/롤백) → 반드시 타이머를 먼저 정리한 후 delete
+                try {
+                    const docInfo = yjsDocuments && yjsDocuments.get(id);
+                    if (docInfo?.saveTimeout) {
+                        clearTimeout(docInfo.saveTimeout);
+                        docInfo.saveTimeout = null;
+                    }
+                } catch (_) {}
                 if (yjsDocuments && yjsDocuments.has(id)) yjsDocuments.delete(id);
+
+                // REST로 content를 갱신하는 동안 실시간 세션이 살아있으면
+                // 서버 Y.Doc 리셋과 클라이언트 incremental update가 충돌해 문서가 깨질 수 있으므로
+                // 연결을 강제로 종료해 클라이언트가 재구독/재동기화하도록 유도
+                if (req.body.content !== undefined && typeof wsCloseConnectionsForPage === 'function')
+                    wsCloseConnectionsForPage(id, 1012, 'Page updated via REST');
             }
 
             sql += ` WHERE id=?`; params.push(id);
@@ -986,6 +1002,11 @@ module.exports = (dependencies) => {
                 } catch (_) {}
 
                 try {
+                    const docInfo = yjsDocuments.get(pid);
+                    if (docInfo?.saveTimeout) {
+                        clearTimeout(docInfo.saveTimeout);
+                        docInfo.saveTimeout = null;
+                    }
                     yjsDocuments.delete(pid);
                 } catch (_) {}
 

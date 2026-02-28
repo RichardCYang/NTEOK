@@ -43,6 +43,21 @@ const wsConnections = {
 
 const yjsDocuments = new Map();
 
+/**
+ * yjsDocuments 엔트리 안전 제거
+ * - saveTimeout이 남아있으면, 문서가 Map에서 제거된 뒤에도 타이머 콜백이 실행되어
+ *   DB에 오래된 상태를 덮어써 데이터 유실이 발생할 수 있음 (특히 REST 저장과 경쟁)
+ */
+function dropYjsDocument(pageId) {
+    const pid = String(pageId || '');
+    const doc = yjsDocuments.get(pid);
+    if (doc?.saveTimeout) {
+        try { clearTimeout(doc.saveTimeout); } catch (_) {}
+        doc.saveTimeout = null;
+    }
+    yjsDocuments.delete(pid);
+}
+
 // E2EE 암호화 저장소 페이지의 encrypted Yjs state 보관 (서버는 평문 불가)
 // pageId -> { encryptedState: string (base64), storedAt: number }
 const yjsE2EEStates = new Map();
@@ -337,7 +352,7 @@ function wsCloseConnectionsForPage(pageId, code = 1009, reason = 'Document too l
     const pid = String(pageId || '');
     const conns = wsConnections.pages.get(pid);
     if (!conns || conns.size === 0) {
-        if (yjsDocuments.has(pid)) yjsDocuments.delete(pid);
+        if (yjsDocuments.has(pid)) dropYjsDocument(pid);
         return;
     }
 
@@ -347,7 +362,7 @@ function wsCloseConnectionsForPage(pageId, code = 1009, reason = 'Document too l
     }
 
     wsConnections.pages.delete(pid);
-    if (yjsDocuments.has(pid)) yjsDocuments.delete(pid);
+    if (yjsDocuments.has(pid)) dropYjsDocument(pid);
 }
 
 function getUserColor(userId) { return USER_COLORS[userId % USER_COLORS.length]; }
@@ -358,7 +373,7 @@ function cleanupInactiveConnections(pool, sanitizeHtmlContent) {
     yjsDocuments.forEach((doc, pageId) => {
         if (now - doc.lastAccess > TIMEOUT) {
             saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, doc.ydoc).catch(e => {});
-            yjsDocuments.delete(pageId);
+            dropYjsDocument(pageId);
         }
     });
 }
@@ -903,6 +918,10 @@ async function handleWebSocketMessage(ws, data, pool, sanitizeHtmlContent, getSe
         case 'subscribe-storage': await handleSubscribeStorage(ws, payload, pool); break;
         case 'unsubscribe-storage': handleUnsubscribeStorage(ws, payload); break;
         case 'subscribe-user': handleSubscribeUser(ws, payload); break;
+        // 데이터 유실 방지: 연결 종료 직전 HTML 스냅샷을 서버에 강제 전달
+        case 'page-snapshot': await handlePageSnapshot(ws, payload, pool, sanitizeHtmlContent, pageSqlPolicy); break;
+        // 데이터 유실 방지: 사용자가 Ctrl+S/모드 전환 등으로 지금 저장을 요청
+        case 'force-save': await handleForceSave(ws, payload, pool, sanitizeHtmlContent, pageSqlPolicy); break;
         case 'yjs-update': await handleYjsUpdate(ws, payload, pool, sanitizeHtmlContent, pageSqlPolicy); break;
         case 'yjs-state': await handleYjsState(ws, payload, pool, sanitizeHtmlContent, pageSqlPolicy); break;
         case 'awareness-update': await handleAwarenessUpdate(ws, payload, pool, pageSqlPolicy); break;
@@ -1232,6 +1251,85 @@ async function refreshConnPermission(pool, conn, { force = false } = {}) {
 function handleSubscribeUser(ws, payload) {
     if (!wsConnections.users.has(ws.userId)) wsConnections.users.set(ws.userId, new Set());
     wsConnections.users.get(ws.userId).add({ ws, sessionId: ws.sessionId });
+}
+
+/**
+ * 데이터 유실 방지: 탭 종료/페이지 이탈 직전 클라이언트가 밀어넣는 HTML 스냅샷 처리
+ * - 암호화(E2EE) 페이지는 서버가 평문을 알면 안 되므로 거부
+ * - 메모리 Y.Doc의 metadata에만 반영 (별도 DB 저장 없이 다음 saveTimeout에 자동 포함)
+ */
+async function handlePageSnapshot(ws, payload, pool, sanitizeHtmlContent, pageSqlPolicy) {
+    const { pageId, html, title } = payload || {};
+    if (!pageId || typeof html !== 'string') return;
+    if (!isSubscribedToPage(ws, pageId)) return;
+
+    const conns = wsConnections.pages.get(pageId);
+    const myConn = conns ? Array.from(conns).find(c => c.ws === ws) : null;
+    if (!myConn) return;
+
+    let access;
+    try {
+        access = await ensureActivePageAccess(pool, pageSqlPolicy, pageId, myConn, { forcePermissionRefresh: true });
+    } catch (_) { return; }
+
+    if (!access.ok) {
+        revokePageSubscription(ws, pageId, conns, myConn, access.reason);
+        return;
+    }
+    if (!['EDIT', 'ADMIN'].includes(access.permission)) return;
+
+    // E2EE/암호화 페이지: 서버는 평문을 알면 안 되므로 snapshot 업로드 자체를 거부
+    if (Number(access.page?.is_encrypted) === 1) return;
+
+    if (byteLenUtf8(html) > (2 * 1024 * 1024)) return;
+    const safeHtml = (typeof sanitizeHtmlContent === 'function') ? sanitizeHtmlContent(html) : html;
+
+    const docMeta = yjsDocuments.get(String(pageId));
+    if (docMeta?.ydoc) {
+        const yMeta = docMeta.ydoc.getMap('metadata');
+        docMeta.ydoc.transact(() => {
+            yMeta.set('content', safeHtml);
+            if (typeof title === 'string' && title.trim()) {
+                yMeta.set('title', title.trim().slice(0, 255));
+            }
+        }, 'snapshot');
+    }
+}
+
+/**
+ * 데이터 유실 방지: 클라이언트가 즉시 DB 저장을 요청 (Ctrl+S / 모드 전환 등)
+ * - 권한 재검증 후 saveYjsDocToDatabase 즉시 실행
+ * - 저장 완료 후 'page-saved' ACK 전송
+ */
+async function handleForceSave(ws, payload, pool, sanitizeHtmlContent, pageSqlPolicy) {
+    const { pageId } = payload || {};
+    if (!pageId) return;
+    if (!isSubscribedToPage(ws, pageId)) return;
+
+    const conns = wsConnections.pages.get(pageId);
+    const myConn = conns ? Array.from(conns).find(c => c.ws === ws) : null;
+    if (!myConn) return;
+
+    let access;
+    try {
+        access = await ensureActivePageAccess(pool, pageSqlPolicy, pageId, myConn, { forcePermissionRefresh: true });
+    } catch (_) { return; }
+
+    if (!access.ok) {
+        revokePageSubscription(ws, pageId, conns, myConn, access.reason);
+        return;
+    }
+    if (!['EDIT', 'ADMIN'].includes(access.permission)) return;
+    if (Number(access.page?.is_encrypted) === 1) return;
+
+    try {
+        const ydoc = await loadOrCreateYjsDoc(pool, sanitizeHtmlContent, pageId);
+        await saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc);
+        ws.send(JSON.stringify({
+            event: 'page-saved',
+            data: { pageId: String(pageId), updatedAt: new Date().toISOString() }
+        }));
+    } catch (_) {}
 }
 
 /**

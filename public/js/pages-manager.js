@@ -5,7 +5,7 @@
 import { escapeHtml, showErrorInEditor, syncPageUpdatedAtPadding, closeSidebar } from './ui-utils.js';
 import * as api from './api-utils.js';
 import { loadAndRenderComments } from './comments-manager.js';
-import { startPageSync, stopPageSync, startStorageSync, stopStorageSync, flushPendingUpdates, syncEditorFromMetadata, onLocalEditModeChanged, updateAwarenessMode, flushE2eeState } from './sync-manager.js';
+import { startPageSync, stopPageSync, startStorageSync, stopStorageSync, flushPendingUpdates, syncEditorFromMetadata, onLocalEditModeChanged, updateAwarenessMode, flushE2eeState, requestImmediateSave } from './sync-manager.js';
 import { showCover, hideCover, updateCoverButtonsVisibility } from './cover-manager.js';
 import { checkPublishStatus, updatePublishButton } from './publish-manager.js';
 import { loadAndRenderSubpages, onEditModeChange } from './subpages-manager.js';
@@ -162,7 +162,7 @@ export function renderPageList() {
 
         const titleSpan = document.createElement("span");
         titleSpan.className = "page-list-item-title";
-        
+
         const iconEl = (() => {
             if (node.icon) {
                 if (node.icon.startsWith('fa-')) {
@@ -226,7 +226,7 @@ export function renderPageList() {
 
     tree.forEach(node => renderNode(node, 0));
     listEl.appendChild(fragment);
-    
+
     // 드래그 앤 드롭 (추후 저장소 단위로 재구현 필요 시 확장)
 }
 
@@ -269,13 +269,13 @@ export async function clearCurrentPage() {
     // 서브페이지 및 댓글 영역 초기화
     const subpagesContainer = document.querySelector("#subpages-container");
     if (subpagesContainer) subpagesContainer.innerHTML = "";
-    
+
     const commentsContainer = document.querySelector("#page-comments-section");
     if (commentsContainer) {
         commentsContainer.innerHTML = "";
         commentsContainer.classList.add("hidden");
     }
-    
+
     updatePublishButton();
 }
 
@@ -342,7 +342,7 @@ export async function loadPage(id) {
         const canEdit = state.currentStoragePermission === 'EDIT' || state.currentStoragePermission === 'ADMIN';
         const modeToggleBtn = document.querySelector("#mode-toggle-btn");
         const newPageBtn = document.querySelector("#new-page-btn");
-        
+
         if (modeToggleBtn) modeToggleBtn.style.display = canEdit ? 'flex' : 'none';
         if (newPageBtn) newPageBtn.style.display = canEdit ? 'flex' : 'none';
 
@@ -368,7 +368,7 @@ export async function loadPage(id) {
             // 페이지 개별 암호화(비밀번호 설정): 서버 실시간 동기화 미지원
             stopPageSync();
         }
-        
+
         await checkPublishStatus(page.id);
         await loadAndRenderSubpages(page.id);
         await loadAndRenderComments(page.id);
@@ -388,17 +388,42 @@ export async function saveCurrentPage() {
 
     const titleInput = document.querySelector("#page-title-input");
     const title = titleInput ? titleInput.value || "제목 없음" : "제목 없음";
+
+    // 비암호화 페이지: REST(content) 저장 대신 WS force-save 사용
+    // - REST 저장은 서버에서 Y.Doc를 리셋하므로, 살아있는 WS 세션의 증분 업데이트와 충돌해
+    //   저장 직후 롤백 또는 문서 일부 소실 등 데이터 유실이 발생할 수 있음
+    if (!state.currentStorageIsEncrypted && !state.currentPageIsEncrypted) {
+        try {
+            flushPendingUpdates();
+            const result = await requestImmediateSave(state.currentPageId, { includeSnapshot: true, waitForAck: true });
+            if (result?.ok) {
+                if (result.updatedAt) {
+                    state.pages = state.pages.map(p =>
+                        p.id === state.currentPageId ? { ...p, title, updatedAt: result.updatedAt } : p
+                    );
+                    renderPageList();
+                }
+                return true;
+            }
+            // ACK 없이 타임아웃된 경우도 저장은 시도된 것으로 간주
+            return true;
+        } catch (error) {
+            console.error("Save error (force-save):", error);
+            return false;
+        }
+    }
+
     let content = sanitizeEditorHtml(state.editor.getHTML());
 
     try {
         const storageKey = window.cryptoManager.getStorageKey();
-        let body = { 
-            title, 
-            content, 
-            isEncrypted: false, 
-            storageId: state.currentStorageId 
+        let body = {
+            title,
+            content,
+            isEncrypted: false,
+            storageId: state.currentStorageId
         };
-        
+
         // 저장소 레벨 암호화 강제 적용
         if (state.currentStorageIsEncrypted) {
             if (!storageKey) {
@@ -456,12 +481,12 @@ export async function toggleEditMode() {
             alert("암호화된 페이지를 편집하려면 저장소 잠금을 해제해야 합니다.");
             return;
         }
-        
+
         state.isWriteMode = true;
         state.editor.setEditable(true);
         btn.classList.add("write-mode");
     }
-    
+
     updateCoverButtonsVisibility();
     updatePublishButton();
 }
@@ -492,7 +517,7 @@ export function bindNewPageButton() {
 
         try {
             const storageKey = window.cryptoManager.getStorageKey();
-            
+
             // 암호화 저장소 검증
             if (state.currentStorageIsEncrypted && !storageKey) {
                 alert("암호화 키가 없어 페이지를 생성할 수 없습니다. 저장소를 다시 열어주세요.");
