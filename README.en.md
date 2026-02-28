@@ -457,13 +457,37 @@ note-taking app, markdown editor, web notes, E2EE, end-to-end encryption, encryp
 
 ## Recent Security Patches and Updates
 
-### 2026-02-27 Feature Additions
+### 2026-02-28 Data Consistency and Stability Fixes
+
+- **WebSocket-REST Race Condition Resolution** - Prevent document corruption during simultaneous editing
+- **WebSocket Connection Recovery Enhancement** - Ensure edit persistence and server-side permanent storage
+- **Authorization Verification Strengthening** - Prevent cascading deletion of other users' pages during permanent deletion
+- **E2EE Collaboration Persistence** - Ensure real-time collaboration content is permanently stored in DB for end-to-end encrypted environments
+- **Block Resizing Improvements** - Dynamic dimension adjustment for database block matrices
+
+### 2026-02-27 New Block Types and Feature Additions
 
 - **Tab View Block** - Display content organized in multiple tabs
 - **File Block** - Attach and download files functionality
 - **Calendar Block** - Display data in calendar format
+- **Database Block** - Structured data management (matrix format)
+- **Web Page Link Block** - External link embedding display
 - **WebRTC-based Real-time Sync** - Yjs synchronization support for encrypted storages
 - **.env Configuration Convenience** - Batch files/shell scripts for easy environment setup
+
+### 2026-02-26 End-to-End Encryption (E2EE) Collaboration Features
+
+- **Storage-level E2EE** - Protect entire storage with end-to-end encryption
+- **Encrypted Environment Real-time Collaboration** - Real-time collaborative editing of encrypted pages via Yjs-based synchronization
+
+### 2026-02-23~02-25 Security and Access Control Strengthening
+
+- **CWE-400 DoS Vulnerability Fix** - Prevent OOM attacks from Yjs document bloat (document size limits added)
+- **Memory Leak DoS Fix** - isomorphic-dompurify v3.0.0 upgrade and periodic window regeneration
+- **Broken Access Control (IDOR) Fix** - Prevent unauthorized file deletion by collaborators (owner verification added)
+- **WebSocket Session Authorization Verification** - Force disconnect existing connections when page encryption/visibility changes
+- **Upload Quota Bypass Prevention** - Accurate quota management in multi-threaded environments (Promise serialization)
+- **WebSocket Maximum Connections Management** - Prevent memory exhaustion from DoS attacks
 
 ### 2026-01-19 Security Patches
 
