@@ -127,7 +127,7 @@ module.exports = ({ pool, pageSqlPolicy }) => {
                  LEFT JOIN storage_shares ss ON p.storage_id = ss.storage_id AND ss.shared_with_user_id = ?
                  WHERE p.id = ? AND (p.user_id = ? OR ss.storage_id IS NOT NULL)
                  ${vis.sql}`;
-            
+
             if (!includeDeleted) {
                 sql += ` AND p.deleted_at IS NULL`;
             }
@@ -198,12 +198,57 @@ module.exports = ({ pool, pageSqlPolicy }) => {
         },
 
         /**
-         * 페이지 영구 삭제
+         * 페이지 영구 삭제 (하위 페이지 포함)
+         * - 보안: 하위 페이지 중 다른 사용자가 소유한 페이지는 삭제하지 않고 분리(orphan)
+         * - DB ON DELETE CASCADE에 의존하되, 삭제 전 타인 소유 페이지는 트리를 끊어 보호함
          */
-        async permanentlyDeletePage(pageId, userId) {
+        async permanentlyDeletePageAndDescendants({ pageId, userId, isAdmin = false }) {
+            // 대상 페이지 정보 조회
+            const [rootRows] = await pool.execute('SELECT storage_id, user_id FROM pages WHERE id = ?', [pageId]);
+            if (!rootRows.length) return;
+            const storageId = rootRows[0].storage_id;
+
+            // 전체 서브트리 구조 파악을 위해 저장소 내 모든 페이지 조회
+            const [allPages] = await pool.execute(
+                `SELECT id, parent_id, user_id FROM pages WHERE storage_id = ?`,
+                [storageId]
+            );
+
+            // 서브트리 ID 목록 추출
+            const subtreeIds = collectSubtreeIds(allPages || [], pageId);
+            const subtreeSet = new Set(subtreeIds);
+
+            // 보존해야 할 페이지 식별 (타인 소유 페이지)
+            const pagesToDetach = [];
+            if (!isAdmin) {
+                for (const p of allPages) {
+                    if (subtreeSet.has(p.id)) {
+                        // 내가 소유하지 않은 페이지는 보존해야 함
+                        if (Number(p.user_id) !== Number(userId)) {
+                            // 부모가 이번 삭제 범위(subtree)에 포함되어 있다면,
+                            // 함께 삭제되지 않도록 parent 연결을 끊어야 함
+                            if (p.parent_id && subtreeSet.has(p.parent_id)) {
+                                pagesToDetach.push(p.id);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 보존 대상 페이지 분리 (부모 끊기)
+            if (pagesToDetach.length > 0) {
+                 await updateByIdInBatches(
+                    `UPDATE pages SET parent_id = NULL, updated_at = NOW() WHERE id IN`,
+                    pagesToDetach
+                 );
+            }
+
+            // 루트 페이지 삭제
+            // - 내가 소유한(또는 isAdmin인 경우 모든) 하위 페이지는
+            //   DB의 ON DELETE CASCADE 설정에 의해 자동 삭제됨
             await pool.execute(
-                `DELETE FROM pages WHERE id = ? AND (user_id = ? OR storage_id IN (SELECT id FROM storages WHERE user_id = ?))`,
-                [pageId, userId, userId]
+                `DELETE FROM pages WHERE id = ?`,
+                [pageId]
             );
         },
 
@@ -274,7 +319,7 @@ module.exports = ({ pool, pageSqlPolicy }) => {
             );
                         return rows || [];
                     },
-            
+
                     /**
                      * 업데이트 히스토리 기록
                      */
@@ -286,7 +331,7 @@ module.exports = ({ pool, pageSqlPolicy }) => {
                             [userId, storageId, pageId, action, detailsStr]
                         );
                     },
-            
+
         /**
          * 업데이트 히스토리 조회
          */
@@ -325,4 +370,4 @@ module.exports = ({ pool, pageSqlPolicy }) => {
             return rows || [];
         }
     };
-};            
+};

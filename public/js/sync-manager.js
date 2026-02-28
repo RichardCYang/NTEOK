@@ -1362,6 +1362,19 @@ function scheduleE2EEStatePush(pageId) {
 }
 
 /**
+ * 대기 중인 E2EE 상태 저장을 즉시 실행 (페이지 이탈 시 등)
+ */
+export async function flushE2eeState() {
+    if (e2eeStatePushTimeout) {
+        clearTimeout(e2eeStatePushTimeout);
+        e2eeStatePushTimeout = null;
+        if (currentPageId && isE2eeSync) {
+            await sendYjsStateE2EE(currentPageId);
+        }
+    }
+}
+
+/**
  * E2EE 전체 Yjs 상태를 서버에 저장 (늦은 참여자 초기 상태 제공)
  */
 async function sendYjsStateE2EE(pageId) {
@@ -1372,12 +1385,30 @@ async function sendYjsStateE2EE(pageId) {
 
     try {
         const stateUpdate = Y.encodeStateAsUpdate(ydoc);
-        const encrypted = await encryptBytes(stateUpdate, storageKey);
+        const encryptedState = await encryptBytes(stateUpdate, storageKey);
+        
+        // HTML 스냅샷도 암호화하여 전송 (서버 검색/미리보기용 DB 저장)
+        let encryptedHtml = null;
+        if (state.editor) {
+            const html = state.editor.getHTML();
+            // window.cryptoManager.encryptWithKey는 string 반환 (base64)
+            // encryptBytes는 Uint8Array 반환.
+            // 서버 핸들러는 encryptedHtml을 string으로 기대함 (DB 컬럼이 MEDIUMTEXT/LONGTEXT).
+            // 기존 cryptoManager 사용
+            if (window.cryptoManager && typeof window.cryptoManager.encryptWithKey === 'function') {
+                encryptedHtml = await window.cryptoManager.encryptWithKey(html, storageKey);
+            }
+        }
+
         ws.send(JSON.stringify({
             type: 'yjs-state-e2ee',
-            payload: { pageId, encryptedState: uint8ToBase64(encrypted) }
+            payload: { 
+                pageId, 
+                encryptedState: uint8ToBase64(encryptedState),
+                encryptedHtml 
+            }
         }));
-        console.log('[E2EE] 전체 상태 서버에 저장 완료');
+        console.log('[E2EE] 전체 상태(및 HTML 스냅샷) 서버에 저장 완료');
     } catch (e) {
         console.error('[E2EE] 상태 저장 실패:', e);
     }

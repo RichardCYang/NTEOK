@@ -912,7 +912,11 @@ module.exports = (dependencies) => {
                 return res.status(403).json({ error: "이 페이지를 영구 삭제할 권한이 없습니다." });
             }
 
-            await pagesRepo.permanentlyDeletePage(id, userId);
+            await pagesRepo.permanentlyDeletePageAndDescendants({
+                pageId: id,
+                userId,
+                isAdmin: permission === 'ADMIN'
+            });
 
             await pagesRepo.recordUpdateHistory({
                 userId,

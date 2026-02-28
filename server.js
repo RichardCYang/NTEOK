@@ -1226,6 +1226,10 @@ async function initDb() {
             encryption_salt VARCHAR(255) NULL,
             encrypted_content MEDIUMTEXT NULL,
             yjs_state	LONGBLOB NULL,
+            -- E2EE(저장소 암호화) 실시간 협업 상태(암호문) 영속 저장용
+            -- 서버는 평문을 모르므로, 암호화된 Yjs 스냅샷만 저장
+            e2ee_yjs_state LONGBLOB NULL,
+            e2ee_yjs_state_updated_at DATETIME NULL,
             share_allowed TINYINT(1) NOT NULL DEFAULT 0,
             icon VARCHAR(100) NULL,
             cover_image VARCHAR(255) NULL,

@@ -46,6 +46,15 @@ const yjsDocuments = new Map();
 // E2EE 암호화 저장소 페이지의 encrypted Yjs state 보관 (서버는 평문 불가)
 // pageId -> { encryptedState: string (base64), storedAt: number }
 const yjsE2EEStates = new Map();
+
+// E2EE 상태 스냅샷(전체 state) 저장은 충돌 위험이 있으므로, 한 페이지당 1개의 리더 연결만 허용
+// pageId -> { sessionId: string, userId: number, lastSeenAt: number }
+const e2eeSnapshotLeaders = new Map();
+
+// E2EE 상태 DB 저장 디바운스
+// pageId -> { timer, stateBuf, encryptedHtml, touchedAt }
+const e2eeDbSaveQueue = new Map();
+
 const USER_COLORS = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A', '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E2', '#F8B195', '#C06C84'];
 const wsConnectionLimiter = new Map();
 const WS_RATE_LIMIT_WINDOW = 60 * 1000;
@@ -53,7 +62,65 @@ const WS_RATE_LIMIT_MAX_CONNECTIONS = 10;
 const WS_MAX_MESSAGE_BYTES = 2 * 1024 * 1024;
 const WS_MAX_AWARENESS_UPDATE_BYTES = 32 * 1024;
 
-// ==================== WebSocket DoS 방어: 메시지 레이트/크기 제한 ====================
+// ==================== E2EE Leader Election & Persistence Helpers ====================
+function getActiveE2eeLeader(pageId) {
+    const leader = e2eeSnapshotLeaders.get(String(pageId));
+    if (!leader) return null;
+    // 30초 이상 활동 없으면 리더 자격 상실로 간주
+    if (Date.now() - leader.lastSeenAt > 30000) {
+        e2eeSnapshotLeaders.delete(String(pageId));
+        return null;
+    }
+    return leader;
+}
+
+function maybeElectE2eeLeader(pageId, myConn) {
+    const pid = String(pageId);
+    let leader = getActiveE2eeLeader(pid);
+    if (!leader) {
+        leader = { sessionId: myConn.sessionId, userId: myConn.userId, lastSeenAt: Date.now() };
+        e2eeSnapshotLeaders.set(pid, leader);
+    }
+    return leader;
+}
+
+function touchE2eeLeader(pageId, myConn) {
+    const pid = String(pageId);
+    const leader = e2eeSnapshotLeaders.get(pid);
+    if (leader && leader.sessionId === myConn.sessionId) {
+        leader.lastSeenAt = Date.now();
+        return true;
+    }
+    return false;
+}
+
+async function persistE2eeStateDebounced(pool, pageId, encryptedStateBuf, encryptedHtml = null) {
+    const pid = String(pageId);
+    const existing = e2eeDbSaveQueue.get(pid);
+    if (existing)
+        clearTimeout(existing.timer);
+
+    // 1.5초 디바운스
+    const timer = setTimeout(async () => {
+        e2eeDbSaveQueue.delete(pid);
+        try {
+            await pool.execute(
+                `UPDATE pages
+                 SET e2ee_yjs_state = ?, e2ee_yjs_state_updated_at = NOW()
+                     ${encryptedHtml ? ', encrypted_content = ?' : ''}
+                 WHERE id = ?`,
+                encryptedHtml
+                    ? [encryptedStateBuf, encryptedHtml, pid]
+                    : [encryptedStateBuf, pid]
+            );
+        } catch (e) {
+            console.error(`[E2EE] Failed to persist state for ${pid}:`, e.message);
+        }
+    }, 1500);
+
+    e2eeDbSaveQueue.set(pid, { timer, stateBuf: encryptedStateBuf, encryptedHtml, touchedAt: Date.now() });
+}
+
 // 연결 수 제한만으로는 1개 연결에서의 메시지 플러딩을 막기 어려움
 // WebSocket 메시지 처리(JSON.parse, base64 decode, Yjs applyUpdate, DB save)는 CPU/메모리 소비
 // (CWE-400 Uncontrolled Resource Consumption)
@@ -950,6 +1017,7 @@ async function handleSubscribePageE2EE(ws, payload, pool, pageSqlPolicy) {
 
         const [rows] = await pool.execute(
             `SELECT p.id, p.user_id, p.is_encrypted, p.share_allowed, p.storage_id,
+                    p.e2ee_yjs_state,
                     s.is_encrypted AS storage_is_encrypted
              FROM pages p
              JOIN storages s ON p.storage_id = s.id
@@ -992,16 +1060,36 @@ async function handleSubscribePageE2EE(ws, payload, pool, pageSqlPolicy) {
         }
         const color = getUserColor(userId);
         // isE2ee: true — ensureActivePageAccess에서 E2EE 연결 허용 식별자
-        conns.add({ ws, userId, username: ws.username, color, permission, storageId: page.storage_id, permCheckedAt: Date.now(), isE2ee: true });
+        const myConn = { ws, userId, username: ws.username, color, permission, storageId: page.storage_id, permCheckedAt: Date.now(), isE2ee: true, sessionId: ws.sessionId };
+        conns.add(myConn);
 
-        // 저장된 암호화 상태 전송 (있으면 최신 스냅샷 전달, 없으면 null)
-        const storedEntry = yjsE2EEStates.get(String(pageId));
-        const encryptedState = storedEntry ? storedEntry.encryptedState : null;
+        // 저장된 암호화 상태 전송 (메모리 우선 -> DB 폴백)
+        let encryptedState = null;
+        const memEntry = yjsE2EEStates.get(String(pageId));
+        if (memEntry) {
+            encryptedState = memEntry.encryptedState;
+        } else if (page.e2ee_yjs_state) {
+            // DB에 저장된 상태가 있으면 로드
+            try {
+                encryptedState = page.e2ee_yjs_state.toString(); // BLOB -> string (base64 expected or just raw bytes?)
+                // NOTE: 클라이언트가 base64 string으로 보내므로 DB엔 base64 string bytes가 저장됨.
+                // toString()으로 복원.
+                yjsE2EEStates.set(String(pageId), { encryptedState, storedAt: Date.now() });
+            } catch (_) {}
+        }
 
         ws.send(JSON.stringify({
             event: 'init-e2ee',
             data: { encryptedState, userId, username: ws.username, color, permission }
         }));
+
+        // 리더 선출 시도 (스냅샷 저장 담당)
+        // - 편집 권한이 있는 사용자만 리더가 될 수 있음
+        if (['EDIT', 'ADMIN'].includes(permission)) {
+            const leader = maybeElectE2eeLeader(pageId, myConn);
+            const isLeader = (leader.sessionId === myConn.sessionId);
+            ws.send(JSON.stringify({ event: 'e2ee-leader-status', data: { isLeader } }));
+        }
 
         // 기존 참여자들에게 user-joined 알림 (그들이 최신 state를 새 참여자에게 전달)
         wsBroadcastToPage(pageId, 'user-joined', { userId, username: ws.username, color, permission }, userId);
@@ -1045,10 +1133,11 @@ async function handleYjsUpdateE2EE(ws, payload, pool, pageSqlPolicy) {
 /**
  * E2EE 전체 상태 스냅샷 저장 핸들러
  * - 클라이언트가 주기적으로 전체 암호화 상태를 서버에 저장 (늦게 입장하는 참여자를 위한 초기 상태)
- * - 브로드캐스트 없음; 서버 내부 캐시에만 저장
+ * - 브로드캐스트 없음; 서버 내부 캐시에만 저장 + DB 영속화
+ * - 리더(Leader) 클라이언트만 저장 권한을 가짐 (충돌 방지)
  */
 async function handleYjsStateE2EE(ws, payload, pool, pageSqlPolicy) {
-    const { pageId, encryptedState } = payload || {};
+    const { pageId, encryptedState, encryptedHtml } = payload || {};
     try {
         if (!pageId || typeof encryptedState !== 'string' || !isSubscribedToPage(ws, pageId)) return;
 
@@ -1056,25 +1145,55 @@ async function handleYjsStateE2EE(ws, payload, pool, pageSqlPolicy) {
         const myConn = Array.from(conns).find(c => c.ws === ws);
         if (!myConn || !myConn.isE2ee) return;
 
+        // 권한 체크
+        const freshPerm = await refreshConnPermission(pool, myConn); // 캐시 허용
+        if (!['EDIT', 'ADMIN'].includes(freshPerm)) return;
+
+        // 리더 체크: 내가 리더가 아니면 저장 요청 무시 (단, 리더가 없거나 죽었으면 내가 될 수도 있음)
+        let leader = getActiveE2eeLeader(pageId);
+        if (leader && leader.sessionId !== myConn.sessionId) {
+            // 다른 활성 리더가 존재함 -> 무시
+            return;
+        }
+        if (!leader) {
+            // 리더가 없으면 내가 됨
+            leader = maybeElectE2eeLeader(pageId, myConn);
+        }
+
         // 크기 제한 (state는 update보다 클 수 있으므로 state용 상한 적용)
         const maxStateB64Chars = Math.ceil(WS_MAX_YJS_STATE_BYTES / 3) * 4 + 8;
         if (encryptedState.length > maxStateB64Chars) return;
 
-        // 저장 (서버는 내용 모름 — 단순 보관)
+        // 메모리 캐시 업데이트
         yjsE2EEStates.set(String(pageId), { encryptedState, storedAt: Date.now() });
+
+        // 리더 활동 갱신
+        touchE2eeLeader(pageId, myConn);
+
+        // DB 영속화 (Debounced)
+        persistE2eeStateDebounced(pool, pageId, encryptedState, encryptedHtml);
+
     } catch (e) {}
 }
 
 /**
- * 비활성 E2EE 상태 정리 (메모리 누수 방지)
+ * 비활성 E2EE 상태 및 리더 정리 (메모리 누수 방지)
  */
 function cleanupInactiveE2EEStates() {
     const now = Date.now();
     const TIMEOUT = 24 * 60 * 60 * 1000; // 24시간 미접근 시 정리
+
+    // States 정리
     yjsE2EEStates.forEach((entry, pageId) => {
-        if (now - entry.storedAt > TIMEOUT) {
+        if (now - entry.storedAt > TIMEOUT)
             yjsE2EEStates.delete(pageId);
-        }
+    });
+
+    // Leaders 정리 (30초 timeout보다 넉넉하게, 혹은 getActiveE2eeLeader에서 lazy cleanup 하므로 여기선 전체 스캔으로 정리)
+	e2eeSnapshotLeaders.forEach((leader, pageId) => {
+		// 1분 이상 잠수면 정리
+        if (now - leader.lastSeenAt > 60000)
+            e2eeSnapshotLeaders.delete(pageId);
     });
 }
 

@@ -5,7 +5,7 @@
 import { escapeHtml, showErrorInEditor, syncPageUpdatedAtPadding, closeSidebar } from './ui-utils.js';
 import * as api from './api-utils.js';
 import { loadAndRenderComments } from './comments-manager.js';
-import { startPageSync, stopPageSync, startStorageSync, stopStorageSync, flushPendingUpdates, syncEditorFromMetadata, onLocalEditModeChanged, updateAwarenessMode } from './sync-manager.js';
+import { startPageSync, stopPageSync, startStorageSync, stopStorageSync, flushPendingUpdates, syncEditorFromMetadata, onLocalEditModeChanged, updateAwarenessMode, flushE2eeState } from './sync-manager.js';
 import { showCover, hideCover, updateCoverButtonsVisibility } from './cover-manager.js';
 import { checkPublishStatus, updatePublishButton } from './publish-manager.js';
 import { loadAndRenderSubpages, onEditModeChange } from './subpages-manager.js';
@@ -233,11 +233,12 @@ export function renderPageList() {
 /**
  * 현재 페이지 상태 초기화 (저장소 전환 시 등)
  */
-export function clearCurrentPage() {
+export async function clearCurrentPage() {
     state.currentPageId = null;
     state.currentPageIsEncrypted = false;
     state.isWriteMode = false;
 
+    await flushE2eeState();
     stopPageSync();
     hideCover();
 
@@ -283,7 +284,7 @@ export function clearCurrentPage() {
  */
 export async function loadPage(id) {
     if (!id) {
-        clearCurrentPage();
+        await clearCurrentPage();
         return;
     }
 
@@ -292,6 +293,7 @@ export async function loadPage(id) {
         // 읽기 모드로 전환 로직 (생략 - app.js 등에서 통합 관리 권장)
     }
 
+    await flushE2eeState();
     stopPageSync();
 
     try {
