@@ -71,10 +71,18 @@ export const DatabaseBlock = Node.create({
             container.className = 'database-container';
             container.contentEditable = 'false';
 
+            // updateAttributes 타이밍 오류 방지 guard: 함수가 아닌 경우 조용히 무시
+            const updateAttrs = (newAttrs) => {
+                if (typeof updateAttributes === 'function') updateAttributes(newAttrs);
+            };
+
             let { title, columns, rows } = node.attrs;
             let lastIsEditable = editor.isEditable;
+            let cancelActiveResize = null; // 활성 리사이즈 정리 함수
 
             const render = () => {
+                // render() 재호출 시 이전 리사이즈 이벤트 리스너 먼저 정리
+                if (cancelActiveResize) { cancelActiveResize(); cancelActiveResize = null; }
                 lastIsEditable = editor.isEditable;
                 container.innerHTML = '';
                 
@@ -88,7 +96,7 @@ export const DatabaseBlock = Node.create({
                 titleInput.readOnly = !editor.isEditable;
                 titleInput.onchange = (e) => {
                     title = e.target.value;
-                    updateAttributes({ title });
+                    updateAttrs({ title });
                 };
                 header.appendChild(titleInput);
                 container.appendChild(header);
@@ -148,11 +156,14 @@ export const DatabaseBlock = Node.create({
                         tableEl.style.width = (startTableWidth + totalDelta) + 'px';
                         tableEl.style.minWidth = (startTableWidth + totalDelta) + 'px';
                     };
-                    const onUp = () => {
+                    const cleanup = () => {
                         window.removeEventListener('pointermove', onMove);
+                        window.removeEventListener('pointerup', onUp);
                         document.body.classList.remove('db-resizing', 'db-resizing-col', 'db-resizing-row');
-                        updateAttributes({ columns: [...columns] });
+                        cancelActiveResize = null;
                     };
+                    const onUp = () => { cleanup(); updateAttrs({ columns: [...columns] }); };
+                    cancelActiveResize = cleanup;
                     window.addEventListener('pointermove', onMove, { passive: false });
                     window.addEventListener('pointerup', onUp, { once: true });
                 };
@@ -160,25 +171,30 @@ export const DatabaseBlock = Node.create({
                 const startRowResize = (e, trEl, rowObj, handleEl) => {
                     if (typeof e.button === 'number' && e.button !== 0) return;
                     e.preventDefault(); e.stopPropagation();
-                    
+
                     const startY = e.clientY;
                     const startHeight = trEl.offsetHeight; // offsetHeight가 더 안정적임
-                    
+
                     handleEl?.setPointerCapture?.(e.pointerId);
                     document.body.classList.add('db-resizing', 'db-resizing-row');
-                    
+
                     const onMove = (moveEvent) => {
                         moveEvent.preventDefault?.();
                         const delta = moveEvent.clientY - startY;
                         const px = Math.round(Math.max(36, startHeight + delta)) + 'px';
                         trEl.style.height = px;
+                        // <td>들에도 높이를 직접 설정해야 height:100% 기반의 셀이 늘어남
+                        trEl.querySelectorAll('td').forEach(td => { td.style.height = px; });
                         rowObj.height = px;
                     };
-                    const onUp = () => {
+                    const cleanup = () => {
                         window.removeEventListener('pointermove', onMove);
+                        window.removeEventListener('pointerup', onUp);
                         document.body.classList.remove('db-resizing', 'db-resizing-col', 'db-resizing-row');
-                        updateAttributes({ rows: [...rows] });
+                        cancelActiveResize = null;
                     };
+                    const onUp = () => { cleanup(); updateAttrs({ rows: [...rows] }); };
+                    cancelActiveResize = cleanup;
                     window.addEventListener('pointermove', onMove, { passive: false });
                     window.addEventListener('pointerup', onUp, { once: true });
                 };
@@ -213,7 +229,7 @@ export const DatabaseBlock = Node.create({
                     colTitle.readOnly = !editor.isEditable;
                     colTitle.onchange = (e) => {
                         col.title = e.target.value;
-                        updateAttributes({ columns: [...columns] });
+                        updateAttrs({ columns: [...columns] });
                     };
                     
                     thContent.appendChild(colTitle);
@@ -227,7 +243,7 @@ export const DatabaseBlock = Node.create({
                             if (confirm('이 열을 삭제하시겠습니까?')) {
                                 columns.splice(index, 1);
                                 rows.forEach(row => { delete row.values[col.id]; });
-                                updateAttributes({ columns: [...columns], rows: [...rows] });
+                                updateAttrs({ columns: [...columns], rows: [...rows] });
                                 render();
                             }
                         };
@@ -256,7 +272,7 @@ export const DatabaseBlock = Node.create({
                         const newColId = 'col-' + Date.now();
                         columns.push({ id: newColId, title: '새 열', type: 'text', width: '150px' });
                         rows.forEach(row => { row.values[newColId] = ''; });
-                        updateAttributes({ columns: [...columns], rows: [...rows] });
+                        updateAttrs({ columns: [...columns], rows: [...rows] });
                         render();
                     };
                     thAddCol.appendChild(addColBtn);
@@ -270,12 +286,14 @@ export const DatabaseBlock = Node.create({
                 const tbody = document.createElement('tbody');
                 rows.forEach((row, rowIndex) => {
                     const tr = document.createElement('tr');
-                    if (row.height && row.height !== 'auto') {
-                        tr.style.height = row.height;
+                    const rowHeightPx = (row.height && row.height !== 'auto') ? row.height : null;
+                    if (rowHeightPx) {
+                        tr.style.height = rowHeightPx;
                     }
 
                     columns.forEach((col, colIndex) => {
                         const td = document.createElement('td');
+                        if (rowHeightPx) { td.style.height = rowHeightPx; }
                         const cell = document.createElement('div');
                         cell.className = 'database-cell';
                         cell.contentEditable = editor.isEditable ? 'true' : 'false';
@@ -284,7 +302,7 @@ export const DatabaseBlock = Node.create({
                             const newValue = sanitizeCellHtml(cell.innerHTML);
                             if (row.values[col.id] !== newValue) {
                                 row.values[col.id] = newValue;
-                                updateAttributes({ rows: [...rows] });
+                                updateAttrs({ rows: [...rows] });
                             }
                         };
                         cell.onkeydown = (e) => {
@@ -304,6 +322,7 @@ export const DatabaseBlock = Node.create({
                     if (editor.isEditable) {
                         const tdDelRow = document.createElement('td');
                         tdDelRow.className = 'database-del-row-td';
+                        if (rowHeightPx) { tdDelRow.style.height = rowHeightPx; }
                         const delRowBtn = document.createElement('button');
                         delRowBtn.className = 'database-del-row-btn';
                         delRowBtn.innerHTML = '<i class="fa-solid fa-xmark"></i>';
@@ -311,7 +330,7 @@ export const DatabaseBlock = Node.create({
                             e.stopPropagation();
                             if (rows.length > 1) {
                                 rows.splice(rowIndex, 1);
-                                updateAttributes({ rows: [...rows] });
+                                updateAttrs({ rows: [...rows] });
                                 render();
                             }
                         };
@@ -338,7 +357,7 @@ export const DatabaseBlock = Node.create({
                         const newValues = {};
                         columns.forEach(col => { newValues[col.id] = ''; });
                         rows.push({ id: 'row-' + Date.now(), values: newValues, height: 'auto' });
-                        updateAttributes({ rows: [...rows] });
+                        updateAttrs({ rows: [...rows] });
                         render();
                     };
                     container.appendChild(addRowBtn);

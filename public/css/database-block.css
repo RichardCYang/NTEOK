@@ -59,7 +59,7 @@
 }
 
 .database-table {
-    width: 100% !important;
+    width: 100%;
     border-collapse: collapse !important;
     table-layout: fixed;
     font-size: 14px;
