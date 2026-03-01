@@ -95,39 +95,67 @@ export async function handleEncryption(event) {
     // 보안/정합성: 실시간 협업(Yjs) 편집 중 암호화를 수행하면
     // - (1) 아직 DB에 flush되지 않은 로컬 편집 내용이 누락되거나
     // - (2) 암호화 전 평문 스냅샷이 yjs_state 등에 잔존할 수 있는 경쟁 조건이 생김
-    // 현재 페이지를 암호화하는 경우에는 먼저 대기 중인 업데이트를 flush하고 WS 구독을 해제
+    //
+    // 데이터 유실 방지(핵심):
+    // - 기존 구현은 stopPageSync() 후 서버에서 다시 page.content를 GET 해서 암호화했는데,
+    //   WS 디바운스 저장(비동기) 타이밍 때문에 마지막 로컬 편집분이 DB에 반영되기 전이라면
+    //   누락된 내용으로 암호화되어 영구 유실될 수 있음
+    // - 따라서 현재 페이지라면 에디터(로컬)에서 최신 HTML 스냅샷을 확보한 뒤 암호화 진행
     const wasActivePage = state.currentPageId === state.currentEncryptingPageId;
+
+    // 현재 페이지의 경우 로컬 스냅샷(제목/본문)을 우선 확보
+    let localTitle = null;
+    let localContent = null;
     if (wasActivePage) {
         try { flushPendingUpdates(); } catch (_) {}
+
+        try {
+            const titleInput = document.querySelector("#page-title-input");
+            localTitle = titleInput ? titleInput.value : null;
+        } catch (_) {}
+
+        try {
+            if (state.editor && typeof state.editor.getHTML === "function") {
+                localContent = state.editor.getHTML();
+            }
+        } catch (_) {}
+
+        // 로컬 스냅샷을 확보한 뒤에 WS 구독을 해제(레이스/평문 잔존 위험 완화)
         try { stopPageSync(); } catch (_) {}
+
         // stopPageSync()가 선택된 페이지 상태까지 null로 만들므로, UI 관점의 선택 상태는 복구
         state.currentPageId = state.currentEncryptingPageId;
     }
 
     try {
-        // 1. 현재 페이지 가져오기
-        const res = await secureFetch(`/api/pages/${encodeURIComponent(state.currentEncryptingPageId)}`);
-        if (!res.ok) {
-            throw new Error("HTTP " + res.status);
+        // 암호화할 평문 스냅샷 확보 (로컬 우선, 없으면 서버)
+        let page = null;
+        let plainTitle = localTitle;
+        let plainContent = localContent;
+
+        if (plainTitle == null || plainContent == null) {
+            const res = await secureFetch(`/api/pages/${encodeURIComponent(state.currentEncryptingPageId)}`);
+            if (!res.ok) throw new Error("HTTP " + res.status);
+            page = await res.json();
+
+            if (plainTitle == null) plainTitle = page.title;
+            if (plainContent == null) plainContent = page.content;
         }
 
-        const page = await res.json();
-
-        // 2. 암호화 키 초기화 (새 salt 생성)
+        // 암호화 키 초기화 (새 salt 생성)
         const saltBase64 = await cryptoManager.initializeKey(password);
 
-        // 3. 콘텐츠 암호화
-        const encryptedData = await cryptoManager.encrypt(page.content);
+        // 콘텐츠 암호화 (클라이언트 정화 후 암호화)
+        const safePlainContent = sanitizeEditorHtml(plainContent || "<p></p>");
+        const encryptedData = await cryptoManager.encrypt(safePlainContent);
 
-        // 4. 암호화된 콘텐츠 저장
+        // 암호화된 콘텐츠 저장
         const updateRes = await secureFetch(`/api/pages/${encodeURIComponent(state.currentEncryptingPageId)}`, {
             method: "PUT",
-            headers: {
-                "Content-Type": "application/json"
-            },
+            headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-                title: page.title,
-                content: '',
+                ...(plainTitle != null ? { title: plainTitle } : {}),
+                content: "",
                 encryptionSalt: saltBase64,
                 encryptedContent: encryptedData,
                 isEncrypted: true
@@ -152,10 +180,11 @@ export async function handleEncryption(event) {
         if (wasActivePage) {
             const titleInput = document.querySelector("#page-title-input");
             if (titleInput) {
-                titleInput.value = page.title;
+                titleInput.value = (plainTitle != null ? plainTitle : (page ? page.title : ''));
             }
             if (state.editor) {
-                state.editor.commands.setContent(page.content, { emitUpdate: false });
+                // 암호화 직전의 로컬 스냅샷을 그대로 유지해서, 사용자가 화면에서 내용을 확인할 수 있게 함
+                state.editor.commands.setContent(safePlainContent, { emitUpdate: false });
             }
 
             // 암호화 후 쓰기 모드 비활성화

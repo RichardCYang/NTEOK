@@ -181,46 +181,101 @@ function touchE2eeLeader(pageId, myConn) {
 }
 
 /**
- * E2EE 스냅샷(암호문) DB 저장 (디바운스/버퍼)
- * - Yjs 증분 업데이트가 올 때마다 즉시 DB에 쓰는 것은 비효율적이므로, 1.5초간 대기 후 마지막 입력분만 저장
- * - 'yjsE2EEStates' 맵에 대기 중인 작업을 관리
+ * E2EE 스냅샷(암호문) DB 저장 (디바운스/버퍼 + 재시도)
+ * - Yjs 증분 업데이트가 올 때마다 즉시 DB에 쓰는 것은 비효율적이므로 디바운스로 마지막 입력분만 저장
+ * - 저장 실패(일시적인 DB 장애/락 등) 시, 기존 구현은 재시도를 하지 않아
+ *   다음 편집이 없으면 최신 암호문 상태가 영속화되지 못하고 서버/프로세스 종료 시 유실될 수 있음
+ *
+ * 참고: 언로드/백그라운드 전환 시 네트워크 요청은 브라우저에서 신뢰할 수 없으므로,
+ *       서버 측에서는 저장 실패 시 재시도가 데이터 유실 위험을 크게 낮춤
  */
-function scheduleE2EESave(pool, pageId, encryptedState, encryptedHtml) {
-    let state = yjsE2EEStates.get(pageId);
-    if (state && state.saveTimeout) {
-        clearTimeout(state.saveTimeout);
-    }
-    
-    const timeout = setTimeout(async () => {
-        try {
-            await saveE2EEStateToDatabase(pool, pageId, encryptedState, encryptedHtml);
-            yjsE2EEStates.delete(pageId);
-        } catch (error) {
-            console.error(`[E2EE] 페이지 ${pageId} 상태 저장 실패:`, error);
-        }
-    }, 1500);
+const E2EE_SAVE_RETRY_MAX_ATTEMPTS = (() => {
+    const v = Number.parseInt(process.env.E2EE_SAVE_RETRY_MAX_ATTEMPTS || '6', 10);
+    return Number.isFinite(v) ? Math.max(0, Math.min(20, v)) : 6;
+})();
+const E2EE_SAVE_RETRY_BASE_MS = (() => {
+    const v = Number.parseInt(process.env.E2EE_SAVE_RETRY_BASE_MS || '2000', 10);
+    return Number.isFinite(v) ? Math.max(200, Math.min(60_000, v)) : 2000;
+})();
+const E2EE_SAVE_RETRY_MAX_MS = (() => {
+    const v = Number.parseInt(process.env.E2EE_SAVE_RETRY_MAX_MS || '60000', 10);
+    return Number.isFinite(v) ? Math.max(500, Math.min(300_000, v)) : 60000;
+})();
+function computeE2eeRetryDelayMs(attempt) {
+    // attempt: 1,2,3...
+    const a = Math.max(1, Math.min(30, attempt));
+    const base = E2EE_SAVE_RETRY_BASE_MS * Math.pow(2, a - 1);
+    return Math.min(E2EE_SAVE_RETRY_MAX_MS, Math.floor(base));
+}
 
-    yjsE2EEStates.set(pageId, {
+function scheduleE2EESave(pool, pageId, encryptedState, encryptedHtml) {
+    const pid = String(pageId || '');
+    if (!pid || !encryptedState) return;
+
+    const prev = yjsE2EEStates.get(pid) || {};
+    if (prev.saveTimeout) {
+        try { clearTimeout(prev.saveTimeout); } catch (_) {}
+    }
+
+    // 새 입력이 들어오면 retryCount는 리셋 (최신 상태 우선)
+    const next = {
+        ...prev,
         encryptedState,
-        encryptedHtml,
-        saveTimeout: timeout
-    });
+        // encryptedHtml이 명시적으로 주어지지 않으면 기존 값을 유지(=무의미한 NULL 덮어쓰기 방지)
+        ...(encryptedHtml !== undefined ? { encryptedHtml } : {}),
+        storedAt: Date.now(),
+        retryCount: 0,
+        saveTimeout: null
+    };
+
+    const attemptSave = async () => {
+        const cur = yjsE2EEStates.get(pid);
+        if (!cur) return;
+        // 최신 입력이 아닌 saveTimeout 콜백이면 중단
+        if (cur.encryptedState !== encryptedState) return;
+
+        try {
+            await saveE2EEStateToDatabase(pool, pid, cur.encryptedState, cur.encryptedHtml);
+            yjsE2EEStates.delete(pid);
+        } catch (error) {
+            const attempt = (cur.retryCount || 0) + 1;
+            cur.retryCount = attempt;
+            cur.saveTimeout = null;
+
+            console.error(`[E2EE] 페이지 ${pid} 상태 저장 실패(시도 ${attempt}):`, error?.message || error);
+
+            if (E2EE_SAVE_RETRY_MAX_ATTEMPTS > 0 && attempt <= E2EE_SAVE_RETRY_MAX_ATTEMPTS) {
+                const delay = computeE2eeRetryDelayMs(attempt);
+                cur.saveTimeout = setTimeout(attemptSave, delay);
+                yjsE2EEStates.set(pid, cur);
+            }
+        }
+    };
+
+    // 기본 디바운스(성능) — 실패 시에는 백오프 재시도
+    next.saveTimeout = setTimeout(attemptSave, 1500);
+    yjsE2EEStates.set(pid, next);
 }
 
 /**
  * 대기 중인 E2EE 저장 작업을 즉시 실행 (플러시)
  */
 async function flushPendingE2eeSaveForPage(pool, pageId) {
-    const state = yjsE2EEStates.get(pageId);
-    if (state && state.saveTimeout) {
-        clearTimeout(state.saveTimeout);
+    const pid = String(pageId || '');
+    const state = yjsE2EEStates.get(pid);
+    if (!state) return;
+
+    if (state.saveTimeout) {
+        try { clearTimeout(state.saveTimeout); } catch (_) {}
         state.saveTimeout = null;
-        try {
-            await saveE2EEStateToDatabase(pool, pageId, state.encryptedState, state.encryptedHtml);
-        } catch (e) {
-            console.error(`[E2EE] flushPendingE2eeSaveForPage(${pageId}) 실패:`, e);
-        }
-        yjsE2EEStates.delete(pageId);
+    }
+
+    try {
+        await saveE2EEStateToDatabase(pool, pid, state.encryptedState, state.encryptedHtml);
+    } catch (e) {
+        console.error(`[E2EE] flushPendingE2eeSaveForPage(${pid}) 실패:`, e);
+    } finally {
+        yjsE2EEStates.delete(pid);
     }
 }
 
@@ -243,23 +298,26 @@ async function saveE2EEStateToDatabase(pool, pageId, encryptedState, encryptedHt
 
     try {
         const updateTime = new Date().toISOString().slice(0, 19).replace('T', ' ');
-        // E2EE 모드에서는 e2ee_yjs_state 컬럼을 사용하고, content는 암호화된 HTML(encryptedHtml)로 덮어씀
-        // (암호화된 HTML은 서버 측에서 검색/미리보기는 불가능하지만, 백업 시 평문 유출을 막는 용도)
-        await pool.execute(
-            `UPDATE pages 
-             SET e2ee_yjs_state = ?, 
-                 e2ee_yjs_state_updated_at = ?,
-                 encrypted_content = ?,
-                 updated_at = ?
-             WHERE id = ?`,
-            [
-                Buffer.from(encryptedState, 'base64'), 
-                updateTime,
-                encryptedHtml || null,
-                updateTime,
-                pageId
-            ]
-        );
+
+        // 데이터 유실 방지:
+        // - encryptedHtml(암호화된 HTML 스냅샷)은 일부 클라이언트/상황에서 누락될 수 있음(undefined/null)
+        // - 기존 구현처럼 NULL로 덮어쓰면, 백업/복구 경로에서 사용할 수 있는 암호문 스냅샷이 사라질 수 있음
+        // - 따라서 encryptedHtml이 명시적으로 제공된 경우에만 갱신하고, 그렇지 않으면 기존 값을 유지
+        let sql = `UPDATE pages
+                   SET e2ee_yjs_state = ?,
+                       e2ee_yjs_state_updated_at = ?,
+                       updated_at = ?`;
+        const params = [Buffer.from(encryptedState, 'base64'), updateTime, updateTime];
+
+        if (encryptedHtml !== undefined && encryptedHtml !== null) {
+            sql += `, encrypted_content = ?`;
+            params.push(String(encryptedHtml));
+        }
+
+        sql += ` WHERE id = ?`;
+        params.push(pageId);
+
+        await pool.execute(sql, params);
     } catch (error) {
         throw error;
     }

@@ -730,6 +730,18 @@ module.exports = (dependencies) => {
             const isEncrypted = req.body.isEncrypted !== undefined ? (req.body.isEncrypted ? 1 : 0) : existing.is_encrypted;
             const encryptionStateChanged = Number(existing.is_encrypted) !== Number(isEncrypted);
 
+            // 데이터 유실 방지(중요): 암호화 페이지를 평문으로 전환(isEncrypted: false)할 때
+            // 클라이언트가 복호화된 평문(content)을 함께 보내지 않으면,
+            // 서버는 encrypted_content를 NULL로 지우고 content는 빈 문자열(기존값)로 남아
+            // 사용자 데이터가 영구 유실될 수 있음
+            const turningOffEncryption =
+                encryptionStateChanged &&
+                Number(existing.is_encrypted) === 1 &&
+                Number(isEncrypted) === 0;
+            if (turningOffEncryption && req.body.content === undefined) {
+                return res.status(400).json({ error: "암호화 해제 전환 시에는 복호화된 평문 content가 필요합니다." });
+            }
+
             const hasEncryptionSalt = Object.prototype.hasOwnProperty.call(req.body, "encryptionSalt");
             const hasEncryptedContent = Object.prototype.hasOwnProperty.call(req.body, "encryptedContent");
 
