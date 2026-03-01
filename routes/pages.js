@@ -67,6 +67,7 @@ module.exports = (dependencies) => {
         fs,
         yjsDocuments,
         extractFilesFromContent,
+        invalidateYjsPersistenceForPage,
         isPrivateOrLocalIP,
         getClientIpFromRequest,
         outboundFetchLimiter
@@ -707,6 +708,7 @@ module.exports = (dependencies) => {
             //   yjs_state를 항상 초기화하고, 서버 메모리의 Yjs 문서도 drop
             const shouldResetYjsState = (req.body.content !== undefined) || encryptionStateChanged || (Number(isEncrypted) === 1);
             if (shouldResetYjsState) {
+                invalidateYjsPersistenceForPage(id); // 핵심: 진행 중인 WS 저장을 즉시 무효화 (레이스 방지)
                 sql += `, yjs_state=NULL`;
                 // 중요: yjsDocuments 엔트리를 제거할 때 pending saveTimeout이 남아있으면
                 // REST 저장 이후에도 타이머 콜백이 실행되어 오래된 Yjs 상태가 DB를 덮어씌울 수 있음
@@ -992,6 +994,9 @@ module.exports = (dependencies) => {
                 : [id];
 
             for (const pid of deletedPageIds) {
+                // 핵심: 진행 중인 WS 저장을 즉시 무효화 (레이스 방지)
+                invalidateYjsPersistenceForPage(pid);
+
                 // 메모리에 로드된 Yjs 문서 정리
                 try {
                     const docInfo = yjsDocuments.get(pid);

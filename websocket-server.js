@@ -43,6 +43,22 @@ const wsConnections = {
 
 const yjsDocuments = new Map();
 
+// 데이터 유실 방지: Yjs -> DB 저장 레이스 취소 토큰(epoch)
+// REST 저장(PUT)이 발생하면 epoch를 증가시켜, 이전에 예약된(setTimeout) WS 저장이
+// DB를 덮어쓰지 못하도록 무효화(fail-closed) 진행
+const yjsSaveEpoch = new Map(); // pageId -> number
+
+function getYjsSaveEpoch(pageId) {
+    const pid = String(pageId || '');
+    return yjsSaveEpoch.get(pid) || 0;
+}
+
+function bumpYjsSaveEpoch(pageId) {
+    const pid = String(pageId || '');
+    const current = yjsSaveEpoch.get(pid) || 0;
+    yjsSaveEpoch.set(pid, current + 1);
+}
+
 /**
  * yjsDocuments 엔트리 안전 제거
  * - saveTimeout이 남아있으면, 문서가 Map에서 제거된 뒤에도 타이머 콜백이 실행되어
@@ -50,6 +66,7 @@ const yjsDocuments = new Map();
  */
 function dropYjsDocument(pageId) {
     const pid = String(pageId || '');
+    bumpYjsSaveEpoch(pid); // 진행 중이거나 예약된 저장 무효화
     const doc = yjsDocuments.get(pid);
     if (doc?.saveTimeout) {
         try { clearTimeout(doc.saveTimeout); } catch (_) {}
@@ -372,7 +389,8 @@ function cleanupInactiveConnections(pool, sanitizeHtmlContent) {
     const TIMEOUT = 30 * 60 * 1000;
     yjsDocuments.forEach((doc, pageId) => {
         if (now - doc.lastAccess > TIMEOUT) {
-            saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, doc.ydoc).catch(e => {});
+            const epoch = getYjsSaveEpoch(pageId);
+            saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, doc.ydoc, { epoch }).catch(e => {});
             dropYjsDocument(pageId);
         }
     });
@@ -457,9 +475,6 @@ async function cleanupOrphanedFiles(pool, filePaths, excludePageId, pageOwnerUse
     if (!ownerIdStr || !/^\d{1,12}$/.test(ownerIdStr)) return;
     const baseDir = path.resolve(__dirname, 'paperclip', ownerIdStr) + path.sep;
 
-    // LIKE 패턴에서 와일드카드(% _) 오인 방지
-    const escapeLike = (s) => String(s).replace(/[\\%_]/g, (m) => '\\' + m);
-
     for (const item of filePaths) {
         try {
             // 현재 orphan cleanup은 paperclip 만 대상으로 함 (imgs는 별도 정책 필요)
@@ -469,17 +484,18 @@ async function cleanupOrphanedFiles(pool, filePaths, excludePageId, pageOwnerUse
             const normalized = normalizePaperclipRefForOwner(ref, ownerIdStr);
             if (!normalized) continue;
 
-            const fileUrl = `/paperclip/${normalized}`;
-            const likePattern = `%${escapeLike(fileUrl)}%`;
+            const [ownerId, filename] = normalized.split('/');
 
-            // 동일 사용자(페이지 소유자) 범위 내에서만 참조 여부 확인
+            // 보안(핵심): page_file_refs 레지스트리로 참조 여부 판단(암호화/지연/협업에도 안전)
+            // - 기존 pages.content LIKE 방식은 암호화 페이지(content='')에서 참조 중인 파일을 오판 삭제함
             const [rows] = await pool.execute(
                 `SELECT COUNT(*) as count
-                   FROM pages
-                  WHERE user_id = ?
-                    AND content LIKE ? ESCAPE '\\\\'
-                    AND id != ?`,
-                [ownerIdStr, likePattern, excludePageId]
+                   FROM page_file_refs
+                  WHERE owner_user_id = ?
+                    AND stored_filename = ?
+                    AND file_type = 'paperclip'
+                    AND page_id != ?`,
+                [ownerId, filename, excludePageId]
             );
             if (!rows || !rows[0] || rows[0].count > 0) continue;
 
@@ -496,8 +512,12 @@ async function cleanupOrphanedFiles(pool, filePaths, excludePageId, pageOwnerUse
     }
 }
 
-async function saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc) {
+async function saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc, opts = {}) {
     try {
+        const { epoch } = opts;
+        // epoch 확인 (시작 시): 이미 더 새로운 REST 저장이 발생했다면 중단
+        if (epoch !== undefined && getYjsSaveEpoch(pageId) > epoch) return;
+
         const yMetadata = ydoc.getMap('metadata');
 		const title = yMetadata.get('title') || '제목 없음';
 		const icon = validateAndNormalizeIcon(yMetadata.get('icon'));
@@ -539,6 +559,9 @@ async function saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc) {
             }
             // approx 미설정(undefined/NaN)이거나 상한 초과 시: HTML snapshot 저장만 유지
         }
+
+        // epoch 재확인 (DB UPDATE 직전): I/O 대기 중에 무효화되었을 수 있음
+        if (epoch !== undefined && getYjsSaveEpoch(pageId) > epoch) return;
 
         await pool.execute(
             `UPDATE pages SET title = ?, content = ?, icon = ?, sort_order = ?, parent_id = ?, yjs_state = ?, updated_at = NOW() WHERE id = ?`,
@@ -1534,7 +1557,13 @@ async function handleYjsUpdate(ws, payload, pool, sanitizeHtmlContent, pageSqlPo
         } catch (_) { return; }
 
         wsBroadcastToPage(pageId, 'yjs-update', { update }, ws.userId);
-        if (doc) { if (doc.saveTimeout) clearTimeout(doc.saveTimeout); doc.saveTimeout = setTimeout(() => { saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc).catch(e => {}); }, 1000); }
+        if (doc) {
+            if (doc.saveTimeout) clearTimeout(doc.saveTimeout);
+            const epoch = getYjsSaveEpoch(pageId); // 현재 시점의 epoch 캡처
+            doc.saveTimeout = setTimeout(() => {
+                saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc, { epoch }).catch(e => {});
+            }, 1000);
+        }
     } catch (e) {}
 }
 
@@ -1640,8 +1669,9 @@ async function handleYjsState(ws, payload, pool, sanitizeHtmlContent, pageSqlPol
 
 		if (doc) {
 			if (doc.saveTimeout) clearTimeout(doc.saveTimeout);
+            const epoch = getYjsSaveEpoch(pageId); // 현재 시점의 epoch 캡처
 			doc.saveTimeout = setTimeout(() => {
-				saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc).catch(e => {});
+				saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc, { epoch }).catch(e => {});
 			}, 1000);
 		}
 	} catch (e) {
@@ -1690,7 +1720,7 @@ function cleanupWebSocketConnection(ws, pool, sanitizeHtmlContent) {
 	unregisterSessionConnection(ws.sessionId, ws);
     wsConnections.pages.forEach((conns, pid) => {
         conns.forEach(c => { if (c.ws === ws) { conns.delete(c); wsBroadcastToPage(pid, 'user-left', { userId: ws.userId }, ws.userId); } });
-        if (conns.size === 0) { wsConnections.pages.delete(pid); const doc = yjsDocuments.get(pid); if (doc) saveYjsDocToDatabase(pool, sanitizeHtmlContent, pid, doc.ydoc).catch(e => {}); }
+        if (conns.size === 0) { wsConnections.pages.delete(pid); const doc = yjsDocuments.get(pid); if (doc) { const epoch = getYjsSaveEpoch(pid); saveYjsDocToDatabase(pool, sanitizeHtmlContent, pid, doc.ydoc, { epoch }).catch(e => {}); } }
     });
     wsConnections.storages.forEach((conns, sid) => { conns.forEach(c => { if (c.ws === ws) conns.delete(c); }); if (conns.size === 0) wsConnections.storages.delete(sid); });
     const uconns = wsConnections.users.get(ws.userId);
@@ -1701,7 +1731,13 @@ function startRateLimitCleanup() { return setInterval(() => { const now = Date.n
 
 function startInactiveConnectionsCleanup(pool, sanitizeHtmlContent) { return setInterval(() => { cleanupInactiveConnections(pool, sanitizeHtmlContent); cleanupInactiveE2EEStates(); }, 600000); }
 
-
+/**
+ * REST API 등 외부에서 페이지 데이터가 직접 수정(PUT)될 때
+ * 진행 중인 Yjs 저장 시퀀스를 즉시 무효화
+ */
+function invalidateYjsPersistenceForPage(pageId) {
+    bumpYjsSaveEpoch(pageId);
+}
 
 /**
  * 저장소 권한이 회수된 사용자를 해당 storage/page 구독에서 즉시 강제 해제
@@ -1740,4 +1776,20 @@ function wsKickUserFromStorage(storageId, targetUserId, closeCode = 1008, reason
     if (userConns) for (const c of Array.from(userConns)) { try { c.ws.close(closeCode, reason); } catch (e) {} }
 }
 
-module.exports = { initWebSocketServer, wsBroadcastToPage, wsBroadcastToStorage, wsBroadcastToUser, startRateLimitCleanup, startInactiveConnectionsCleanup, wsConnections, yjsDocuments, yjsE2EEStates, saveYjsDocToDatabase, wsCloseConnectionsForSession, wsCloseConnectionsForPage, wsKickUserFromStorage, extractFilesFromContent };
+module.exports = {
+    initWebSocketServer,
+    wsBroadcastToPage,
+    wsBroadcastToStorage,
+    wsBroadcastToUser,
+    startRateLimitCleanup,
+    startInactiveConnectionsCleanup,
+    wsConnections,
+    yjsDocuments,
+    yjsE2EEStates,
+    saveYjsDocToDatabase,
+    wsCloseConnectionsForSession,
+    wsCloseConnectionsForPage,
+    wsKickUserFromStorage,
+    extractFilesFromContent,
+    invalidateYjsPersistenceForPage
+};
