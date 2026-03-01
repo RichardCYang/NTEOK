@@ -82,16 +82,8 @@ function dropYjsDocument(pageId, opts = {}) {
 }
 
 // E2EE 암호화 저장소 페이지의 encrypted Yjs state 보관 (서버는 평문 불가)
-// pageId -> { encryptedState: string (base64), storedAt: number }
+// pageId -> { encryptedState: string (base64), encryptedHtml: string, saveTimeout: timer }
 const yjsE2EEStates = new Map();
-
-// E2EE 상태 스냅샷(전체 state) 저장은 충돌 위험이 있으므로, 한 페이지당 1개의 리더 연결만 허용
-// pageId -> { sessionId: string, userId: number, lastSeenAt: number }
-const e2eeSnapshotLeaders = new Map();
-
-// E2EE 상태 DB 저장 디바운스
-// pageId -> { timer, stateBuf, encryptedHtml, touchedAt }
-const e2eeDbSaveQueue = new Map();
 
 const USER_COLORS = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A', '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E2', '#F8B195', '#C06C84'];
 const wsConnectionLimiter = new Map();
@@ -188,31 +180,89 @@ function touchE2eeLeader(pageId, myConn) {
     return false;
 }
 
-async function persistE2eeStateDebounced(pool, pageId, encryptedStateBuf, encryptedHtml = null) {
-    const pid = String(pageId);
-    const existing = e2eeDbSaveQueue.get(pid);
-    if (existing)
-        clearTimeout(existing.timer);
-
-    // 1.5초 디바운스
-    const timer = setTimeout(async () => {
-        e2eeDbSaveQueue.delete(pid);
+/**
+ * E2EE 스냅샷(암호문) DB 저장 (디바운스/버퍼)
+ * - Yjs 증분 업데이트가 올 때마다 즉시 DB에 쓰는 것은 비효율적이므로, 1.5초간 대기 후 마지막 입력분만 저장
+ * - 'yjsE2EEStates' 맵에 대기 중인 작업을 관리
+ */
+function scheduleE2EESave(pool, pageId, encryptedState, encryptedHtml) {
+    let state = yjsE2EEStates.get(pageId);
+    if (state && state.saveTimeout) {
+        clearTimeout(state.saveTimeout);
+    }
+    
+    const timeout = setTimeout(async () => {
         try {
-            await pool.execute(
-                `UPDATE pages
-                 SET e2ee_yjs_state = ?, e2ee_yjs_state_updated_at = NOW()
-                     ${encryptedHtml ? ', encrypted_content = ?' : ''}
-                 WHERE id = ?`,
-                encryptedHtml
-                    ? [encryptedStateBuf, encryptedHtml, pid]
-                    : [encryptedStateBuf, pid]
-            );
-        } catch (e) {
-            console.error(`[E2EE] Failed to persist state for ${pid}:`, e.message);
+            await saveE2EEStateToDatabase(pool, pageId, encryptedState, encryptedHtml);
+            yjsE2EEStates.delete(pageId);
+        } catch (error) {
+            console.error(`[E2EE] 페이지 ${pageId} 상태 저장 실패:`, error);
         }
     }, 1500);
 
-    e2eeDbSaveQueue.set(pid, { timer, stateBuf: encryptedStateBuf, encryptedHtml, touchedAt: Date.now() });
+    yjsE2EEStates.set(pageId, {
+        encryptedState,
+        encryptedHtml,
+        saveTimeout: timeout
+    });
+}
+
+/**
+ * 대기 중인 E2EE 저장 작업을 즉시 실행 (플러시)
+ */
+async function flushPendingE2eeSaveForPage(pool, pageId) {
+    const state = yjsE2EEStates.get(pageId);
+    if (state && state.saveTimeout) {
+        clearTimeout(state.saveTimeout);
+        state.saveTimeout = null;
+        try {
+            await saveE2EEStateToDatabase(pool, pageId, state.encryptedState, state.encryptedHtml);
+        } catch (e) {
+            console.error(`[E2EE] flushPendingE2eeSaveForPage(${pageId}) 실패:`, e);
+        }
+        yjsE2EEStates.delete(pageId);
+    }
+}
+
+/**
+ * 서버 종료 시 모든 대기 중인 E2EE 저장 작업을 플러시
+ */
+async function flushAllPendingE2eeSaves(pool) {
+    const pageIds = Array.from(yjsE2EEStates.keys());
+    console.log(`[E2EE] Graceful shutdown: flushing ${pageIds.length} pending E2EE saves...`);
+    for (const pageId of pageIds) {
+        await flushPendingE2eeSaveForPage(pool, pageId);
+    }
+}
+
+/**
+ * E2EE 상태를 데이터베이스에 실제 저장 (SQL 실행)
+ */
+async function saveE2EEStateToDatabase(pool, pageId, encryptedState, encryptedHtml) {
+    if (!encryptedState) return;
+
+    try {
+        const updateTime = new Date().toISOString().slice(0, 19).replace('T', ' ');
+        // E2EE 모드에서는 e2ee_yjs_state 컬럼을 사용하고, content는 암호화된 HTML(encryptedHtml)로 덮어씀
+        // (암호화된 HTML은 서버 측에서 검색/미리보기는 불가능하지만, 백업 시 평문 유출을 막는 용도)
+        await pool.execute(
+            `UPDATE pages 
+             SET e2ee_yjs_state = ?, 
+                 e2ee_yjs_state_updated_at = ?,
+                 encrypted_content = ?,
+                 updated_at = ?
+             WHERE id = ?`,
+            [
+                Buffer.from(encryptedState, 'base64'), 
+                updateTime,
+                encryptedHtml || null,
+                updateTime,
+                pageId
+            ]
+        );
+    } catch (error) {
+        throw error;
+    }
 }
 
 // 연결 수 제한만으로는 1개 연결에서의 메시지 플러딩을 막기 어려움
@@ -1039,6 +1089,7 @@ async function handleWebSocketMessage(ws, data, pool, sanitizeHtmlContent, getSe
         case 'page-snapshot': await handlePageSnapshot(ws, payload, pool, sanitizeHtmlContent, pageSqlPolicy); break;
         // 데이터 유실 방지: 사용자가 Ctrl+S/모드 전환 등으로 지금 저장을 요청
         case 'force-save': await handleForceSave(ws, payload, pool, sanitizeHtmlContent, pageSqlPolicy); break;
+        case 'force-save-e2ee': await handleForceSaveE2EE(ws, payload, pool, pageSqlPolicy); break;
         case 'yjs-update': await handleYjsUpdate(ws, payload, pool, sanitizeHtmlContent, pageSqlPolicy); break;
         case 'yjs-state': await handleYjsState(ws, payload, pool, sanitizeHtmlContent, pageSqlPolicy); break;
         case 'awareness-update': await handleAwarenessUpdate(ws, payload, pool, pageSqlPolicy); break;
@@ -1327,7 +1378,7 @@ async function handleYjsStateE2EE(ws, payload, pool, pageSqlPolicy) {
         touchE2eeLeader(pageId, myConn);
 
         // DB 영속화 (Debounced)
-        persistE2eeStateDebounced(pool, pageId, encryptedState, encryptedHtml);
+        scheduleE2EESave(pool, pageId, encryptedState, encryptedHtml);
 
     } catch (e) {}
 }
@@ -1464,6 +1515,28 @@ async function handleForceSave(ws, payload, pool, sanitizeHtmlContent, pageSqlPo
             data: { pageId: String(pageId), updatedAt: new Date().toISOString() }
         }));
     } catch (_) {}
+}
+
+async function handleForceSaveE2EE(ws, payload, pool, pageSqlPolicy) {
+    const { pageId } = payload || {};
+    if (!pageId || !isSubscribedToPage(ws, pageId)) return;
+
+    const conns = wsConnections.pages.get(pageId);
+    const myConn = conns ? Array.from(conns).find(c => c.ws === ws) : null;
+    if (!myConn || !myConn.isE2ee) return;
+
+    let access;
+    try {
+        access = await ensureActivePageAccess(pool, pageSqlPolicy, pageId, myConn, { forcePermissionRefresh: true });
+    } catch (_) { return; }
+
+    if (!access.ok) {
+        revokePageSubscription(ws, pageId, conns, myConn, access.reason);
+        return;
+    }
+    if (!['EDIT', 'ADMIN'].includes(access.permission)) return;
+
+    await flushPendingE2eeSaveForPage(pool, pageId);
 }
 
 /**
@@ -1950,6 +2023,8 @@ module.exports = {
     yjsDocuments,
     yjsE2EEStates,
     saveYjsDocToDatabase,
+    flushPendingE2eeSaveForPage,
+    flushAllPendingE2eeSaves,
     wsCloseConnectionsForSession,
     wsCloseConnectionsForPage,
     wsKickUserFromStorage,

@@ -40,6 +40,15 @@ const pendingForceSaves = new Map();
 // E2EE (저장소 암호화) 동기화 상태
 let isE2eeSync = false;				// 현재 페이지가 E2EE 모드인지 여부
 let e2eeStatePushTimeout = null;	// 주기적 상태 스냅샷 서버 저장용 타이머
+let e2eeStatePushPageId = null;	// 마지막으로 스냅샷 저장이 예약된 페이지 (E2EE)
+
+// E2EE 스냅샷 저장 디바운스(ms)
+// - 값이 클수록 DB/CPU 부하는 줄지만, 탭 종료/새로고침 직전 변경분 유실 가능성이 커짐
+// - 기본값은 데이터 유실 위험을 낮추기 위해 800ms로 설정
+const E2EE_STATE_PUSH_DEBOUNCE_MS = (() => {
+	const v = Number.parseInt(window?.__NTEOK_E2EE_SNAPSHOT_DEBOUNCE_MS || '800', 10);
+	return Number.isFinite(v) ? Math.max(200, Math.min(5000, v)) : 800;
+})();
 
 // 커서 공유 상태
 // 서버와 동일한 상한(기본값). 운영에서 서버(.env) 값 변경 시 함께 맞추는 것을 권장
@@ -191,7 +200,15 @@ export function initSyncManager(appState) {
 
     // 데이터 유실 방지: 탭 종료/브라우저 닫기 직전 미반영 변경분을 서버에 best-effort로 전달
     window.addEventListener('pagehide', () => {
-        if (!state.currentPageId || isE2eeSync) return;
+        if (!state.currentPageId) return;
+
+        if (isE2eeSync) {
+            // E2EE는 pagehide/beforeunload에서 async가 보장되지 않으므로 best-effort로 즉시 스냅샷 저장을 시작
+            flushE2eeStateBestEffort(state.currentPageId, 'pagehide');
+            try { sendForceSaveE2ee(state.currentPageId); } catch (_) {}
+            return;
+        }
+
         flushPendingUpdates();
         sendPageSnapshotNow(state.currentPageId);
         // waitForAck=false: 비동기 ACK 대기는 언로드 중 불가능
@@ -203,7 +220,14 @@ export function initSyncManager(appState) {
     }, { capture: true });
 
     window.addEventListener('beforeunload', () => {
-        if (!state.currentPageId || isE2eeSync) return;
+        if (!state.currentPageId) return;
+
+        if (isE2eeSync) {
+            flushE2eeStateBestEffort(state.currentPageId, 'beforeunload');
+            try { sendForceSaveE2ee(state.currentPageId); } catch (_) {}
+            return;
+        }
+
         flushPendingUpdates();
         sendPageSnapshotNow(state.currentPageId);
     }, { capture: true });
@@ -1172,7 +1196,18 @@ function handleOffline() {
  * Visibility 변경 핸들러
  */
 function handleVisibilityChange() {
-    if (!document.hidden) {
+    if (document.hidden) {
+        // 탭이 숨겨질 때 (모바일 앱 전환 등) 즉시 저장 시도
+        if (state.currentPageId) {
+            if (isE2eeSync) {
+                flushE2eeStateBestEffort(state.currentPageId, 'hidden');
+                try { sendForceSaveE2ee(state.currentPageId); } catch (_) {}
+            } else {
+                flushPendingUpdates();
+                sendPageSnapshotNow(state.currentPageId);
+            }
+        }
+    } else {
         // WebSocket 연결 확인 및 재연결
         if (!ws || ws.readyState !== WebSocket.OPEN) {
             connectWebSocket();
@@ -1547,67 +1582,110 @@ async function sendYjsUpdateE2EE(pageId, update) {
 }
 
 /**
- * E2EE 전체 상태 서버 저장 예약 (디바운스)
+ * E2EE 전체 상태 서버 저장 예약 (Debounce)
+ * - 편집할 때마다 타이머를 리셋하여, 마지막 입력 후 지정된 시간(E2EE_STATE_PUSH_DEBOUNCE_MS) 뒤에만 저장 수행
  * - 서버는 이 스냅샷을 늦게 입장하는 참여자의 초기 상태로 사용
  */
 function scheduleE2EEStatePush(pageId) {
-    if (e2eeStatePushTimeout) return; // 이미 예약됨
+    if (!pageId || !isE2eeSync) return;
+    e2eeStatePushPageId = pageId;
+    if (e2eeStatePushTimeout) clearTimeout(e2eeStatePushTimeout);
     e2eeStatePushTimeout = setTimeout(async () => {
         e2eeStatePushTimeout = null;
+        e2eeStatePushPageId = null;
         await sendYjsStateE2EE(pageId);
-    }, 3000);
+    }, E2EE_STATE_PUSH_DEBOUNCE_MS);
 }
 
 /**
- * 대기 중인 E2EE 상태 저장을 즉시 실행 (페이지 이탈 시 등)
+ * 대기 중인 E2EE 상태 저장을 즉시 실행 (동기 방식)
+ * - Prosemirror detach 또는 탭 종료 직전에 호출
  */
 export async function flushE2eeState() {
     if (e2eeStatePushTimeout) {
         clearTimeout(e2eeStatePushTimeout);
         e2eeStatePushTimeout = null;
-        if (currentPageId && isE2eeSync) {
-            await sendYjsStateE2EE(currentPageId);
-        }
     }
+    const pageId = e2eeStatePushPageId || currentPageId;
+    if (pageId && isE2eeSync) {
+        e2eeStatePushPageId = null;
+        await sendYjsStateE2EE(pageId);
+    }
+}
+
+/**
+ * E2EE 스냅샷 객체 생성 (암호화)
+ */
+async function buildE2eeSnapshot(pageId) {
+    if (!ydoc || !pageId) return null;
+    const storageKey = window.cryptoManager.getStorageKey();
+    if (!storageKey) return null;
+
+    try {
+        const stateUpdate = Y.encodeStateAsUpdate(ydoc);
+        const encryptedState = await encryptBytes(stateUpdate, storageKey);
+
+        let encryptedHtml = null;
+        if (state.editor) {
+            const html = state.editor.getHTML();
+            if (window.cryptoManager && typeof window.cryptoManager.encryptWithKey === 'function')
+                encryptedHtml = await window.cryptoManager.encryptWithKey(html, storageKey);
+        }
+
+        return {
+            pageId,
+            encryptedState: uint8ToBase64(encryptedState),
+            encryptedHtml
+        };
+    } catch (e) {
+        console.error('[E2EE] 스냅샷 생성 실패:', e);
+        return null;
+    }
+}
+
+/**
+ * E2EE 데이터 유실 방지: 언로드/숨김 시 async 대기 없이 즉시 전송 시도 (best-effort)
+ */
+async function flushE2eeStateBestEffort(pageId, context = '') {
+    if (!pageId || !isE2eeSync || !ydoc) return;
+    if (e2eeStatePushTimeout) {
+        clearTimeout(e2eeStatePushTimeout);
+        e2eeStatePushTimeout = null;
+    }
+    e2eeStatePushPageId = null;
+
+    try {
+        const snapshot = await buildE2eeSnapshot(pageId);
+        if (snapshot) await sendYjsStateE2EE(pageId, snapshot);
+    } catch (_) {}
+}
+
+/**
+ * E2EE 데이터 유실 방지: 서버 측 디바운스(DB write) 즉시 플러시 요청
+ */
+function sendForceSaveE2ee(pageId) {
+    if (!pageId || !ws || ws.readyState !== WebSocket.OPEN) return;
+    try {
+        ws.send(JSON.stringify({ type: 'force-save-e2ee', payload: { pageId } }));
+    } catch (_) {}
 }
 
 /**
  * E2EE 전체 Yjs 상태를 서버에 저장 (늦은 참여자 초기 상태 제공)
  */
-async function sendYjsStateE2EE(pageId) {
-    if (!ws || ws.readyState !== WebSocket.OPEN || !ydoc || !pageId) return;
-
-    const storageKey = window.cryptoManager.getStorageKey();
-    if (!storageKey) return;
+async function sendYjsStateE2EE(pageId, prebuiltSnapshot = null) {
+    if (!ws || ws.readyState !== WebSocket.OPEN || !pageId) return;
 
     try {
-        const stateUpdate = Y.encodeStateAsUpdate(ydoc);
-        const encryptedState = await encryptBytes(stateUpdate, storageKey);
-        
-        // HTML 스냅샷도 암호화하여 전송 (서버 검색/미리보기용 DB 저장)
-        let encryptedHtml = null;
-        if (state.editor) {
-            const html = state.editor.getHTML();
-            // window.cryptoManager.encryptWithKey는 string 반환 (base64)
-            // encryptBytes는 Uint8Array 반환.
-            // 서버 핸들러는 encryptedHtml을 string으로 기대함 (DB 컬럼이 MEDIUMTEXT/LONGTEXT).
-            // 기존 cryptoManager 사용
-            if (window.cryptoManager && typeof window.cryptoManager.encryptWithKey === 'function') {
-                encryptedHtml = await window.cryptoManager.encryptWithKey(html, storageKey);
-            }
-        }
+        const snapshot = prebuiltSnapshot || await buildE2eeSnapshot(pageId);
+        if (!snapshot) return;
 
         ws.send(JSON.stringify({
             type: 'yjs-state-e2ee',
-            payload: { 
-                pageId, 
-                encryptedState: uint8ToBase64(encryptedState),
-                encryptedHtml 
-            }
+            payload: snapshot
         }));
-        console.log('[E2EE] 전체 상태(및 HTML 스냅샷) 서버에 저장 완료');
     } catch (e) {
-        console.error('[E2EE] 상태 저장 실패:', e);
+        console.error('[E2EE] 상태 저장 전송 실패:', e);
     }
 }
 

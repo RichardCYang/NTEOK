@@ -236,6 +236,7 @@ const {
     wsConnections,
     yjsDocuments,
 	saveYjsDocToDatabase,
+    flushAllPendingE2eeSaves,
 	wsCloseConnectionsForSession,
     wsCloseConnectionsForPage,
     wsKickUserFromStorage,
@@ -2388,6 +2389,54 @@ function getSessionFromId(sessionId) {
 }
 
 // WebSocket Rate Limiting, 서버 초기화, 메시지 핸들러 등은 websocket-server.js 모듈로 이동됨
+
+/**
+ * Graceful Shutdown 핸들러 등록
+ * - 프로세스 종료 시(SIGINT, SIGTERM) 모든 대기 중인 데이터를 DB에 저장
+ */
+function installGracefulShutdownHandlers(httpServer, pool, sanitizeHtmlContent) {
+    const shutdown = async (signal) => {
+        console.log(`\n[${signal}] Graceful shutdown sequence started...`);
+
+        // 새 연결 차단
+        if (httpServer) {
+            httpServer.close(() => {
+                console.log('HTTP/WebSocket server closed.');
+            });
+        }
+
+        try {
+            // 모든 E2EE 대기 작업 플러시
+            await flushAllPendingE2eeSaves(pool);
+
+            // 모든 Yjs 문서 메모리 -> DB 강제 저장
+            const pageIds = Array.from(yjsDocuments.keys());
+            console.log(`[YJS] Flushing ${pageIds.length} active documents to DB...`);
+            for (const pageId of pageIds) {
+                const doc = yjsDocuments.get(pageId);
+                if (doc && doc.ydoc) {
+                    await saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, doc.ydoc);
+                }
+            }
+            console.log('[YJS] All documents flushed.');
+
+            // DB 연결 종료
+            if (pool) {
+                await pool.end();
+                console.log('Database pool closed.');
+            }
+
+            console.log('Graceful shutdown completed successfully.');
+            process.exit(0);
+        } catch (error) {
+            console.error('Error during graceful shutdown:', error);
+            process.exit(1);
+        }
+    };
+
+    process.on('SIGINT', () => shutdown('SIGINT'));
+    process.on('SIGTERM', () => shutdown('SIGTERM'));
+}
 
 /**
  * 서버 시작 (HTTPS 자동 설정)
