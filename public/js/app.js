@@ -73,7 +73,8 @@ import {
     startPageSync,
     stopPageSync,
     startStorageSync,
-    stopStorageSync
+    stopStorageSync,
+    requestImmediateSave
 } from './sync-manager.js';
 import {
     initCoverManager,
@@ -243,6 +244,15 @@ async function handlePageListClick(event, state) {
         if (action === "delete-page") {
             if (!confirm("이 페이지를 휴지통으로 이동하시겠습니까?")) return;
             try {
+                // 데이터 유실 방지(중요): 현재 열려 있는 페이지를 삭제하기 전에
+                // WS force-save(=DB 저장)를 best-effort로 한 번 수행
+                if (state.currentPageId === pageId) {
+                    try {
+                        await requestImmediateSave(pageId, { includeSnapshot: true, waitForAck: true });
+                    } catch (_) {
+                        // best-effort
+                    }
+                }
                 await api.del("/api/pages/" + encodeURIComponent(pageId));
                 state.pages = state.pages.filter(p => p.id !== pageId);
                 if (state.currentPageId === pageId) {

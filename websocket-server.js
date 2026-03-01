@@ -722,7 +722,7 @@ async function cleanupOrphanedFiles(pool, filePaths, excludePageId, pageOwnerUse
 
 async function saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc, opts = {}) {
     try {
-        const { epoch } = opts;
+        const { epoch, allowDeleted = false } = opts;
         // epoch 확인 (시작 시): 이미 더 새로운 REST 저장이 발생했다면 중단
         if (epoch !== undefined && getYjsSaveEpoch(pageId) > epoch) return { status: 'skipped-epoch' };
 
@@ -733,7 +733,12 @@ async function saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc, opt
         );
 
         // 페이지가 이미 삭제되었으면 저장을 중단하여 유령 데이터가 되살아나지 않도록 함
-        if (existingRows.length === 0 || existingRows[0].deleted_at !== null) {
+        // - 단, soft-delete(휴지통) 시점에 마지막 편집 내용을 보존해야 하는 경우가 있어
+        //   allowDeleted=true 인 경우에는 deleted_at 을 그대로 유지한 채 content/yjs_state만 갱신을 허용
+        if (existingRows.length === 0) {
+            return { status: 'aborted-deleted' };
+        }
+        if (existingRows[0].deleted_at !== null && !allowDeleted) {
             return { status: 'aborted-deleted' };
         }
 

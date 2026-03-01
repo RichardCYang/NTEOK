@@ -59,6 +59,7 @@ module.exports = (dependencies) => {
         wsBroadcastToPage,
         wsBroadcastToStorage,
         wsCloseConnectionsForPage,
+        saveYjsDocToDatabase,
         logError,
         generatePublishToken,
         coverUpload,
@@ -1119,8 +1120,9 @@ module.exports = (dependencies) => {
                 try {
                     const docInfo = yjsDocuments.get(pid);
                     if (docInfo?.ydoc) {
-                        // DB에 최종 상태 저장 (선택: 삭제 직전 상태 보존)
-                        await saveYjsDocToDatabase(pool, sanitizeHtmlContent, pid, docInfo.ydoc);
+                        // soft-delete 직후에는 deleted_at이 세팅되어 saveYjsDocToDatabase가 기본적으로 중단되므로,
+                        // allowDeleted=true로 휴지통에서 복구 시 최신 편집 내용이 보존되도록 함
+                        await saveYjsDocToDatabase(pool, sanitizeHtmlContent, pid, docInfo.ydoc, { allowDeleted: true });
                     }
                 } catch (_) {}
 
