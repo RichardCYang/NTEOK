@@ -1059,6 +1059,24 @@ module.exports = (dependencies) => {
                 return res.status(400).json({ error: "Invalid filename" });
             }
 
+            // 데이터 유실 방지: 아직 어떤 페이지에서 cover_image로 사용 중이면 삭제를 거부
+            // (삭제하면 페이지 UI가 깨지며, 사용자가 원치 않는 커버 유실로 인식될 수 있음)
+            const coverRef = `${userId}/${filename}`;
+            const [useRows] = await pool.execute(
+                `SELECT COUNT(*) AS cnt
+                   FROM pages
+                  WHERE user_id = ?
+                    AND cover_image = ?
+                    AND deleted_at IS NULL`,
+                [userId, coverRef]
+            );
+            const inUse = Number(useRows?.[0]?.cnt || 0);
+            if (inUse > 0) {
+                return res.status(409).json({
+                    error: `이 커버 이미지는 현재 ${inUse}개 페이지에서 사용 중입니다. 먼저 해당 페이지의 커버를 제거/변경한 뒤 다시 시도하세요.`
+                });
+            }
+
             if (fs.existsSync(targetPath)) {
                 const st = fs.statSync(targetPath);
                 if (st.isFile()) fs.unlinkSync(targetPath);
@@ -1292,6 +1310,18 @@ module.exports = (dependencies) => {
         return { urlUserId, filename };
     }
 
+    // 데이터 유실 방지(중요): 첨부파일 정리(file-cleanup)
+    // 기존 구현은 이 페이지에서 삭제 요청이 오면 즉시 실제 파일을 삭제했음
+    // 하지만 동일 파일 URL이 다른 페이지에서도 재사용(복사/붙여넣기)될 수 있어
+    // 다른 페이지가 이미 참조 중이거나, 다른 페이지가 아직 저장되기 전(레지스트리 미등록)인데도
+    // 실제 파일을 지워버려 사용자 데이터(첨부) 유실이 발생할 수 있음
+    //
+    // 해결:
+    //  - 먼저 이 페이지의 레지스트리(page_file_refs)만 제거
+    //  - 남은 레지스트리 참조 개수를 확인
+    //  - 0일 때만 실제 파일을 삭제 (그 외는 보존)
+    //  - DB 정합성을 위해 트랜잭션 사용, 파일 삭제는 커밋 이후 수행
+    // =====================================================================
     router.delete("/:id/file-cleanup", authMiddleware, async (req, res) => {
         const id = req.params.id;
         const userId = req.user.id;
@@ -1328,22 +1358,127 @@ module.exports = (dependencies) => {
                 return res.status(400).json({ error: "Invalid fileUrl" });
             }
 
-            // 파일만 삭제(디렉터리 삭제 시도 차단)
-            if (fs.existsSync(targetPath)) {
-                const st = fs.statSync(targetPath);
-                if (st.isFile()) fs.unlinkSync(targetPath);
+            let remaining = null;
+            let deletedPhysical = false;
+            let connection;
+            try {
+                connection = await pool.getConnection();
+                await connection.beginTransaction();
+
+                // 이 페이지의 참조만 제거 (다른 페이지 참조는 건드리지 않음)
+                await connection.execute(
+                    `DELETE FROM page_file_refs
+                      WHERE page_id = ?
+                        AND owner_user_id = ?
+                        AND stored_filename = ?
+                        AND file_type = 'paperclip'`,
+                    [id, userId, filename]
+                );
+
+                // 남아있는 전체 참조 카운트 확인
+                const [cntRows] = await connection.execute(
+                    `SELECT COUNT(*) AS cnt
+                       FROM page_file_refs
+                      WHERE owner_user_id = ?
+                        AND stored_filename = ?
+                        AND file_type = 'paperclip'`,
+                    [userId, filename]
+                );
+                remaining = Number(cntRows?.[0]?.cnt || 0);
+
+                await connection.commit();
+            } catch (txErr) {
+                try { if (connection) await connection.rollback(); } catch (_) {}
+                throw txErr;
+            } finally {
+                try { if (connection) connection.release(); } catch (_) {}
             }
 
-            // 보안: 레지스트리에서도 제거
+            // 트랜잭션 커밋 이후 실제 파일 삭제(정합성 우선)
+            //  - 다른 페이지에서 여전히 참조 중이면 절대 삭제하지 않음
+            if (remaining === 0) {
+                try {
+                    if (fs.existsSync(targetPath)) {
+                        const st = fs.statSync(targetPath);
+                        if (st.isFile()) {
+                            fs.unlinkSync(targetPath);
+                            deletedPhysical = true;
+                        }
+                    }
+                } catch (_) {
+                    // 파일 삭제 실패는 DB 정합성에 영향을 주지 않도록 best-effort
+                    deletedPhysical = false;
+                }
+            }
+
+            res.json({ ok: true, remainingRefs: remaining, deletedPhysical });
+        } catch (error) {
+            logError("DELETE /api/pages/:id/file-cleanup", error);
+            res.status(500).json({ error: "Failed" });
+        }
+    });
+
+    // 데이터 유실 방지(중요): 에디터에서 파일/이미지를 복사/붙여넣기로 재사용할 때
+    // 저장 전에 page_file_refs 레지스트리가 비어 있어, 다른 페이지에서 삭제 시
+    // 참조 중인 파일이 오판 삭제될 수 있음
+    //
+    // 해결: 클라이언트(NodeView)가 렌더링 시점에 이 엔드포인트를 best-effort로 호출해
+    //       현재 페이지와 자산의 참조 관계를 선등록 진행
+    // =====================================================================
+    const IMG_PATH_RE = /^\/imgs\/(\d{1,12})\/([A-Za-z0-9][A-Za-z0-9._-]{0,199})$/;
+    function parseImgsPathFromUserInput(raw) {
+        if (typeof raw !== "string") return null;
+        const s = raw.trim();
+        if (!s) return null;
+
+        let pathname = s;
+        try { pathname = new URL(s, "http://local").pathname; } catch (_) { pathname = s; }
+
+        const m = pathname.match(IMG_PATH_RE);
+        if (!m) return null;
+        const urlUserId = m[1];
+        const filename = m[2];
+        if (filename.includes("..")) return null;
+        return { urlUserId, filename };
+    }
+
+    router.post("/:id/register-asset-ref", authMiddleware, async (req, res) => {
+        const id = req.params.id;
+        const userId = req.user.id;
+        const { assetUrl } = req.body || {};
+
+        if (!assetUrl) return res.status(400).json({ error: "assetUrl required" });
+
+        try {
+            const existing = await loadPageForMutationOr404(userId, id, res);
+            if (!existing) return;
+
+            const permission = await storagesRepo.getPermission(userId, existing.storage_id);
+            if (!permission || !['EDIT', 'ADMIN'].includes(permission))
+                return res.status(403).json({ error: "Forbidden" });
+
+            const parsedPaper = parsePaperclipPathFromUserInput(assetUrl);
+            const parsedImg = parsedPaper ? null : parseImgsPathFromUserInput(assetUrl);
+            if (!parsedPaper && !parsedImg) return res.status(400).json({ error: "Invalid assetUrl" });
+
+            const urlUserId = parsedPaper ? parsedPaper.urlUserId : parsedImg.urlUserId;
+            const filename = parsedPaper ? parsedPaper.filename : parsedImg.filename;
+            const fileType = parsedPaper ? 'paperclip' : 'imgs';
+
+            // 본인 자산만 레지스트리 선등록 (타인 파일에 대한 위조/오염 방지)
+            if (String(urlUserId) !== String(userId))
+                return res.status(403).json({ error: "자신의 자산만 등록할 수 있습니다." });
+
             await pool.execute(
-                `DELETE FROM page_file_refs
-                  WHERE page_id = ? AND owner_user_id = ? AND stored_filename = ? AND file_type = 'paperclip'`,
-                [id, userId, filename]
+                `INSERT IGNORE INTO page_file_refs
+                    (page_id, owner_user_id, stored_filename, file_type, created_at)
+                 VALUES (?, ?, ?, ?, NOW())`,
+                [id, userId, filename, fileType]
             );
 
             res.json({ ok: true });
-        } catch (error) {
-            logError("DELETE /api/pages/:id/file-cleanup", error);
+        } catch (e) {
+            logError("POST /api/pages/:id/register-asset-ref", e);
             res.status(500).json({ error: "Failed" });
         }
     });

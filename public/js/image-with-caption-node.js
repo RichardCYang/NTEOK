@@ -6,8 +6,29 @@
 // 보안: 협업(WebSocket/Yjs) 업데이트는 서버 저장 전에 다른 클라이언트로 즉시 전파될 수 있으므로,
 // NodeView에서 사용하는 URL(src)은 렌더링 시점에도 반드시 검증해야 함
 import { sanitizeHttpHref } from './url-utils.js';
+import { secureFetch } from './ui-utils.js';
 
 const Node = Tiptap.Core.Node;
+
+// 복사/붙여넣기 등으로 기존 이미지 URL이 다른 페이지에 들어오는 경우,
+// 저장 전에도 서버 레지스트리(page_file_refs)에 선등록하여
+// 다른 페이지에서 삭제 시 오판 삭제로 인한 데이터 유실을 방지
+const _registeredAssetRefs = new Set(); // key: `${pageId}|${assetUrl}`
+async function registerAssetRefOnce(pageId, assetUrl) {
+    if (!pageId || !assetUrl) return;
+    const key = `${pageId}|${assetUrl}`;
+    if (_registeredAssetRefs.has(key)) return;
+    _registeredAssetRefs.add(key);
+    try {
+        await secureFetch(`/api/pages/${encodeURIComponent(pageId)}/register-asset-ref`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ assetUrl })
+        });
+    } catch (_) {
+        // best-effort
+    }
+}
 
 function sanitizeImageSrc(raw) {
     if (typeof raw !== 'string') return null;
@@ -166,6 +187,15 @@ export const ImageWithCaption = Node.create({
             figure.contentEditable = 'false';
             figure.style.width = node.attrs.width || '100%';
             figure.setAttribute('data-align', node.attrs.align || 'center');
+
+            // 선등록(best-effort): 렌더링 시점에 현재 페이지의 참조를 기록
+            try {
+                const pageId = window.appState?.currentPageId;
+                const safe = sanitizeImageSrc(node.attrs.src || '');
+                if (pageId && safe && (safe.startsWith('/imgs/') || safe.startsWith('/paperclip/'))) {
+                    registerAssetRefOnce(pageId, safe);
+                }
+            } catch (_) {}
 
             let currentCaption = node.attrs.caption || '';
             let currentAlign = node.attrs.align || 'center';

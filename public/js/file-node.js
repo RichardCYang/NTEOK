@@ -8,6 +8,26 @@ import { sanitizeHttpHref } from './url-utils.js';
 
 const Node = Tiptap.Core.Node;
 
+// 복사/붙여넣기 등으로 기존 자산 URL이 다른 페이지에 들어오는 경우,
+// 저장 전에도 서버 레지스트리(page_file_refs)에 선등록하여
+// 다른 페이지에서 삭제 시 오판 삭제로 인한 데이터 유실을 방지
+const _registeredAssetRefs = new Set(); // key: `${pageId}|${assetUrl}`
+async function registerAssetRefOnce(pageId, assetUrl) {
+    if (!pageId || !assetUrl) return;
+    const key = `${pageId}|${assetUrl}`;
+    if (_registeredAssetRefs.has(key)) return;
+    _registeredAssetRefs.add(key);
+    try {
+        await secureFetch(`/api/pages/${encodeURIComponent(pageId)}/register-asset-ref`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ assetUrl })
+        });
+    } catch (_) {
+        // best-effort
+    }
+}
+
 export const FileBlock = Node.create({
     name: 'fileBlock',
 
@@ -296,6 +316,15 @@ export const FileBlock = Node.create({
 
                     rightPart.appendChild(deleteBtn);
                     container.appendChild(rightPart);
+
+                    // 선등록(best-effort): 렌더링 시점에 현재 페이지의 참조를 기록
+                    try {
+                        const pageId = window.appState?.currentPageId;
+                        const safe = sanitizeHttpHref(node.attrs.src, { allowRelative: true, addHttpsIfMissing: false });
+                        if (pageId && safe && safe.startsWith('/paperclip/')) {
+                            registerAssetRefOnce(pageId, safe);
+                        }
+                    } catch (_) {}
 
                     container.onclick = (e) => {
                         if (e.target.closest('.file-delete-btn')) return;
