@@ -101,12 +101,68 @@ const WS_MAX_MESSAGE_BYTES = 2 * 1024 * 1024;
 const WS_MAX_AWARENESS_UPDATE_BYTES = 32 * 1024;
 
 // ==================== E2EE Leader Election & Persistence Helpers ====================
+const E2EE_LEADER_IDLE_HANDOFF_MS = (() => {
+    const n = Number.parseInt(process.env.E2EE_LEADER_IDLE_HANDOFF_MS || '2000', 10);
+    if (!Number.isFinite(n)) return 2000;
+    return Math.max(500, Math.min(60_000, n));
+})();
+
+// E2EE 리더 선출/핸드오프 정책
+// - 기존 설계는 1명의 리더만 yjs-state-e2ee(전체 스냅샷)를 DB에 저장할 수 있음
+// - 하지만 리더가 편집을 하지 않고 접속만 유지하는 동안, 다른 편집자의 스냅샷 저장이 거부되어
+//   최신 암호화 상태가 DB에 남지 않는(=데이터 유실) 문제가 발생할 수 있음
+// - 해결:
+//     (1) 리더가 일정 시간 이상 비활성일 때, 활성 편집자에게 리더를 자동 핸드오프
+//     (2) disconnect/권한회수 시 stale leader 즉시 제거
+
+function hasActiveE2eeSessionOnPage(pageId, sessionId) {
+    const pid = String(pageId || '');
+    const sid = String(sessionId || '');
+    if (!pid || !sid) return false;
+    const conns = wsConnections.pages.get(pid);
+    if (!conns || conns.size === 0) return false;
+    for (const c of Array.from(conns)) {
+        if (!c || !c.isE2ee) continue;
+        if (String(c.sessionId) !== sid) continue;
+        const rs = c.ws && c.ws.readyState;
+        if (rs === WebSocket.OPEN || rs === WebSocket.CONNECTING) return true;
+    }
+    return false;
+}
+
+function ensureE2eeLeaderForActiveEditor(pageId, myConn) {
+    const pid = String(pageId || '');
+    if (!pid || !myConn || !myConn.sessionId) return getActiveE2eeLeader(pid);
+    let leader = getActiveE2eeLeader(pid);
+    const now = Date.now();
+    if (!leader) {
+        leader = { sessionId: myConn.sessionId, userId: myConn.userId, lastSeenAt: now };
+        e2eeSnapshotLeaders.set(pid, leader);
+        return leader;
+    }
+    if (String(leader.sessionId) === String(myConn.sessionId)) {
+        leader.lastSeenAt = now;
+        return leader;
+    }
+    if (now - (leader.lastSeenAt || 0) > E2EE_LEADER_IDLE_HANDOFF_MS) {
+        leader = { sessionId: myConn.sessionId, userId: myConn.userId, lastSeenAt: now };
+        e2eeSnapshotLeaders.set(pid, leader);
+        return leader;
+    }
+    return leader;
+}
+
 function getActiveE2eeLeader(pageId) {
-    const leader = e2eeSnapshotLeaders.get(String(pageId));
+    const pid = String(pageId);
+    const leader = e2eeSnapshotLeaders.get(pid);
     if (!leader) return null;
-    // 30초 이상 활동 없으면 리더 자격 상실로 간주
+    // 리더 세션이 실제로 연결돼 있지 않으면 즉시 무효화 (stale leader 방지)
+    if (!hasActiveE2eeSessionOnPage(pid, leader.sessionId)) {
+        e2eeSnapshotLeaders.delete(pid);
+        return null;
+    }
     if (Date.now() - leader.lastSeenAt > 30000) {
-        e2eeSnapshotLeaders.delete(String(pageId));
+        e2eeSnapshotLeaders.delete(pid);
         return null;
     }
     return leader;
@@ -1075,19 +1131,33 @@ async function handleSubscribePage(ws, payload, pool, sanitizeHtmlContent, pageS
 
 function handleUnsubscribePage(ws, payload, pool, sanitizeHtmlContent) {
     const { pageId } = payload;
-    const conns = wsConnections.pages.get(pageId);
-    if (conns) {
-        conns.forEach(c => { if (c.ws === ws) conns.delete(c); });
-        if (conns.size === 0) {
-            wsConnections.pages.delete(pageId);
-            const doc = yjsDocuments.get(pageId);
-            if (doc) {
-                saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, doc.ydoc)
-                    .catch(e => { console.error('[YJS] unsubscribe save failed:', String(pageId), e?.message || e); });
+    const pid = String(pageId || '');
+    const conns = wsConnections.pages.get(pid);
+    if (!conns) return;
+    let removed = null;
+    for (const c of Array.from(conns)) {
+        if (c && c.ws === ws) { removed = c; conns.delete(c); }
+    }
+    // stale leader 정리
+    try {
+        if (removed && removed.isE2ee && removed.sessionId) {
+            const leader = e2eeSnapshotLeaders.get(pid);
+            if (leader && String(leader.sessionId) === String(removed.sessionId)) {
+                if (!hasActiveE2eeSessionOnPage(pid, leader.sessionId)) e2eeSnapshotLeaders.delete(pid);
             }
         }
-        wsBroadcastToPage(pageId, 'user-left', { userId: ws.userId }, ws.userId);
+    } catch (_) {}
+    if (conns.size === 0) {
+        wsConnections.pages.delete(pid);
+        try { e2eeSnapshotLeaders.delete(pid); } catch (_) {}
+        const doc = yjsDocuments.get(pid);
+        if (doc) {
+            const epoch = getYjsSaveEpoch(pid);
+            saveYjsDocToDatabase(pool, sanitizeHtmlContent, pid, doc.ydoc, { epoch })
+                .catch(e => { console.error('[YJS] unsubscribe save failed:', String(pid), e?.message || e); });
+        }
     }
+    wsBroadcastToPage(pid, 'user-left', { userId: ws.userId }, ws.userId);
 }
 
 // ==================== E2EE (저장소 레벨 암호화) 전용 핸들러 ====================
@@ -1210,6 +1280,9 @@ async function handleYjsUpdateE2EE(ws, payload, pool, pageSqlPolicy) {
         }
         if (!['EDIT', 'ADMIN'].includes(freshPerm)) return;
 
+        // 데이터 유실 방지: 활성 편집자가 리더를 승계하도록 핸드오프(리더 고착 방지)
+        ensureE2eeLeaderForActiveEditor(pageId, myConn);
+
         // 크기 제한
         if (update.length > WS_MAX_YJS_UPDATE_B64_CHARS) return;
         const updateBuf = Buffer.from(update, 'base64');
@@ -1239,16 +1312,9 @@ async function handleYjsStateE2EE(ws, payload, pool, pageSqlPolicy) {
         const freshPerm = await refreshConnPermission(pool, myConn); // 캐시 허용
         if (!['EDIT', 'ADMIN'].includes(freshPerm)) return;
 
-        // 리더 체크: 내가 리더가 아니면 저장 요청 무시 (단, 리더가 없거나 죽었으면 내가 될 수도 있음)
-        let leader = getActiveE2eeLeader(pageId);
-        if (leader && leader.sessionId !== myConn.sessionId) {
-            // 다른 활성 리더가 존재함 -> 무시
-            return;
-        }
-        if (!leader) {
-            // 리더가 없으면 내가 됨
-            leader = maybeElectE2eeLeader(pageId, myConn);
-        }
+        // 리더 선출/핸드오프: 리더가 비활성이면 활성 편집자로 승계
+        const leader = ensureE2eeLeaderForActiveEditor(pageId, myConn);
+        if (leader && String(leader.sessionId) !== String(myConn.sessionId)) return;
 
         // 크기 제한 (state는 update보다 클 수 있으므로 state용 상한 적용)
         const maxStateB64Chars = Math.ceil(WS_MAX_YJS_STATE_BYTES / 3) * 4 + 8;
@@ -1405,9 +1471,24 @@ async function handleForceSave(ws, payload, pool, sanitizeHtmlContent, pageSqlPo
  */
 function revokePageSubscription(ws, pageId, conns, myConn, reason = 'Access revoked') {
     try {
-        if (conns && myConn) conns.delete(myConn);
-        if (conns && conns.size === 0) wsConnections.pages.delete(pageId);
-        ws.send(JSON.stringify({ event: 'access-revoked', data: { pageId, reason } }));
+        const pid = String(pageId || '');
+        if (conns && myConn) {
+            conns.delete(myConn);
+            // stale leader 정리(권한회수/정책변경)
+            try {
+                if (myConn.isE2ee && myConn.sessionId) {
+                    const leader = e2eeSnapshotLeaders.get(pid);
+                    if (leader && String(leader.sessionId) === String(myConn.sessionId)) {
+                        if (!hasActiveE2eeSessionOnPage(pid, leader.sessionId)) e2eeSnapshotLeaders.delete(pid);
+                    }
+                }
+            } catch (_) {}
+        }
+        if (conns && conns.size === 0) {
+            wsConnections.pages.delete(pid);
+            try { e2eeSnapshotLeaders.delete(pid); } catch (_) {}
+        }
+        ws.send(JSON.stringify({ event: 'access-revoked', data: { pageId: pid, reason } }));
     } catch (_) {}
 }
 
@@ -1766,9 +1847,26 @@ function cleanupWebSocketConnection(ws, pool, sanitizeHtmlContent) {
 
 	unregisterSessionConnection(ws.sessionId, ws);
     wsConnections.pages.forEach((conns, pid) => {
-        conns.forEach(c => { if (c.ws === ws) { conns.delete(c); wsBroadcastToPage(pid, 'user-left', { userId: ws.userId }, ws.userId); } });
+        let removed = null;
+        conns.forEach(c => {
+            if (c.ws === ws) {
+                removed = c;
+                conns.delete(c);
+                wsBroadcastToPage(pid, 'user-left', { userId: ws.userId }, ws.userId);
+            }
+        });
+        // stale leader 정리
+        try {
+            if (removed && removed.isE2ee && removed.sessionId) {
+                const leader = e2eeSnapshotLeaders.get(pid);
+                if (leader && String(leader.sessionId) === String(removed.sessionId)) {
+                    if (!hasActiveE2eeSessionOnPage(pid, leader.sessionId)) e2eeSnapshotLeaders.delete(pid);
+                }
+            }
+        } catch (_) {}
         if (conns.size === 0) {
             wsConnections.pages.delete(pid);
+            try { e2eeSnapshotLeaders.delete(pid); } catch (_) {}
             const doc = yjsDocuments.get(pid);
             if (doc) {
                 const epoch = getYjsSaveEpoch(pid);
@@ -1821,9 +1919,19 @@ function wsKickUserFromStorage(storageId, targetUserId, closeCode = 1008, reason
             if (String(c.userId) === uid && String(c.storageId) === sid) {
                 pageConns.delete(c);
                 try { c.ws.send(JSON.stringify({ event: 'access-revoked', data: { pageId, storageId: sid } })); } catch (e) {}
+                // 강제 퇴장 대상이 리더였으면 즉시 제거
+                try {
+                    if (c.isE2ee) {
+                        const leader = e2eeSnapshotLeaders.get(String(pageId));
+                        if (leader && String(leader.userId) === uid) e2eeSnapshotLeaders.delete(String(pageId));
+                    }
+                } catch (_) {}
             }
         }
-        if (pageConns.size === 0) wsConnections.pages.delete(pageId);
+        if (pageConns.size === 0) {
+            wsConnections.pages.delete(pageId);
+            try { e2eeSnapshotLeaders.delete(String(pageId)); } catch (_) {}
+        }
     }
 
     // 해당 사용자의 모든 WS를 끊어 재연결 유도
