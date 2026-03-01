@@ -64,9 +64,15 @@ function bumpYjsSaveEpoch(pageId) {
  * - saveTimeout이 남아있으면, 문서가 Map에서 제거된 뒤에도 타이머 콜백이 실행되어
  *   DB에 오래된 상태를 덮어써 데이터 유실이 발생할 수 있음 (특히 REST 저장과 경쟁)
  */
-function dropYjsDocument(pageId) {
+function dropYjsDocument(pageId, opts = {}) {
     const pid = String(pageId || '');
-    bumpYjsSaveEpoch(pid); // 진행 중이거나 예약된 저장 무효화
+    // 기본 동작: 진행 중이거나 예약된 저장 무효화
+    // - 단, 저장 후 정리 경로에서 epoch를 올리면(=무효화)
+    //   saveYjsDocToDatabase의 DB UPDATE 직전 epoch 재확인에서 취소되어
+    //   결과적으로 데이터가 저장되지 않는 레이스가 발생할 수 있음
+    //   (예: inactivity cleanup)
+    const bumpEpoch = opts.bumpEpoch !== false;
+    if (bumpEpoch) bumpYjsSaveEpoch(pid);
     const doc = yjsDocuments.get(pid);
     if (doc?.saveTimeout) {
         try { clearTimeout(doc.saveTimeout); } catch (_) {}
@@ -388,11 +394,42 @@ function cleanupInactiveConnections(pool, sanitizeHtmlContent) {
     const now = Date.now();
     const TIMEOUT = 30 * 60 * 1000;
     yjsDocuments.forEach((doc, pageId) => {
-        if (now - doc.lastAccess > TIMEOUT) {
-            const epoch = getYjsSaveEpoch(pageId);
-            saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, doc.ydoc, { epoch }).catch(e => {});
-            dropYjsDocument(pageId);
+        if (now - doc.lastAccess <= TIMEOUT) return;
+
+        // 데이터 유실/문서 파손 방지:
+        // - 구독(연결)이 살아있는 상태에서 서버 메모리 문서를 drop 하면
+        //   클라이언트는 계속 편집/동기화 중인데 서버 문서가 사라져 재동기화/충돌로 이어질 수 있음
+        // - 활성 구독이 남아있으면 정리 금지
+        const conns = wsConnections.pages.get(String(pageId));
+        if (conns && conns.size > 0) {
+            doc.lastAccess = now; // 활동으로 간주하여 유예
+            return;
         }
+
+        // pending debounce save가 남아있다면 먼저 정리 (중복 저장/레이스 방지)
+        if (doc.saveTimeout) {
+            try { clearTimeout(doc.saveTimeout); } catch (_) {}
+            doc.saveTimeout = null;
+        }
+
+        const epoch = getYjsSaveEpoch(pageId);
+
+        // 중요:
+        // - dropYjsDocument()가 epoch를 bump 하면, 방금 시작한 saveYjsDocToDatabase가
+        //   DB UPDATE 직전(epoch 재확인)에서 스스로 취소되어 저장이 되지 않는 레이스가 발생할 수 있음
+        // - 따라서 저장 성공(또는 epoch 스킵) 이후에 bumpEpoch=false로 정리
+        // - 저장 실패 시에는 문서를 유지하여 다음 cleanup 주기에서 재시도(=데이터 유실 방지)
+        saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, doc.ydoc, { epoch })
+            .then(() => {
+                dropYjsDocument(pageId, { bumpEpoch: false });
+            })
+            .catch((e) => {
+                try {
+                    console.error('[YJS] inactivity cleanup save failed:', String(pageId), e?.message || e);
+                } catch (_) {}
+                // 저장 실패: drop하지 않고 유지(다음 주기에 재시도)
+                doc.lastAccess = now; // 즉시 재시도 폭주 방지
+            });
     });
 }
 
@@ -516,7 +553,7 @@ async function saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc, opt
     try {
         const { epoch } = opts;
         // epoch 확인 (시작 시): 이미 더 새로운 REST 저장이 발생했다면 중단
-        if (epoch !== undefined && getYjsSaveEpoch(pageId) > epoch) return;
+        if (epoch !== undefined && getYjsSaveEpoch(pageId) > epoch) return { status: 'skipped-epoch' };
 
         const yMetadata = ydoc.getMap('metadata');
 		const title = yMetadata.get('title') || '제목 없음';
@@ -561,7 +598,7 @@ async function saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc, opt
         }
 
         // epoch 재확인 (DB UPDATE 직전): I/O 대기 중에 무효화되었을 수 있음
-        if (epoch !== undefined && getYjsSaveEpoch(pageId) > epoch) return;
+        if (epoch !== undefined && getYjsSaveEpoch(pageId) > epoch) return { status: 'skipped-epoch' };
 
         await pool.execute(
             `UPDATE pages SET title = ?, content = ?, icon = ?, sort_order = ?, parent_id = ?, yjs_state = ?, updated_at = NOW() WHERE id = ?`,
@@ -633,6 +670,7 @@ async function saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc, opt
             const deletedFiles = oldFiles.filter(f => !newFiles.some(nf => nf.ref === f.ref));
             if (deletedFiles.length > 0) cleanupOrphanedFiles(pool, deletedFiles, pageId, pageOwnerUserId).catch(e => {});
         }
+        return { status: 'saved' };
     } catch (error) { throw error; }
 }
 
@@ -1040,7 +1078,14 @@ function handleUnsubscribePage(ws, payload, pool, sanitizeHtmlContent) {
     const conns = wsConnections.pages.get(pageId);
     if (conns) {
         conns.forEach(c => { if (c.ws === ws) conns.delete(c); });
-        if (conns.size === 0) { wsConnections.pages.delete(pageId); const doc = yjsDocuments.get(pageId); if (doc) saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, doc.ydoc).catch(e => {}); }
+        if (conns.size === 0) {
+            wsConnections.pages.delete(pageId);
+            const doc = yjsDocuments.get(pageId);
+            if (doc) {
+                saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, doc.ydoc)
+                    .catch(e => { console.error('[YJS] unsubscribe save failed:', String(pageId), e?.message || e); });
+            }
+        }
         wsBroadcastToPage(pageId, 'user-left', { userId: ws.userId }, ws.userId);
     }
 }
@@ -1561,7 +1606,8 @@ async function handleYjsUpdate(ws, payload, pool, sanitizeHtmlContent, pageSqlPo
             if (doc.saveTimeout) clearTimeout(doc.saveTimeout);
             const epoch = getYjsSaveEpoch(pageId); // 현재 시점의 epoch 캡처
             doc.saveTimeout = setTimeout(() => {
-                saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc, { epoch }).catch(e => {});
+                saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc, { epoch })
+                    .catch(e => { console.error('[YJS] debounce save failed:', String(pageId), e?.message || e); });
             }, 1000);
         }
     } catch (e) {}
@@ -1671,7 +1717,8 @@ async function handleYjsState(ws, payload, pool, sanitizeHtmlContent, pageSqlPol
 			if (doc.saveTimeout) clearTimeout(doc.saveTimeout);
             const epoch = getYjsSaveEpoch(pageId); // 현재 시점의 epoch 캡처
 			doc.saveTimeout = setTimeout(() => {
-				saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc, { epoch }).catch(e => {});
+				saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc, { epoch })
+                    .catch(e => { console.error('[YJS] state save failed:', String(pageId), e?.message || e); });
 			}, 1000);
 		}
 	} catch (e) {
@@ -1720,7 +1767,15 @@ function cleanupWebSocketConnection(ws, pool, sanitizeHtmlContent) {
 	unregisterSessionConnection(ws.sessionId, ws);
     wsConnections.pages.forEach((conns, pid) => {
         conns.forEach(c => { if (c.ws === ws) { conns.delete(c); wsBroadcastToPage(pid, 'user-left', { userId: ws.userId }, ws.userId); } });
-        if (conns.size === 0) { wsConnections.pages.delete(pid); const doc = yjsDocuments.get(pid); if (doc) { const epoch = getYjsSaveEpoch(pid); saveYjsDocToDatabase(pool, sanitizeHtmlContent, pid, doc.ydoc, { epoch }).catch(e => {}); } }
+        if (conns.size === 0) {
+            wsConnections.pages.delete(pid);
+            const doc = yjsDocuments.get(pid);
+            if (doc) {
+                const epoch = getYjsSaveEpoch(pid);
+                saveYjsDocToDatabase(pool, sanitizeHtmlContent, pid, doc.ydoc, { epoch })
+                    .catch(e => { console.error('[YJS] connection cleanup save failed:', String(pid), e?.message || e); });
+            }
+        }
     });
     wsConnections.storages.forEach((conns, sid) => { conns.forEach(c => { if (c.ws === ws) conns.delete(c); }); if (conns.size === 0) wsConnections.storages.delete(sid); });
     const uconns = wsConnections.users.get(ws.userId);
