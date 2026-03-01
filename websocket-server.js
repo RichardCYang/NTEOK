@@ -56,7 +56,9 @@ function getYjsSaveEpoch(pageId) {
 function bumpYjsSaveEpoch(pageId) {
     const pid = String(pageId || '');
     const current = yjsSaveEpoch.get(pid) || 0;
-    yjsSaveEpoch.set(pid, current + 1);
+    const next = current + 1;
+    yjsSaveEpoch.set(pid, next);
+    return next;
 }
 
 /**
@@ -388,6 +390,11 @@ function validateRealtimeYjsCandidate(candidateYDoc, sanitizeHtmlContent) {
     try {
         const yMeta = candidateYDoc.getMap('metadata');
 
+        // 데이터 유실 방지(중요): 필수 메타 키(content)가 사라진 상태를 저장하면
+        // saveYjsDocToDatabase의 fallback 로직에 의해 문서가 빈 값으로 덮어써질 수 있음
+        // (클라이언트 버그/악성 업데이트 모두 포함) → 필수 키가 없으면 즉시 거부
+        if (!yMeta.has('content')) return { ok: false, code: 1008, reason: 'Missing content' };
+
         // title
         if (yMeta.has('title')) {
             const title = yMeta.get('title');
@@ -576,7 +583,7 @@ function cleanupInactiveConnections(pool, sanitizeHtmlContent) {
             doc.saveTimeout = null;
         }
 
-        const epoch = getYjsSaveEpoch(pageId);
+        const epoch = bumpYjsSaveEpoch(pageId);
 
         // 중요:
         // - dropYjsDocument()가 epoch를 bump 하면, 방금 시작한 saveYjsDocToDatabase가
@@ -719,7 +726,24 @@ async function saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc, opt
         // epoch 확인 (시작 시): 이미 더 새로운 REST 저장이 발생했다면 중단
         if (epoch !== undefined && getYjsSaveEpoch(pageId) > epoch) return { status: 'skipped-epoch' };
 
+        // 데이터 유실 방지(중간): 최신 DB 상태를 읽어 삭제 여부 및 메타 정보 확인
+        const [existingRows] = await pool.execute(
+            'SELECT content, is_encrypted, user_id, deleted_at FROM pages WHERE id = ?',
+            [pageId]
+        );
+
+        // 페이지가 이미 삭제되었으면 저장을 중단하여 유령 데이터가 되살아나지 않도록 함
+        if (existingRows.length === 0 || existingRows[0].deleted_at !== null) {
+            return { status: 'aborted-deleted' };
+        }
+
         const yMetadata = ydoc.getMap('metadata');
+        // 데이터 유실 방지(핵심): Yjs metadata Map 에 content 키가 없으면,
+        // 빈 값으로 DB를 덮어쓰는 대신 기존 DB 내용을 유지하여 최악의 유실 상황 회피
+        if (!yMetadata.has('content')) {
+            return { status: 'skipped-no-content' };
+        }
+
 		const title = yMetadata.get('title') || '제목 없음';
 		const icon = validateAndNormalizeIcon(yMetadata.get('icon'));
         const sortOrder = yMetadata.get('sortOrder') || 0;
@@ -727,24 +751,18 @@ async function saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc, opt
         const rawContent = yMetadata.get('content') || '<p></p>';
         const content = sanitizeHtmlContent(rawContent);
 
-        const [existingRows] = await pool.execute('SELECT content, is_encrypted, user_id FROM pages WHERE id = ?', [pageId]);
-        const isEncrypted = (existingRows.length > 0 && existingRows[0].is_encrypted === 1);
-        const pageOwnerUserId = (existingRows.length > 0 ? existingRows[0].user_id : null);
+        const isEncrypted = (existingRows[0].is_encrypted === 1);
+        const pageOwnerUserId = (existingRows[0].user_id);
         let finalContent = content;
         let oldFiles = [];
-        if (existingRows.length > 0) {
-            const existing = existingRows[0];
-            if (existing.is_encrypted === 1) finalContent = '';
-            else oldFiles = extractFilesFromContent(existing.content, pageOwnerUserId);
+
+        if (isEncrypted) {
+            finalContent = '';
+        } else {
+            oldFiles = extractFilesFromContent(existingRows[0].content, pageOwnerUserId);
         }
 
         // 보안: 암호화된 페이지는 yjs_state에 문서 스냅샷(평문)이 남을 수 있으므로 DB에 저장하지 않음
-        // - 페이지 암호화의 핵심은 서버/DB 어디에도 평문이 남지 않게 하는 것
-        // - 암호화 페이지에 대한 WS 구독은 이미 차단하지만(실시간 협업 미지원)
-        //   경쟁 조건/레거시 문서 객체가 남아 있는 경우 저장 타이밍에 평문이 영구 저장될 수 있음
-        // DoS 방지: 큰 문서는 encodeStateAsUpdate 자체를 호출하지 않음 (CWE-400)
-        // - encodeStateAsUpdate는 문서 크기/히스토리에 비례해 CPU/메모리 스파이크 유발 가능
-        // - approxBytes가 저장 상한을 이미 초과한 경우 인코딩 자체를 건너뜀
         let yjsStateToSave = null;
         if (!isEncrypted) {
             const meta = yjsDocuments.get(pageId);
@@ -752,13 +770,9 @@ async function saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc, opt
             if (Number.isFinite(approx) && approx <= WS_MAX_YJS_STATE_BYTES) {
                 try {
                     yjsStateToSave = Buffer.from(Y.encodeStateAsUpdate(ydoc));
-                    // DoS/DB bloat 방지: 실제 인코딩 크기도 재확인
                     if (yjsStateToSave.length > WS_MAX_YJS_STATE_BYTES) yjsStateToSave = null;
-                } catch (_) {
-                    yjsStateToSave = null;
-                }
+                } catch (_) { yjsStateToSave = null; }
             }
-            // approx 미설정(undefined/NaN)이거나 상한 초과 시: HTML snapshot 저장만 유지
         }
 
         // epoch 재확인 (DB UPDATE 직전): I/O 대기 중에 무효화되었을 수 있음
@@ -769,14 +783,11 @@ async function saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc, opt
             [title, finalContent, icon, sortOrder, parentId, yjsStateToSave, pageId]
         );
 
-        if (existingRows.length > 0 && existingRows[0].is_encrypted === 0) {
+        if (!isEncrypted) {
             const newFiles = extractFilesFromContent(content, pageOwnerUserId);
 
-            // 보안: 정당 참조 레지스트리(page_file_refs) 동기화
-            // - 실시간 편집 중 새로 추가된 첨부파일이나 이미지를 등록
-            // - 페이지에서 제거된 파일은 이 페이지와의 매핑 정보를 레지스트리에서 제거
             try {
-                // 신규 파일 등록 (INSERT IGNORE)
+                // 신규 파일 등록
                 for (const file of newFiles) {
                     const parts = file.ref.split('/');
                     const ownerId = parseInt(parts[0], 10);
@@ -790,49 +801,34 @@ async function saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc, opt
                     }
                 }
 
-                // 이 페이지에서 더 이상 참조되지 않는 레지스트리 제거
-                // 중요: pageOwnerUserId scope만 삭제해야 타 사용자 첨부 레지스트리를 건드리지 않음
+                // 레지스트리 제거
                 const currentPaperclipFiles = newFiles.filter(f => f.type === 'paperclip').map(f => f.ref.split('/')[1]);
                 if (currentPaperclipFiles.length > 0) {
                     await pool.execute(
                         `DELETE FROM page_file_refs
-                          WHERE page_id = ?
-                            AND owner_user_id = ?
-                            AND file_type = 'paperclip'
+                          WHERE page_id = ? AND owner_user_id = ? AND file_type = 'paperclip'
                             AND stored_filename NOT IN (${currentPaperclipFiles.map(() => '?').join(',')})`,
                         [pageId, pageOwnerUserId, ...currentPaperclipFiles]
                     );
                 } else {
-                    await pool.execute(
-                        `DELETE FROM page_file_refs
-                          WHERE page_id = ? AND owner_user_id = ? AND file_type = 'paperclip'`,
-                        [pageId, pageOwnerUserId]
-                    );
+                    await pool.execute(`DELETE FROM page_file_refs WHERE page_id = ? AND owner_user_id = ? AND file_type = 'paperclip'`, [pageId, pageOwnerUserId]);
                 }
 
                 const currentImgsFiles = newFiles.filter(f => f.type === 'imgs').map(f => f.ref.split('/')[1]);
                 if (currentImgsFiles.length > 0) {
                     await pool.execute(
                         `DELETE FROM page_file_refs
-                          WHERE page_id = ?
-                            AND owner_user_id = ?
-                            AND file_type = 'imgs'
+                          WHERE page_id = ? AND owner_user_id = ? AND file_type = 'imgs'
                             AND stored_filename NOT IN (${currentImgsFiles.map(() => '?').join(',')})`,
                         [pageId, pageOwnerUserId, ...currentImgsFiles]
                     );
                 } else {
-                    await pool.execute(
-                        `DELETE FROM page_file_refs
-                          WHERE page_id = ? AND owner_user_id = ? AND file_type = 'imgs'`,
-                        [pageId, pageOwnerUserId]
-                    );
+                    await pool.execute(`DELETE FROM page_file_refs WHERE page_id = ? AND owner_user_id = ? AND file_type = 'imgs'`, [pageId, pageOwnerUserId]);
                 }
-            } catch (regErr) {
-                console.error('보안 레지스트리 동기화 실패 (비치명적):', regErr);
-            }
+            } catch (regErr) { console.error('보안 레지스트리 동기화 실패:', regErr); }
 
             const deletedFiles = oldFiles.filter(f => !newFiles.some(nf => nf.ref === f.ref));
-            if (deletedFiles.length > 0) cleanupOrphanedFiles(pool, deletedFiles, pageId, pageOwnerUserId).catch(e => {});
+            if (deletedFiles.length > 0) cleanupOrphanedFiles(pool, deletedFiles, pageId, pageOwnerUserId).catch(() => {});
         }
         return { status: 'saved' };
     } catch (error) { throw error; }
@@ -1559,6 +1555,14 @@ async function handlePageSnapshot(ws, payload, pool, sanitizeHtmlContent, pageSq
                 yMeta.set('title', title.trim().slice(0, 255));
             }
         }, 'snapshot');
+
+        // 데이터 유실 방지: 스냅샷을 받았으므로 즉시(또는 짧은 지연 후) 저장을 예약하여 유실 위험 최소화
+        if (docMeta.saveTimeout) clearTimeout(docMeta.saveTimeout);
+        const epoch = getYjsSaveEpoch(pageId);
+        docMeta.saveTimeout = setTimeout(() => {
+            saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, docMeta.ydoc, { epoch })
+                .catch(e => { console.error('[YJS] snapshot best-effort save failed:', String(pageId), e?.message || e); });
+        }, 1000);
     }
 }
 
@@ -1590,7 +1594,8 @@ async function handleForceSave(ws, payload, pool, sanitizeHtmlContent, pageSqlPo
 
     try {
         const ydoc = await loadOrCreateYjsDoc(pool, sanitizeHtmlContent, pageId);
-        await saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc);
+        const epoch = bumpYjsSaveEpoch(pageId);
+        await saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc, { epoch });
         ws.send(JSON.stringify({
             event: 'page-saved',
             data: { pageId: String(pageId), updatedAt: new Date().toISOString() }

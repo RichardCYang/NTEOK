@@ -727,7 +727,10 @@ module.exports = (dependencies) => {
                 return res.status(403).json({ error: "이 페이지를 수정할 권한이 없습니다." });
 
             const title = req.body.title !== undefined ? sanitizeInput(req.body.title) : existing.title;
-            const isEncrypted = req.body.isEncrypted !== undefined ? (req.body.isEncrypted ? 1 : 0) : existing.is_encrypted;
+            // 데이터 유실 방지: isEncrypted는 반드시 불리언(true/false) 값으로 받아야 하며,
+            // 문자열 false 등 모호한 타입을 방지하기 위해 엄격히 체크
+            const reqIsEncrypted = (req.body.isEncrypted === true || req.body.isEncrypted === false) ? req.body.isEncrypted : undefined;
+            const isEncrypted = (reqIsEncrypted !== undefined) ? (reqIsEncrypted ? 1 : 0) : existing.is_encrypted;
             const encryptionStateChanged = Number(existing.is_encrypted) !== Number(isEncrypted);
 
             // 데이터 유실 방지(중요): 암호화 페이지를 평문으로 전환(isEncrypted: false)할 때
