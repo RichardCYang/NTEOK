@@ -1281,11 +1281,27 @@ async function handleSubscribePageE2EE(ws, payload, pool, pageSqlPolicy) {
             encryptedState = memEntry.encryptedState;
         } else if (page.e2ee_yjs_state) {
             // DB에 저장된 상태가 있으면 로드
+            // 중요: e2ee_yjs_state는 LONGBLOB(바이너리)로 저장되므로,
+            // 클라이언트가 기대하는 base64 문자열로 되돌릴 때는 반드시 base64 인코딩을 사용해야 함
+            // (과거/마이그레이션 호환을 위해 base64 텍스트로 저장된 경우도 감지)
             try {
-                encryptedState = page.e2ee_yjs_state.toString(); // BLOB -> string (base64 expected or just raw bytes?)
-                // NOTE: 클라이언트가 base64 string으로 보내므로 DB엔 base64 string bytes가 저장됨.
-                // toString()으로 복원.
-                yjsE2EEStates.set(String(pageId), { encryptedState, storedAt: Date.now() });
+                const blob = page.e2ee_yjs_state;
+                if (Buffer.isBuffer(blob)) {
+                    const asUtf8 = blob.toString('utf8');
+                    // base64 텍스트로 저장된 레거시(혹은 마이그레이션) 형식이면 그대로 사용
+                    if (/^[A-Za-z0-9+/=]+$/.test(asUtf8) && asUtf8.length >= 16) {
+                        encryptedState = asUtf8;
+                    } else {
+                        encryptedState = blob.toString('base64');
+                    }
+                } else if (typeof blob === 'string') {
+                    encryptedState = blob;
+                } else {
+                    encryptedState = String(blob);
+                }
+
+                if (encryptedState && !/^[A-Za-z0-9+/=]+$/.test(encryptedState)) encryptedState = null;
+                if (encryptedState) yjsE2EEStates.set(String(pageId), { encryptedState, storedAt: Date.now() });
             } catch (_) {}
         }
 
@@ -1370,6 +1386,13 @@ async function handleYjsStateE2EE(ws, payload, pool, pageSqlPolicy) {
         // 크기 제한 (state는 update보다 클 수 있으므로 state용 상한 적용)
         const maxStateB64Chars = Math.ceil(WS_MAX_YJS_STATE_BYTES / 3) * 4 + 8;
         if (encryptedState.length > maxStateB64Chars) return;
+        // 데이터 유실 방지: 잘못된 base64 입력이 DB 상태를 오염시키지 않도록 fail-closed 검증
+        if (!/^[A-Za-z0-9+/=]+$/.test(encryptedState)) return;
+        try {
+            const buf = Buffer.from(encryptedState, 'base64');
+            // AES-GCM: IV(12) + 최소 태그(16) = 28 bytes 미만이면 비정상
+            if (!buf || buf.length < 28) return;
+        } catch (_) { return; }
 
         // 메모리 캐시 업데이트
         yjsE2EEStates.set(String(pageId), { encryptedState, storedAt: Date.now() });
