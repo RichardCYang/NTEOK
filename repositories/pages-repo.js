@@ -317,8 +317,23 @@ module.exports = ({ pool, pageSqlPolicy }) => {
                  ORDER BY p.storage_id ASC, p.parent_id IS NULL DESC, p.sort_order ASC`,
                 [userId, ...vis.params]
             );
-                        return rows || [];
-                    },
+            return rows || [];
+        },
+
+        /**
+         * 백업 내보내기용: 여러 페이지 ID들에 대한 파일 참조(레지스트리) 목록 조회
+         */
+        async listFileRefsForPageIds(pageIds) {
+            if (!Array.isArray(pageIds) || pageIds.length === 0) return [];
+            const placeholders = pageIds.map(() => '?').join(',');
+            const [rows] = await pool.execute(
+                `SELECT page_id, owner_user_id, stored_filename, file_type, created_at
+                 FROM page_file_refs
+                 WHERE page_id IN (${placeholders})`,
+                pageIds
+            );
+            return rows || [];
+        },
 
                     /**
                      * 업데이트 히스토리 기록

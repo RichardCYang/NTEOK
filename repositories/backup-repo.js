@@ -31,6 +31,10 @@ module.exports = ({
                 pages,
                 publishes
             };
+        },
+
+        async listFileRefsForPageIds(pageIds) {
+            return await pagesRepo.listFileRefsForPageIds(pageIds);
         }
     };
 };
