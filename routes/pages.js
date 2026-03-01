@@ -56,6 +56,7 @@ module.exports = (dependencies) => {
         sanitizeHtmlContent,
         generatePageId,
         formatDateForDb,
+        wsBroadcastToPage,
         wsBroadcastToStorage,
         wsCloseConnectionsForPage,
         logError,
@@ -303,6 +304,88 @@ module.exports = (dependencies) => {
         return page;
     }
 
+    /**
+     * 데이터 유실 방지(핵심): REST 경로에서 수정된 메타데이터를
+     * 서버 메모리의 Yjs 문서(metadata)에도 동기화
+     *
+     * 문제:
+     * - 실시간 협업(WS) 경로는 디바운스 저장(saveYjsDocToDatabase)에서
+     *   title/icon/sortOrder/parentId/content 등을 DB에 덮어씀
+     * - 반면 REST 경로(예: 제목 변경, 아이콘 변경, 정렬 변경)는 DB만 갱신하고
+     *   이미 로드된 Yjs 문서는 갱신하지 않음
+     * - 그 결과, 이후 WS 저장/연결 종료 저장이 오래된 Yjs metadata로 DB를
+     *   덮어써서 사용자가 변경한 제목/아이콘/정렬이 되돌아가는(=lost update) 현상이 발생
+     *
+     * 해결:
+     * - REST에서 바뀐 메타를, 해당 페이지의 yjsDocuments(있을 때)에 즉시 반영
+     * - Yjs의 LWW(Map) 특성상 서버 측 변경은 추후 클라이언트와도 안전하게 병합됨
+     */
+    function syncYjsMetadataFromRest(pageId, patch = {}) {
+        try {
+            const pid = String(pageId || '');
+            if (!pid || !yjsDocuments) return;
+            const docInfo = yjsDocuments.get(pid);
+            if (!docInfo?.ydoc) return;
+
+            // Yjs 변경사항 캡처
+            let update = null;
+            const handler = (u) => { update = u; };
+            docInfo.ydoc.once('update', handler);
+
+            const yMeta = docInfo.ydoc.getMap('metadata');
+            docInfo.ydoc.transact(() => {
+                if (Object.prototype.hasOwnProperty.call(patch, 'title')) {
+                    const t = (typeof patch.title === 'string' && patch.title.trim())
+                        ? patch.title.trim().slice(0, 255)
+                        : '제목 없음';
+                    yMeta.set('title', t);
+                }
+
+                if (Object.prototype.hasOwnProperty.call(patch, 'icon')) {
+                    yMeta.set('icon', validateAndNormalizeIcon(patch.icon));
+                }
+
+                if (Object.prototype.hasOwnProperty.call(patch, 'sortOrder')) {
+                    const n = Number(patch.sortOrder);
+                    if (Number.isFinite(n)) yMeta.set('sortOrder', Math.max(-1e9, Math.min(1e9, Math.trunc(n))));
+                }
+
+                if (Object.prototype.hasOwnProperty.call(patch, 'parentId')) {
+                    const p = patch.parentId;
+                    if (p == null) yMeta.set('parentId', null);
+                    else if (typeof p === 'string') yMeta.set('parentId', p.trim().slice(0, 128));
+                }
+
+                if (Object.prototype.hasOwnProperty.call(patch, 'content')) {
+                    // content는 서버 정책으로 정화된 HTML만 반영
+                    const c = (typeof patch.content === 'string') ? patch.content : '';
+                    yMeta.set('content', c);
+                }
+            }, 'rest-sync');
+
+            docInfo.ydoc.off('update', handler);
+
+            // 실시간 클라이언트들에게 Yjs 업데이트 전파 (UI 동기화)
+            if (update && typeof wsBroadcastToPage === 'function') {
+                wsBroadcastToPage(pid, 'yjs-update', {
+                    update: Buffer.from(update).toString('base64')
+                });
+            }
+
+            // 레이스 방지: 진행 중인 WS 저장 시퀀스를 즉시 무효화 (epoch bump)
+            // 이를 통해 REST UPDATE가 진행되는 동안 또는 직후에 실행될 수도 있는
+            // 오래된 Yjs 메타데이터 기반의 DB 쓰기를 차단함
+            if (typeof invalidateYjsPersistenceForPage === 'function') {
+                invalidateYjsPersistenceForPage(pid);
+            }
+
+            // inactivity cleanup 대상이 되지 않도록 터치
+            docInfo.lastAccess = Date.now();
+        } catch (_) {
+            // best-effort
+        }
+    }
+
 	function normalizeUploadedImageFile(fileObj, detectedExt) {
 	    if (!fileObj?.path || !fileObj?.filename) throw new Error('INVALID_UPLOAD');
 	    const ext = `.${String(detectedExt || '').toLowerCase()}`;
@@ -452,7 +535,7 @@ module.exports = (dependencies) => {
 
             const $ = cheerio.load(response.data);
             const title = $('title').first().text() || $('meta[property="og:title"]').attr('content') || $('meta[name="twitter:title"]').attr('content') || targetUrl.hostname;
-            
+
             // 파비콘 추출 강화: 다양한 rel 속성 대응
             let favicon = null;
             const faviconSelectors = [
@@ -462,7 +545,7 @@ module.exports = (dependencies) => {
                 'link[rel="shortcut icon"]',
                 'link[rel="alternate icon"]'
             ];
-            
+
             for (const selector of faviconSelectors) {
                 const href = $(selector).attr('href');
                 if (href) {
@@ -475,7 +558,7 @@ module.exports = (dependencies) => {
             if (!favicon) {
                 favicon = '/favicon.ico';
             }
-            
+
             // Favicon URL 정규화
             if (favicon && !favicon.startsWith('http') && !favicon.startsWith('data:')) {
                 if (favicon.startsWith('//')) {
@@ -583,7 +666,7 @@ module.exports = (dependencies) => {
 
             if (isEncrypted) {
                 if (!encContent) return res.status(400).json({ error: "Encryption fields missing" });
-                
+
                 // 보안: 암호화 필드 형식 및 크기 검증 (Stored XSS 및 DoS 방어)
                 if (salt) {
                     if (typeof salt !== "string" || salt.length > 512 || !/^[A-Za-z0-9+/=]*$/.test(salt))
@@ -592,15 +675,15 @@ module.exports = (dependencies) => {
 
                 if (typeof encContent !== "string")
                     return res.status(400).json({ error: "유효하지 않은 encryptedContent 형식" });
-                
+
                 if (encContent.length > 5 * 1024 * 1024)
                     return res.status(400).json({ error: "encryptedContent가 너무 큽니다." });
-                
-                const isWellFormed = 
+
+                const isWellFormed =
                     /^SALT:[A-Za-z0-9+/=]+:ENC2:[A-Za-z0-9+/=]+$/.test(encContent) ||
                     /^ENC1:[A-Za-z0-9+/=]+$/.test(encContent) ||
                     /^[A-Za-z0-9+/=]+$/.test(encContent);
-                
+
                 if (!isWellFormed || /[\x00-\x1F\x7F]/.test(encContent))
                     return res.status(400).json({ error: "encryptedContent 형식이 올바르지 않거나 허용되지 않는 문자가 포함되어 있습니다." });
             }
@@ -672,15 +755,15 @@ module.exports = (dependencies) => {
                 if (encContent != null) {
                     if (typeof encContent !== "string")
                         return res.status(400).json({ error: "유효하지 않은 encryptedContent 형식" });
-                    
+
                     if (encContent.length > 5 * 1024 * 1024)
                         return res.status(400).json({ error: "encryptedContent가 너무 큽니다." });
-                    
-                    const isWellFormed = 
+
+                    const isWellFormed =
                         /^SALT:[A-Za-z0-9+/=]+:ENC2:[A-Za-z0-9+/=]+$/.test(encContent) ||
                         /^ENC1:[A-Za-z0-9+/=]+$/.test(encContent) ||
                         /^[A-Za-z0-9+/=]+$/.test(encContent);
-                    
+
                     if (!isWellFormed || /[\x00-\x1F\x7F]/.test(encContent))
                         return res.status(400).json({ error: "encryptedContent 형식이 올바르지 않거나 허용되지 않는 문자가 포함되어 있습니다." });
                 }
@@ -696,6 +779,17 @@ module.exports = (dependencies) => {
             const icon = req.body.icon !== undefined ? validateAndNormalizeIcon(req.body.icon) : existing.icon;
             const hPadding = req.body.horizontalPadding !== undefined ? req.body.horizontalPadding : existing.horizontal_padding;
             const nowStr = formatDateForDb(new Date());
+
+            // 데이터 유실 방지(중요): REST 경로에서 변경된 메타데이터를
+            // 서버 메모리의 Yjs 문서에도 먼저 반영해, 아래 DB UPDATE를 await 하는 동안
+            // 디바운스 WS 저장이 실행되더라도 오래된 title/icon 값으로 DB를 되돌리지 않게 함
+            // (content 업데이트는 shouldResetYjsState에서 문서를 drop 하므로 제외)
+            if (Number(isEncrypted) === 0 && req.body.content === undefined) {
+                const patch = {};
+                if (req.body.title !== undefined) patch.title = title;
+                if (req.body.icon !== undefined) patch.icon = icon;
+                if (Object.keys(patch).length > 0) syncYjsMetadataFromRest(id, patch);
+            }
             // share_allowed 결정:
             // - 저장소 레벨 E2EE (encryptionSalt 없음): 저장소 참여자 모두 볼 수 있어야 함 → 1
             // - 페이지 개별 암호화 (encryptionSalt 있음): 페이지 비밀번호 소유자만 → 0
@@ -824,6 +918,15 @@ module.exports = (dependencies) => {
             if (allowed.size !== normalizedIds.length) {
                 // 존재/권한 여부를 섞어 404로 통일 (enumeration 완화)
                 return res.status(404).json({ error: "Not found" });
+            }
+
+            // 데이터 유실 방지(중요): 정렬 변경(sort_order)이 DB에 반영되는 동안/이후
+            // WS 디바운스 저장이 오래된 sortOrder 메타로 DB를 덮어쓰면
+            // 사용자가 바꾼 페이지 순서가 되돌아갈 수 있음
+            // 따라서: 서버 메모리의 Yjs metadata.sortOrder(있을 때)를 먼저 동기화하여
+            // 이후 저장(saveYjsDocToDatabase)도 새 순서를 유지하도록 함
+            for (let i = 0; i < normalizedIds.length; i++) {
+                syncYjsMetadataFromRest(normalizedIds[i], { sortOrder: i * 10 });
             }
 
             // 일관성: 트랜잭션으로 sort_order 일괄 적용
