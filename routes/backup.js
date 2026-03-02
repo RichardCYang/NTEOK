@@ -93,6 +93,23 @@ const MIN_RATIO_ENTRY_BYTES = 1 * 1024 * 1024;        	// ratio 검사 적용 �
 // 메모리 DoS 방지: 이 크기 이하 + pages/images/ 아닌 경우만 Buffer로 보관, 그 외는 디스크 스풀
 const MAX_ENTRY_BUFFER_BYTES = 256 * 1024; // 256KB
 
+// file_type 정규화 (하위호환)
+// - DB 스키마(page_file_refs.file_type)는 ENUM('paperclip', 'imgs') 사용
+// - 과거/외부 백업에서 image 같은 값이 올 수 있으므로 import/export 모두에서 표준값으로 정규화
+const FILE_TYPE = Object.freeze({
+    PAPERCLIP: 'paperclip',
+    IMGS: 'imgs'
+});
+
+function normalizeFileType(raw) {
+    const t = String(raw || '').trim().toLowerCase();
+    if (!t) return null;
+    if (t === 'image' || t === 'img' || t === 'images') return FILE_TYPE.IMGS;
+    if (t === FILE_TYPE.IMGS) return FILE_TYPE.IMGS;
+    if (t === FILE_TYPE.PAPERCLIP) return FILE_TYPE.PAPERCLIP;
+    return null;
+}
+
 function openZipFile(zipPath) {
     return new Promise((resolve, reject) => {
         yauzl.open(zipPath, { lazyEntries: true, autoClose: true }, (err, zipfile) => {
@@ -863,10 +880,12 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
 
             // 1. 레지스트리 기반 자산 수집
             for (const ref of fileRefs) {
-                if (ref.file_type === 'image') {
+                const ftype = normalizeFileType(ref.file_type);
+
+                if (ftype === FILE_TYPE.IMGS) {
                     const normalized = normalizeUserImageRefForExport(`${ref.owner_user_id}/${ref.stored_filename}`, userId);
                     if (normalized) imagesToInclude.add(normalized);
-                } else if (ref.file_type === 'paperclip') {
+                } else if (ftype === FILE_TYPE.PAPERCLIP) {
                     // paperclip은 owner_user_id/filename 구조로 관리됨
                     const s = `${ref.owner_user_id}/${ref.stored_filename}`;
                     if (!s.includes('..') && !s.startsWith('/') && ref.owner_user_id === userId) {
@@ -984,12 +1003,18 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
             }
 
             // 레지스트리(file-refs.json) 추가
-            const safeFileRefs = fileRefs.map(ref => ({
-                page_id: ref.page_id,
-                owner_user_id: ref.owner_user_id,
-                stored_filename: ref.stored_filename,
-                file_type: ref.file_type
-            }));
+            const safeFileRefs = fileRefs
+                .map(ref => {
+                    const ft = normalizeFileType(ref.file_type);
+                    if (!ft) return null;
+                    return {
+                        page_id: ref.page_id,
+                        owner_user_id: ref.owner_user_id,
+                        stored_filename: ref.stored_filename,
+                        file_type: ft
+                    };
+                })
+                .filter(Boolean);
             archive.append(JSON.stringify({ fileRefs: safeFileRefs }, null, 2), { name: 'file-refs.json' });
 
             // 백업 정보 파일 추가
@@ -1213,15 +1238,21 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
             }
 
             // 4. 레지스트리(page_file_refs) 복원
-            // 보안: userId가 바뀔 수 있으므로(마이그레이션), 레지스트리의 owner_user_id는 현재 userId로 덮어씀
+            // 보안/무결성:
+            //  - page_file_refs.file_type는 ENUM('paperclip','imgs') 이므로, 백업에서 들어온 값은 정규화가 필요
+            //  - 알 수 없는 타입은 무시(전체 import를 실패시키지 않음)
+            //  - userId가 바뀔 수 있으므로(마이그레이션), 레지스트리의 owner_user_id는 현재 userId로 덮어씀
             for (const ref of backupFileRefs) {
                 const mapping = oldToNewPageMap.get(String(ref.page_id));
                 if (!mapping) continue;
 
+                const ft = normalizeFileType(ref.file_type);
+                if (!ft) continue;
+
                 await connection.execute(
                     `INSERT IGNORE INTO page_file_refs (page_id, owner_user_id, stored_filename, file_type, created_at)
                      VALUES (?, ?, ?, ?, NOW())`,
-                    [mapping.newId, userId, ref.stored_filename, ref.file_type]
+                    [mapping.newId, userId, ref.stored_filename, ft]
                 );
             }
 
