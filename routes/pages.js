@@ -1432,6 +1432,109 @@ module.exports = (dependencies) => {
         return { urlUserId, filename };
     }
 
+    // (추가) 레지스트리 누락/flush 지연을 고려한 paperclip 삭제 보호 로직
+    function escapeLikeForSql(s) {
+        return String(s).replace(/[\\%_]/g, (m) => `\\${m}`);
+    }
+
+    async function countPlaintextPaperclipRefsForUser(ownerUserId, filename, excludePageId) {
+        const fileUrlPart = `/paperclip/${ownerUserId}/${filename}`;
+        const likePattern = `%${escapeLikeForSql(fileUrlPart)}%`;
+
+        const params = [ownerUserId, likePattern];
+        let sql = `
+            SELECT COUNT(*) AS cnt
+              FROM pages
+             WHERE user_id = ?
+               AND is_encrypted = 0
+               AND deleted_at IS NULL
+               AND content LIKE ? ESCAPE '\\\\'
+        `;
+        if (excludePageId) {
+            sql += ` AND id != ?`;
+            params.push(excludePageId);
+        }
+
+        const [rows] = await pool.execute(sql, params);
+        return Number(rows?.[0]?.cnt || 0);
+    }
+
+    async function backfillPaperclipRefsFromPlaintextContentForUser(ownerUserId, filename) {
+        const fileUrlPart = `/paperclip/${ownerUserId}/${filename}`;
+        const likePattern = `%${escapeLikeForSql(fileUrlPart)}%`;
+        try {
+            await pool.execute(
+                `INSERT IGNORE INTO page_file_refs (page_id, owner_user_id, stored_filename, file_type, created_at)
+                 SELECT id, ?, ?, 'paperclip', NOW()
+                   FROM pages
+                  WHERE user_id = ?
+                    AND is_encrypted = 0
+                    AND deleted_at IS NULL
+                    AND content LIKE ? ESCAPE '\\\\'`,
+                [ownerUserId, filename, ownerUserId, likePattern]
+            );
+        } catch (_) {}
+    }
+
+    function findActiveYjsPagesReferencingPaperclip(ownerIdStr, filename, excludePageId) {
+        try {
+            if (!yjsDocuments) return [];
+            const needle = `/paperclip/${ownerIdStr}/${filename}`;
+            const out = [];
+            for (const [pid, info] of yjsDocuments.entries()) {
+                if (!info?.ydoc) continue;
+                if (excludePageId && String(pid) === String(excludePageId)) continue;
+                if (String(info.ownerUserId) !== String(ownerIdStr)) continue;
+                if (info.isEncrypted === true) continue;
+
+                const meta = info.ydoc.getMap('metadata');
+                const html = meta?.get('content') || '';
+                if (typeof html === 'string' && html.includes(needle)) {
+                    out.push(String(pid));
+                    continue;
+                }
+                try {
+                    const xml = info.ydoc.getXmlFragment('prosemirror')?.toString?.() || '';
+                    if (typeof xml === 'string' && xml.includes(needle)) out.push(String(pid));
+                } catch (_) {}
+            }
+            return out;
+        } catch (_) {
+            return [];
+        }
+    }
+
+    async function backfillPaperclipRefsForPageIds(pageIds, ownerUserId, filename) {
+        if (!Array.isArray(pageIds) || pageIds.length === 0) return;
+        const values = pageIds.map(() => `(?, ?, ?, 'paperclip', NOW())`).join(',');
+        const params = [];
+        for (const pid of pageIds) params.push(String(pid), ownerUserId, filename);
+        try {
+            await pool.execute(
+                `INSERT IGNORE INTO page_file_refs (page_id, owner_user_id, stored_filename, file_type, created_at)
+                 VALUES ${values}`,
+                params
+            );
+        } catch (_) {}
+    }
+
+    function movePaperclipToTrash(fullPath, ownerUserId, filename) {
+        try {
+            const trashDir = path.resolve(__dirname, '..', 'paperclip-trash', String(ownerUserId));
+            const trashBase = path.resolve(trashDir) + path.sep;
+            if (!fs.existsSync(trashDir)) fs.mkdirSync(trashDir, { recursive: true, mode: 0o700 });
+
+            const stamp = `${Date.now().toString(36)}-${Math.random().toString(16).slice(2, 10)}`;
+            const dest = path.resolve(trashDir, `${stamp}-${filename}`);
+            if (!dest.startsWith(trashBase)) return false;
+
+            try { fs.renameSync(fullPath, dest); return true; }
+            catch { fs.copyFileSync(fullPath, dest); fs.unlinkSync(fullPath); return true; }
+        } catch (_) {
+            return false;
+        }
+    }
+
     // 데이터 유실 방지(중요): 첨부파일 정리(file-cleanup)
     // 기존 구현은 이 페이지에서 삭제 요청이 오면 즉시 실제 파일을 삭제했음
     // 하지만 동일 파일 URL이 다른 페이지에서도 재사용(복사/붙여넣기)될 수 있어
@@ -1517,23 +1620,55 @@ module.exports = (dependencies) => {
             }
 
             // 트랜잭션 커밋 이후 실제 파일 삭제(정합성 우선)
-            //  - 다른 페이지에서 여전히 참조 중이면 절대 삭제하지 않음
+            //  - remaining=0 이더라도 레지스트리 누락/flush 지연이 있을 수 있어 추가 검증 + self-heal
+            let blockedByPlaintextRefs = false;
+            let blockedByActiveYjsRefs = false;
+            let selfHealedRegistry = false;
+
             if (remaining === 0) {
-                try {
-                    if (fs.existsSync(targetPath)) {
-                        const st = fs.statSync(targetPath);
-                        if (st.isFile()) {
-                            fs.unlinkSync(targetPath);
-                            deletedPhysical = true;
-                        }
+                const plaintextRefs = await countPlaintextPaperclipRefsForUser(userId, filename, id);
+                if (plaintextRefs > 0) {
+                    blockedByPlaintextRefs = true;
+                    selfHealedRegistry = true;
+                    await backfillPaperclipRefsFromPlaintextContentForUser(userId, filename);
+                }
+
+                const activePages = findActiveYjsPagesReferencingPaperclip(userId, filename, id);
+                if (activePages.length > 0) {
+                    blockedByActiveYjsRefs = true;
+                    selfHealedRegistry = true;
+                    await backfillPaperclipRefsForPageIds(activePages, userId, filename);
+                }
+
+                if (selfHealedRegistry) {
+                    const [cntRows2] = await pool.execute(
+                        `SELECT COUNT(*) AS cnt
+                           FROM page_file_refs
+                          WHERE owner_user_id = ?
+                            AND stored_filename = ?
+                            AND file_type = 'paperclip'`,
+                        [userId, filename]
+                    );
+                    remaining = Number(cntRows2?.[0]?.cnt || 0);
+                }
+
+                if (!blockedByPlaintextRefs && !blockedByActiveYjsRefs) {
+                    if (fs.existsSync(targetPath) && fs.statSync(targetPath).isFile()) {
+                        const moved = movePaperclipToTrash(targetPath, userId, filename);
+                        if (!moved) fs.unlinkSync(targetPath);
+                        deletedPhysical = true;
                     }
-                } catch (_) {
-                    // 파일 삭제 실패는 DB 정합성에 영향을 주지 않도록 best-effort
-                    deletedPhysical = false;
                 }
             }
 
-            res.json({ ok: true, remainingRefs: remaining, deletedPhysical });
+            res.json({
+                ok: true,
+                remainingRefs: remaining,
+                deletedPhysical,
+                blockedByPlaintextRefs,
+                blockedByActiveYjsRefs,
+                selfHealedRegistry
+            });
         } catch (error) {
             logError("DELETE /api/pages/:id/file-cleanup", error);
             res.status(500).json({ error: "Failed" });

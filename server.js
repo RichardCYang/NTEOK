@@ -618,6 +618,44 @@ function cleanupExpiredWebAuthnChallenges() {
 setInterval(cleanupExpiredWebAuthnChallenges, 5 * 60 * 1000);
 
 /**
+ * 데이터 유실 방지(운영): paperclip-trash 보존기간 이후 자동 정리
+ * - soft delete(휴지통 이동)로 인해 디스크가 무한 증가하지 않도록 purge 필요
+ */
+const PAPERCLIP_TRASH_RETENTION_DAYS = (() => {
+    const raw = String(process.env.PAPERCLIP_TRASH_RETENTION_DAYS || '').trim();
+    const n = raw ? Number.parseInt(raw, 10) : 14;
+    return Number.isFinite(n) ? Math.max(1, Math.min(365, n)) : 14;
+})();
+
+function purgePaperclipTrash() {
+    try {
+        const trashRoot = path.resolve(__dirname, 'paperclip-trash');
+        if (!fs.existsSync(trashRoot)) return;
+
+        const cutoff = Date.now() - PAPERCLIP_TRASH_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+        const userDirs = fs.readdirSync(trashRoot, { withFileTypes: true })
+            .filter(d => d.isDirectory() && /^\d{1,12}$/.test(d.name))
+            .map(d => d.name);
+
+        let deleted = 0;
+        for (const uid of userDirs) {
+            const dir = path.resolve(trashRoot, uid);
+            const base = dir + path.sep;
+            for (const f of fs.readdirSync(dir, { withFileTypes: true }).filter(x => x.isFile())) {
+                const fp = path.resolve(dir, f.name);
+                if (!fp.startsWith(base)) continue;
+                try { if (fs.statSync(fp).mtimeMs < cutoff) { fs.unlinkSync(fp); deleted++; } } catch (_) {}
+            }
+            try { if (fs.readdirSync(dir).length === 0) fs.rmdirSync(dir); } catch (_) {}
+        }
+        if (deleted > 0) console.log(`[paperclip-trash 정리] ${deleted}개 파일(>${PAPERCLIP_TRASH_RETENTION_DAYS}일)을 삭제했습니다.`);
+    } catch (_) {}
+}
+
+setInterval(purgePaperclipTrash, 24 * 60 * 60 * 1000);
+setTimeout(purgePaperclipTrash, 10 * 60 * 1000);
+
+/**
  * 30일 이상 오래된 로그인 로그 정리
  */
 function cleanupOldLoginLogs() {

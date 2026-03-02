@@ -703,6 +703,121 @@ function extractFilesFromContent(content, pageOwnerUserId = null) {
     return files;
 }
 
+// ============================================================
+// 데이터 유실 방지(핵심): orphan cleanup(첨부파일 정리)에서 레지스트리(page_file_refs)만
+// 의존하면, 다음 상황에서 참조 중인 파일을 고아로 오판해 영구 삭제할 수 있음
+//  - 다른 페이지에 복사/붙여넣기로 재사용했지만 아직 저장/동기화가 끝나지 않아 레지스트리가 미등록인 경우
+//  - 과거 버전/에러로 인해 레지스트리가 누락된 평문 페이지가 존재하는 경우
+//
+// 완화:
+//  1. pages.content(평문 페이지)에서의 실제 참조도 함께 검사(레지스트리 self-heal 포함)
+//  2. 서버 메모리의 활성 Yjs 문서(아직 DB에 flush되지 않은 상태)에서도 참조를 검사
+//  3. 최종 삭제는 paperclip-trash로 이동(soft delete) 후, 별도 보존 기간이 지난 뒤에만 purge 권장
+// ============================================================
+
+function escapeLikeForSql(s) {
+    // MySQL LIKE: % and _ are wildcards. Backslash is the default escape.
+    return String(s).replace(/[\\%_]/g, (m) => `\\${m}`);
+}
+
+async function countPlaintextPaperclipRefs(pool, ownerId, filename, excludePageId) {
+    const fileUrlPart = `/paperclip/${ownerId}/${filename}`;
+    const likePattern = `%${escapeLikeForSql(fileUrlPart)}%`;
+
+    const params = [ownerId, likePattern];
+    let sql = `
+        SELECT COUNT(*) AS cnt
+          FROM pages
+         WHERE user_id = ?
+           AND is_encrypted = 0
+           AND deleted_at IS NULL
+           AND content LIKE ? ESCAPE '\\\\'
+    `;
+    if (excludePageId) {
+        sql += ` AND id != ?`;
+        params.push(excludePageId);
+    }
+
+    const [rows] = await pool.execute(sql, params);
+    return Number(rows?.[0]?.cnt || 0);
+}
+
+async function backfillPaperclipRefsFromPlaintextContent(pool, ownerId, filename) {
+    const fileUrlPart = `/paperclip/${ownerId}/${filename}`;
+    const likePattern = `%${escapeLikeForSql(fileUrlPart)}%`;
+    try {
+        await pool.execute(
+            `INSERT IGNORE INTO page_file_refs (page_id, owner_user_id, stored_filename, file_type, created_at)
+             SELECT id, ?, ?, 'paperclip', NOW()
+               FROM pages
+              WHERE user_id = ?
+                AND is_encrypted = 0
+                AND deleted_at IS NULL
+                AND content LIKE ? ESCAPE '\\\\'`,
+            [ownerId, filename, ownerId, likePattern]
+        );
+    } catch (_) {}
+}
+
+function findActiveYjsPagesReferencingPaperclip(ownerIdStr, filename, excludePageId) {
+    try {
+        if (!yjsDocuments) return [];
+        const needle = `/paperclip/${ownerIdStr}/${filename}`;
+        const out = [];
+        for (const [pid, info] of yjsDocuments.entries()) {
+            if (!info?.ydoc) continue;
+            if (excludePageId && String(pid) === String(excludePageId)) continue;
+            if (String(info.ownerUserId) !== String(ownerIdStr)) continue;
+            if (info.isEncrypted === true) continue;
+
+            const meta = info.ydoc.getMap('metadata');
+            const html = meta?.get('content') || '';
+            if (typeof html === 'string' && html.includes(needle)) {
+                out.push(String(pid));
+                continue;
+            }
+            try {
+                const xml = info.ydoc.getXmlFragment('prosemirror')?.toString?.() || '';
+                if (typeof xml === 'string' && xml.includes(needle)) out.push(String(pid));
+            } catch (_) {}
+        }
+        return out;
+    } catch (_) {
+        return [];
+    }
+}
+
+async function backfillPaperclipRefsForPageIds(pool, pageIds, ownerId, filename) {
+    if (!Array.isArray(pageIds) || pageIds.length === 0) return;
+    const values = pageIds.map(() => `(?, ?, ?, 'paperclip', NOW())`).join(',');
+    const params = [];
+    for (const pid of pageIds) params.push(String(pid), ownerId, filename);
+    try {
+        await pool.execute(
+            `INSERT IGNORE INTO page_file_refs (page_id, owner_user_id, stored_filename, file_type, created_at)
+             VALUES ${values}`,
+            params
+        );
+    } catch (_) {}
+}
+
+function movePaperclipToTrash(fs, path, fullPath, ownerIdStr, filename) {
+    try {
+        const trashDir = path.resolve(__dirname, 'paperclip-trash', String(ownerIdStr));
+        const trashBase = path.resolve(trashDir) + path.sep;
+        if (!fs.existsSync(trashDir)) fs.mkdirSync(trashDir, { recursive: true, mode: 0o700 });
+
+        const stamp = `${Date.now().toString(36)}-${Math.random().toString(16).slice(2, 10)}`;
+        const dest = path.resolve(trashDir, `${stamp}-${filename}`);
+        if (!dest.startsWith(trashBase)) return false;
+
+        try { fs.renameSync(fullPath, dest); return true; }
+        catch { fs.copyFileSync(fullPath, dest); fs.unlinkSync(fullPath); return true; }
+    } catch (_) {
+        return false;
+    }
+}
+
 async function cleanupOrphanedFiles(pool, filePaths, excludePageId, pageOwnerUserId) {
     if (!filePaths || filePaths.length === 0) return;
 
@@ -724,8 +839,8 @@ async function cleanupOrphanedFiles(pool, filePaths, excludePageId, pageOwnerUse
 
             const [ownerId, filename] = normalized.split('/');
 
-            // 보안(핵심): page_file_refs 레지스트리로 참조 여부 판단(암호화/지연/협업에도 안전)
-            // - 기존 pages.content LIKE 방식은 암호화 페이지(content='')에서 참조 중인 파일을 오판 삭제함
+            // 보안(핵심): page_file_refs 레지스트리로 1차 참조 여부 판단
+            // - 레지스트리 누락(복붙 직후 flush 지연 등) 오탐 방지를 위해 2차/3차 방어 추가
             const [rows] = await pool.execute(
                 `SELECT COUNT(*) as count
                    FROM page_file_refs
@@ -737,13 +852,33 @@ async function cleanupOrphanedFiles(pool, filePaths, excludePageId, pageOwnerUse
             );
             if (!rows || !rows[0] || rows[0].count > 0) continue;
 
+            // 2차 방어: 평문 페이지(content)에 실제 참조가 존재하는지 검사 + self-heal
+            const plaintextRefs = await countPlaintextPaperclipRefs(pool, ownerId, filename, excludePageId);
+            if (plaintextRefs > 0) {
+                await backfillPaperclipRefsFromPlaintextContent(pool, ownerId, filename);
+                continue;
+            }
+
+            // 3차 방어: 활성 Yjs 문서(메모리)에서 참조 검사 + self-heal
+            const activePages = findActiveYjsPagesReferencingPaperclip(ownerIdStr, filename, excludePageId);
+            if (activePages.length > 0) {
+                await backfillPaperclipRefsForPageIds(pool, activePages, ownerId, filename);
+                continue;
+            }
+
             const fullPath = path.resolve(__dirname, 'paperclip', normalized);
             if (!fullPath.startsWith(baseDir)) {
                 console.warn(`[보안] orphan cleanup traversal blocked: ${normalized}`);
                 continue;
             }
 
-            if (fs.existsSync(fullPath)) fs.unlinkSync(fullPath);
+            if (fs.existsSync(fullPath)) {
+                // 영구 삭제 대신 휴지통(paperclip-trash)으로 이동(soft delete)
+                const moved = movePaperclipToTrash(fs, path, fullPath, ownerIdStr, filename);
+                if (!moved) {
+                    try { fs.unlinkSync(fullPath); } catch (_) {}
+                }
+            }
         } catch (err) {
             // best-effort cleanup
         }
