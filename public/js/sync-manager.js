@@ -677,8 +677,13 @@ function sendYjsUpdate(pageId, update) {
  */
 function handleInit(data) {
     try {
+        const incomingPageId = data?.pageId ? String(data.pageId) : null;
+        if (incomingPageId && typeof currentPageId !== 'undefined' && currentPageId && incomingPageId !== String(currentPageId)) {
+            console.warn('[WS] stale init ignored:', incomingPageId, '!=', String(currentPageId));
+            return;
+        }
         // Yjs 상태 복원
-		const stateUpdate = base64ToUint8(data.state);
+        const stateUpdate = base64ToUint8(data.state);
 		// init update는 원격으로 취급해서 다시 서버로 브로드캐스트하지 않게 origin 지정
 		Y.applyUpdate(ydoc, stateUpdate, 'remote');
 
@@ -1719,6 +1724,11 @@ async function sendYjsFullStateAsUpdate(pageId) {
  */
 async function handleInitE2EE(data) {
     try {
+        const incomingPageId = data?.pageId ? String(data.pageId) : null;
+        if (incomingPageId && typeof currentPageId !== 'undefined' && currentPageId && incomingPageId !== String(currentPageId)) {
+            console.warn('[E2EE] stale init-e2ee ignored:', incomingPageId, '!=', String(currentPageId));
+            return;
+        }
         if (data.encryptedState) {
             const storageKey = window.cryptoManager.getStorageKey();
             if (!storageKey) {

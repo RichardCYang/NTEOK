@@ -1234,7 +1234,10 @@ async function handleSubscribePage(ws, payload, pool, sanitizeHtmlContent, pageS
             ws.send(JSON.stringify({ event: 'error', data: { message: 'Failed to init document' } }));
             return;
         }
-        ws.send(JSON.stringify({ event: 'init', data: { state: stateB64, userId, username: ws.username, color, permission } }));
+        ws.send(JSON.stringify({
+            event: 'init',
+            data: { pageId: String(pageId), state: stateB64, userId, username: ws.username, color, permission }
+        }));
         wsBroadcastToPage(pageId, 'user-joined', { userId, username: ws.username, color, permission }, userId);
     } catch (e) { ws.send(JSON.stringify({ event: 'error', data: { message: 'Failed' } })); }
 }
@@ -1366,7 +1369,7 @@ async function handleSubscribePageE2EE(ws, payload, pool, pageSqlPolicy) {
 
         ws.send(JSON.stringify({
             event: 'init-e2ee',
-            data: { encryptedState, userId, username: ws.username, color, permission }
+            data: { pageId: String(pageId), encryptedState, userId, username: ws.username, color, permission }
         }));
 
         // 리더 선출 시도 (스냅샷 저장 담당)
