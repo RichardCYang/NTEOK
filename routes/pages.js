@@ -60,6 +60,7 @@ module.exports = (dependencies) => {
         wsBroadcastToStorage,
         wsCloseConnectionsForPage,
         saveYjsDocToDatabase,
+        enqueueYjsDbSave,
         logError,
         generatePublishToken,
         coverUpload,
@@ -1122,7 +1123,8 @@ module.exports = (dependencies) => {
                     if (docInfo?.ydoc) {
                         // soft-delete 직후에는 deleted_at이 세팅되어 saveYjsDocToDatabase가 기본적으로 중단되므로,
                         // allowDeleted=true로 휴지통에서 복구 시 최신 편집 내용이 보존되도록 함
-                        await saveYjsDocToDatabase(pool, sanitizeHtmlContent, pid, docInfo.ydoc, { allowDeleted: true });
+                        // 데이터 유실 방지: 직렬화 큐(enqueueYjsDbSave)를 사용하여 병렬 저장 레이스 차단
+                        await enqueueYjsDbSave(pid, () => saveYjsDocToDatabase(pool, sanitizeHtmlContent, pid, docInfo.ydoc, { allowDeleted: true }));
                     }
                 } catch (_) {}
 

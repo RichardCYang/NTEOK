@@ -43,6 +43,36 @@ const wsConnections = {
 
 const yjsDocuments = new Map();
 
+// 문제(데이터 유실): 동일 pageId에 대해 saveYjsDocToDatabase()가 동시에(병렬) 실행되면,
+// 더 늦게 시작한 저장이 먼저 커밋된 뒤, 먼저 시작한(=더 오래 걸린) 저장이 마지막에 커밋되면서
+// 최신 내용을 과거 스냅샷으로 되돌려버릴 수 있음(Lost Update / write-after-write race)
+// 해결: pageId 단위로 DB 저장을 직렬화(serialize)하여 병렬 저장을 제거
+const yjsDbSaveQueue = new Map(); // pageId -> Promise chain
+
+function enqueueYjsDbSave(pageId, taskFn) {
+    const pid = String(pageId || '').trim();
+    if (!pid) return Promise.resolve({ status: 'skipped-no-pageid' });
+
+    const prev = yjsDbSaveQueue.get(pid) || Promise.resolve();
+    const next = prev
+        .catch(() => {})
+        .then(() => taskFn());
+
+    yjsDbSaveQueue.set(
+        pid,
+        next.finally(() => {
+            if (yjsDbSaveQueue.get(pid) === next) yjsDbSaveQueue.delete(pid);
+        })
+    );
+    return next;
+}
+
+async function flushAllPendingYjsDbSaves() {
+    const pending = Array.from(yjsDbSaveQueue.values());
+    if (!pending.length) return;
+    await Promise.allSettled(pending);
+}
+
 // 데이터 유실 방지: Yjs -> DB 저장 레이스 취소 토큰(epoch)
 // REST 저장(PUT)이 발생하면 epoch를 증가시켜, 이전에 예약된(setTimeout) WS 저장이
 // DB를 덮어쓰지 못하도록 무효화(fail-closed) 진행
@@ -590,7 +620,7 @@ function cleanupInactiveConnections(pool, sanitizeHtmlContent) {
         //   DB UPDATE 직전(epoch 재확인)에서 스스로 취소되어 저장이 되지 않는 레이스가 발생할 수 있음
         // - 따라서 저장 성공(또는 epoch 스킵) 이후에 bumpEpoch=false로 정리
         // - 저장 실패 시에는 문서를 유지하여 다음 cleanup 주기에서 재시도(=데이터 유실 방지)
-        saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, doc.ydoc, { epoch })
+        enqueueYjsDbSave(pageId, () => saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, doc.ydoc, { epoch }))
             .then(() => {
                 dropYjsDocument(pageId, { bumpEpoch: false });
             })
@@ -1266,7 +1296,7 @@ function handleUnsubscribePage(ws, payload, pool, sanitizeHtmlContent) {
         const doc = yjsDocuments.get(pid);
         if (doc) {
             const epoch = getYjsSaveEpoch(pid);
-            saveYjsDocToDatabase(pool, sanitizeHtmlContent, pid, doc.ydoc, { epoch })
+            enqueueYjsDbSave(pid, () => saveYjsDocToDatabase(pool, sanitizeHtmlContent, pid, doc.ydoc, { epoch }))
                 .catch(e => { console.error('[YJS] unsubscribe save failed:', String(pid), e?.message || e); });
         }
     }
@@ -1568,7 +1598,7 @@ async function handlePageSnapshot(ws, payload, pool, sanitizeHtmlContent, pageSq
         if (docMeta.saveTimeout) clearTimeout(docMeta.saveTimeout);
         const epoch = getYjsSaveEpoch(pageId);
         docMeta.saveTimeout = setTimeout(() => {
-            saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, docMeta.ydoc, { epoch })
+            enqueueYjsDbSave(pageId, () => saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, docMeta.ydoc, { epoch }))
                 .catch(e => { console.error('[YJS] snapshot best-effort save failed:', String(pageId), e?.message || e); });
         }, 1000);
     }
@@ -1603,7 +1633,7 @@ async function handleForceSave(ws, payload, pool, sanitizeHtmlContent, pageSqlPo
     try {
         const ydoc = await loadOrCreateYjsDoc(pool, sanitizeHtmlContent, pageId);
         const epoch = bumpYjsSaveEpoch(pageId);
-        await saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc, { epoch });
+        await enqueueYjsDbSave(pageId, () => saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc, { epoch }));
         ws.send(JSON.stringify({
             event: 'page-saved',
             data: { pageId: String(pageId), updatedAt: new Date().toISOString() }
@@ -1801,7 +1831,7 @@ async function handleYjsUpdate(ws, payload, pool, sanitizeHtmlContent, pageSqlPo
             const next = cur + updateBuf.length;
             if (next > WS_MAX_DOC_EST_BYTES) {
                 // HTML snapshot만 저장하고 협업 세션 리셋
-                try { await saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc); } catch (_) {}
+                try { await enqueueYjsDbSave(pageId, () => saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc)); } catch (_) {}
                 wsCloseConnectionsForPage(pageId, 1009, 'Document too large - collaboration reset');
                 return;
             }
@@ -1854,7 +1884,7 @@ async function handleYjsUpdate(ws, payload, pool, sanitizeHtmlContent, pageSqlPo
             if (doc.saveTimeout) clearTimeout(doc.saveTimeout);
             const epoch = getYjsSaveEpoch(pageId); // 현재 시점의 epoch 캡처
             doc.saveTimeout = setTimeout(() => {
-                saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc, { epoch })
+                enqueueYjsDbSave(pageId, () => saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc, { epoch }))
                     .catch(e => { console.error('[YJS] debounce save failed:', String(pageId), e?.message || e); });
             }, 1000);
         }
@@ -1965,7 +1995,7 @@ async function handleYjsState(ws, payload, pool, sanitizeHtmlContent, pageSqlPol
 			if (doc.saveTimeout) clearTimeout(doc.saveTimeout);
             const epoch = getYjsSaveEpoch(pageId); // 현재 시점의 epoch 캡처
 			doc.saveTimeout = setTimeout(() => {
-				saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc, { epoch })
+				enqueueYjsDbSave(pageId, () => saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc, { epoch }))
                     .catch(e => { console.error('[YJS] state save failed:', String(pageId), e?.message || e); });
 			}, 1000);
 		}
@@ -2037,7 +2067,7 @@ function cleanupWebSocketConnection(ws, pool, sanitizeHtmlContent) {
             const doc = yjsDocuments.get(pid);
             if (doc) {
                 const epoch = getYjsSaveEpoch(pid);
-                saveYjsDocToDatabase(pool, sanitizeHtmlContent, pid, doc.ydoc, { epoch })
+                enqueueYjsDbSave(pid, () => saveYjsDocToDatabase(pool, sanitizeHtmlContent, pid, doc.ydoc, { epoch }))
                     .catch(e => { console.error('[YJS] connection cleanup save failed:', String(pid), e?.message || e); });
             }
         }
@@ -2117,6 +2147,8 @@ module.exports = {
     yjsDocuments,
     yjsE2EEStates,
     saveYjsDocToDatabase,
+    enqueueYjsDbSave,
+    flushAllPendingYjsDbSaves,
     flushPendingE2eeSaveForPage,
     flushAllPendingE2eeSaves,
     wsCloseConnectionsForSession,

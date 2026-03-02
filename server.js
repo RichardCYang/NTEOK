@@ -236,7 +236,10 @@ const {
     wsConnections,
     yjsDocuments,
 	saveYjsDocToDatabase,
-    flushAllPendingE2eeSaves,
+	enqueueYjsDbSave,
+	flushAllPendingYjsDbSaves,
+	flushAllPendingE2eeSaves,
+
 	wsCloseConnectionsForSession,
     wsCloseConnectionsForPage,
     wsKickUserFromStorage,
@@ -2409,13 +2412,17 @@ function installGracefulShutdownHandlers(httpServer, pool, sanitizeHtmlContent) 
             // 모든 E2EE 대기 작업 플러시
             await flushAllPendingE2eeSaves(pool);
 
+            // 모든 Yjs DB 저장 대기 작업 플러시 (직렬화 큐)
+            await flushAllPendingYjsDbSaves();
+
             // 모든 Yjs 문서 메모리 -> DB 강제 저장
             const pageIds = Array.from(yjsDocuments.keys());
             console.log(`[YJS] Flushing ${pageIds.length} active documents to DB...`);
             for (const pageId of pageIds) {
                 const doc = yjsDocuments.get(pageId);
                 if (doc && doc.ydoc) {
-                    await saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, doc.ydoc);
+                    // 데이터 유실 방지: 직렬화 큐(enqueueYjsDbSave)를 사용하여 병렬 저장 레이스 차단
+                    await enqueueYjsDbSave(pageId, () => saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, doc.ydoc));
                 }
             }
             console.log('[YJS] All documents flushed.');
@@ -2512,6 +2519,8 @@ function installGracefulShutdownHandlers(httpServer, pool, sanitizeHtmlContent) 
             extractFilesFromContent,
             invalidateYjsPersistenceForPage,
             saveYjsDocToDatabase,
+            enqueueYjsDbSave,
+            flushAllPendingYjsDbSaves,
             yjsDocuments,
             authLimiter,
             totpLimiter,
