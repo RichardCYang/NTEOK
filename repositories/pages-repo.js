@@ -216,31 +216,43 @@ module.exports = ({ pool, pageSqlPolicy }) => {
 
             // 서브트리 ID 목록 추출
             const subtreeIds = collectSubtreeIds(allPages || [], pageId);
-            const subtreeSet = new Set(subtreeIds);
+            const rowsById = new Map((allPages || []).map(r => [r.id, r]));
 
             // 보존해야 할 페이지 식별 (타인 소유 페이지)
-            const pagesToDetach = [];
+            // 기존 구현은 서브트리 안에 있고, 소유자가 다른 페이지를 전부 parent_id=NULL 처리함
+            // 하지만 협업자 페이지가 서로 부모-자식 관계를 이루는 경우까지 끊어버려,
+            // 협업자의 하위 트리가 모두 루트로 풀려(Flatten) 페이지 구조(계층)가 영구적으로 유실됨
+            //
+            // 원하는 동작:
+            //  - 삭제 대상(내 소유 페이지) 때문에 함께 삭제될 위험이 있는 경계 협업자 페이미만
+            //    부모 연결을 끊음
+            //  - 협업자 페이지들끼리의 parent-child 관계는 그대로 유지
+            //
+            // 구현:
+            //  - deletableSet: 이번 삭제로 실제로 사라질 페이지(내 소유)
+            //  - keptRootIds : kept 페이지 중, 부모가 deletableSet 에 속한 경우만 detach
+            // =========================
             if (!isAdmin) {
-                for (const p of allPages) {
-                    if (subtreeSet.has(p.id)) {
-                        // 내가 소유하지 않은 페이지는 보존해야 함
-                        if (Number(p.user_id) !== Number(userId)) {
-                            // 부모가 이번 삭제 범위(subtree)에 포함되어 있다면,
-                            // 함께 삭제되지 않도록 parent 연결을 끊어야 함
-                            if (p.parent_id && subtreeSet.has(p.parent_id)) {
-                                pagesToDetach.push(p.id);
-                            }
-                        }
-                    }
+                const deletableSet = new Set();
+                for (const id of subtreeIds) {
+                    const row = rowsById.get(id);
+                    if (row && Number(row.user_id) === Number(userId)) deletableSet.add(id);
                 }
-            }
 
-            // 보존 대상 페이지 분리 (부모 끊기)
-            if (pagesToDetach.length > 0) {
-                 await updateByIdInBatches(
-                    `UPDATE pages SET parent_id = NULL, updated_at = NOW() WHERE id IN`,
-                    pagesToDetach
-                 );
+                const keptRootIds = [];
+                for (const id of subtreeIds) {
+                    const row = rowsById.get(id);
+                    if (!row) continue;
+                    if (Number(row.user_id) === Number(userId)) continue;
+                    if (row.parent_id && deletableSet.has(row.parent_id)) keptRootIds.push(row.id);
+                }
+
+                if (keptRootIds.length > 0) {
+                    await updateByIdInBatches(
+                        `UPDATE pages SET parent_id = NULL, updated_at = NOW() WHERE id IN`,
+                        keptRootIds
+                    );
+                }
             }
 
             // 루트 페이지 삭제
@@ -274,13 +286,35 @@ module.exports = ({ pool, pageSqlPolicy }) => {
             const { allowed: deletableIds, disallowed: keptIds } =
                 splitIdsByPermission(rowsById, subtreeIds, actorUserId, isAdmin);
 
+            // 기존 구현은 삭제 권한이 없는(=keptIds) 페이지를 전부 rootParentId 로 재부모화함
+            // 이러면 협업자 페이지가 서로 부모-자식 관계를 이루는 경우까지 강제로 끊겨,
+            // 협업자 트리 구조가 평평하게 풀리는(Flatten) 문제 발생
+            //
+            // 원하는 동작:
+            //  - 이번 soft-delete로 실제로 삭제될 페이지(deletableIds) 아래에 붙어있던
+            //    협업자 페이지의 경계 루트만 안전한 부모(rootParentId 또는 NULL)로 옮김
+            //  - 협업자 페이지들끼리의 parent-child 관계는 그대로 유지
+            // =========================
             if (!isAdmin && keptIds && keptIds.length > 0) {
-                const safeParentId = rootParentId || null;
-                await updateByIdInBatches(
-                    `UPDATE pages SET parent_id = ?, updated_at = NOW() WHERE id IN`,
-                    keptIds,
-                    [safeParentId]
-                );
+                const deletableSet = new Set(deletableIds || []);
+
+                // 안전한 부모: rootParentId가 이번 삭제 범위(deletable)에 포함되면 NULL로 강등
+                const safeParentId = (rootParentId && !deletableSet.has(rootParentId)) ? rootParentId : null;
+
+                const keptRootIds = [];
+                for (const id of keptIds) {
+                    const row = rowsById.get(id);
+                    if (!row) continue;
+                    if (row.parent_id && deletableSet.has(row.parent_id)) keptRootIds.push(id);
+                }
+
+                if (keptRootIds.length > 0) {
+                    await updateByIdInBatches(
+                        `UPDATE pages SET parent_id = ?, updated_at = NOW() WHERE id IN`,
+                        keptRootIds,
+                        [safeParentId]
+                    );
+                }
             }
 
             if (!deletableIds || deletableIds.length === 0) return { deletedPageIds: [], keptPageIds: keptIds || [] };
