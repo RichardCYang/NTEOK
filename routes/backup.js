@@ -1062,6 +1062,7 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
             const workspaceMap = new Map(); // 폴더명 -> 저장소 ID
             const oldToNewPageMap = new Map(); // 원본 ID -> 새 정보 { newId, storageId }
             const importedPages = []; // 복원된 페이지 목록 (2차 패스용)
+            const coverImageFilenames = new Set(); // cover_image로 쓰인 파일명(복원 시 covers/로 분리)
             let totalPages = 0;
             let totalImages = 0;
 
@@ -1128,7 +1129,12 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
                 let coverImage = pageData.coverImage;
                 if (coverImage && !DEFAULT_COVERS.includes(coverImage)) {
                     const cParts = coverImage.split('/');
-                    if (cParts.length === 2) coverImage = `${userId}/${cParts[1]}`;
+                    if (cParts.length === 2) {
+                        // backup에는 images/<oldUserId>/<filename> 형태로 들어오지만,
+                        // DB cover_image는 <userId>/<filename>만 저장하므로 파일명 기준으로 분리 복원
+                        coverImageFilenames.add(cParts[1]);
+                        coverImage = `${userId}/${cParts[1]}`;
+                    }
                 }
 
                 const safeTitle = sanitizeInput(pageData.title || '제목 없음').slice(0, 200);
@@ -1195,16 +1201,8 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
                 const filename = isImage ? getSafeImageFilenameFromZipPath(assetPath) : getSafePaperclipFilenameFromZipPath(assetPath);
                 if (!filename) continue;
 
-                // 커버 이미지 여부 확인
-                let isCover = false;
-                if (isImage) {
-                    for (const p of importedPages) {
-                        // 실제 pageData는 이미 소비되었으므로, 필요한 경우 HTML을 다시 파싱하거나
-                        // 1차 패스에서 수집한 메타데이터를 활용해야 함.
-                        // 여기서는 단순함을 위해 기존 로직의 의도를 살려 filenames 체크
-                        // (실무에서는 1차 패스 때 coverImage 목록을 Set으로 모으는 것이 효율적)
-                    }
-                }
+                // cover_image에 쓰인 파일은 covers/<userId>/ 에 복원해야 UI(/covers/...)에서 정상 표시됨
+                const isCover = isImage && coverImageFilenames.has(filename);
 
                 const subDir = isImage ? (isCover ? 'covers' : 'imgs') : 'paperclip';
                 const targetDir = path.join(__dirname, '..', subDir, String(userId));
@@ -1264,7 +1262,7 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
                 if (!row.length || row[0].is_encrypted || !row[0].content) continue;
 
                 let content = row[0].content;
-                const oldUserIdPattern = /\/(imgs|paperclip)\/(\d+)\//g;
+                const oldUserIdPattern = /\/(imgs|paperclip|covers)\/(\d+)\//g;
                 // 내용 중에 /imgs/123/ 이 있으면 /imgs/<currentUserId>/ 로 변경
                 const newContent = content.replace(oldUserIdPattern, `/$1/${userId}/`);
                 
