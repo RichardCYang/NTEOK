@@ -120,18 +120,24 @@ export function initStoragesManager(appState, onStorageSelected) {
                 }
 
                 const confirmMsg = isOwner 
-                    ? `'${storage.name}' 저장소를 삭제하시겠습니까?\n포함된 모든 컬렉션과 페이지가 영구적으로 삭제됩니다.`
+                    ? `'${storage.name}' 저장소를 삭제하시겠습니까?\n포함된 모든 컬렉션과 페이지가 영구적으로 삭제됩니다.\n(참고: 다른 협업자가 작성한 페이지는 해당 사용자의 복구 저장소로 안전하게 이관됩니다.)`
                     : `'${storage.name}' 저장소의 공유를 해제하시겠습니까?`;
-
                 if (!confirm(confirmMsg)) {
                     return;
                 }
 
                 showLoadingOverlay();
                 try {
-                    await api.del(`/api/storages/${storage.id}`);
+                    const result = await api.del(`/api/storages/${storage.id}`);
                     appState.storages = appState.storages.filter(s => s.id !== storage.id);
                     renderStorages(appState.storages);
+
+                    // 데이터 이관 리포트 표시
+                    if (result?.transferred && Object.keys(result.transferred).length > 0) {
+                        const userCount = Object.keys(result.transferred).length;
+                        const totalPages = Object.values(result.transferred).reduce((sum, item) => sum + (item.movedPages || 0), 0);
+                        alert(`저장소가 삭제되었습니다.\n\n[데이터 이관 리포트]\n- 대상 협업자: ${userCount}명\n- 이관된 페이지: 총 ${totalPages}개\n\n협업자들의 데이터는 각 사용자의 'Recovered' 저장소로 안전하게 분리 보관되었습니다.`);
+                    }
                 } catch (error) {
                     console.error('저장소 작업 실패:', error);
                     alert(error.message || '저장소 작업에 실패했습니다.');

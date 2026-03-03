@@ -399,6 +399,27 @@ module.exports = (dependencies) => {
                 return res.status(401).json({ error: "비밀번호가 올바르지 않습니다." });
             }
 
+            // ==================== 데이터 유실 방지(중요) ====================
+            // 문제:
+            //  - users -> storages, storages -> pages 관계가 모두 ON DELETE CASCADE 이므로,
+            //    계정 삭제 시 해당 사용자가 소유한 저장소가 삭제되고, 그 저장소에 속한 모든 페이지 삭제
+            //  - 협업 저장소에서는 다른 사용자(user_id != owner)가 생성한 페이지도 같은 storage_id를 쓰므로,
+            //    소유자 계정 삭제로 협업자 데이터까지 함께 영구 삭제될 수 있음
+            //
+            // 해결:
+            //  - 계정 삭제 전에, 소유 저장소에서 협업자 소유 페이지를 협업자 개인 저장소로 이관 후
+            //    원래 저장소를 삭제(=계정 삭제로 인한 CASCADE 영향 범위 축소)
+            // ===============================================================
+            try {
+                if (storagesRepo && typeof storagesRepo.safeDeleteAllOwnedStoragesPreservingCollaborators === 'function') {
+                    await storagesRepo.safeDeleteAllOwnedStoragesPreservingCollaborators(req.user.id);
+                }
+            } catch (e) {
+                // 이관 실패 시 계정 삭제를 중단해 협업자 데이터 유실을 방지
+                logError('DELETE /api/auth/account (pre-delete transfer)', e);
+                return res.status(500).json({ error: '계정 삭제 전 데이터 이관에 실패했습니다. 잠시 후 다시 시도해 주세요.' });
+            }
+
             await pool.execute(`DELETE FROM users WHERE id = ?`, [req.user.id]);
 
             // 보안: 민감 정보 마스킹 (사용자명 일부만 표시)

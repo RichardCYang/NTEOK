@@ -248,11 +248,18 @@ module.exports = (dependencies) => {
             // 만약 공유받은 저장소라면 참여자 목록에서 삭제
             if (storageToDelete && !storageToDelete.is_owner) {
                 await storagesRepo.removeCollaborator(storageId, userId);
+                res.json({ success: true });
             } else {
-                await storagesRepo.deleteStorage(userId, storageId);
+                // 데이터 유실 방지(중요): 협업 저장소 삭제 시
+                // 다른 사용자 소유 페이지가 FK CASCADE로 함께 삭제되는 것을 방지하기 위해
+                // 협업자 페이지를 협업자 개인 저장소로 이관 후 삭제
+                const result = await storagesRepo.safeDeleteStoragePreservingCollaborators(userId, storageId);
+                if (!result?.ok) {
+                    // 권한/존재 여부는 기존 UX와 동일하게 처리
+                    return res.status(404).json({ error: '저장소를 찾을 수 없거나 권한이 없습니다.' });
+                }
+                res.json({ success: true, transferred: result.transferred });
             }
-
-            res.json({ success: true });
         } catch (error) {
             logError('DELETE /api/storages/:id', error);
             res.status(500).json({ error: '저장소 삭제에 실패했습니다.' });

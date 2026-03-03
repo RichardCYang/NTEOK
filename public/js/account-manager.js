@@ -79,7 +79,7 @@ export async function confirmDeleteAccount() {
 
     // 최종 확인
     const finalConfirm = confirm(
-        '정말로 계정을 삭제하시겠습니까?\n\n이 작업은 되돌릴 수 없으며 모든 데이터가 영구적으로 삭제됩니다.'
+        '정말로 계정을 삭제하시겠습니까?\n\n이 작업은 되돌릴 수 없으며 모든 데이터가 영구적으로 삭제됩니다.\n(참고: 협업 중인 다른 사용자의 데이터는 해당 사용자의 계정으로 안전하게 분리 보관됩니다.)'
     );
 
     if (!finalConfirm) {
