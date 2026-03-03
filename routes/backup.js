@@ -672,6 +672,61 @@ function ensureUniqueDestPath(targetDir, filename) {
             .replace(/\u2029/g, '\\u2029');
     }
 
+    // =====================================================================
+    // 데이터 유실 방지(핵심): Backup export/import 스키마 정규화
+    // 문제:
+    // - DB rows는 snake_case (is_encrypted, encrypted_content, parent_id, ...)
+    // - backup metadata는 camelCase (isEncrypted, encryptedContent, parentId, ...)
+    // - export에서 DB row를 그대로 convertPageToHTML에 넘기면,
+    //   암호화 페이지의 encryptedContent(=실데이터)가 백업에 포함되지 않아 복구 불가능한 유실 발생
+    //
+    // 또한 import 파서에서 metadata?.isEncrypted || false 같은 패턴은
+    // false(string)가 truthy라서 암호화 플래그가 뒤집힐 수 있으므로(OR는 첫 truthy 반환),
+    // boolean 정규화 함수를 공유해서 사용
+    // =====================================================================
+    function normalizeBackupBoolean(v, defaultValue = false) {
+        if (v === true || v === false) return v;
+        if (v === 1 || v === 0) return v === 1;
+        if (typeof v === 'string') {
+            const s = v.trim().toLowerCase();
+            if (s === 'true' || s === '1') return true;
+            if (s === 'false' || s === '0') return false;
+        }
+        return defaultValue;
+    }
+
+    function normalizePageRowForBackupExport(pageRow, publishInfo) {
+        const isEncrypted = normalizeBackupBoolean(pageRow.is_encrypted, false);
+        return {
+            // IDs / relations
+            id: pageRow.id,
+            parentId: pageRow.parent_id || null,
+            sortOrder: pageRow.sort_order || 0,
+
+            // content/meta
+            title: pageRow.title || '제목 없음',
+            content: pageRow.content || '',
+            icon: pageRow.icon || null,
+            coverImage: pageRow.cover_image || null,
+            coverPosition: pageRow.cover_position || 50,
+
+            // encryption (CRITICAL)
+            isEncrypted,
+            encryptionSalt: pageRow.encryption_salt || null,
+            encryptedContent: pageRow.encrypted_content || null,
+            shareAllowed: normalizeBackupBoolean(pageRow.share_allowed, false),
+
+            // timestamps
+            createdAt: toIsoString(pageRow.created_at) || pageRow.created_at,
+            updatedAt: toIsoString(pageRow.updated_at) || pageRow.updated_at,
+
+            // publish metadata
+            publishToken: publishInfo?.token || null,
+            publishedAt: publishInfo?.createdAt || null,
+            allowComments: publishInfo?.allowComments || 0
+        };
+    }
+
     /**
      * 페이지 내용을 HTML로 변환
      */
@@ -823,19 +878,26 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
             }
 
             // 메타데이터가 있으면 사용, 없으면 기본값
+            const metaParentRaw = metadata?.parentId ?? metadata?.parent_id ?? null;
+            const metaParentId = (typeof metaParentRaw === 'string' && metaParentRaw.trim()) ? metaParentRaw.trim() : null;
+
+            const metaIsEncrypted = normalizeBackupBoolean(metadata?.isEncrypted ?? metadata?.is_encrypted, false);
+            const metaShareAllowed = normalizeBackupBoolean(metadata?.shareAllowed ?? metadata?.share_allowed, false);
+
             return {
                 backupId: (typeof metadata?.id === 'string' && metadata.id.trim()) ? metadata.id.trim() : null,
-                parentId: (typeof metadata?.parentId === 'string' && metadata.parentId.trim()) ? metadata.parentId.trim() : null,
+                parentId: metaParentId,
                 title,
                 content,
                 icon: icon || (metadata?.icon) || null,
-                isEncrypted: metadata?.isEncrypted || false,
-                encryptionSalt: metadata?.encryptionSalt || null,
-                encryptedContent: metadata?.encryptedContent || null,
-                shareAllowed: metadata?.shareAllowed || false,
+                // 데이터 유실 방지: false(string) truthy 문제 방지 위해 정규화
+                isEncrypted: metaIsEncrypted,
+                // 하위호환: snake_case도 허용
+                encryptionSalt: (metadata?.encryptionSalt ?? metadata?.encryption_salt) || null,
+                encryptedContent: (metadata?.encryptedContent ?? metadata?.encrypted_content) || null,
+                shareAllowed: metaShareAllowed,
                 coverImage: coverImage || metadata?.coverImage || null,
                 coverPosition: metadata?.coverPosition || 50,
-                parentId: metadata?.parentId || null,
                 sortOrder: metadata?.sortOrder || 0,
                 publishToken: metadata?.publishToken || null,
                 publishedAt: metadata?.publishedAt || null,
@@ -1004,12 +1066,8 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
                 });
 
                 const publishInfo = publishMap.get(page.id);
-                const pageData = {
-                    ...page,
-                    publishToken: publishInfo?.token || null,
-                    publishedAt: publishInfo?.createdAt || null,
-                    allowComments: publishInfo?.allowComments || 0
-                };
+                // 데이터 유실 방지(핵심): DB row(snake_case) -> backup schema(camelCase) 정규화
+                const pageData = normalizePageRowForBackupExport(page, publishInfo);
 
                 const html = convertPageToHTML(pageData);
                 archive.append(html, { name: `pages/${storageFolderName}/${pageFileName}.html` });
