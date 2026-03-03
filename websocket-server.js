@@ -932,7 +932,7 @@ async function cleanupOrphanedFiles(pool, filePaths, excludePageId, pageOwnerUse
 
 async function saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc, opts = {}) {
     try {
-        const { epoch, allowDeleted = false } = opts;
+        const { epoch, allowDeleted = false, forceClearYjsState = false } = opts;
         // epoch 확인 (시작 시): 이미 더 새로운 REST 저장이 발생했다면 중단
         if (epoch !== undefined && getYjsSaveEpoch(pageId) > epoch) return { status: 'skipped-epoch' };
 
@@ -979,7 +979,7 @@ async function saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc, opt
 
         // 보안: 암호화된 페이지는 yjs_state에 문서 스냅샷(평문)이 남을 수 있으므로 DB에 저장하지 않음
         let yjsStateToSave = null;
-        if (!isEncrypted) {
+        if (!isEncrypted && !forceClearYjsState) {
             const meta = yjsDocuments.get(pageId);
             const approx = meta?.approxBytes;
             if (Number.isFinite(approx) && approx <= WS_MAX_YJS_STATE_BYTES) {
@@ -1787,7 +1787,7 @@ function handleSubscribeUser(ws, payload) {
  * - 메모리 Y.Doc의 metadata에만 반영 (별도 DB 저장 없이 다음 saveTimeout에 자동 포함)
  */
 async function handlePageSnapshot(ws, payload, pool, sanitizeHtmlContent, pageSqlPolicy) {
-    const { pageId, html, title } = payload || {};
+    const { pageId, html, title, resyncNeeded } = payload || {};
     if (!pageId || typeof html !== 'string') return;
     if (!isSubscribedToPage(ws, pageId)) return;
 
@@ -1824,6 +1824,24 @@ async function handlePageSnapshot(ws, payload, pool, sanitizeHtmlContent, pageSq
 
         // 데이터 유실 방지: 스냅샷을 받았으므로 즉시(또는 짧은 지연 후) 저장을 예약하여 유실 위험 최소화
         if (docMeta.saveTimeout) clearTimeout(docMeta.saveTimeout);
+
+        const needsResync = (resyncNeeded === true || resyncNeeded === 1 || String(resyncNeeded || '').toLowerCase() === 'true');
+
+        // 데이터 유실 방지: needsResync 스냅샷은 content는 저장하되 yjs_state는 강제로 NULL로 저장(forceClearYjsState)
+        // 그리고 협업 세션을 리셋하여 다음 재접속 시 HTML 스냅샷으로 fragment를 재구성하도록 유도
+        if (needsResync) {
+            const epoch = bumpYjsSaveEpoch(pageId);
+            try {
+                await enqueueYjsDbSave(pageId, () =>
+                    saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, docMeta.ydoc, { epoch, forceClearYjsState: true })
+                );
+            } catch (e) {
+                console.error('[YJS] snapshot resync-save failed:', String(pageId), e?.message || e);
+            }
+            try { wsCloseConnectionsForPage(pageId, 1012, 'Resync required - reload'); } catch (_) {}
+            return;
+        }
+
         const epoch = getYjsSaveEpoch(pageId);
         docMeta.saveTimeout = setTimeout(() => {
             enqueueYjsDbSave(pageId, () => saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, docMeta.ydoc, { epoch }))

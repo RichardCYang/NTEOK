@@ -219,6 +219,13 @@ export function initSyncManager(appState) {
         }
 
         flushPendingUpdates();
+
+        // 데이터 유실 방지: resyncNeeded(네트워크/대용량) 상태에서 탭 종료 시,
+        // Yjs state를 마지막으로 한 번 더 밀어넣어 동기화 시도 (Best-effort)
+        if (isResyncNeeded(state.currentPageId)) {
+            sendYjsState(state.currentPageId);
+        }
+
         sendPageSnapshotNow(state.currentPageId);
         // waitForAck=false: 비동기 ACK 대기는 언로드 중 불가능
         if (ws && ws.readyState === WebSocket.OPEN) {
@@ -238,6 +245,11 @@ export function initSyncManager(appState) {
         }
 
         flushPendingUpdates();
+
+        if (isResyncNeeded(state.currentPageId)) {
+            sendYjsState(state.currentPageId);
+        }
+
         sendPageSnapshotNow(state.currentPageId);
     }, { capture: true });
 
@@ -587,10 +599,12 @@ function sendPageSnapshotNow(pageId) {
     const titleInput = document.querySelector('#page-title-input');
     const title = titleInput ? titleInput.value : undefined;
 
+    const resyncNeeded = isResyncNeeded(pageId);
+
     try {
         ws.send(JSON.stringify({
             type: 'page-snapshot',
-            payload: { pageId, html, ...(title ? { title } : {}) }
+            payload: { pageId, html, resyncNeeded, ...(title ? { title } : {}) }
         }));
         return true;
     } catch (_) {
