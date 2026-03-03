@@ -580,15 +580,47 @@ module.exports = (dependencies) => {
     }
 
     function safeResolveIntoDir(baseDir, filename) {
-        const base = path.resolve(baseDir);
-        const target = path.resolve(base, filename);
-        const rel = path.relative(base, target);
-        // base 밖으로 나가거나(../), 절대경로가 되어버리면 차단
-        if (rel.startsWith("..") || path.isAbsolute(rel)) return null;
-        // startsWith 경계(유사 prefix) 혼동 방지
-        if (!target.startsWith(base + path.sep)) return null;
-        return target;
+    const base = path.resolve(baseDir);
+    const target = path.resolve(base, filename);
+    const rel = path.relative(base, target);
+    // base 밖으로 나가거나(../), 절대경로가 되어버리면 차단
+    if (rel.startsWith("..") || path.isAbsolute(rel)) return null;
+    // startsWith 경계(유사 prefix) 혼동 방지
+    if (!target.startsWith(base + path.sep)) return null;
+    return target;
+}
+
+// 데이터 유실 방지(중요): 백업 import 시 기존 파일 덮어쓰기 방지
+// - 동일 파일명이 이미 존재하면 overwrite로 기존 첨부/이미지가 영구 유실될 수 있음
+// - 충돌 시 import 파일을 고유 파일명으로 저장(never overwrite) + 참조를 함께 치환
+function escapeRegExp(s) {
+    return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function makeUniqueFilename(original, suffix) {
+    const ext = path.extname(original);
+    const base = path.basename(original, ext);
+    return `${base}__imp__${suffix}${ext}`;
+}
+
+function ensureUniqueDestPath(targetDir, filename) {
+    const baseDir = path.resolve(targetDir);
+    const initial = safeResolveIntoDir(baseDir, filename);
+    if (!initial) return { filename: null, fullPath: null };
+    if (!fs.existsSync(initial)) return { filename, fullPath: initial };
+
+    // 충돌: 새 파일명 생성(최대 20회)
+    for (let i = 0; i < 20; i++) {
+        const suffix = `${Date.now().toString(36)}-${crypto.randomBytes(4).toString("hex")}${i ? "-" + i : ""}`;
+        const candName = makeUniqueFilename(filename, suffix);
+        const candPath = safeResolveIntoDir(baseDir, candName);
+        if (!candPath) continue;
+        if (!fs.existsSync(candPath)) return { filename: candName, fullPath: candPath };
     }
+
+    // 데이터 보존 우선: overwrite 대신 실패
+    return { filename: null, fullPath: null };
+}
 
 	function isSupportedImageBuffer(buf, filename) {
 	    if (!Buffer.isBuffer(buf) || buf.length < 12) return false;
@@ -1062,6 +1094,9 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
             const workspaceMap = new Map(); // 폴더명 -> 저장소 ID
             const oldToNewPageMap = new Map(); // 원본 ID -> 새 정보 { newId, storageId }
             const importedPages = []; // 복원된 페이지 목록 (2차 패스용)
+            const imgFilenameMap = new Map();       // old -> new
+            const coverFilenameMap = new Map();     // old -> new
+            const paperclipFilenameMap = new Map(); // old -> new
             const coverImageFilenames = new Set(); // cover_image로 쓰인 파일명(복원 시 covers/로 분리)
             let totalPages = 0;
             let totalImages = 0;
@@ -1124,7 +1159,7 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
                 // 원본 ID 매핑 기록 (부모 복원용)
                 const oldId = pageData.backupId || `backup-${crypto.createHash('sha256').update(entry.entryName).digest('hex').slice(0, 24)}`;
                 oldToNewPageMap.set(String(oldId), { newId: pageId, storageId });
-                importedPages.push({ newId: pageId, storageId, parentOldId: pageData.parentId });
+                importedPages.push({ newId: pageId, storageId, parentOldId: pageData.parentId, coverImage: null });
 
                 let coverImage = pageData.coverImage;
                 if (coverImage && !DEFAULT_COVERS.includes(coverImage)) {
@@ -1136,6 +1171,8 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
                         coverImage = `${userId}/${cParts[1]}`;
                     }
                 }
+                // cover_image는 파일 복원 단계에서 충돌로 이름이 바뀔 수 있으므로 값 보관
+                importedPages[importedPages.length - 1].coverImage = coverImage;
 
                 const safeTitle = sanitizeInput(pageData.title || '제목 없음').slice(0, 200);
                 const safeIcon = validateAndNormalizeIcon(pageData.icon);
@@ -1208,19 +1245,31 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
                 const targetDir = path.join(__dirname, '..', subDir, String(userId));
                 if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
 
-                const targetPath = safeResolveIntoDir(targetDir, filename);
-                if (!targetPath) continue;
+                const unique = ensureUniqueDestPath(targetDir, filename);
+                if (!unique.fullPath || !unique.filename) continue;
+
+                // 충돌 시 old filename -> new filename 매핑 기록
+                if (unique.filename !== filename) {
+                    if (isImage) {
+                        if (isCover) coverFilenameMap.set(filename, unique.filename);
+                        else imgFilenameMap.set(filename, unique.filename);
+                    } else {
+                        paperclipFilenameMap.set(filename, unique.filename);
+                    }
+                }
+
+                const targetPath = unique.fullPath;
 
                 const processFile = (srcPath, destPath, buf) => {
                     if (buf) {
-                        if (isImage && !isSupportedImageBuffer(buf, filename)) return false;
+                        if (isImage && !isSupportedImageBuffer(buf, unique.filename)) return false;
                         fs.writeFileSync(destPath, buf);
                     } else {
                         const fd = fs.openSync(srcPath, 'r');
                         const header = Buffer.alloc(16);
                         const n = fs.readSync(fd, header, 0, 16, 0);
                         fs.closeSync(fd);
-                        if (isImage && !isSupportedImageBuffer(header.slice(0, n), filename)) return false;
+                        if (isImage && !isSupportedImageBuffer(header.slice(0, n), unique.filename)) return false;
                         try { fs.renameSync(srcPath, destPath); } catch (e) {
                             fs.copyFileSync(srcPath, destPath);
                             fs.unlinkSync(srcPath);
@@ -1247,10 +1296,16 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
                 const ft = normalizeFileType(ref.file_type);
                 if (!ft) continue;
 
+                // 충돌로 바뀐 stored_filename 반영
+                let stored = String(ref.stored_filename || '');
+                if (!stored) continue;
+                if (ft === FILE_TYPE.PAPERCLIP) stored = paperclipFilenameMap.get(stored) || stored;
+                else if (ft === FILE_TYPE.IMGS) stored = imgFilenameMap.get(stored) || coverFilenameMap.get(stored) || stored;
+
                 await connection.execute(
                     `INSERT IGNORE INTO page_file_refs (page_id, owner_user_id, stored_filename, file_type, created_at)
                      VALUES (?, ?, ?, ?, NOW())`,
-                    [mapping.newId, userId, ref.stored_filename, ft]
+                    [mapping.newId, userId, stored, ft]
                 );
             }
 
@@ -1264,11 +1319,40 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
                 let content = row[0].content;
                 const oldUserIdPattern = /\/(imgs|paperclip|covers)\/(\d+)\//g;
                 // 내용 중에 /imgs/123/ 이 있으면 /imgs/<currentUserId>/ 로 변경
-                const newContent = content.replace(oldUserIdPattern, `/$1/${userId}/`);
+                let newContent = content.replace(oldUserIdPattern, `/$1/${userId}/`);
+
+                // 파일명 충돌로 변경된 이름을 HTML 참조에도 반영
+                for (const [oldName, newName] of imgFilenameMap.entries()) {
+                    newContent = newContent.replace(new RegExp(`/imgs/${userId}/${escapeRegExp(oldName)}`, 'g'), `/imgs/${userId}/${newName}`);
+                }
+
+                for (const [oldName, newName] of paperclipFilenameMap.entries()) {
+                    newContent = newContent.replace(new RegExp(`/paperclip/${userId}/${escapeRegExp(oldName)}`, 'g'), `/paperclip/${userId}/${newName}`);
+                }
+
+                for (const [oldName, newName] of coverFilenameMap.entries()) {
+                    newContent = newContent.replace(new RegExp(`/covers/${userId}/${escapeRegExp(oldName)}`, 'g'), `/covers/${userId}/${newName}`);
+                }
                 
                 if (newContent !== content) {
                     await connection.execute('UPDATE pages SET content = ? WHERE id = ?', [newContent, p.newId]);
                 }
+
+                // cover_image(DB 필드)도 충돌 매핑 반영: "<userId>/<filename>"
+                try {
+                    if (p.coverImage && typeof p.coverImage === 'string') {
+                        const parts = p.coverImage.split('/');
+                        if (parts.length === 2 && String(parts[0]) === String(userId)) {
+                            const oldFn = parts[1];
+                            const newFn = coverFilenameMap.get(oldFn);
+                            if (newFn) {
+                                const newCover = `${userId}/${newFn}`;
+                                await connection.execute('UPDATE pages SET cover_image = ? WHERE id = ?', [newCover, p.newId]);
+                                p.coverImage = newCover;
+                            }
+                        }
+                    }
+                } catch (_) {}
             }
 
             await connection.commit();
