@@ -569,7 +569,7 @@ module.exports = (dependencies) => {
         if (/[\x00-\x1F\x7F]/.test(base)) return null;
         if (base.includes("/") || base.includes("\\") || base.includes("..")) return null;
 
-        // paperclip은 확장자 제한이 더 넓을 수 있지만, 
+        // paperclip은 확장자 제한이 더 넓을 수 있지만,
         // 서버에서 부여한 저장 파일명 규칙([A-Za-z0-9._-])은 준수해야 함
         if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,250}$/.test(base)) return null;
 
@@ -580,14 +580,15 @@ module.exports = (dependencies) => {
     }
 
     function safeResolveIntoDir(baseDir, filename) {
-    const base = path.resolve(baseDir);
-    const target = path.resolve(base, filename);
-    const rel = path.relative(base, target);
-    // base 밖으로 나가거나(../), 절대경로가 되어버리면 차단
-    if (rel.startsWith("..") || path.isAbsolute(rel)) return null;
-    // startsWith 경계(유사 prefix) 혼동 방지
-    if (!target.startsWith(base + path.sep)) return null;
-    return target;
+	    const base = path.resolve(baseDir);
+	    const target = path.resolve(base, filename);
+	    const rel = path.relative(base, target);
+	    // base 밖으로 나가거나(../), 절대경로가 되어버리면 차단
+	    if (rel.startsWith("..") || path.isAbsolute(rel)) return null;
+	    // startsWith 경계(유사 prefix) 혼동 방지
+	    if (!target.startsWith(base + path.sep)) return null;
+	    return target;
+    }
 }
 
 // 데이터 유실 방지(중요): 백업 import 시 기존 파일 덮어쓰기 방지
@@ -1333,7 +1334,7 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
                 for (const [oldName, newName] of coverFilenameMap.entries()) {
                     newContent = newContent.replace(new RegExp(`/covers/${userId}/${escapeRegExp(oldName)}`, 'g'), `/covers/${userId}/${newName}`);
                 }
-                
+
                 if (newContent !== content) {
                     await connection.execute('UPDATE pages SET content = ? WHERE id = ?', [newContent, p.newId]);
                 }
@@ -1357,10 +1358,10 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
 
             await connection.commit();
             fs.unlinkSync(uploadedFile.path);
-            res.json({ 
-                ok: true, 
-                storagesCount: workspaceMap.size, 
-                pagesCount: totalPages, 
+            res.json({
+                ok: true,
+                storagesCount: workspaceMap.size,
+                pagesCount: totalPages,
                 imagesCount: totalImages,
                 paperclipsCount: totalPaperclips
             });
