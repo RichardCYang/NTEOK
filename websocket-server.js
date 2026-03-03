@@ -169,6 +169,27 @@ function wsRequestE2eeSnapshot(pageId) {
     }
 }
 
+/**
+ * 데이터 유실 방지(Self-heal): 비암호화 페이지의 HTML 스냅샷 재전송 요청
+ * - 서버 메모리의 Yjs 문서에 metadata.content 가 유실된 경우(동기화 이상/버그),
+ *   편집 권한이 있는 클라이언트들에게 현재 에디터의 HTML을 스냅샷으로 보내달라고 요청
+ */
+function wsRequestPageSnapshot(pageId) {
+    const pid = String(pageId || '');
+    if (!pid) return;
+    const conns = wsConnections.pages.get(pid);
+    if (!conns || conns.size === 0) return;
+    for (const c of Array.from(conns)) {
+        try {
+            if (!c || c.isE2ee) continue;
+            if (!['EDIT','ADMIN'].includes(c.permission)) continue;
+            if (c.ws && c.ws.readyState === WebSocket.OPEN) {
+                c.ws.send(JSON.stringify({ event: 'request-page-snapshot', data: { pageId: pid } }));
+            }
+        } catch (_) {}
+    }
+}
+
 // ==================== E2EE Leader Election & Persistence Helpers ====================
 const E2EE_LEADER_IDLE_HANDOFF_MS = (() => {
     const n = Number.parseInt(process.env.E2EE_LEADER_IDLE_HANDOFF_MS || '2000', 10);
@@ -938,7 +959,7 @@ async function saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc, opt
 
         // 데이터 유실 방지(중간): 최신 DB 상태를 읽어 삭제 여부 및 메타 정보 확인
         const [existingRows] = await pool.execute(
-            'SELECT content, is_encrypted, user_id, deleted_at FROM pages WHERE id = ?',
+            'SELECT title, content, icon, sort_order, parent_id, is_encrypted, user_id, deleted_at FROM pages WHERE id = ?',
             [pageId]
         );
 
@@ -948,33 +969,45 @@ async function saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc, opt
         if (existingRows.length === 0) {
             return { status: 'aborted-deleted' };
         }
-        if (existingRows[0].deleted_at !== null && !allowDeleted) {
+        const existing = existingRows[0];
+        if (existing.deleted_at !== null && !allowDeleted) {
             return { status: 'aborted-deleted' };
         }
 
         const yMetadata = ydoc.getMap('metadata');
-        // 데이터 유실 방지(핵심): Yjs metadata Map 에 content 키가 없으면,
-        // 빈 값으로 DB를 덮어쓰는 대신 기존 DB 내용을 유지하여 최악의 유실 상황 회피
-        if (!yMetadata.has('content')) {
-            return { status: 'skipped-no-content' };
+        // 데이터 유실 방지(핵심):
+        // - Y.Map은 delete/clear가 가능하므로(협업자/버그/악성 클라이언트) metadata의 필수 키(content 등)가 사라질 수 있음
+        // - 기존 구현은 content 키가 없으면 저장을 중단했는데, 이 경우 yjs_state까지 저장되지 않아
+        //   서버 재시작/문서 언로드 시 최신 편집분이 통째로 유실될 수 있음
+        // - 따라서 content 키가 없을 때는 DB content는 유지 + yjs_state는 계속 저장으로 fail-safe 처리
+        const metaHasString = (k) => (yMetadata && yMetadata.has(k) && typeof yMetadata.get(k) === 'string');
+        const metaHasAny = (k) => (yMetadata && yMetadata.has(k));
+
+        const title = metaHasString('title') ? yMetadata.get('title') : (existing.title || '제목 없음');
+        const icon = validateAndNormalizeIcon(metaHasString('icon') ? yMetadata.get('icon') : (existing.icon || null));
+        const sortOrder = metaHasAny('sortOrder') ? (Number(yMetadata.get('sortOrder')) || 0) : (Number(existing.sort_order) || 0);
+        const parentId = metaHasAny('parentId') ? (yMetadata.get('parentId') || null) : (existing.parent_id || null);
+
+        const isEncrypted = (existing.is_encrypted === 1);
+        const metaContent = metaHasAny('content') ? yMetadata.get('content') : undefined;
+        const shouldUpdateContent = (typeof metaContent === 'string');
+        const content = shouldUpdateContent ? sanitizeHtmlContent(metaContent || '<p></p>') : null;
+
+        if (!shouldUpdateContent && !isEncrypted) {
+            // 데이터 유실 방지: 서버 메모리 Yjs 에 content 키가 없으면 클라이언트에 재전송 요청(Self-heal)
+            wsRequestPageSnapshot(pageId);
         }
 
-		const title = yMetadata.get('title') || '제목 없음';
-		const icon = validateAndNormalizeIcon(yMetadata.get('icon'));
-        const sortOrder = yMetadata.get('sortOrder') || 0;
-        const parentId = yMetadata.get('parentId') || null;
-        const rawContent = yMetadata.get('content') || '<p></p>';
-        const content = sanitizeHtmlContent(rawContent);
-
-        const isEncrypted = (existingRows[0].is_encrypted === 1);
-        const pageOwnerUserId = (existingRows[0].user_id);
-        let finalContent = content;
+        const pageOwnerUserId = (existing.user_id);
+        let finalContent = '';
         let oldFiles = [];
 
         if (isEncrypted) {
             finalContent = '';
         } else {
-            oldFiles = extractFilesFromContent(existingRows[0].content, pageOwnerUserId);
+            // content 키가 사라진 경우(shouldUpdateContent=false)에는 DB content를 유지
+            finalContent = shouldUpdateContent ? (content || '<p></p>') : (existing.content || '<p></p>');
+            oldFiles = extractFilesFromContent(existing.content, pageOwnerUserId);
         }
 
         // 보안: 암호화된 페이지는 yjs_state에 문서 스냅샷(평문)이 남을 수 있으므로 DB에 저장하지 않음
@@ -998,7 +1031,7 @@ async function saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc, opt
             [title, finalContent, icon, sortOrder, parentId, yjsStateToSave, pageId]
         );
 
-        if (!isEncrypted) {
+        if (!isEncrypted && shouldUpdateContent) {
             const newFiles = extractFilesFromContent(content, pageOwnerUserId);
 
             try {

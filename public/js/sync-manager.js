@@ -194,7 +194,7 @@ export function initSyncManager(appState) {
     state.editor = appState.editor;
     state.fetchPageList = appState.fetchPageList;
     state.pages = appState.pages;
-    
+
     // appState와 reactive하게 연결 (app.js의 appState를 참조하되, sync-manager 내부 상태도 업데이트)
     Object.defineProperty(state, 'currentPageId', { get: () => appState.currentPageId });
     Object.defineProperty(state, 'currentStorageId', { get: () => appState.currentStorageId });
@@ -361,6 +361,9 @@ function handleWebSocketMessage(message) {
             break;
         case 'request-yjs-state-e2ee':
             handleRequestYjsStateE2EE(data).catch(e => console.error('[E2EE] snapshot 요청 처리 오류:', e));
+            break;
+        case 'request-page-snapshot':
+            handleRequestPageSnapshot(data).catch(e => console.error('[Self-heal] snapshot 요청 처리 오류:', e));
             break;
         case 'user-joined':
             handleUserJoined(data);
@@ -922,7 +925,7 @@ function handleMetadataChange(data) {
         if (data.field === 'coverPosition' && data.pageId === state.currentPageId) {
             const page = state.pages.find(p => p.id === data.pageId);
             if (page) page.coverPosition = data.value;
-            
+
             const imageEl = document.getElementById('page-cover-image');
             if (imageEl) {
                 imageEl.style.backgroundPositionY = `${data.value}%`;
@@ -1839,6 +1842,27 @@ async function handleYjsUpdateE2EEEvent(data) {
         Y.applyUpdate(ydoc, stateUpdate, 'remote');
     } catch (error) {
         console.error('[E2EE] 업데이트 복호화/적용 오류:', error);
+    }
+}
+
+/**
+ * 데이터 유실 방지(핵심): 서버로부터 HTML 스냅샷(전체 상태) 업로드 요청 수신
+ * - 서버 메모리의 Yjs 문서에 metadata.content 가 유실되었을 때 자가 치유(Self-heal)를 위해 발생
+ */
+async function handleRequestPageSnapshot(data) {
+    const pageId = data?.pageId ? String(data.pageId) : null;
+    if (!pageId || isE2eeSync || String(currentPageId) !== pageId) return;
+
+    console.log('[Self-heal] 서버로부터 HTML 스냅샷 업로드 요청 수신');
+    try {
+        // 최신 HTML 스냅샷 생성 및 전송
+        const sent = sendPageSnapshotNow(pageId);
+        if (sent) {
+            // 서버 측 디바운스(DB write) 즉시 플러시 요청
+            await requestImmediateSave(pageId, { includeSnapshot: false, waitForAck: false });
+        }
+    } catch (e) {
+        console.error('[Self-heal] 스냅샷 요청 응답 실패:', e);
     }
 }
 
