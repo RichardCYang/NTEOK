@@ -725,7 +725,21 @@ module.exports = (dependencies) => {
             // - E2EE 콘텐츠는 반드시 WebSocket(yjs-state-e2ee)을 통해서만 저장해야 함
             // - REST로 저장하면 e2ee_yjs_state와 엇갈려 다음 로드 시 stale snapshot 롤백이 발생함
             const [pageRows] = await pool.execute(
-                'SELECT p.user_id, p.storage_id, p.is_encrypted, s.is_encrypted AS storage_is_encrypted, s.salt AS storage_salt FROM pages p JOIN storages s ON p.storage_id = s.id WHERE p.id = ?',
+                `SELECT p.user_id,
+                        p.storage_id,
+                        p.title,
+                        p.content,
+                        p.icon,
+                        p.horizontal_padding,
+                        p.is_encrypted,
+                        p.encryption_salt,
+                        p.encrypted_content,
+                        p.share_allowed,
+                        s.is_encrypted AS storage_is_encrypted,
+                        s.encryption_salt AS storage_encryption_salt
+                   FROM pages p
+                   JOIN storages s ON p.storage_id = s.id
+                  WHERE p.id = ?`,
                 [id]
             );
 
@@ -734,18 +748,30 @@ module.exports = (dependencies) => {
             }
 
             const existing = pageRows[0];
-            const hasEncryptedContent = Object.prototype.hasOwnProperty.call(req.body, "encryptedContent");
+            const hasEncryptedContentField = Object.prototype.hasOwnProperty.call(req.body, "encryptedContent");
 
-            // 저장소 레벨 E2EE인 경우(storage.is_encrypted=1 AND storage.salt가 없음)
-            if (existing.storage_is_encrypted && !existing.storage_salt && hasEncryptedContent) {
-                 return res.status(403).json({ error: "E2EE content must be saved via WebSocket to prevent data loss" });
+            // 저장소 레벨 E2EE 페이지 판정:
+            // - storage.is_encrypted=1 (저장소 키 기반 E2EE)
+            // - page.is_encrypted=1 이면서 page.encryption_salt가 NULL (페이지 비밀번호 기반 암호화가 아닌 경우)
+            // ※ 이 페이지 타입은 encryptedContent(REST)로 저장하면 WS(e2ee_yjs_state)와 불일치가 생겨
+            //    다음 로드에서 stale snapshot으로 롤백될 수 있으므로 차단
+            const isE2eePage =
+                Number(existing.storage_is_encrypted) === 1 &&
+                Number(existing.is_encrypted) === 1 &&
+                (existing.encryption_salt === null || existing.encryption_salt === undefined);
+            if (isE2eePage && hasEncryptedContentField) {
+                return res.status(403).json({ error: "E2EE content must be saved via WebSocket to prevent data loss" });
             }
 
             const permission = await storagesRepo.getPermission(userId, existing.storage_id);
             if (!permission || !['EDIT', 'ADMIN'].includes(permission))
                 return res.status(403).json({ error: "이 페이지를 수정할 권한이 없습니다." });
 
-            const title = req.body.title !== undefined ? sanitizeInput(req.body.title) : existing.title;
+            // NOTE: mysql2는 bind parameter에 undefined가 들어가면 에러가 날 수 있으므로,
+            //       (특히 메타데이터-only 업데이트) fallback 값을 반드시 보장
+            const title = req.body.title !== undefined
+                ? sanitizeInput(req.body.title)
+                : (existing.title || '제목 없음');
             // 데이터 유실 방지: isEncrypted는 반드시 불리언(true/false) 값으로 받아야 하며,
             // 문자열 false 등 모호한 타입을 방지하기 위해 엄격히 체크
             const reqIsEncrypted = (req.body.isEncrypted === true || req.body.isEncrypted === false) ? req.body.isEncrypted : undefined;
@@ -765,7 +791,7 @@ module.exports = (dependencies) => {
             }
 
             const hasEncryptionSalt = Object.prototype.hasOwnProperty.call(req.body, "encryptionSalt");
-            const hasEncryptedContent = Object.prototype.hasOwnProperty.call(req.body, "encryptedContent");
+            const hasEncryptedContent = hasEncryptedContentField;
 
             let salt;
             let encContent;
@@ -809,9 +835,11 @@ module.exports = (dependencies) => {
 
             const content = isEncrypted
                 ? ''
-                : (req.body.content !== undefined ? sanitizeHtmlContent(req.body.content) : existing.content);
-            const icon = req.body.icon !== undefined ? validateAndNormalizeIcon(req.body.icon) : existing.icon;
-            const hPadding = req.body.horizontalPadding !== undefined ? req.body.horizontalPadding : existing.horizontal_padding;
+                : (req.body.content !== undefined
+                    ? sanitizeHtmlContent(req.body.content)
+                    : (existing.content ?? '<p></p>'));
+            const icon = req.body.icon !== undefined ? validateAndNormalizeIcon(req.body.icon) : (existing.icon ?? null);
+            const hPadding = req.body.horizontalPadding !== undefined ? req.body.horizontalPadding : (existing.horizontal_padding ?? null);
             const nowStr = formatDateForDb(new Date());
 
             // 데이터 유실 방지(중요): REST 경로에서 변경된 메타데이터를
