@@ -126,6 +126,8 @@ const appState = {
     currentStorageId: null,
     pages: [],
     currentPageId: null,
+    // 현재 로드된 페이지의 updatedAt(REST 기준) — E2EE init에서 stale snapshot 적용을 막는 용도
+    currentPageUpdatedAt: null,
     expandedPages: new Set(),
     isWriteMode: false,
     currentPageIsEncrypted: false,

@@ -75,6 +75,8 @@ const state = {
     editor: null,
     currentPageId: null,
     currentStorageId: null,
+    // REST로 로드한 페이지의 updatedAt (E2EE init에서 stale state 롤백 방지용)
+    currentPageUpdatedAt: null,
     fetchPageList: null,
     pages: []
 };
@@ -189,7 +191,14 @@ function getPrimaryWriterClientId() {
  * 초기화
  */
 export function initSyncManager(appState) {
-    Object.assign(state, appState);
+    state.editor = appState.editor;
+    state.fetchPageList = appState.fetchPageList;
+    state.pages = appState.pages;
+    
+    // appState와 reactive하게 연결 (app.js의 appState를 참조하되, sync-manager 내부 상태도 업데이트)
+    Object.defineProperty(state, 'currentPageId', { get: () => appState.currentPageId });
+    Object.defineProperty(state, 'currentStorageId', { get: () => appState.currentStorageId });
+    Object.defineProperty(state, 'currentPageUpdatedAt', { get: () => appState.currentPageUpdatedAt });
 
     // 네트워크 상태 감지
     window.addEventListener('online', handleOnline);
@@ -597,17 +606,23 @@ function sendPageSnapshotNow(pageId) {
  */
 export async function requestImmediateSave(pageId, { includeSnapshot = true, waitForAck = true } = {}) {
     if (!pageId || !ws || ws.readyState !== WebSocket.OPEN) return null;
-    // E2EE 페이지는 snapshot 제외
-    if (isE2eeSync) includeSnapshot = false;
-    if (includeSnapshot) {
-        flushPendingUpdates();
-        sendPageSnapshotNow(pageId);
-    }
     try {
-        ws.send(JSON.stringify({ type: 'force-save', payload: { pageId } }));
+        if (isE2eeSync) {
+            if (includeSnapshot) {
+                await flushE2eeState();
+            }
+            ws.send(JSON.stringify({ type: 'force-save-e2ee', payload: { pageId } }));
+        } else {
+            if (includeSnapshot) {
+                flushPendingUpdates();
+                sendPageSnapshotNow(pageId);
+            }
+            ws.send(JSON.stringify({ type: 'force-save', payload: { pageId } }));
+        }
     } catch (_) {
         return null;
     }
+
     if (!waitForAck) return { ok: true };
     return new Promise((resolve) => {
         const timer = setTimeout(() => {
@@ -1732,7 +1747,26 @@ async function handleInitE2EE(data) {
             console.warn('[E2EE] stale init-e2ee ignored:', incomingPageId, '!=', String(currentPageId));
             return;
         }
-        if (data.encryptedState) {
+
+        const parseIsoMs = (v) => {
+            if (!v) return null;
+            let s = String(v);
+            if (!s.includes('T') && s.includes(' ')) s = s.replace(' ', 'T');
+            const t = Date.parse(s);
+            return Number.isFinite(t) ? t : null;
+        };
+
+        const localUpdatedMs = parseIsoMs(state.currentPageUpdatedAt);
+        const serverE2eeUpdatedMs = parseIsoMs(data?.e2eeStateUpdatedAt);
+
+        const shouldTrustServerSnapshot = (() => {
+            if (!data?.encryptedState) return false;
+            if (!localUpdatedMs || !serverE2eeUpdatedMs) return true;
+            // 서버 스냅샷이 로컬(REST)보다 최신이거나 거의 비슷하면 신뢰
+            return serverE2eeUpdatedMs + 1000 >= localUpdatedMs;
+        })();
+
+        if (data.encryptedState && shouldTrustServerSnapshot) {
             const storageKey = window.cryptoManager.getStorageKey();
             if (!storageKey) {
                 console.warn('[E2EE] 저장소 키 없음 — init 상태 복호화 불가');
@@ -1742,6 +1776,8 @@ async function handleInitE2EE(data) {
                 Y.applyUpdate(ydoc, stateUpdate, 'remote');
                 console.log('[E2EE] 서버 스냅샷 복호화 및 적용 완료');
             }
+        } else if (data.encryptedState && !shouldTrustServerSnapshot) {
+            console.warn('[E2EE] 서버 스냅샷이 stale로 판단되어 무시함 (data.e2eeStateUpdatedAt < REST updatedAt)');
         }
 
         // 서버 스냅샷이 없거나 fragment가 비어있으면 현재 에디터 HTML로 시드

@@ -721,8 +721,25 @@ module.exports = (dependencies) => {
         const id = req.params.id;
         const userId = req.user.id;
         try {
-            const existing = await loadPageForMutationOr404(userId, id, res);
-            if (!existing) return;
+            // E2EE(저장소 암호화) 페이지인 경우 REST를 통한 콘텐츠(encryptedContent) 업데이트를 차단
+            // - E2EE 콘텐츠는 반드시 WebSocket(yjs-state-e2ee)을 통해서만 저장해야 함
+            // - REST로 저장하면 e2ee_yjs_state와 엇갈려 다음 로드 시 stale snapshot 롤백이 발생함
+            const [pageRows] = await pool.execute(
+                'SELECT p.user_id, p.storage_id, p.is_encrypted, s.is_encrypted AS storage_is_encrypted, s.salt AS storage_salt FROM pages p JOIN storages s ON p.storage_id = s.id WHERE p.id = ?',
+                [id]
+            );
+
+            if (pageRows.length === 0) {
+                return res.status(404).json({ error: "Page not found" });
+            }
+
+            const existing = pageRows[0];
+            const hasEncryptedContent = Object.prototype.hasOwnProperty.call(req.body, "encryptedContent");
+
+            // 저장소 레벨 E2EE인 경우(storage.is_encrypted=1 AND storage.salt가 없음)
+            if (existing.storage_is_encrypted && !existing.storage_salt && hasEncryptedContent) {
+                 return res.status(403).json({ error: "E2EE content must be saved via WebSocket to prevent data loss" });
+            }
 
             const permission = await storagesRepo.getPermission(userId, existing.storage_id);
             if (!permission || !['EDIT', 'ADMIN'].includes(permission))

@@ -299,6 +299,7 @@ export async function loadPage(id) {
     try {
         const page = await api.get("/api/pages/" + encodeURIComponent(id));
         state.currentPageId = page.id;
+        state.currentPageUpdatedAt = page.updatedAt || null;
 
         // 부모 확장
         let curr = page.parentId;
@@ -401,6 +402,7 @@ export async function saveCurrentPage() {
                     state.pages = state.pages.map(p =>
                         p.id === state.currentPageId ? { ...p, title, updatedAt: result.updatedAt } : p
                     );
+                    state.currentPageUpdatedAt = result.updatedAt;
                     renderPageList();
                 }
                 return true;
@@ -413,10 +415,44 @@ export async function saveCurrentPage() {
         }
     }
 
-    let content = sanitizeEditorHtml(state.editor.getHTML());
-
     try {
         const storageKey = window.cryptoManager.getStorageKey();
+        // ============================================================
+        // 저장소 레벨 E2EE 페이지 저장 (중요)
+        // ------------------------------------------------------------
+        // 문제(데이터 유실): E2EE 페이지를 REST로 저장하면 encrypted_content만 갱신되고
+        //                 협업 상태(e2ee_yjs_state)가 갱신되지 않아, 이후 init-e2ee에서
+        //                 stale snapshot이 적용되며 최신 내용이 롤백될 수 있음
+        // 해결: 콘텐츠는 반드시 WS(yjs-state-e2ee + force-save-e2ee) 경로로 저장
+        //       REST는 제목/아이콘 같은 평문 메타 업데이트에만 사용
+        // ============================================================
+        if (state.currentStorageIsEncrypted) {
+            if (!storageKey) {
+                alert("암호화 키가 없어 저장할 수 없습니다. 저장소를 다시 열어주세요.");
+                return false;
+            }
+
+            // 메타(제목) 업데이트 — content/encryptedContent는 보내지 않음
+            try {
+                await api.put("/api/pages/" + encodeURIComponent(state.currentPageId), { title });
+            } catch (e) {
+                console.error("Save meta error:", e);
+            }
+
+            // 콘텐츠 스냅샷을 WS로 전송 + 서버 디바운스 플러시
+            const result = await requestImmediateSave(state.currentPageId, { includeSnapshot: true, waitForAck: true });
+            const updatedAt = result?.updatedAt || new Date().toISOString();
+
+            state.pages = state.pages.map(p =>
+                p.id === state.currentPageId ? { ...p, title, updatedAt } : p
+            );
+            state.currentPageUpdatedAt = updatedAt;
+            renderPageList();
+            return true;
+        }
+
+        // 일반/비E2EE 저장 (기존 로직)
+        let content = sanitizeEditorHtml(state.editor.getHTML());
         let body = {
             title,
             content,
@@ -424,10 +460,10 @@ export async function saveCurrentPage() {
             storageId: state.currentStorageId
         };
 
-        // 저장소 레벨 암호화 강제 적용
-        if (state.currentStorageIsEncrypted) {
+        if (state.currentPageIsEncrypted) {
+            // 이미 암호화된 페이지인데 키가 없다면? (수정 불가 상태여야 함)
             if (!storageKey) {
-                alert("암호화 키가 없어 저장할 수 없습니다. 저장소를 다시 열어주세요.");
+                alert("암호화 키가 없어 저장할 수 없습니다.");
                 return false;
             }
             // 암호화 수행
@@ -435,18 +471,12 @@ export async function saveCurrentPage() {
             body.isEncrypted = true;
             body.encryptedContent = encryptedContent;
             body.content = ""; // 서버에는 평문 전송 안 함 (빈 문자열)
-        } else if (storageKey) {
-            // (참고) 일반 저장소인데 키가 있는 경우는 없어야 함 (selectStorage에서 clear하므로)
-            // 혹시라도 있다면 암호화해서 보낼 수도 있겠지만, 여기서는 저장소 속성을 따름
-        } else if (state.currentPageIsEncrypted) {
-            // 이미 암호화된 페이지인데 키가 없다면? (수정 불가 상태여야 함)
-            alert("암호화 키가 없어 저장할 수 없습니다.");
-            return false;
         }
 
         const page = await api.put("/api/pages/" + encodeURIComponent(state.currentPageId), body);
 
         state.pages = state.pages.map(p => p.id === page.id ? { ...p, title, updatedAt: page.updatedAt } : p);
+        state.currentPageUpdatedAt = page.updatedAt || null;
         renderPageList();
         return true;
     } catch (error) {

@@ -1582,9 +1582,27 @@ async function handleSubscribePageE2EE(ws, payload, pool, pageSqlPolicy) {
             } catch (_) {}
         }
 
+        const toIsoMaybe = (v) => {
+            if (!v) return null;
+            try {
+                if (v instanceof Date) return v.toISOString();
+                let s = String(v);
+                if (!s.includes('T') && s.includes(' ')) s = s.replace(' ', 'T');
+                return s.endsWith('Z') ? s : (s + 'Z');
+            } catch (_) {
+                return null;
+            }
+        };
+
         ws.send(JSON.stringify({
             event: 'init-e2ee',
-            data: { pageId: String(pageId), encryptedState, userId, username: ws.username, color, permission }
+            data: {
+                pageId: String(pageId),
+                encryptedState,
+                e2eeStateUpdatedAt: toIsoMaybe(page.e2ee_yjs_state_updated_at),
+                pageUpdatedAt: toIsoMaybe(page.updated_at),
+                userId, username: ws.username, color, permission
+            }
         }));
         if (encryptedState) {
             e2eeLastSnapshotAt.set(String(pageId), Date.now());
@@ -1871,6 +1889,12 @@ async function handleForceSaveE2EE(ws, payload, pool, pageSqlPolicy) {
     if (!['EDIT', 'ADMIN'].includes(access.permission)) return;
 
     await flushPendingE2eeSaveForPage(pool, pageId);
+
+    // ACK 전송 (클라이언트 UI 갱신용)
+    ws.send(JSON.stringify({
+        event: 'page-saved',
+        data: { pageId: String(pageId), updatedAt: new Date().toISOString() }
+    }));
 }
 
 /**
