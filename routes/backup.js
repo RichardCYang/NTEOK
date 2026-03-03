@@ -684,6 +684,8 @@ function ensureUniqueDestPath(targetDir, filename) {
             isEncrypted: pageData.isEncrypted,
             encryptionSalt: pageData.encryptionSalt || null,
             encryptedContent: pageData.encryptedContent || null,
+            // NOTE: 저장소(E2EE) 암호화 여부 및 복호화 파라미터는 workspace JSON에 저장됨
+            // (페이지 단위로 중복 저장하지 않음)
             shareAllowed: pageData.shareAllowed || false,
             coverImage: pageData.coverImage || null,
             coverPosition: pageData.coverPosition || 50,
@@ -967,7 +969,16 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
                     name: storage.name,
                     sortOrder: storage.sort_order,
                     createdAt: toIsoString(storage.created_at),
-                    updatedAt: toIsoString(storage.updated_at)
+                    updatedAt: toIsoString(storage.updated_at),
+                    // 데이터 유실 방지(핵심): 암호화 저장소(E2EE)의 복호화 파라미터 보존
+                    // - is_encrypted/encryption_salt/encryption_check가 백업에 없으면,
+                    //   import 후 저장소가 평문으로 복원되어 클라이언트가 키를 재생성할 수 없고
+                    //   서버도 E2EE(WebSocket) 구독을 거부하여( storage_is_encrypted=1 조건 불만족 )
+                    //   사용자 입장에서는 암호화된 페이지들이 영구히 잠김 상태가 됨
+                    // - 키(비밀번호) 자체를 저장하는 것이 아니라, 키 파생/검증에 필요한 파라미터만 포함
+                    isEncrypted: storage.is_encrypted ? true : false,
+                    encryptionSalt: storage.encryption_salt || null,
+                    encryptionCheck: storage.encryption_check || null
                 };
 
                 archive.append(
@@ -1052,7 +1063,7 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
 
             // 백업 정보 파일 추가
             const backupInfo = {
-                version: '2.0 (storages based)',
+                version: '2.1 (storages based, preserves encryption metadata)',
                 exportDate: new Date().toISOString(),
                 storagesCount: storages.length,
                 pagesCount: pages.length,
@@ -1092,7 +1103,31 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
             connection = await pool.getConnection();
             await connection.beginTransaction();
 
+            // 데이터 유실 방지(핵심): 암호화 저장소(E2EE) 복원 파라미터 정규화/검증
+            function normalizeBoolean(v) {
+                if (v === true || v === false) return v;
+                if (v === 1 || v === 0) return Boolean(v);
+                if (typeof v === 'string') {
+                    const s = v.trim().toLowerCase();
+                    if (s === 'true' || s === '1') return true;
+                    if (s === 'false' || s === '0') return false;
+                }
+                return null;
+            }
+
+            function normalizeMaybeBase64(v, maxLen = 4096) {
+                if (v === null || v === undefined) return null;
+                if (typeof v !== 'string') return null;
+                const s = v.trim();
+                if (!s) return null;
+                if (s.length > maxLen) return null;
+                // base64(표준/URL-safe 혼재 가능) 최소 검증
+                if (!/^[A-Za-z0-9+/=_-]+$/.test(s)) return null;
+                return s;
+            }
+
             const workspaceMap = new Map(); // 폴더명 -> 저장소 ID
+            const storageEncryptionMetaById = new Map(); // storageId -> { isEncrypted, encryptionSalt, encryptionCheck }
             const oldToNewPageMap = new Map(); // 원본 ID -> 새 정보 { newId, storageId }
             const importedPages = []; // 복원된 페이지 목록 (2차 패스용)
             const imgFilenameMap = new Map();       // old -> new
@@ -1111,18 +1146,45 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
                 const metadata = safeJsonParse(entry.data.toString('utf8'), entry.entryName);
                 if (!metadata) continue;
 
+                // 백업 v2.1+: 암호화 저장소(E2EE) 복호화 파라미터 포함
+                // (구 버전 백업은 값이 없을 수 있으므로 기본은 비암호화)
+                const isEncrypted = normalizeBoolean(metadata.isEncrypted ?? metadata.is_encrypted) === true;
+                const encryptionSalt = normalizeMaybeBase64(metadata.encryptionSalt ?? metadata.encryption_salt);
+                const encryptionCheck = normalizeMaybeBase64(metadata.encryptionCheck ?? metadata.encryption_check, 8192);
+
+                // 백업에 isEncrypted=true로 표시되어 있다면, 필수 파라미터가 없을 경우 import를 중단
+                // (그대로 진행하면 암호화 페이지가 영구히 잠겨 사용자 데이터가 사실상 유실됨)
+                if (isEncrypted && (!encryptionSalt || !encryptionCheck)) {
+                    throw new Error('백업에 암호화 저장소 정보가 불완전합니다. (encryptionSalt/encryptionCheck 누락)\n새 버전에서 다시 내보내기 후 가져오기를 진행해주세요.');
+                }
+
                 const nowStr = formatDateForDb(new Date());
                 const storageId = 'stg-' + Date.now() + '-' + crypto.randomBytes(4).toString('hex');
                 const safeStorageName = normalizeStorageName(metadata?.name);
 
                 await connection.execute(
-                    `INSERT INTO storages (id, user_id, name, sort_order, created_at, updated_at)
-                     VALUES (?, ?, ?, ?, ?, ?)`,
-                    [storageId, userId, safeStorageName, metadata.sortOrder || 0, nowStr, nowStr]
+                    `INSERT INTO storages (id, user_id, name, sort_order, created_at, updated_at, is_encrypted, encryption_salt, encryption_check)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                    [
+                        storageId,
+                        userId,
+                        safeStorageName,
+                        metadata.sortOrder || 0,
+                        nowStr,
+                        nowStr,
+                        isEncrypted ? 1 : 0,
+                        isEncrypted ? encryptionSalt : null,
+                        isEncrypted ? encryptionCheck : null
+                    ]
                 );
 
                 const folderName = entry.entryName.split('/').pop().replace('.json', '');
                 workspaceMap.set(folderName, storageId);
+                storageEncryptionMetaById.set(storageId, {
+                    isEncrypted,
+                    encryptionSalt: isEncrypted ? encryptionSalt : null,
+                    encryptionCheck: isEncrypted ? encryptionCheck : null
+                });
             }
 
             if (workspaceMap.size === 0) {
@@ -1136,12 +1198,18 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
                 for (const f of folders) {
                     const storageId = 'stg-' + Date.now() + '-' + crypto.randomBytes(4).toString('hex');
                     const safeStorageName = normalizeStorageName(f);
-                    await connection.execute(`INSERT INTO storages (id, user_id, name, created_at, updated_at) VALUES (?, ?, ?, NOW(), NOW())`, [storageId, userId, safeStorageName]);
+                    await connection.execute(
+                        `INSERT INTO storages (id, user_id, name, created_at, updated_at, is_encrypted, encryption_salt, encryption_check)
+                         VALUES (?, ?, ?, NOW(), NOW(), 0, NULL, NULL)`,
+                        [storageId, userId, safeStorageName]
+                    );
                     workspaceMap.set(f, storageId);
+                    storageEncryptionMetaById.set(storageId, { isEncrypted: false, encryptionSalt: null, encryptionCheck: null });
                 }
             }
 
             // 2. 페이지 복원 (1차 패스: parent_id=NULL로 생성)
+            let detectedE2eePagesMissingStorageMeta = false;
             for (const entry of zipEntries) {
                 if (entry.isDirectory || !entry.entryName.startsWith('pages/') || !entry.entryName.endsWith('.html')) continue;
 
@@ -1181,6 +1249,15 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
                 const safeEncryptionSalt = pageData.isEncrypted ? (pageData.encryptionSalt || null) : null;
                 const safeEncryptedContent = pageData.isEncrypted ? (pageData.encryptedContent || null) : null;
 
+                // E2EE(저장소 레벨) 암호화 페이지는 encryptionSalt가 NULL인 것이 정상이며,
+                // 이 경우 저장소 is_encrypted=1 + encryption_salt/encryption_check가 반드시 필요함
+                if (pageData.isEncrypted && !safeEncryptionSalt) {
+                    const stMeta = storageEncryptionMetaById.get(storageId);
+                    if (!stMeta?.isEncrypted || !stMeta.encryptionSalt || !stMeta.encryptionCheck) {
+                        detectedE2eePagesMissingStorageMeta = true;
+                    }
+                }
+
                 await connection.execute(
                     `INSERT INTO pages (id, user_id, storage_id, title, content, encryption_salt, encrypted_content,
                                        sort_order, created_at, updated_at, is_encrypted, share_allowed, icon, cover_image, cover_position, parent_id)
@@ -1207,6 +1284,13 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
                 }
 
                 totalPages++;
+            }
+
+            // 백업이 오래된 버전이라 암호화 저장소 파라미터가 누락된 경우,
+            // 진행하면 가져오기 성공처럼 보이지만 실제로는 암호화 페이지가 영구 잠김 상태가 됨
+            // 따라서 트랜잭션을 중단하여 사용자 데이터 유실(가시성 상실)을 예방
+            if (detectedE2eePagesMissingStorageMeta) {
+                throw new Error('이 백업은 암호화 저장소(E2EE) 복원에 필요한 정보가 포함되어 있지 않습니다.\n(스토리지 encryptionSalt/encryptionCheck 누락)\n새 버전에서 다시 내보내기 후 가져오기를 진행해주세요.');
             }
 
             // 2-1. 페이지 계층 복원 (2차 패스: parent_id 업데이트)
