@@ -338,6 +338,9 @@ function handleWebSocketMessage(message) {
         case 'yjs-update-e2ee':
             handleYjsUpdateE2EEEvent(data).catch(e => console.error('[E2EE] update 처리 오류:', e));
             break;
+        case 'request-yjs-state-e2ee':
+            handleRequestYjsStateE2EE(data).catch(e => console.error('[E2EE] snapshot 요청 처리 오류:', e));
+            break;
         case 'user-joined':
             handleUserJoined(data);
             break;
@@ -1786,5 +1789,24 @@ async function handleYjsUpdateE2EEEvent(data) {
         Y.applyUpdate(ydoc, stateUpdate, 'remote');
     } catch (error) {
         console.error('[E2EE] 업데이트 복호화/적용 오류:', error);
+    }
+}
+
+/**
+ * 데이터 유실 방지(핵심): 서버가 E2EE 스냅샷(전체 상태) 업로드를 요청함
+ * - 서버가 증분 업데이트를 받았으나 일정 시간 내 스냅샷이 도착하지 않을 때 발생
+ */
+async function handleRequestYjsStateE2EE(data) {
+    const pageId = data?.pageId ? String(data.pageId) : null;
+    if (!pageId || !isE2eeSync || String(currentPageId) !== pageId) return;
+
+    console.log('[E2EE] 서버로부터 스냅샷 업로드 요청 수신');
+    try {
+        // 1. 최신 스냅샷 생성 및 전송
+        await sendYjsStateE2EE(pageId);
+        // 2. 서버 측 디바운스(DB write) 즉시 플러시 요청 (백스톱 완성)
+        sendForceSaveE2ee(pageId);
+    } catch (e) {
+        console.error('[E2EE] 스냅샷 요청 응답 실패:', e);
     }
 }

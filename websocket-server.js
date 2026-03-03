@@ -124,6 +124,51 @@ const WS_RATE_LIMIT_MAX_CONNECTIONS = 10;
 const WS_MAX_MESSAGE_BYTES = 2 * 1024 * 1024;
 const WS_MAX_AWARENESS_UPDATE_BYTES = 32 * 1024;
 
+// ==================== E2EE Snapshot Request (Data Loss Prevention) ====================
+// 문제:
+// - E2EE(yjs-update-e2ee)는 서버가 복호화할 수 없어 증분 업데이트를 DB에 반영할 수 없음
+// - 따라서 DB 영속화는 yjs-state-e2ee(전체 스냅샷) 수신에 전적으로 의존함
+// - (예) A가 마지막 편집 후 탭 종료/크래시 → 스냅샷 미전송,
+//       B는 변경을 원격으로만 수신(로컬 편집 없음) → 스냅샷 전송 트리거가 없어
+//       서버 재시작/크래시 시 마지막 변경분이 유실될 수 있음
+// 해결:
+// - 서버가 E2EE 증분 업데이트를 수신하면, 일정 시간 내 스냅샷이 도착하지 않을 경우
+//   현재 접속 중인 EDIT/ADMIN 클라이언트들에게 스냅샷 업로드를 요청
+const E2EE_SNAPSHOT_EXPECT_MS = (() => {
+    const n = Number.parseInt(process.env.E2EE_SNAPSHOT_EXPECT_MS || '1500', 10);
+    if (!Number.isFinite(n)) return 1500;
+    return Math.max(300, Math.min(10_000, n));
+})();
+
+const e2eeLastUpdateAt = new Map();        // pageId -> ms
+const e2eeLastSnapshotAt = new Map();      // pageId -> ms
+const e2eeSnapshotRequestTimers = new Map(); // pageId -> timeout
+
+function clearE2eeSnapshotRequestTimer(pageId) {
+    const pid = String(pageId || '');
+    const t = e2eeSnapshotRequestTimers.get(pid);
+    if (t) {
+        try { clearTimeout(t); } catch (_) {}
+        e2eeSnapshotRequestTimers.delete(pid);
+    }
+}
+
+function wsRequestE2eeSnapshot(pageId) {
+    const pid = String(pageId || '');
+    if (!pid) return;
+    const conns = wsConnections.pages.get(pid);
+    if (!conns || conns.size === 0) return;
+    for (const c of Array.from(conns)) {
+        try {
+            if (!c || !c.isE2ee) continue;
+            if (!['EDIT','ADMIN'].includes(c.permission)) continue;
+            if (c.ws && c.ws.readyState === WebSocket.OPEN) {
+                c.ws.send(JSON.stringify({ event: 'request-yjs-state-e2ee', data: { pageId: pid } }));
+            }
+        } catch (_) {}
+    }
+}
+
 // ==================== E2EE Leader Election & Persistence Helpers ====================
 const E2EE_LEADER_IDLE_HANDOFF_MS = (() => {
     const n = Number.parseInt(process.env.E2EE_LEADER_IDLE_HANDOFF_MS || '2000', 10);
@@ -1428,6 +1473,11 @@ function handleUnsubscribePage(ws, payload, pool, sanitizeHtmlContent) {
     if (conns.size === 0) {
         wsConnections.pages.delete(pid);
         try { e2eeSnapshotLeaders.delete(pid); } catch (_) {}
+        // ===== 데이터 유실 방지: 구독 종료 시 타이머/상태 정리 =====
+        clearE2eeSnapshotRequestTimer(pid);
+        e2eeLastUpdateAt.delete(pid);
+        e2eeLastSnapshotAt.delete(pid);
+
         const doc = yjsDocuments.get(pid);
         if (doc) {
             const epoch = getYjsSaveEpoch(pid);
@@ -1536,6 +1586,9 @@ async function handleSubscribePageE2EE(ws, payload, pool, pageSqlPolicy) {
             event: 'init-e2ee',
             data: { pageId: String(pageId), encryptedState, userId, username: ws.username, color, permission }
         }));
+        if (encryptedState) {
+            e2eeLastSnapshotAt.set(String(pageId), Date.now());
+        }
 
         // 리더 선출 시도 (스냅샷 저장 담당)
         // - 편집 권한이 있는 사용자만 리더가 될 수 있음
@@ -1584,6 +1637,23 @@ async function handleYjsUpdateE2EE(ws, payload, pool, pageSqlPolicy) {
 
         // 암호문 중계 (내용 검증 불가/불필요 — 서버는 키 없음)
         wsBroadcastToPage(pageId, 'yjs-update-e2ee', { update }, ws.userId);
+
+        // ===== 데이터 유실 방지(핵심): 스냅샷 요청 백스톱 =====
+        const pid = String(pageId);
+        const now = Date.now();
+        e2eeLastUpdateAt.set(pid, now);
+
+        if (!e2eeSnapshotRequestTimers.has(pid)) {
+            const timer = setTimeout(() => {
+                try {
+                    e2eeSnapshotRequestTimers.delete(pid);
+                    const lu = e2eeLastUpdateAt.get(pid) || 0;
+                    const ls = e2eeLastSnapshotAt.get(pid) || 0;
+                    if (lu > ls) wsRequestE2eeSnapshot(pid);
+                } catch (_) {}
+            }, E2EE_SNAPSHOT_EXPECT_MS);
+            e2eeSnapshotRequestTimers.set(pid, timer);
+        }
     } catch (e) {}
 }
 
@@ -1623,6 +1693,11 @@ async function handleYjsStateE2EE(ws, payload, pool, pageSqlPolicy) {
 
         // 메모리 캐시 업데이트
         yjsE2EEStates.set(String(pageId), { encryptedState, storedAt: Date.now() });
+
+        // ===== 데이터 유실 방지: 스냅샷 수신 시 타이머/상태 갱신 =====
+        const pid = String(pageId);
+        e2eeLastSnapshotAt.set(pid, Date.now());
+        clearE2eeSnapshotRequestTimer(pid);
 
         // 리더 활동 갱신
         touchE2eeLeader(pageId, myConn);
@@ -2199,6 +2274,11 @@ function cleanupWebSocketConnection(ws, pool, sanitizeHtmlContent) {
         if (conns.size === 0) {
             wsConnections.pages.delete(pid);
             try { e2eeSnapshotLeaders.delete(pid); } catch (_) {}
+            // ===== 데이터 유실 방지: 구독 종료 시 타이머/상태 정리 =====
+            clearE2eeSnapshotRequestTimer(pid);
+            e2eeLastUpdateAt.delete(pid);
+            e2eeLastSnapshotAt.delete(pid);
+
             const doc = yjsDocuments.get(pid);
             if (doc) {
                 const epoch = getYjsSaveEpoch(pid);
