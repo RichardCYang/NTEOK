@@ -342,6 +342,7 @@ module.exports = ({ pool, pageSqlPolicy }) => {
             const vis = pageSqlPolicy.andVisible({ alias: "p", viewerUserId: userId });
             const [rows] = await pool.execute(
                 `SELECT p.id, p.title, p.content, p.encryption_salt, p.encrypted_content,
+                        p.e2ee_yjs_state, p.e2ee_yjs_state_updated_at,
                         p.created_at, p.updated_at, p.parent_id, p.sort_order, p.storage_id,
                         p.is_encrypted, p.share_allowed, p.icon, p.cover_image, p.cover_position
                  FROM pages p

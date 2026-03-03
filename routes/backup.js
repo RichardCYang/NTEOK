@@ -246,6 +246,7 @@ module.exports = (dependencies) => {
     const {
 		pool,
         backupRepo,
+		flushAllPendingE2eeSaves,
         authMiddleware,
         toIsoString,
         sanitizeInput,
@@ -409,7 +410,7 @@ module.exports = (dependencies) => {
 		// 큰 엔트리(pages/, images/)를 메모리 대신 디스크에 스풀하기 위한 임시 디렉터리
 		const extractDir = createImportTempDir();
 
-		const allowedTopLevel = ['backup-info.json', 'file-refs.json', 'workspaces/', 'collections/', 'pages/', 'images/', 'paperclip/'];
+		const allowedTopLevel = ['backup-info.json', 'file-refs.json', 'workspaces/', 'collections/', 'pages/', 'images/', 'paperclip/', 'e2ee/'];
 
 		let entryCount = 0;
 		let totalHeaderUncompressed = 0;
@@ -487,7 +488,7 @@ module.exports = (dependencies) => {
 
 						const perEntryLimitBytes = Math.min(BACKUP_IMPORT_MAX_ENTRY_UNCOMPRESSED, MAX_ENTRY_UNCOMPRESSED_BYTES);
 						// pages/, images/ 엔트리 또는 큰 파일은 디스크로 스풀 (메모리 DoS 방지)
-						const forceToDisk = entryName.startsWith('pages/') || entryName.startsWith('images/');
+						const forceToDisk = entryName.startsWith('pages/') || entryName.startsWith('images/') || entryName.startsWith('e2ee/');
 						const canBuffer = !forceToDisk && Number(entry.uncompressedSize || 0) <= MAX_ENTRY_BUFFER_BYTES;
 
 						const stream = await openZipReadStream(zipfile, entry);
@@ -934,6 +935,11 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
         const userId = req.user.id;
 
         try {
+            // [데이터 유실 방지] 내보내기 직전, 메모리에 머물러 있는 E2EE 실시간 협업 상태(Yjs)를 DB로 강제 플러시
+            // - E2EE 저장 작업은 디바운스(Debounce) 방식으로 지연 처리되므로,
+            //   플러시하지 않으면 방금 편집한 내용이 백업에 누락될 수 있음
+            await flushAllPendingE2eeSaves(pool);
+
 			// DB 접근은 repo에서만 수행 (접근제어 SQL 정책 중앙화 포함)
 			const { storages, pages, publishes } = await backupRepo.getExportRows(userId);
 
@@ -1050,6 +1056,7 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
             }
 
             // 페이지 추가
+            let e2eeStatesCount = 0;
             for (const page of pages) {
                 const storage = storageMap.get(page.storage_id);
                 if (!storage) continue;
@@ -1071,6 +1078,19 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
 
                 const html = convertPageToHTML(pageData);
                 archive.append(html, { name: `pages/${storageFolderName}/${pageFileName}.html` });
+
+                // [데이터 유실 방지] E2EE(저장소 레벨 암호화) 페이지의 실시간 상태(Yjs 바이너리) 추가
+                // - E2EE 페이지는 content/encrypted_content 필드보다 e2ee_yjs_state 가 더 최신이자 원본(Source of Truth)임
+                // - 이를 누락하면 복구 시 페이지가 과거 시점(또는 빈 페이지)으로 되돌아가는 치명적 유실 발생
+                if (page.e2ee_yjs_state) {
+                    try {
+                        const buf = Buffer.isBuffer(page.e2ee_yjs_state)
+                            ? page.e2ee_yjs_state
+                            : Buffer.from(String(page.e2ee_yjs_state), 'utf8');
+                        archive.append(buf, { name: `e2ee/${page.id}.bin` });
+                        e2eeStatesCount++;
+                    } catch (_) {}
+                }
             }
 
             // 이미지 추가
@@ -1121,17 +1141,18 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
 
             // 백업 정보 파일 추가
             const backupInfo = {
-                version: '2.1 (storages based, preserves encryption metadata)',
+                version: '2.2 (E2EE yjs_state binary support)',
                 exportDate: new Date().toISOString(),
                 storagesCount: storages.length,
                 pagesCount: pages.length,
+                e2eeStatesCount,
                 imagesCount: imagesToInclude.size,
                 paperclipsCount: paperclipsToInclude.size
             };
             archive.append(JSON.stringify(backupInfo, null, 2), { name: 'backup-info.json' });
 
             await archive.finalize();
-            console.log(`[백업 내보내기] 사용자 ${userId} 완료`);
+            console.log(`[백업 내보내기] 사용자 ${userId} 완료 (E2EE 상태: ${e2eeStatesCount})`);
         } catch (error) {
             logError('GET /api/backup/export', error);
             if (!res.headersSent) res.status(500).json({ error: '백업 내보내기 실패' });
@@ -1157,6 +1178,9 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
             const importResult = await readBackupZipEntriesForImport(uploadedFile.path);
             const zipEntries = importResult.zipEntries;
             extractDir = importResult.extractDir;
+
+			// 빠른 조회를 위한 엔트리 인덱스
+			const zipEntryByName = new Map((zipEntries || []).map(e => [e.entryName, e]));
 
             connection = await pool.getConnection();
             await connection.beginTransaction();
@@ -1194,6 +1218,18 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
             const coverImageFilenames = new Set(); // cover_image로 쓰인 파일명(복원 시 covers/로 분리)
             let totalPages = 0;
             let totalImages = 0;
+
+			// E2EE 상태 파일 크기 상한 (DoS/메모리 보호)
+			// - WebSocket 서버의 WS_MAX_YJS_STATE_BYTES와 동일한 환경변수명을 우선 사용
+			const MAX_E2EE_STATE_BYTES = (() => {
+				const v = Number.parseInt(
+					process.env.WS_MAX_YJS_STATE_BYTES || process.env.BACKUP_IMPORT_MAX_E2EE_STATE_BYTES || String(1024 * 1024),
+					10
+				);
+				if (!Number.isFinite(v)) return 1024 * 1024;
+				// 128KB~32MB로 클램핑
+				return Math.max(128 * 1024, Math.min(32 * 1024 * 1024, v));
+			})();
 
             // 1. 저장소(구 컬렉션) 생성
             // (생략: 기존 코드와 동일)
@@ -1307,10 +1343,39 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
                 const safeEncryptionSalt = pageData.isEncrypted ? (pageData.encryptionSalt || null) : null;
                 const safeEncryptedContent = pageData.isEncrypted ? (pageData.encryptedContent || null) : null;
 
+				// ===== E2EE 상태 파일 복원 (중요: E2EE 페이지의 실제 소스 오브 트루스) =====
+				const stMeta = storageEncryptionMetaById.get(storageId);
+				const isStorageE2ee = Boolean(stMeta?.isEncrypted);
+				let e2eeStateBuf = null;
+				if (isStorageE2ee && pageData.isEncrypted) {
+					const e2eeEntryName = `e2ee/${oldId}.bin`;
+					const e2eeEntry = zipEntryByName.get(e2eeEntryName);
+					if (e2eeEntry) {
+						try {
+							const buf = e2eeEntry.data
+								? e2eeEntry.data
+								: fs.readFileSync(e2eeEntry.tempFilePath);
+							if (Buffer.isBuffer(buf) && buf.length > 0 && buf.length <= MAX_E2EE_STATE_BYTES) {
+								e2eeStateBuf = buf;
+							} else if (Buffer.isBuffer(buf) && buf.length > MAX_E2EE_STATE_BYTES) {
+								throw new Error(`E2EE 상태 파일이 너무 큽니다: ${e2eeEntryName}`);
+							}
+						} catch (e) {
+							throw new Error(`E2EE 상태 파일을 읽을 수 없습니다: ${e2eeEntryName} (${e?.message || e})`);
+						}
+					}
+				}
+
+				// 데이터 유실 방지(강제): E2EE 페이지는 (1) e2ee 상태 파일 또는 (2) encryptedContent(암호문 HTML)
+				// 둘 중 하나라도 있어야 복구가 가능 -> 둘 다 없으면 성공처럼 보이지만 사실상 빈 페이지로 복원되어
+				// 사용자 입장에서는 데이터가 유실된 것으로 인지
+				if (isStorageE2ee && pageData.isEncrypted && !e2eeStateBuf && !safeEncryptedContent) {
+					throw new Error('E2EE 페이지 복원 데이터가 불완전합니다. (e2ee state + encryptedContent 모두 누락)\n새 버전에서 다시 내보내기 후 가져오기를 진행해주세요.');
+				}
+
                 // E2EE(저장소 레벨) 암호화 페이지는 encryptionSalt가 NULL인 것이 정상이며,
                 // 이 경우 저장소 is_encrypted=1 + encryption_salt/encryption_check가 반드시 필요함
                 if (pageData.isEncrypted && !safeEncryptionSalt) {
-                    const stMeta = storageEncryptionMetaById.get(storageId);
                     if (!stMeta?.isEncrypted || !stMeta.encryptionSalt || !stMeta.encryptionCheck) {
                         detectedE2eePagesMissingStorageMeta = true;
                     }
@@ -1318,9 +1383,11 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
 
                 await connection.execute(
                     `INSERT INTO pages (id, user_id, storage_id, title, content, encryption_salt, encrypted_content,
+                                       e2ee_yjs_state, e2ee_yjs_state_updated_at,
                                        sort_order, created_at, updated_at, is_encrypted, share_allowed, icon, cover_image, cover_position, parent_id)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
                     [pageId, userId, storageId, safeTitle, safeContent, safeEncryptionSalt, safeEncryptedContent,
+                     e2eeStateBuf, e2eeStateBuf ? nowStr : null,
                      pageData.sortOrder || 0, nowStr, nowStr, pageData.isEncrypted ? 1 : 0, pageData.shareAllowed ? 1 : 0, safeIcon, coverImage, pageData.coverPosition || 50]
                 );
 

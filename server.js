@@ -2559,6 +2559,7 @@ function installGracefulShutdownHandlers(httpServer, pool, sanitizeHtmlContent) 
             saveYjsDocToDatabase,
             enqueueYjsDbSave,
             flushAllPendingYjsDbSaves,
+            flushAllPendingE2eeSaves,
             yjsDocuments,
             authLimiter,
             totpLimiter,
