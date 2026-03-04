@@ -679,7 +679,14 @@ module.exports = (dependencies) => {
                     return res.status(400).json({ error: "encryptedContent 형식이 올바르지 않거나 허용되지 않는 문자가 포함되어 있습니다." });
             }
 
-            const content = isEncrypted ? '' : sanitizeHtmlContent(req.body.content || "<p></p>");
+            const hasContentField = Object.prototype.hasOwnProperty.call(req.body, 'content');
+            if (!isEncrypted && hasContentField && typeof req.body.content !== 'string') {
+                return res.status(400).json({ error: 'content must be a string' });
+            }
+
+            const content = isEncrypted
+                ? ''
+                : sanitizeHtmlContent(hasContentField ? (req.body.content || '<p></p>') : '<p></p>');
 
             // share_allowed 결정:
             // - 저장소 레벨 E2EE (encryptionSalt 없음): 저장소 참여자 모두 볼 수 있어야 함 → 1
@@ -822,10 +829,16 @@ module.exports = (dependencies) => {
                 encContent = null;
             }
 
+            // 데이터 유실 방지: content 필드가 있으면 반드시 문자열이어야 함
+            const hasContentField = Object.prototype.hasOwnProperty.call(req.body, 'content');
+            if (!isEncrypted && hasContentField && typeof req.body.content !== 'string') {
+                return res.status(400).json({ error: 'content must be a string' });
+            }
+
             const content = isEncrypted
                 ? ''
-                : (req.body.content !== undefined
-                    ? sanitizeHtmlContent(req.body.content)
+                : (hasContentField
+                    ? sanitizeHtmlContent(req.body.content || '<p></p>')
                     : (existing.content ?? '<p></p>'));
             const icon = req.body.icon !== undefined ? validateAndNormalizeIcon(req.body.icon) : (existing.icon ?? null);
             const hPadding = req.body.horizontalPadding !== undefined ? req.body.horizontalPadding : (existing.horizontal_padding ?? null);
