@@ -1065,26 +1065,70 @@ function extractFilesFromContent(content, pageOwnerUserId = null) {
     const files = [];
     if (!content) return files;
 
-    // paperclip 추출: data-src="/paperclip/<userId>/<filename>" (file-block)
-    const fileRegex = /<div[^>]*data-type=["']file-block["'][^>]*data-src=["']\/paperclip\/([^"']+)["'][^>]*>/gi;
+    // ============================================================
+    // 데이터 유실 방지(핵심): 파일 참조 추출 로직의 과도한 특이성 제거
+    //
+    // 기존 구현은 file-block 전용 마크업(<div data-type="file-block" data-src="/paperclip/...">)만
+    // 탐지했기 때문에,
+    //  - 과거/외부 백업 복원본
+    //  - 에디터 플러그인/템플릿 변화(예: <a href>, <span data-src>, <img data-src>, markdown 변환 등)
+    //  - 사용자가 HTML을 직접 수정한 경우
+    // 에서 /paperclip URL이 실제로 존재함에도 newFiles에서 누락될 수 있었음
+    //
+    // 그 결과:
+    //  - page_file_refs 레지스트리에서 참조가 제거되고
+    //  - orphan cleanup이 이 페이지(excludePageId)는 이미 참조를 제거했다고 가정하고
+    //    excludePageId를 검색에서 제외한 채 파일을 휴지통/삭제하여
+    //    실제 참조 중인 첨부가 영구 유실될 수 있음
+    //
+    // 해결:
+    //  - HTML 전체에서 /paperclip/<uid>/<filename>, /imgs/<uid>/<filename> 패턴을 폭넓게 스캔
+    //  - 기존 file-block 전용 패턴도 유지(호환)
+    //  - 중복 제거
+    // ============================================================
+
+    const html = String(content);
+    const seen = new Set();
+    const pushUnique = (type, ref, extra = null) => {
+        const k = `${type}:${ref}`;
+        if (seen.has(k)) return;
+        seen.add(k);
+        files.push(extra ? { type, ref, ...extra } : { type, ref });
+    };
+
+    // 1) paperclip: /paperclip/<userId>/<filename>
+    const paperclipUrlRegex = /\/paperclip\/(\d{1,12})\/([A-Za-z0-9][A-Za-z0-9._-]{0,199})(?=$|["'\s<>?)#&])/g;
     let match;
-    while ((match = fileRegex.exec(String(content))) !== null) {
+    while ((match = paperclipUrlRegex.exec(html)) !== null) {
+        const candidate = `${match[1]}/${match[2]}`;
+        const ref = (pageOwnerUserId !== null && pageOwnerUserId !== undefined)
+            ? normalizePaperclipRefForOwner(candidate, pageOwnerUserId)
+            : normalizePaperclipRef(candidate);
+        if (ref) pushUnique('paperclip', ref);
+    }
+
+    // 1-b) legacy file-block markup (기존 호환)
+    const fileBlockRegex = /<div[^>]*data-type=["']file-block["'][^>]*data-src=["']\/paperclip\/([^"']+)["'][^>]*>/gi;
+    while ((match = fileBlockRegex.exec(html)) !== null) {
         const ref = (pageOwnerUserId !== null && pageOwnerUserId !== undefined)
             ? normalizePaperclipRefForOwner(match[1], pageOwnerUserId)
             : normalizePaperclipRef(match[1]);
-        if (ref) files.push({ type: 'paperclip', ref });
+        if (ref) pushUnique('paperclip', ref);
     }
 
-    // imgs 추출: src="/imgs/<userId>/<filename>" (img tags, image-with-caption 등)
-    // - userId가 pageOwnerUserId와 일치하는 경우만 수집 (보안 규칙 준수)
-    const imgRegex = /src=["']\/imgs\/(\d+)\/([A-Za-z0-9._-]+)["']/gi;
-    while ((match = imgRegex.exec(String(content))) !== null) {
+    // 2) imgs: /imgs/<userId>/<filename>
+    const imgsUrlRegex = /\/imgs\/(\d{1,12})\/([A-Za-z0-9][A-Za-z0-9._-]{0,199})(?=$|["'\s<>?)#&])/g;
+    while ((match = imgsUrlRegex.exec(html)) !== null) {
         const ownerId = parseInt(match[1], 10);
         const filename = match[2];
+        if (!Number.isFinite(ownerId)) continue;
         if (pageOwnerUserId === null || pageOwnerUserId === undefined || ownerId === pageOwnerUserId) {
-            files.push({ type: 'imgs', ref: `${ownerId}/${filename}`, filename });
+            if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/.test(filename)) continue;
+            if (filename.includes('..') || /[\x00-\x1F\x7F]/.test(filename)) continue;
+            pushUnique('imgs', `${ownerId}/${filename}`, { filename });
         }
     }
+
     return files;
 }
 
@@ -1243,6 +1287,28 @@ async function cleanupOrphanedFiles(pool, filePaths, excludePageId, pageOwnerUse
                 await backfillPaperclipRefsFromPlaintextContent(pool, ownerId, filename);
                 continue;
             }
+
+            // 2.5차 방어(데이터 유실 방지): excludePageId 자체도 여전히 참조 중일 수 있음
+            // 삭제 직전 DB의 최신 content 스냅샷을 직접 확인해 fail-closed
+            try {
+                if (excludePageId) {
+                    const fileUrlPart = `/paperclip/${ownerId}/${filename}`;
+                    const likePattern = `%${escapeLikeForSql(fileUrlPart)}%`;
+                    const [selfRows] = await pool.execute(
+                        `SELECT COUNT(*) AS cnt
+                           FROM pages
+                          WHERE id = ?
+                            AND user_id = ?
+                            AND is_encrypted = 0
+                            AND content LIKE ? ESCAPE '\\\\'`,
+                        [excludePageId, ownerId, likePattern]
+                    );
+                    if (Number(selfRows?.[0]?.cnt || 0) > 0) {
+                        await backfillPaperclipRefsForPageIds(pool, [String(excludePageId)], ownerId, filename);
+                        continue;
+                    }
+                }
+            } catch (_) {}
 
             // 3차 방어: 활성 Yjs 문서(메모리)에서 참조 검사 + self-heal
             const activePages = findActiveYjsPagesReferencingPaperclip(ownerIdStr, filename, excludePageId);

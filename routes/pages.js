@@ -1692,6 +1692,28 @@ module.exports = (dependencies) => {
                     await backfillPaperclipRefsFromPlaintextContentForUser(userId, filename);
                 }
 
+                // 2.5차 방어: id(현재 페이지) 자체도 여전히 참조 중일 수 있음 (fail-closed)
+                // - DELETE 요청 당시에는 content가 변했다고 가정했으나,
+                // - 실제 DB 상의 content에 여전히 링크가 남아있다면 유실 방지를 위해 차단함
+                try {
+                    const fileUrlPart = `/paperclip/${userId}/${filename}`;
+                    const likePattern = `%${escapeLikeForSql(fileUrlPart)}%`;
+                    const [selfRows] = await pool.execute(
+                        `SELECT COUNT(*) AS cnt
+                           FROM pages
+                          WHERE id = ?
+                            AND user_id = ?
+                            AND is_encrypted = 0
+                            AND content LIKE ? ESCAPE '\\\\'`,
+                        [id, userId, likePattern]
+                    );
+                    if (Number(selfRows?.[0]?.cnt || 0) > 0) {
+                        blockedByPlaintextRefs = true;
+                        selfHealedRegistry = true;
+                        await backfillPaperclipRefsForPageIds([String(id)], userId, filename);
+                    }
+                } catch (_) {}
+
                 const activePages = findActiveYjsPagesReferencingPaperclip(userId, filename, id);
                 if (activePages.length > 0) {
                     blockedByActiveYjsRefs = true;
