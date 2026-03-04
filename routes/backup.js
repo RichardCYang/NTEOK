@@ -257,6 +257,17 @@ module.exports = (dependencies) => {
         logError
 	} = dependencies;
 
+    // WebSocket/Yjs (backup consistency): flush in-memory documents before exporting.
+    const wsConnections = dependencies.wsConnections;
+    const yjsDocuments = dependencies.yjsDocuments;
+    const saveYjsDocToDatabase = dependencies.saveYjsDocToDatabase;
+    const enqueueYjsDbSave = dependencies.enqueueYjsDbSave;
+    const flushAllPendingYjsDbSaves = dependencies.flushAllPendingYjsDbSaves;
+
+    function sleep(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
     /**
      * 보안: 백업 가져오기(import)에서 발행(공개 공유) 토큰을 그대로 복원하면 신뢰할 수 없는
      * 백업 파일(또는 변조된 백업)을 가져오는 순간 공격자가 알고 있는 토큰으로 페이지가 즉시 공개되어 내용이 유출될 수 있음
@@ -939,6 +950,81 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
             // - E2EE 저장 작업은 디바운스(Debounce) 방식으로 지연 처리되므로,
             //   플러시하지 않으면 방금 편집한 내용이 백업에 누락될 수 있음
             await flushAllPendingE2eeSaves(pool);
+
+            // ==================== Data-loss prevention (plaintext pages) ==================================
+            // Problem:
+            //  - Non-E2EE pages are persisted via WebSocket/Yjs debounce
+            //  - If the user exports a backup right after editing, the latest HTML snapshot may still be
+            //    only in server memory (or not yet updated in metadata.content due to 1s debounce)
+            //  - The backup is generated from DB rows (pages.content), so missing flush => backup omission
+            // Mitigation:
+            //  1. Ask active EDIT/ADMIN clients (for pages in storages owned by this user) to push a fresh
+            //     page-snapshot (client responds via the existing self-heal path)
+            //  2. Force-flush all in-memory Yjs docs for those storages to DB before reading export rows
+            // ==============================================================================================
+            try {
+                const [ownedRows] = await pool.execute(
+                    `SELECT id FROM storages WHERE user_id = ?`,
+                    [userId]
+                );
+                const ownedStorageIds = new Set((ownedRows || []).map(r => String(r.id)));
+
+                // Request snapshots from active editors
+                let requested = 0;
+                if (wsConnections && wsConnections.pages && ownedStorageIds.size > 0) {
+                    for (const [pid, conns] of wsConnections.pages.entries()) {
+                        if (!conns || conns.size === 0) continue;
+                        for (const c of Array.from(conns)) {
+                            const stgId = c && c.storageId ? String(c.storageId) : '';
+                            if (!stgId || !ownedStorageIds.has(stgId)) continue;
+                            if (c.isE2ee) continue;
+                            const perm = String(c.permission || '');
+                            if (perm !== 'EDIT' && perm !== 'ADMIN') continue;
+                            try {
+                                c.ws.send(JSON.stringify({
+                                    event: 'request-page-snapshot',
+                                    data: { pageId: String(pid) }
+                                }));
+                                requested++;
+                            } catch (_) {}
+                        }
+                    }
+                }
+
+                // Give clients a moment to respond + server to enqueue immediate saves
+                if (requested > 0) {
+                    const waitMsRaw = Number.parseInt(process.env.BACKUP_EXPORT_SNAPSHOT_WAIT_MS || '1200', 10);
+                    const waitMs = Number.isFinite(waitMsRaw) ? Math.max(200, Math.min(5000, waitMsRaw)) : 1200;
+                    await sleep(waitMs);
+                }
+
+                // Flush in-memory Yjs docs for owned storages
+                if (yjsDocuments && ownedStorageIds.size > 0 && typeof enqueueYjsDbSave === 'function' && typeof saveYjsDocToDatabase === 'function') {
+                    for (const [pageId, docInfo] of yjsDocuments.entries()) {
+                        if (!docInfo || !docInfo.ydoc) continue;
+                        const stgId = docInfo.storageId ? String(docInfo.storageId) : '';
+                        if (!stgId || !ownedStorageIds.has(stgId)) continue;
+                        if (docInfo.isEncrypted === true) continue;
+
+                        // Cancel debounce and force immediate persist
+                        if (docInfo.saveTimeout) {
+                            try { clearTimeout(docInfo.saveTimeout); } catch (_) {}
+                            docInfo.saveTimeout = null;
+                        }
+
+                        // preserveDbMetadata: avoid overwriting title/icon/sortOrder/parentId with potentially stale Yjs metadata
+                        enqueueYjsDbSave(pageId, () =>
+                            saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, docInfo.ydoc, { preserveDbMetadata: true })
+                        ).catch(() => {});
+                    }
+
+                    if (typeof flushAllPendingYjsDbSaves === 'function') {
+                        await flushAllPendingYjsDbSaves();
+                    }
+                }
+            } catch (e) {
+                try { console.warn('[backup export] plaintext flush failed (continue):', e?.message || e); } catch (_) {}
+            }
 
 			// DB 접근은 repo에서만 수행 (접근제어 SQL 정책 중앙화 포함)
 			const { storages, pages, publishes } = await backupRepo.getExportRows(userId);

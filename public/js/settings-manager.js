@@ -545,6 +545,25 @@ export async function fetchAndDisplayCurrentUser() {
  */
 async function exportBackup() {
     try {
+        // ==================== 데이터 유실 방지(중요) ==================================
+        // 문제:
+        //  - 편집 내용은 Yjs/WS 디바운스로 서버(DB)에 지연 반영될 수 있음
+        //  - 사용자가 편집 직후(1초 이내) 백업을 내보내면 최신 변경분이 DB에 아직 저장되지 않아
+        //    백업 ZIP에 누락(=복구 불가능한 유실)될 수 있음
+        // 해결:
+        //  - 백업 요청 전, 현재 열려있는 페이지를 WS force-save로 best-effort 즉시 저장
+        //    (E2EE 페이지도 requestImmediateSave가 스냅샷/force-save-e2ee를 수행)
+        // ===========================================================================
+        try {
+            const pageId = window?.appState?.currentPageId;
+            if (pageId) {
+                const { requestImmediateSave } = await import('./sync-manager.js');
+                await requestImmediateSave(pageId, { includeSnapshot: true, waitForAck: true });
+            }
+        } catch (e) {
+            console.warn('[백업 내보내기] 저장 선반영 실패(continue):', e?.message || e);
+        }
+
         // 내보내기 시작 알림
         alert('백업 생성 중입니다. 데이터 양에 따라 시간이 걸릴 수 있습니다.');
 

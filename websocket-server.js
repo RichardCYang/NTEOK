@@ -953,7 +953,7 @@ async function cleanupOrphanedFiles(pool, filePaths, excludePageId, pageOwnerUse
 
 async function saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc, opts = {}) {
     try {
-        const { epoch, allowDeleted = false, forceClearYjsState = false } = opts;
+        const { epoch, allowDeleted = false, forceClearYjsState = false, preserveDbMetadata = false } = opts;
         // epoch 확인 (시작 시): 이미 더 새로운 REST 저장이 발생했다면 중단
         if (epoch !== undefined && getYjsSaveEpoch(pageId) > epoch) return { status: 'skipped-epoch' };
 
@@ -983,10 +983,10 @@ async function saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc, opt
         const metaHasString = (k) => (yMetadata && yMetadata.has(k) && typeof yMetadata.get(k) === 'string');
         const metaHasAny = (k) => (yMetadata && yMetadata.has(k));
 
-        const title = metaHasString('title') ? yMetadata.get('title') : (existing.title || '제목 없음');
-        const icon = validateAndNormalizeIcon(metaHasString('icon') ? yMetadata.get('icon') : (existing.icon || null));
-        const sortOrder = metaHasAny('sortOrder') ? (Number(yMetadata.get('sortOrder')) || 0) : (Number(existing.sort_order) || 0);
-        const parentId = metaHasAny('parentId') ? (yMetadata.get('parentId') || null) : (existing.parent_id || null);
+        const title = preserveDbMetadata ? existing.title : (metaHasString('title') ? yMetadata.get('title') : (existing.title || '제목 없음'));
+        const icon = validateAndNormalizeIcon(preserveDbMetadata ? existing.icon : (metaHasString('icon') ? yMetadata.get('icon') : (existing.icon || null)));
+        const sortOrder = preserveDbMetadata ? (Number(existing.sort_order) || 0) : (metaHasAny('sortOrder') ? (Number(yMetadata.get('sortOrder')) || 0) : (Number(existing.sort_order) || 0));
+        const parentId = preserveDbMetadata ? (existing.parent_id || null) : (metaHasAny('parentId') ? (yMetadata.get('parentId') || null) : (existing.parent_id || null));
 
         const isEncrypted = (existing.is_encrypted === 1);
         const metaContent = metaHasAny('content') ? yMetadata.get('content') : undefined;
