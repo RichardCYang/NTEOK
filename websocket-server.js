@@ -43,6 +43,138 @@ const wsConnections = {
 
 const yjsDocuments = new Map();
 
+// WebSocket 모듈 전역(의존성 주입)
+// wsCloseConnectionsForPage 같은 헬퍼는 pool/sanitizeHtmlContent에 직접 접근할 수 없어서,
+// initWebSocketServer에서 한 번 주입해 모듈 스코프에 보관함
+// (중요) 문서 리셋/강제 종료 시점에도 최신 편집분을 DB에 best-effort로 남기기 위해 사용함
+let _wsPool = null;
+let _wsSanitizeHtmlContent = null;
+
+// 데이터 유실 방지(핵심): 협업 세션 강제 종료(wsCloseConnectionsForPage) 시
+// 문서를 drop 하기 전에 마지막 스냅샷(HTML)을 DB에 긴급 저장함
+// 저장 실패 시에도 즉시 drop 하지 않고, 백오프로 재시도하여 서버 재시작/크래시 시 유실 위험을 줄임
+const emergencyPersistState = new Map(); // pageId -> { epoch, attempts, timer, forceClearYjsState }
+
+const EMERGENCY_PERSIST_MAX_ATTEMPTS = (() => {
+    const v = Number.parseInt(process.env.YJS_EMERGENCY_PERSIST_MAX_ATTEMPTS || '8', 10);
+    return Number.isFinite(v) ? Math.max(0, Math.min(30, v)) : 8;
+})();
+const EMERGENCY_PERSIST_BASE_MS = (() => {
+    const v = Number.parseInt(process.env.YJS_EMERGENCY_PERSIST_BASE_MS || '1500', 10);
+    return Number.isFinite(v) ? Math.max(200, Math.min(60_000, v)) : 1500;
+})();
+const EMERGENCY_PERSIST_MAX_MS = (() => {
+    const v = Number.parseInt(process.env.YJS_EMERGENCY_PERSIST_MAX_MS || '60000', 10);
+    return Number.isFinite(v) ? Math.max(500, Math.min(300_000, v)) : 60000;
+})();
+function computeEmergencyPersistDelayMs(attempt) {
+    const a = Math.max(1, Math.min(30, attempt));
+    const base = EMERGENCY_PERSIST_BASE_MS * Math.pow(2, a - 1);
+    return Math.min(EMERGENCY_PERSIST_MAX_MS, Math.floor(base));
+}
+
+function inferForceClearYjsStateFromReason(reason) {
+    const r = String(reason || '').toLowerCase();
+    // oversize / resync / collaboration reset 등은 yjs_state 저장이 비용이 크거나 위험하므로 clear 우선함
+    if (!r) return true;
+    return r.includes('too large') || r.includes('oversize') || r.includes('resync') || r.includes('reset');
+}
+
+function scheduleEmergencyPersistThenDrop(pageId, reason, opts = {}) {
+    const pid = String(pageId || '').trim();
+    if (!pid) return;
+
+    const docInfo = yjsDocuments.get(pid);
+    if (!docInfo || !docInfo.ydoc) {
+        // 문서가 없으면 기존 동작(즉시 drop)으로 귀결함
+        if (yjsDocuments.has(pid)) dropYjsDocument(pid);
+        return;
+    }
+
+    // 암호화 페이지는 서버가 평문을 저장하면 안 되므로(보안), 즉시 drop함
+    if (docInfo.isEncrypted === true) {
+        dropYjsDocument(pid);
+        return;
+    }
+
+    // pool/sanitize가 없으면 저장 불가함 -> 최소한 타이머는 정리하고 drop함 (fallback)
+    if (!_wsPool || typeof _wsPool.execute !== 'function' || typeof _wsSanitizeHtmlContent !== 'function') {
+        try { if (docInfo.saveTimeout) clearTimeout(docInfo.saveTimeout); } catch (_) {}
+        docInfo.saveTimeout = null;
+        dropYjsDocument(pid);
+        return;
+    }
+
+    // 이미 긴급 저장이 예약되어 있으면 중복 예약 금지함
+    const existing = emergencyPersistState.get(pid);
+    if (existing && existing.timer) return;
+
+    // 기존 디바운스 저장 타이머는 취소함 (중복 저장/레이스 방지)
+    try { if (docInfo.saveTimeout) clearTimeout(docInfo.saveTimeout); } catch (_) {}
+    docInfo.saveTimeout = null;
+
+    const forceClearYjsState = (opts.forceClearYjsState === true || opts.forceClearYjsState === false)
+        ? opts.forceClearYjsState
+        : inferForceClearYjsStateFromReason(reason);
+
+    // 진행 중/예약된 저장 무효화 + 이번 저장에 사용할 epoch 발급함
+    const epoch = bumpYjsSaveEpoch(pid);
+
+    const state = {
+        epoch,
+        attempts: 0,
+        timer: null,
+        forceClearYjsState
+    };
+    emergencyPersistState.set(pid, state);
+
+    const attempt = async () => {
+        const cur = emergencyPersistState.get(pid);
+        if (!cur) return;
+
+        try {
+            const result = await enqueueYjsDbSave(pid, () =>
+                saveYjsDocToDatabase(_wsPool, _wsSanitizeHtmlContent, pid, docInfo.ydoc, {
+                    epoch: cur.epoch,
+                    forceClearYjsState: cur.forceClearYjsState
+                })
+            );
+
+            // epoch가 더 최신으로 올라가 저장이 스킵된 경우:
+            // 다른 경로(REST 저장/정리 루틴)가 더 최신 상태를 다루고 있다는 의미이므로
+            // 데이터 유실을 막기 위해 여기서는 drop 하지 않고 문서를 유지함
+            if (result && result.status === 'skipped-epoch') {
+                emergencyPersistState.delete(pid);
+                return;
+            }
+
+            emergencyPersistState.delete(pid);
+            // 저장 성공 후에만 문서를 drop함 (bumpEpoch=false: 방금 저장한 epoch를 무효화하지 않음)
+            dropYjsDocument(pid, { bumpEpoch: false });
+        } catch (e) {
+            cur.attempts = (cur.attempts || 0) + 1;
+            cur.timer = null;
+
+            const msg = e?.message || e;
+            try { console.error(`[YJS] emergency persist failed(page=${pid}, attempt=${cur.attempts}):`, msg); } catch (_) {}
+
+            if (EMERGENCY_PERSIST_MAX_ATTEMPTS > 0 && cur.attempts <= EMERGENCY_PERSIST_MAX_ATTEMPTS) {
+                const delay = computeEmergencyPersistDelayMs(cur.attempts);
+                cur.timer = setTimeout(attempt, delay);
+                emergencyPersistState.set(pid, cur);
+                return;
+            }
+
+            // 최종 실패: 데이터 보존을 위해 문서를 메모리에 유지함 (다음 inactivity cleanup/수동 resync로 회복 가능함)
+            emergencyPersistState.delete(pid);
+        }
+    };
+
+    // 첫 시도는 즉시(0ms) 실행해 유실 창을 최소화함
+    state.timer = setTimeout(attempt, 0);
+    emergencyPersistState.set(pid, state);
+}
+
 // 데이터 유실 방지: 동일 페이지(pageId)에 대해 saveYjsDocToDatabase()가 병렬로 실행되는 것을 방지
 // 병렬 실행 시 나중에 시작한 저장이 먼저 커밋되고, 먼저 시작한 저장이 나중에 커밋되면서
 // 최신 데이터를 과거 상태로 되돌리는 현상(Lost Update)을 막기 위해 직렬화 처리
@@ -812,18 +944,21 @@ function wsCloseConnectionsForPage(pageId, code = 1009, reason = 'Document too l
     const pid = String(pageId || '');
     clearOversizeResyncTimer(pid);
     const conns = wsConnections.pages.get(pid);
-    if (!conns || conns.size === 0) {
-        if (yjsDocuments.has(pid)) dropYjsDocument(pid);
-        return;
+
+    if (conns && conns.size > 0) {
+        for (const c of Array.from(conns)) {
+            try { c.ws.send(JSON.stringify({ event: 'collab-reset', data: { pageId: pid, reason } })); } catch (_) {}
+            try { c.ws.close(code, reason); } catch (_) {}
+        }
     }
 
-    for (const c of Array.from(conns)) {
-        try { c.ws.send(JSON.stringify({ event: 'collab-reset', data: { pageId: pid, reason } })); } catch (_) {}
-        try { c.ws.close(code, reason); } catch (_) {}
-    }
-
+    // 구독 맵에서는 먼저 제거해 추가 업데이트 유입을 차단함
     wsConnections.pages.delete(pid);
-    if (yjsDocuments.has(pid)) dropYjsDocument(pid);
+
+    // 데이터 유실 방지(핵심): 강제 종료/리셋 시점에 문서를 즉시 drop 하지 말고
+    // 마지막 HTML 스냅샷을 DB에 긴급 저장한 뒤에 drop함
+    // (실패 시 재시도, 성공 후 drop)
+    scheduleEmergencyPersistThenDrop(pid, reason);
 }
 
 function getUserColor(userId) { return USER_COLORS[userId % USER_COLORS.length]; }
@@ -1400,6 +1535,9 @@ async function getStoragePermission(pool, userId, storageId) {
 }
 
 function initWebSocketServer(server, sessions, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, SESSION_COOKIE_NAME, getSessionFromId, getClientIpFromRequest, pageSqlPolicy) {
+    // 모듈 스코프 의존성 주입 (긴급 저장/강제 종료 시 사용함)
+    _wsPool = pool;
+    _wsSanitizeHtmlContent = sanitizeHtmlContent;
     /**
      * ==================== WebSocket 보안: Origin 검증 (CSWSH 방지) ====================
      * - WebSocket은 브라우저의 SOP/CORS로 보호되지 않으므로, 핸드셰이크에서 Origin allowlist 검증이 필요함
@@ -2039,6 +2177,10 @@ async function handlePageSnapshot(ws, payload, pool, sanitizeHtmlContent, pageSq
         // 데이터 유실 방지: 스냅샷을 받았으므로 즉시(또는 짧은 지연 후) 저장을 예약하여 유실 위험 최소화
         if (docMeta.saveTimeout) clearTimeout(docMeta.saveTimeout);
 
+        // 긴급 저장이 이미 예약된 경우(scheduleEmergencyPersistThenDrop)
+        // 일반 디바운스 저장을 추가로 예약하지 않음 (레이스 및 중복 drop 방지)
+        if (emergencyPersistState.has(pageId)) return;
+
         const needsResync = (resyncNeeded === true || resyncNeeded === 1 || String(resyncNeeded || '').toLowerCase() === 'true');
 
         // 데이터 유실 방지: needsResync 스냅샷은 content는 저장하되 yjs_state는 강제로 NULL로 저장(forceClearYjsState)
@@ -2346,9 +2488,15 @@ async function handleYjsUpdate(ws, payload, pool, sanitizeHtmlContent, pageSqlPo
                 yMeta.set('parentId', parentCheck.parentId);
         } catch (_) { return; }
 
+        // 긴급 저장이 진행 중이면 실시간 업데이트 중단 (레이스 방지)
+        if (emergencyPersistState.has(pageId)) return;
+
         wsBroadcastToPage(pageId, 'yjs-update', { update }, ws.userId);
         if (doc) {
-            if (doc.saveTimeout) clearTimeout(doc.saveTimeout);
+            // (중요) 긴급 저장이 이미 예약된 경우(scheduleEmergencyPersistThenDrop)
+            // 일반 디바운스 저장을 추가로 예약하지 않음 (레이스 및 중복 drop 방지)
+            if (doc.saveTimeout || emergencyPersistState.has(pageId)) return;
+
             const epoch = getYjsSaveEpoch(pageId); // 현재 시점의 epoch 캡처
             doc.saveTimeout = setTimeout(() => {
                 enqueueYjsDbSave(pageId, () => saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc, { epoch }))
@@ -2462,13 +2610,19 @@ async function handleYjsState(ws, payload, pool, sanitizeHtmlContent, pageSqlPol
                 yMeta.set('parentId', parentCheck.parentId);
         } catch (_) { return; }
 
+		// 긴급 저장이 진행 중이면 실시간 업데이트 중단 (레이스 방지)
+		if (emergencyPersistState.has(pageId)) return;
+
 		// 다른 클라이언트에게 state 전송 (브로드캐스트)
 		// yjs-state 이벤트로 보냄 -> 클라이언트는 이를 받아 applyUpdate
 		wsBroadcastToPage(pageId, 'yjs-state', { state }, ws.userId);
 
 		if (doc) {
-			if (doc.saveTimeout) clearTimeout(doc.saveTimeout);
-            const epoch = getYjsSaveEpoch(pageId); // 현재 시점의 epoch 캡처
+			// (중요) 긴급 저장이 이미 예약된 경우(scheduleEmergencyPersistThenDrop)
+			// 일반 디바운스 저장을 추가로 예약하지 않음 (레이스 및 중복 drop 방지)
+			if (doc.saveTimeout || emergencyPersistState.has(pageId)) return;
+
+			const epoch = getYjsSaveEpoch(pageId); // 현재 시점의 epoch 캡처
 			doc.saveTimeout = setTimeout(() => {
 				enqueueYjsDbSave(pageId, () => saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc, { epoch }))
                     .catch(e => { console.error('[YJS] state save failed:', String(pageId), e?.message || e); });
