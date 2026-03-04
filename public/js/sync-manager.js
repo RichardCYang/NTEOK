@@ -39,6 +39,8 @@ const pendingForceSaves = new Map();
 
 // E2EE (저장소 암호화) 동기화 상태
 let isE2eeSync = false;				// 현재 페이지가 E2EE 모드인지 여부
+let isE2eeWalSyncing = false;       // WAL(증분 로그) 동기화 진행 중
+let e2eeWalUpdateBuffer = [];       // WAL 동기화 중 도착한 실시간 증분 업데이트 버퍼
 let e2eeStatePushTimeout = null;	// 주기적 상태 스냅샷 서버 저장용 타이머
 let e2eeStatePushPageId = null;	// 마지막으로 스냅샷 저장이 예약된 페이지 (E2EE)
 
@@ -358,6 +360,9 @@ function handleWebSocketMessage(message) {
 			break;
         case 'yjs-update-e2ee':
             handleYjsUpdateE2EEEvent(data).catch(e => console.error('[E2EE] update 처리 오류:', e));
+            break;
+        case 'e2ee-pending-updates':
+            handleE2eePendingUpdates(data).catch(e => console.error('[E2EE] WAL 복구 오류:', e));
             break;
         case 'request-yjs-state-e2ee':
             handleRequestYjsStateE2EE(data).catch(e => console.error('[E2EE] snapshot 요청 처리 오류:', e));
@@ -1765,6 +1770,10 @@ async function handleInitE2EE(data) {
             return;
         }
 
+        // WAL 동기화 상태 초기화
+        isE2eeWalSyncing = true;
+        e2eeWalUpdateBuffer = [];
+
         const parseIsoMs = (v) => {
             if (!v) return null;
             let s = String(v);
@@ -1827,11 +1836,56 @@ async function handleInitE2EE(data) {
 }
 
 /**
+ * E2EE WAL(증분 로그) 동기화 처리
+ */
+async function handleE2eePendingUpdates(data) {
+    if (!isE2eeSync) return;
+    const pageId = data?.pageId ? String(data.pageId) : null;
+    if (pageId && String(currentPageId) !== pageId) return;
+
+    if (data.updates && Array.isArray(data.updates)) {
+        const storageKey = window.cryptoManager.getStorageKey();
+        if (!storageKey) {
+            console.warn('[E2EE] 저장소 키 없음 — WAL 복구 불가');
+        } else {
+            for (const b64 of data.updates) {
+                try {
+                    const combined = base64ToUint8(b64);
+                    const stateUpdate = await decryptBytes(combined, storageKey);
+                    Y.applyUpdate(ydoc, stateUpdate, 'remote');
+                } catch (e) {
+                    console.error('[E2EE] WAL 업데이트 적용 실패:', e);
+                }
+            }
+        }
+    }
+
+    if (data.done) {
+        isE2eeWalSyncing = false;
+        console.log('[E2EE] WAL 동기화 완료, 버퍼링된 업데이트 적용 시작');
+        
+        // WAL 동기화 중 들어온 실시간 업데이트들을 순차적으로 적용함
+        const buffered = e2eeWalUpdateBuffer;
+        e2eeWalUpdateBuffer = [];
+        for (const update of buffered) {
+            handleYjsUpdateE2EEEvent(update).catch(() => {});
+        }
+    }
+}
+
+/**
  * E2EE 암호화 Yjs 업데이트 수신 처리
  */
 async function handleYjsUpdateE2EEEvent(data) {
     try {
         if (!ydoc) return;
+
+        // WAL 동기화 중이면 실시간 업데이트를 버퍼에 저장하고 나중에 처리함
+        if (isE2eeWalSyncing) {
+            e2eeWalUpdateBuffer.push(data);
+            return;
+        }
+
         const storageKey = window.cryptoManager.getStorageKey();
         if (!storageKey) {
             console.warn('[E2EE] 저장소 키 없음 — 업데이트 복호화 불가');

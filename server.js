@@ -239,6 +239,7 @@ const {
 	enqueueYjsDbSave,
 	flushAllPendingYjsDbSaves,
 	flushAllPendingE2eeSaves,
+	flushAllPendingE2eeUpdateLogs,
 
 	wsCloseConnectionsForSession,
     wsCloseConnectionsForPage,
@@ -1539,6 +1540,21 @@ async function initDb() {
     `);
 
     // ============================================================
+    // E2EE 증분 업데이트 로그 (WAL) 테이블 생성
+    // ============================================================
+    await pool.execute(`
+        CREATE TABLE IF NOT EXISTS e2ee_yjs_updates (
+            id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            page_id VARCHAR(64) NOT NULL,
+            created_at_ms BIGINT NOT NULL,
+            created_at DATETIME NOT NULL,
+            update_blob LONGBLOB NOT NULL,
+            INDEX idx_e2ee_wal_page_ms (page_id, created_at_ms),
+            CONSTRAINT fk_e2ee_wal_page FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE
+        ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
+    `);
+
+    // ============================================================
     // 성능 최적화: 데이터베이스 인덱스 추가
     // ============================================================
 
@@ -2449,6 +2465,7 @@ function installGracefulShutdownHandlers(httpServer, pool, sanitizeHtmlContent) 
         try {
             // 모든 E2EE 대기 작업 플러시
             await flushAllPendingE2eeSaves(pool);
+            await flushAllPendingE2eeUpdateLogs(pool);
 
             // 모든 Yjs DB 저장 대기 작업 플러시 (직렬화 큐)
             await flushAllPendingYjsDbSaves();
