@@ -43,11 +43,10 @@ const wsConnections = {
 
 const yjsDocuments = new Map();
 
-// 문제(데이터 유실): 동일 pageId에 대해 saveYjsDocToDatabase()가 동시에(병렬) 실행되면,
-// 더 늦게 시작한 저장이 먼저 커밋된 뒤, 먼저 시작한(=더 오래 걸린) 저장이 마지막에 커밋되면서
-// 최신 내용을 과거 스냅샷으로 되돌려버릴 수 있음(Lost Update / write-after-write race)
-// 해결: pageId 단위로 DB 저장을 직렬화(serialize)하여 병렬 저장을 제거
-const yjsDbSaveQueue = new Map(); // pageId -> Promise chain
+// 데이터 유실 방지: 동일 페이지(pageId)에 대해 saveYjsDocToDatabase()가 병렬로 실행되는 것을 방지
+// 병렬 실행 시 나중에 시작한 저장이 먼저 커밋되고, 먼저 시작한 저장이 나중에 커밋되면서
+// 최신 데이터를 과거 상태로 되돌리는 현상(Lost Update)을 막기 위해 직렬화 처리
+const yjsDbSaveQueue = new Map(); // 페이지 ID별 프로미스 체인
 
 function enqueueYjsDbSave(pageId, taskFn) {
     const pid = String(pageId || '').trim();
@@ -124,16 +123,11 @@ const WS_RATE_LIMIT_MAX_CONNECTIONS = 10;
 const WS_MAX_MESSAGE_BYTES = 2 * 1024 * 1024;
 const WS_MAX_AWARENESS_UPDATE_BYTES = 32 * 1024;
 
-// ==================== E2EE Snapshot Request (Data Loss Prevention) ====================
-// 문제:
-// - E2EE(yjs-update-e2ee)는 서버가 복호화할 수 없어 증분 업데이트를 DB에 반영할 수 없음
-// - 따라서 DB 영속화는 yjs-state-e2ee(전체 스냅샷) 수신에 전적으로 의존함
-// - (예) A가 마지막 편집 후 탭 종료/크래시 → 스냅샷 미전송,
-//       B는 변경을 원격으로만 수신(로컬 편집 없음) → 스냅샷 전송 트리거가 없어
-//       서버 재시작/크래시 시 마지막 변경분이 유실될 수 있음
-// 해결:
-// - 서버가 E2EE 증분 업데이트를 수신하면, 일정 시간 내 스냅샷이 도착하지 않을 경우
-//   현재 접속 중인 EDIT/ADMIN 클라이언트들에게 스냅샷 업로드를 요청
+// ==================== E2EE 스냅샷 요청 (데이터 유실 방지) ====================
+// 서버가 복호화할 수 없는 E2EE 증분 업데이트의 경우, 전체 스냅샷 수신에 의존해 DB에 저장함
+// 편집자가 탭을 닫거나 크래시가 발생해 스냅샷이 전송되지 않으면 데이터가 유실될 수 있음
+// 이를 방지하기 위해 증분 업데이트 수신 후 일정 시간 내에 스냅샷이 도착하지 않으면
+// 현재 접속 중인 다른 편집 권한 사용자들에게 스냅샷 업로드를 요청함
 const E2EE_SNAPSHOT_EXPECT_MS = (() => {
     const n = Number.parseInt(process.env.E2EE_SNAPSHOT_EXPECT_MS || '1500', 10);
     if (!Number.isFinite(n)) return 1500;
@@ -197,13 +191,11 @@ const E2EE_LEADER_IDLE_HANDOFF_MS = (() => {
     return Math.max(500, Math.min(60_000, n));
 })();
 
-// E2EE 리더 선출/핸드오프 정책
-// - 기존 설계는 1명의 리더만 yjs-state-e2ee(전체 스냅샷)를 DB에 저장할 수 있음
-// - 하지만 리더가 편집을 하지 않고 접속만 유지하는 동안, 다른 편집자의 스냅샷 저장이 거부되어
-//   최신 암호화 상태가 DB에 남지 않는(=데이터 유실) 문제가 발생할 수 있음
-// - 해결:
-//     (1) 리더가 일정 시간 이상 비활성일 때, 활성 편집자에게 리더를 자동 핸드오프
-//     (2) disconnect/권한회수 시 stale leader 즉시 제거
+// E2EE 리더 선출 및 핸드오프 정책
+// 기존 설계는 1명의 리더만 전체 스냅샷(yjs-state-e2ee)을 DB에 저장할 수 있음
+// 하지만 리더가 편집 없이 접속만 유지하는 경우, 다른 편집자의 스냅샷 저장이 거부되어 최신 암호화 상태가 유실될 수 있음
+// 이를 방지하기 위해 리더가 일정 시간 비활성 상태이면 활성 편집자에게 리더 권한을 자동으로 핸드오프하고,
+// 연결 종료나 권한 회수 시에는 기존 리더를 즉시 제거함
 
 function hasActiveE2eeSessionOnPage(pageId, sessionId) {
     const pid = String(pageId || '');
@@ -1231,9 +1223,9 @@ async function getStoragePermission(pool, userId, storageId) {
 function initWebSocketServer(server, sessions, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, SESSION_COOKIE_NAME, getSessionFromId, getClientIpFromRequest, pageSqlPolicy) {
     /**
      * ==================== WebSocket 보안: Origin 검증 (CSWSH 방지) ====================
-     * - WebSocket은 브라우저의 SOP/CORS로 보호되지 않으므로, 핸드셰이크에서 Origin allowlist 검증이 필요합니다.
-     * - BASE_URL(예: https://example.com) 기준으로 허용 Origin을 구성합니다.
-     *   (리버스 프록시/도메인 변경 시 BASE_URL을 정확히 설정하세요.)
+     * - WebSocket은 브라우저의 SOP/CORS로 보호되지 않으므로, 핸드셰이크에서 Origin allowlist 검증이 필요함
+     * - BASE_URL(예: https://example.com) 기준으로 허용 Origin을 구성함
+     *   (리버스 프록시/도메인 변경 시 BASE_URL을 정확히 설정하길 권장함)
      */
     const allowedWsOrigins = (() => {
         const set = new Set();

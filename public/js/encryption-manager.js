@@ -93,8 +93,8 @@ export async function handleEncryption(event) {
     }
 
     // 보안/정합성: 실시간 협업(Yjs) 편집 중 암호화를 수행하면
-    // - (1) 아직 DB에 flush되지 않은 로컬 편집 내용이 누락되거나
-    // - (2) 암호화 전 평문 스냅샷이 yjs_state 등에 잔존할 수 있는 경쟁 조건이 생김
+    // 아직 DB에 저장되지 않은 로컬 편집 내용이 누락되거나,
+    // 암호화 전의 평문 스냅샷이 yjs_state 등에 남는 경쟁 조건이 발생할 수 있음
     //
     // 데이터 유실 방지(핵심):
     // - 기존 구현은 stopPageSync() 후 서버에서 다시 page.content를 GET 해서 암호화했는데,

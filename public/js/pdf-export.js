@@ -9,8 +9,8 @@ import DOMPurify from 'dompurify';
 // ------------------------------------------------------------
 // Security fix: Board(Kanban) block XSS hardening in PDF export
 // ------------------------------------------------------------
-// pdf-export.js는 data-columns(JSON)에서 파싱한 card.content를 innerHTML로 주입합니다.
-// export 시점에도 allow-list 기반 정화가 없으면 저장형/DOM XSS가 발생할 수 있습니다.
+// pdf-export.js는 data-columns(JSON)에서 파싱한 card.content를 innerHTML로 주입함
+// export 시점에도 allow-list 기반 정화가 없으면 저장형/DOM XSS가 발생할 수 있음
 const BOARD_CARD_PURIFY_CONFIG = {
     USE_PROFILES: { html: true },
     ALLOWED_TAGS: [

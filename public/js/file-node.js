@@ -194,7 +194,7 @@ export const FileBlock = Node.create({
                 `;
 
                 if (!node.attrs.src) {
-                    // 1. Placeholder State (Embed Form Style)
+                    // 미지정 상태 (업로드 폼 스타일)
                     const placeholder = document.createElement('div');
                     placeholder.className = 'file-placeholder';
 
@@ -240,7 +240,7 @@ export const FileBlock = Node.create({
                     wrapper.appendChild(placeholder);
 
                 } else {
-                    // 2. Filled State (File Card Style)
+                    // 완료 상태 (파일 카드 스타일)
                     const container = document.createElement('div');
                     container.className = 'file-block';
 

@@ -337,8 +337,8 @@ const HSTS_ENABLED = (() => {
 const ALLOW_INSECURE_HTTP_FALLBACK = String(process.env.ALLOW_INSECURE_HTTP_FALLBACK || '').toLowerCase() === 'true';
 
 // TOTP 비밀키 (2FA) 최소 암호화
-// - TOTP 공유 비밀키를 DB에 평문 저장하면, DB 유출 시 2FA가 즉시 무력화됨
-// - 해결: AES-256-GCM(AEAD)으로 암호화하여 저장 + 키는 환경변수/시크릿 매니저로 분리
+// TOTP 공유 비밀키를 DB에 평문 저장하면 DB 유출 시 2FA가 무력화될 수 있음
+// 이를 방지하기 위해 AES-256-GCM(AEAD)으로 암호화하여 저장하며, 키는 환경변수나 시크릿 매니저로 분리해 관리함
 function decode32ByteKey(raw) {
     if (!raw) return null;
     const s = String(raw).trim();
@@ -448,7 +448,7 @@ if (!DEFAULT_ADMIN_PASSWORD) {
             console.error("\n" + "=".repeat(80));
             console.error("🛑 [보안] ADMIN_PASSWORD가 약하여 서버 시작을 중단합니다.");
             console.error(`   사유: ${reason}`);
-            console.error("   해결: 길고(>=10), 예측 불가한 강력 비밀번호로 변경 후 재시작하세요.");
+            console.error("   사전 조치: 길고(>=10), 예측 불가한 강력 비밀번호로 변경 후 재시작하세요.");
             console.error("=".repeat(80) + "\n");
             process.exit(1);
         } else {
@@ -2706,7 +2706,7 @@ function installGracefulShutdownHandlers(httpServer, pool, sanitizeHtmlContent) 
 
                 // WebSocket 서버 초기화
                 // HTTP 모드에서도 WebSocket 메시지 처리 시 세션 검증 로직(getSessionFromId)을 사용해야
-                // 동기화 메시지가 "Session expired"로 오판되어 연결이 반복 종료되는 문제를 방지할 수 있습니다.
+                // 동기화 메시지가 Session expired로 오판되어 연결이 반복 종료되는 문제를 방지할 수 있음
                 initWebSocketServer(httpServer, sessions, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, SESSION_COOKIE_NAME, getSessionFromId, getClientIpFromRequest, pageSqlPolicy);
 
                 // WebSocket Rate Limit 정리 작업 시작
@@ -2733,7 +2733,7 @@ function installGracefulShutdownHandlers(httpServer, pool, sanitizeHtmlContent) 
 
             // WebSocket 서버 초기화
             // HTTP 모드에서도 WebSocket 메시지 처리 시 세션 검증 로직(getSessionFromId)을 사용해야
-            // 동기화 메시지가 "Session expired"로 오판되어 연결이 반복 종료되는 문제를 방지할 수 있습니다.
+            // 동기화 메시지가 Session expired로 오판되어 연결이 반복 종료되는 문제를 방지할 수 있음
             initWebSocketServer(httpServer, sessions, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, SESSION_COOKIE_NAME, getSessionFromId, getClientIpFromRequest, pageSqlPolicy);
 
             // WebSocket Rate Limit 정리 작업 시작

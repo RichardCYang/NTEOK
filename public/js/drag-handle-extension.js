@@ -121,7 +121,7 @@ export const DragHandle = Extension.create({
                              return false;
                         };
 
-                        // 1. Leaf / Atom Block Check (Callout, Board 등)
+                        // 리프 / 아톰 블록 확인 (Callout, Board 등)
                         // $pos가 블록 바로 앞/뒤에 있는 경우 (Atom 노드 등)
                         const nodeAfter = $pos.nodeAfter;
                         // Atom 노드이거나 텍스트가 없는 특수 블록인 경우 우선 선택
@@ -140,7 +140,7 @@ export const DragHandle = Extension.create({
                             }
                         }
                         
-                        // 2. Container Hierarchy Check (Table, ToggleList, TaskList 등 중첩 구조)
+                        // 컨테이너 계층 확인 (Table, ToggleList, TaskList 등 중첩 구조)
                         if (!targetNode) {
                             // 이동 가능한 블록의 부모가 될 수 있는 컨테이너 타입 정의
                             const containerTypes = ['doc', 'toggleBlock', 'blockquote', 'taskList', 'bulletList', 'orderedList', 'boardBlock'];

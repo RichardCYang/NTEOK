@@ -159,23 +159,15 @@ module.exports = ({ pool }) => {
         },
 
         /**
-         * =========================================
-         * 데이터 유실 방지(중요): 협업 저장소 삭제 안전화
-         * =========================================
-         * 문제:
-         *  - pages.storage_id FK가 ON DELETE CASCADE 이므로, 저장소(storages) 삭제 시
-         *    해당 저장소의 모든 pages가 자동 삭제
-         *  - 그런데 협업 저장소에서는 다른 사용자(user_id != owner)가 생성한 페이지도
-         *    동일 storage_id 아래에 존재할 수 있어, 소유자(ADMIN)가 저장소/계정을 삭제하면
-         *    협업자의 페이지까지 함께 영구 삭제되어 사용자 데이터 유실
-         *
-         * 해결:
-         *  - 저장소를 삭제하기 전에, 협업자 소유 페이지들을 협업자 개인 저장소로 이관
-         *  - 동시에 parent_id(FK ON DELETE CASCADE) 경계 관계를 끊어, 삭제되는(소유자) 페이지를
-         *    부모로 가진 협업자 페이지가 연쇄 삭제되지 않도록 함
-         *
-         * 반환:
-         *  - transferred: { [userId]: { newStorageId, movedPages } }
+         * 데이터 유실 방지: 협업 저장소 삭제 안전화
+         * 
+         * 저장소(storages) 삭제 시 pages.storage_id(FK ON DELETE CASCADE) 설정으로 인해 해당 저장소의 모든 페이지가 함께 삭제될 수 있음
+         * 특히 협업 저장소에서는 저장소 소유자가 아닌 다른 참여자가 생성한 페이지도 존재할 수 있는데, 소유자가 저장소를 삭제할 때 참여자의 데이터까지 영구 삭제되는 것을 방지해야 함
+         * 
+         * 이를 해결하기 위해 저장소를 삭제하기 전, 협업자 소유의 페이지들을 각자의 개인 저장소로 이관함
+         * 또한 부모 페이지 삭제 시 연쇄 삭제되지 않도록 부모 관계(parent_id)를 해제하여 데이터를 보존함
+         * 
+         * @returns {Object} transferred - 사용자별 이관 정보 (개인 저장소 ID 및 이동된 페이지 목록)
          */
         async safeDeleteStoragePreservingCollaborators(ownerUserId, storageId) {
             const ownerId = Number(ownerUserId);

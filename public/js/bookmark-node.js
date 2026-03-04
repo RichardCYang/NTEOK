@@ -81,8 +81,7 @@ export const BookmarkBlock = Node.create({
 
                         // 간단한 URL 형식 검사
                         if (!url.startsWith('http://') && !url.startsWith('https://')) {
-                             alert('http:// 또는 https:// 로 시작하는 올바른 URL을 입력하세요.');
-                             return;
+                             alert('http:// 또는 https:// 로 시작하는 올바른 URL을 입력함');                             return;
                         }
 
                         input.disabled = true;

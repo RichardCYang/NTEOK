@@ -417,15 +417,15 @@ export async function saveCurrentPage() {
 
     try {
         const storageKey = window.cryptoManager.getStorageKey();
-        // ============================================================
-        // 저장소 레벨 E2EE 페이지 저장 (중요)
-        // ------------------------------------------------------------
-        // 문제(데이터 유실): E2EE 페이지를 REST로 저장하면 encrypted_content만 갱신되고
-        //                 협업 상태(e2ee_yjs_state)가 갱신되지 않아, 이후 init-e2ee에서
-        //                 stale snapshot이 적용되며 최신 내용이 롤백될 수 있음
-        // 해결: 콘텐츠는 반드시 WS(yjs-state-e2ee + force-save-e2ee) 경로로 저장
-        //       REST는 제목/아이콘 같은 평문 메타 업데이트에만 사용
-        // ============================================================
+        /**
+         * 저장소 레벨 E2EE 페이지 저장
+         * 
+         * E2EE 페이지를 REST로 저장하면 encrypted_content만 갱신되고 협업 상태(e2ee_yjs_state)가 갱신되지 않을 수 있음
+         * 이 경우 이후 로딩 시 오래된 스냅샷이 적용되어 데이터가 롤백될 위험이 있음
+         * 
+         * 이를 방지하기 위해 콘텐츠는 반드시 WebSocket(yjs-state-e2ee + force-save-e2ee)을 통해 저장하며,
+         * REST는 제목이나 아이콘과 같은 평문 메타데이터 업데이트에만 사용함
+         */
         if (state.currentStorageIsEncrypted) {
             if (!storageKey) {
                 alert("암호화 키가 없어 저장할 수 없습니다. 저장소를 다시 열어주세요.");

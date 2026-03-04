@@ -16,7 +16,7 @@ const rateLimit = erl.rateLimit || erl;
 const { ipKeyGenerator } = erl;
 
 // cover_image는 UI에서 `/covers/${coverImage}` 형태로 쓰이므로
-// "default/<file>" 또는 "<userId>/<file>"만 허용 (저장형 CSS Injection 차단)
+// default/<file> 또는 <userId>/<file>만 허용 (저장형 CSS Injection 차단)
 function validateCoverImageRef(ref, currentUserId) {
     if (ref === null || ref === '') return { ok: true, value: null };
     if (typeof ref !== 'string') return { ok: false, error: 'coverImage 형식이 올바르지 않습니다.' };
@@ -154,15 +154,10 @@ module.exports = (dependencies) => {
     }
 
     /**
-     * ============================================================
-     * 보안: 업로드 총량 + 횟수 제한 (CWE-400 / OWASP API4)
-     * ------------------------------------------------------------
-     * 문제: 단건 파일 크기만 제한되어 있고, 총량/횟수 제한이 없어
-     *      디스크 고갈(DoS)이 가능함
-     * 해결:
-     *  - userId 기준 업로드 레이트리밋
-     *  - userId 기준 디렉터리 총량 quota 강제
-     * ============================================================
+     * 보안: 업로드 총량 및 횟수 제한 (디스크 고갈 DoS 방지)
+     * 
+     * 단건 파일 크기 제한만으로는 전체 디스크 용량을 고갈시키는 공격을 막기 어렵음
+     * 이를 방지하기 위해 사용자(userId)별로 업로드 횟수 제한(Rate Limit)과 전체 디렉터리 용량 제한(Quota)을 적용함
      */
 
     // 환경변수로 조정 가능 (기본값: 1GB)
@@ -307,20 +302,14 @@ module.exports = (dependencies) => {
     }
 
     /**
-     * 데이터 유실 방지(핵심): REST 경로에서 수정된 메타데이터를
-     * 서버 메모리의 Yjs 문서(metadata)에도 동기화
-     *
-     * 문제:
-     * - 실시간 협업(WS) 경로는 디바운스 저장(saveYjsDocToDatabase)에서
-     *   title/icon/sortOrder/parentId/content 등을 DB에 덮어씀
-     * - 반면 REST 경로(예: 제목 변경, 아이콘 변경, 정렬 변경)는 DB만 갱신하고
-     *   이미 로드된 Yjs 문서는 갱신하지 않음
-     * - 그 결과, 이후 WS 저장/연결 종료 저장이 오래된 Yjs metadata로 DB를
-     *   덮어써서 사용자가 변경한 제목/아이콘/정렬이 되돌아가는(=lost update) 현상이 발생
-     *
-     * 해결:
-     * - REST에서 바뀐 메타를, 해당 페이지의 yjsDocuments(있을 때)에 즉시 반영
-     * - Yjs의 LWW(Map) 특성상 서버 측 변경은 추후 클라이언트와도 안전하게 병합됨
+     * 데이터 유실 방지: REST 경로에서 수정된 메타데이터 동기화
+     * 
+     * 실시간 협업(WS) 중에는 디바운스 저장을 통해 title, icon, content 등을 DB에 덮어씁니다.
+     * 하지만 REST 경로(제목/아이콘/정렬 변경 등)는 DB만 갱신하고 메모리에 로드된 Yjs 문서는 갱신하지 않아,
+     * 이후 WS 저장이 발생할 때 오래된 Yjs 데이터로 DB를 덮어쓰는 Lost Update 현상이 발생할 수 있습니다.
+     * 
+     * 이를 해결하기 위해 REST에서 변경된 메타데이터를 해당 페이지의 Yjs 문서에도 즉시 반영하며,
+     * Yjs의 LWW(Last Write Wins) 특성을 이용해 클라이언트와 안전하게 병합되도록 합니다.
      */
     function syncYjsMetadataFromRest(pageId, patch = {}) {
         try {
