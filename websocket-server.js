@@ -325,6 +325,38 @@ function wsRequestPageSnapshot(pageId) {
     }
 }
 
+// ==================== 대용량 full-state 구제 (데이터 유실 방지) ====================
+// 클라이언트가 resync 모드에서 대용량 Yjs state를 보낼 때 서버 제한을 초과하는 경우 발생함
+// 단순히 연결을 끊으면 클라이언트의 최신 편집분이 저장되지 않아 데이터 유실로 보임
+// 전략: 가벼운 HTML 스냅샷을 먼저 요청하여 DB에 보존한 뒤 세션을 리셋함
+const oversizeResyncCloseTimers = new Map(); // pageId -> timeout
+
+function scheduleOversizeResyncSnapshotThenClose(pageId, reason = 'Document too large - collaboration reset') {
+    const pid = String(pageId || '');
+    if (!pid) return;
+    if (oversizeResyncCloseTimers.has(pid)) return;
+
+    // 활성 편집자에게 HTML 스냅샷 전송 요청함 (best-effort)
+    wsRequestPageSnapshot(pid);
+
+    // 클라이언트가 응답할 시간을 준 뒤 세션 리셋함
+    const delay = Math.max(800, Math.min(5000, (typeof E2EE_SNAPSHOT_EXPECT_MS === 'number' ? (E2EE_SNAPSHOT_EXPECT_MS + 800) : 2300)));
+    const t = setTimeout(() => {
+        oversizeResyncCloseTimers.delete(pid);
+        try { wsCloseConnectionsForPage(pid, 1009, reason); } catch (_) {}
+    }, delay);
+    oversizeResyncCloseTimers.set(pid, t);
+}
+
+function clearOversizeResyncTimer(pageId) {
+    const pid = String(pageId || '');
+    const t = oversizeResyncCloseTimers.get(pid);
+    if (t) {
+        try { clearTimeout(t); } catch (_) {}
+        oversizeResyncCloseTimers.delete(pid);
+    }
+}
+
 // ==================== E2EE Leader Election & Persistence Helpers ====================
 const E2EE_LEADER_IDLE_HANDOFF_MS = (() => {
     const n = Number.parseInt(process.env.E2EE_LEADER_IDLE_HANDOFF_MS || '2000', 10);
@@ -778,6 +810,7 @@ function wsCloseConnectionsForSession(sessionId, code = 1008, reason = 'Session 
  */
 function wsCloseConnectionsForPage(pageId, code = 1009, reason = 'Document too large') {
     const pid = String(pageId || '');
+    clearOversizeResyncTimer(pid);
     const conns = wsConnections.pages.get(pid);
     if (!conns || conns.size === 0) {
         if (yjsDocuments.has(pid)) dropYjsDocument(pid);
@@ -2019,6 +2052,7 @@ async function handlePageSnapshot(ws, payload, pool, sanitizeHtmlContent, pageSq
             } catch (e) {
                 console.error('[YJS] snapshot resync-save failed:', String(pageId), e?.message || e);
             }
+            try { clearOversizeResyncTimer(pageId); } catch (_) {}
             try { wsCloseConnectionsForPage(pageId, 1012, 'Resync required - reload'); } catch (_) {}
             return;
         }
@@ -2346,9 +2380,17 @@ async function handleYjsState(ws, payload, pool, sanitizeHtmlContent, pageSqlPol
 		if (!['EDIT', 'ADMIN'].includes(freshPerm)) return;
 
 		// DoS 방지: State 크기 제한
-		if (state.length > WS_MAX_YJS_STATE_B64_CHARS) throw new Error('State too large');
+		if (state.length > WS_MAX_YJS_STATE_B64_CHARS) {
+            ws.send(JSON.stringify({ event: 'error', data: { message: 'State too large' } }));
+            scheduleOversizeResyncSnapshotThenClose(pageId, 'Document state too large');
+            return;
+        }
 		const stateBuf = Buffer.from(state, 'base64');
-		if (stateBuf.length > WS_MAX_YJS_STATE_BYTES) throw new Error('State too large');
+		if (stateBuf.length > WS_MAX_YJS_STATE_BYTES) {
+            ws.send(JSON.stringify({ event: 'error', data: { message: 'State too large' } }));
+            scheduleOversizeResyncSnapshotThenClose(pageId, 'Document state too large');
+            return;
+        }
 
 		const ydoc = await loadOrCreateYjsDoc(pool, sanitizeHtmlContent, pageId);
 
