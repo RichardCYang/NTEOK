@@ -961,6 +961,19 @@ function wsCloseConnectionsForPage(pageId, code = 1009, reason = 'Document too l
     scheduleEmergencyPersistThenDrop(pid, reason);
 }
 
+/**
+ * REST/관리 기능에서 실시간 협업 중 여부를 확인하기 위한 헬퍼
+ * - REST로 content/암호화 정책을 바꾸면서 WS 협업 세션을 강제 종료하면,
+ *   아직 서버/DB에 반영되지 않은 클라이언트 변경분이 유실될 수 있음
+ * - 따라서 서버에서 409(Conflict)로 차단/유도하기 위해, 페이지 구독(WS) 존재 여부를 노출
+ */
+function wsHasActiveConnectionsForPage(pageId) {
+    const pid = String(pageId || '').trim();
+    if (!pid) return false;
+    const conns = wsConnections.pages.get(pid);
+    return !!(conns && conns.size > 0);
+}
+
 function getUserColor(userId) { return USER_COLORS[userId % USER_COLORS.length]; }
 
 function cleanupInactiveConnections(pool, sanitizeHtmlContent) {
@@ -2788,6 +2801,7 @@ module.exports = {
     flushAllPendingE2eeUpdateLogs,
     wsCloseConnectionsForSession,
     wsCloseConnectionsForPage,
+    wsHasActiveConnectionsForPage,
     wsKickUserFromStorage,
     extractFilesFromContent,
     invalidateYjsPersistenceForPage

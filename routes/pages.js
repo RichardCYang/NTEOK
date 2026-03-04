@@ -59,6 +59,7 @@ module.exports = (dependencies) => {
         wsBroadcastToPage,
         wsBroadcastToStorage,
         wsCloseConnectionsForPage,
+        wsHasActiveConnectionsForPage,
         saveYjsDocToDatabase,
         enqueueYjsDbSave,
         logError,
@@ -763,16 +764,27 @@ module.exports = (dependencies) => {
             if (!permission || !['EDIT', 'ADMIN'].includes(permission))
                 return res.status(403).json({ error: "이 페이지를 수정할 권한이 없습니다." });
 
-            // NOTE: mysql2는 bind parameter에 undefined가 들어가면 에러가 날 수 있으므로,
-            //       (특히 메타데이터-only 업데이트) fallback 값을 반드시 보장
-            const title = req.body.title !== undefined
-                ? sanitizeInput(req.body.title)
-                : (existing.title || '제목 없음');
-            // 데이터 유실 방지: isEncrypted는 반드시 불리언(true/false) 값으로 받아야 하며,
-            // 문자열 false 등 모호한 타입을 방지하기 위해 엄격히 체크
+            // 데이터 유실 방지(핵심): 실시간 협업(WS) 중인 페이지를 REST로 덮어쓰려 할 때 차단
+            // - WS 편집 중인 내용은 메모리(Yjs)에만 있고 아직 DB에 반영되지 않았을 수 있음
+            // - 이때 REST(PUT)로 content를 덮어쓰거나 암호화 정책을 바꾸면, WS 세션이 강제 종료되면서
+            //   편집 중이던 데이터가 증발(Silent Lost Update)함
+            // - 따라서 활성 연결이 있다면 409 Conflict를 응답해 사용자가 WS를 통해 편집하도록 유도
             const reqIsEncrypted = (req.body.isEncrypted === true || req.body.isEncrypted === false) ? req.body.isEncrypted : undefined;
             const isEncrypted = (reqIsEncrypted !== undefined) ? (reqIsEncrypted ? 1 : 0) : existing.is_encrypted;
             const encryptionStateChanged = Number(existing.is_encrypted) !== Number(isEncrypted);
+
+            const isRealtimeCollabPage = (Number(existing.storage_is_encrypted) === 0 && Number(existing.is_encrypted) === 0);
+            const contentWillBeReset = (req.body.content !== undefined) || encryptionStateChanged || (Number(isEncrypted) === 1);
+
+            if (isRealtimeCollabPage && contentWillBeReset && typeof wsHasActiveConnectionsForPage === 'function') {
+                if (wsHasActiveConnectionsForPage(id)) {
+                    return res.status(409).json({
+                        error: '이 페이지는 현재 실시간 협업으로 열려 있어 REST 저장이 충돌합니다. (데이터 유실 방지)\n페이지를 새로고침하거나, 다른 탭/사용자의 편집을 종료한 뒤 다시 시도하세요.'
+                    });
+                }
+            }
+
+            // NOTE: mysql2는 bind parameter에 undefined가 들어가면 에러가 날 수 있으므로,
 
             // 데이터 유실 방지(중요): 암호화 페이지를 평문으로 전환(isEncrypted: false)할 때
             // 클라이언트가 복호화된 평문(content)을 함께 보내지 않으면,

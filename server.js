@@ -243,6 +243,7 @@ const {
 
 	wsCloseConnectionsForSession,
     wsCloseConnectionsForPage,
+    wsHasActiveConnectionsForPage,
     wsKickUserFromStorage,
     extractFilesFromContent,
     invalidateYjsPersistenceForPage
@@ -2570,6 +2571,7 @@ function installGracefulShutdownHandlers(httpServer, pool, sanitizeHtmlContent) 
 			wsBroadcastToUser,
 			wsCloseConnectionsForSession,
             wsCloseConnectionsForPage,
+            wsHasActiveConnectionsForPage,
             wsKickUserFromStorage,
             extractFilesFromContent,
             invalidateYjsPersistenceForPage,
