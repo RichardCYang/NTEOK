@@ -3,7 +3,6 @@ import { secureFetch } from './ui-utils.js';
 let currentTempSessionId = null;
 let availableMethods = [];
 
-// SimpleWebAuthn 동적 import
 let SimpleWebAuthnBrowser = null;
 
 async function loadSimpleWebAuthn() {
@@ -58,12 +57,10 @@ async function handleLogin(event) {
                     message = data.error;
                 }
 
-                // 중복 로그인 차단 에러 처리
                 if (res.status === 409 && data.code === 'DUPLICATE_LOGIN_BLOCKED') {
                     message += "\n\n기존 세션을 종료하려면 다른 기기에서 로그아웃하거나, 설정에서 '중복 로그인 차단' 옵션을 해제하세요.";
                 }
             } catch (_) {
-                // ignore
             }
             errorEl.textContent = message;
             return;
@@ -71,12 +68,10 @@ async function handleLogin(event) {
 
         const data = await res.json();
 
-        // 2FA 검증 필요
         if (data.requires2FA && data.tempSessionId) {
             currentTempSessionId = data.tempSessionId;
             availableMethods = data.availableMethods || [];
 
-            // 사용 가능한 2FA 방법이 1개면 바로 해당 방법으로, 2개 이상이면 선택 화면
             if (availableMethods.length === 1) {
                 if (availableMethods[0] === 'passkey') {
                     await startPasskeyAuth();
@@ -91,7 +86,6 @@ async function handleLogin(event) {
             return;
         }
 
-        // 로그인 성공 → 메인 페이지로 이동
         if (data.ok) {
             window.location.href = "/";
         }
@@ -160,7 +154,6 @@ async function verifyTotpLogin() {
             return;
         }
 
-        // 로그인 성공
         window.location.href = "/";
     } catch (error) {
         console.error("TOTP 검증 실패:", error);
@@ -200,7 +193,6 @@ async function useBackupCode() {
             return;
         }
 
-        // 로그인 성공
         window.location.href = "/";
     } catch (error) {
         console.error("백업 코드 검증 실패:", error);
@@ -214,13 +206,11 @@ document.addEventListener("DOMContentLoaded", () => {
         form.addEventListener("submit", handleLogin);
     }
 
-    // 패스키로 로그인 버튼 이벤트 바인딩
     const passkeyLoginBtn = document.querySelector("#passkey-login-btn");
     if (passkeyLoginBtn) {
         passkeyLoginBtn.addEventListener("click", handlePasskeyLogin);
     }
 
-    // TOTP 검증 모달 이벤트 바인딩
     const verifyBtn = document.querySelector("#verify-totp-login-btn");
     if (verifyBtn) {
         verifyBtn.addEventListener("click", verifyTotpLogin);
@@ -236,7 +226,6 @@ document.addEventListener("DOMContentLoaded", () => {
         backupCodeBtn.addEventListener("click", useBackupCode);
     }
 
-    // TOTP 로그인 코드 입력 시 Enter 키 처리
     const totpCodeInput = document.querySelector("#totp-login-code");
     if (totpCodeInput) {
         totpCodeInput.addEventListener("keypress", (e) => {
@@ -247,7 +236,6 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 
-    // 2FA 방식 선택 모달 이벤트 바인딩
     const selectPasskeyBtn = document.querySelector("#select-passkey-btn");
     if (selectPasskeyBtn) {
         selectPasskeyBtn.addEventListener("click", async () => {
@@ -269,7 +257,6 @@ document.addEventListener("DOMContentLoaded", () => {
         cancelTwoFASelectBtn.addEventListener("click", close2FAMethodSelectModal);
     }
 
-    // 패스키 인증 모달 이벤트 바인딩
     const cancelPasskeyAuthBtn = document.querySelector("#cancel-passkey-auth-btn");
     if (cancelPasskeyAuthBtn) {
         cancelPasskeyAuthBtn.addEventListener("click", closePasskeyAuthModal);
@@ -284,7 +271,6 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 });
 
-// 2FA 방식 선택 모달
 function show2FAMethodSelectModal() {
     const modal = document.querySelector("#twofa-method-select-modal");
     const passkeyBtn = document.querySelector("#select-passkey-btn");
@@ -292,7 +278,6 @@ function show2FAMethodSelectModal() {
 
     if (!modal) return;
 
-    // 사용 가능한 방법에 따라 버튼 표시
     if (passkeyBtn) {
         passkeyBtn.style.display = availableMethods.includes('passkey') ? 'block' : 'none';
     }
@@ -308,7 +293,6 @@ function close2FAMethodSelectModal() {
     if (modal) modal.classList.add("hidden");
 }
 
-// 패스키 인증
 async function startPasskeyAuth() {
     const modal = document.querySelector("#passkey-auth-modal");
     const errorEl = document.querySelector("#passkey-auth-error");
@@ -317,7 +301,6 @@ async function startPasskeyAuth() {
     if (errorEl) errorEl.textContent = "";
 
     try {
-        // 서버에서 인증 옵션 가져오기
         const optionsReq = {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -332,11 +315,9 @@ async function startPasskeyAuth() {
 
         const options = await optionsRes.json();
 
-        // SimpleWebAuthn 브라우저 라이브러리로 인증 시작
         const webAuthn = await loadSimpleWebAuthn();
         const credential = await webAuthn.startAuthentication(options);
 
-        // 서버에서 인증 검증
         const verifyReq = {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -352,7 +333,6 @@ async function startPasskeyAuth() {
             throw new Error(errorData.error || "인증에 실패했습니다.");
         }
 
-        // 로그인 성공
         window.location.href = "/";
     } catch (error) {
         console.error("패스키 인증 실패:", error);
@@ -367,7 +347,6 @@ function closePasskeyAuthModal() {
     if (modal) modal.classList.add("hidden");
 }
 
-// 패스키 직접 로그인 (비밀번호 없이)
 async function handlePasskeyLogin(event) {
     event.preventDefault();
 
@@ -384,9 +363,7 @@ async function handlePasskeyLogin(event) {
     try {
         let optionsRes, options, tempSessionId;
 
-        // 아이디가 입력되지 않은 경우: Userless 인증 (Discoverable Credentials)
         if (!username) {
-            // 서버에서 userless 패스키 로그인 옵션 가져오기
             const optionsReq = {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -403,8 +380,6 @@ async function handlePasskeyLogin(event) {
             options = await optionsRes.json();
             tempSessionId = options.tempSessionId;
         } else {
-            // 아이디가 입력된 경우: username 기반 인증
-            // 서버에서 패스키 로그인 옵션 가져오기
             const optionsReq = {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -422,17 +397,14 @@ async function handlePasskeyLogin(event) {
             tempSessionId = options.tempSessionId;
         }
 
-        // 패스키 인증 모달 표시
         const modal = document.querySelector("#passkey-auth-modal");
         const passkeyErrorEl = document.querySelector("#passkey-auth-error");
         if (modal) modal.classList.remove("hidden");
         if (passkeyErrorEl) passkeyErrorEl.textContent = "";
 
-        // SimpleWebAuthn 브라우저 라이브러리로 인증 시작
         const webAuthn = await loadSimpleWebAuthn();
         const credential = await webAuthn.startAuthentication(options);
 
-        // 서버에서 인증 검증
         const verifyEndpoint = username
             ? "/api/passkey/login/verify"
             : "/api/passkey/login/userless/verify";
@@ -450,7 +422,6 @@ async function handlePasskeyLogin(event) {
         if (!verifyRes.ok) {
             const errorData = await verifyRes.json();
 
-            // 중복 로그인 차단 에러 처리
             if (verifyRes.status === 409 && errorData.code === 'DUPLICATE_LOGIN_BLOCKED') {
                 if (passkeyErrorEl) {
                     passkeyErrorEl.textContent = errorData.error + " 기존 세션을 종료하거나 설정을 변경하세요.";
@@ -463,12 +434,10 @@ async function handlePasskeyLogin(event) {
             return;
         }
 
-        // 로그인 성공
         window.location.href = "/";
     } catch (error) {
         console.error("패스키 로그인 실패:", error);
 
-        // 모달이 열려있으면 모달 내부 에러, 아니면 전역 에러
         const modal = document.querySelector("#passkey-auth-modal");
         const passkeyErrorEl = document.querySelector("#passkey-auth-error");
 

@@ -1,14 +1,12 @@
 import DOMPurify from 'dompurify';
 
-// DOMPurify는 기본적으로 href/src 같은 URI 속성만 프로토콜 검증을 수행
-// 이 앱은 data-src/data-url 같은 data-*를 실제 URL sink로 승격시키므로 data-*도 별도 검증 필요
 const CONTROL_CHARS_RE = /[\u0000-\u001F\u007F]/;
 function isSafeHttpUrlOrRelative(value) {
 	if (typeof value !== 'string') return false;
 	const v = value.trim();
 	if (!v) return false;
 	if (CONTROL_CHARS_RE.test(v)) return false;
-	if (v.startsWith('//')) return false;	// protocol-relative 차단
+	if (v.startsWith('//')) return false;	
 	if (v.startsWith('/') || v.startsWith('#')) return true;
 	try {
 		const u = new URL(v);
@@ -18,11 +16,9 @@ function isSafeHttpUrlOrRelative(value) {
 	}
 }
 
-// 훅은 1회만 설치 (중복 설치 방지)
 if (!DOMPurify.__nteokSecurityHooksInstalled) {
 	DOMPurify.__nteokSecurityHooksInstalled = true;
 
-	// data-src/data-url 등 data-* 속성 검증
 	DOMPurify.addHook('uponSanitizeAttribute', (node, data) => {
 		const name = String(data?.attrName || '').toLowerCase();
 
@@ -36,7 +32,6 @@ if (!DOMPurify.__nteokSecurityHooksInstalled) {
 				return;
 			}
 
-			// file-block는 내부 첨부만 허용
 			if (nodeType === 'file-block' && !raw.startsWith('/paperclip/')) {
 				data.keepAttr = false;
 				data.forceKeepAttr = false;
@@ -44,7 +39,6 @@ if (!DOMPurify.__nteokSecurityHooksInstalled) {
 		}
 	});
 
-	// Reverse Tabnabbing 방어: target="_blank"인 경우 rel="noopener noreferrer" 강제
 	DOMPurify.addHook('afterSanitizeAttributes', (node) => {
 		if (String(node.tagName).toLowerCase() === 'a') {
 			const target = String(node.getAttribute('target') || '').trim().toLowerCase();
@@ -59,8 +53,6 @@ if (!DOMPurify.__nteokSecurityHooksInstalled) {
 	});
 }
 
-// 서버(server.js)의 sanitizeHtmlContent 정책과 최대한 유사하게 유지하는 것이 중요
-// 암호화 콘텐츠는 서버에서 정화할 수 없으므로 클라이언트가 최후의 방어
 export const EDITOR_PURIFY_CONFIG = {
 	ALLOWED_TAGS: [
 		'p','br','strong','em','u','s','code','pre',
@@ -78,7 +70,6 @@ export const EDITOR_PURIFY_CONFIG = {
 		'data-callout-type','data-content','data-columns','data-is-open','data-selected-date','data-memos'
 	],
 	ALLOW_DATA_ATTR: true,
-	// javascript:, data: 등을 차단하기 위한 안전한 URI 패턴
 	ALLOWED_URI_REGEXP: /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|cid|xmpp):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i
 };
 
@@ -87,17 +78,10 @@ export function sanitizeEditorHtml(html) {
 	return DOMPurify.sanitize(html, EDITOR_PURIFY_CONFIG);
 }
 
-/**
- * 안전한 HTML → Plain text 변환기
- * - innerHTML 같은 위험한 sink를 사용하지 않음
- * - DOMParser는 스크립트를 실행하거나 서브리소스를 로드하지 않는 inert 파싱을 제공
- * - 검색/미리보기 생성 등, 사용자 콘텐츠를 텍스트로만 쓰고 싶을 때 사용
- */
 export function htmlToPlainText(html, { maxLength = 0 } = {}) {
 	if (!html || typeof html !== 'string') return '';
 
-	// 과도한 입력으로 브라우저가 멈추는 것을 방지 (방어적 제한)
-	const HARD_LIMIT = 2_000_000; // 2MB
+	const HARD_LIMIT = 2_000_000; 
 	const input = html.length > HARD_LIMIT ? html.slice(0, HARD_LIMIT) : html;
 
 	try {
@@ -108,7 +92,6 @@ export function htmlToPlainText(html, { maxLength = 0 } = {}) {
 		if (maxLength > 0 && out.length > maxLength) return out.slice(0, maxLength);
 		return out;
 	} catch {
-		// 최후의 fallback: 태그 제거(보수적)
 		let out = input.replace(/<[^>]*>/g, ' ');
 		out = out.replace(/\s+/g, ' ').trim();
 		if (maxLength > 0 && out.length > maxLength) return out.slice(0, maxLength);

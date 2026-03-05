@@ -15,8 +15,6 @@ const erl = require("express-rate-limit");
 const rateLimit = erl.rateLimit || erl;
 const { ipKeyGenerator } = erl;
 
-// cover_image는 UI에서 `/covers/${coverImage}` 형태로 쓰이므로
-// default/<file> 또는 <userId>/<file>만 허용 (저장형 CSS Injection 차단)
 function validateCoverImageRef(ref, currentUserId) {
     if (ref === null || ref === '') return { ok: true, value: null };
     if (typeof ref !== 'string') return { ok: false, error: 'coverImage 형식이 올바르지 않습니다.' };
@@ -33,10 +31,8 @@ function validateCoverImageRef(ref, currentUserId) {
     const isUser = /^\d{1,12}$/.test(scope) && String(scope) === String(currentUserId);
     if (!isDefault && !isUser) return { ok: false, error: 'coverImage 범위가 허용되지 않습니다.' };
 
-    // filename: 슬래시 불가(이미 split), path traversal/문자열 주입 방지
     if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/.test(filename)) return { ok: false, error: 'coverImage 파일명이 올바르지 않습니다.' };
     if (filename.includes('..') || /["'()\\]/.test(filename)) return { ok: false, error: 'coverImage 파일명에 허용되지 않는 문자가 포함되어 있습니다.' };
-    // 확장자 allowlist(커버 업로드 정책과 일치)
     if (!/\.(?:jpe?g|png|gif|webp)$/i.test(filename)) return { ok: false, error: '허용되지 않는 커버 이미지 확장자입니다.' };
 
     return { ok: true, value: `${scope}/${filename}` };
@@ -77,8 +73,6 @@ module.exports = (dependencies) => {
         outboundFetchLimiter
 	} = dependencies;
 
-    // 주의: 이 동기화는 특정 사용자(pageOwnerUserId)의 첨부 레지스트리 slice만 갱신함
-    // 따라서 삭제 쿼리도 반드시 owner_user_id 범위로 제한해야 타 사용자 레코드를 건드리지 않음
     async function syncPageFileRefs(pageId, pageOwnerUserId, content) {
         if (!content) return;
         try {
@@ -87,7 +81,6 @@ module.exports = (dependencies) => {
 
             const newFiles = extractFilesFromContent(content, ownerId);
 
-            // 신규 파일 등록 (INSERT IGNORE)
             for (const file of newFiles) {
                 const parts = file.ref.split('/');
                 const fileOwnerId = parseInt(parts[0], 10);
@@ -101,8 +94,6 @@ module.exports = (dependencies) => {
                 }
             }
 
-            // 이 페이지에서 더 이상 참조되지 않는 레지스트리 제거
-            // 중요: 현재 동기화 대상(ownerId)의 레코드만 제거해야 타 사용자 첨부 레지스트리를 보호함
             const currentPaperclipFiles = newFiles.filter(f => f.type === 'paperclip').map(f => f.ref.split('/')[1]);
             if (currentPaperclipFiles.length > 0) {
                 await pool.execute(
@@ -154,27 +145,18 @@ module.exports = (dependencies) => {
         );
     }
 
-    /**
-     * 보안: 업로드 총량 및 횟수 제한 (디스크 고갈 DoS 방지)
-     * 
-     * 단건 파일 크기 제한만으로는 전체 디스크 용량을 고갈시키는 공격을 막기 어렵음
-     * 이를 방지하기 위해 사용자(userId)별로 업로드 횟수 제한(Rate Limit)과 전체 디렉터리 용량 제한(Quota)을 적용함
-     */
 
-    // 환경변수로 조정 가능 (기본값: 1GB)
     const MAX_PAPERCLIP_BYTES_PER_USER = (() => {
         const raw = String(process.env.MAX_PAPERCLIP_BYTES_PER_USER || '').trim().toLowerCase();
-        if (!raw) return 1024 * 1024 * 1024; // 1GB
+        if (!raw) return 1024 * 1024 * 1024; 
         const m = raw.match(/^(\d+(?:\.\d+)?)\s*(b|kb|mb|gb)?$/);
         if (!m) return 1024 * 1024 * 1024;
         const n = Number(m[1]);
         const unit = m[2] || 'b';
         const mul = unit === 'gb' ? 1024**3 : unit === 'mb' ? 1024**2 : unit === 'kb' ? 1024 : 1;
-        // 50MB~20GB 범위로 클램핑 (최소 50MB, 최대 20GB)
         return Math.max(50 * 1024 * 1024, Math.min(20 * 1024**3, Math.floor(n * mul)));
     })();
 
-    // 업로드 요청 횟수 제한 (기본: 60회/시간)
     const fileUploadLimiter = rateLimit({
         windowMs: 60 * 60 * 1000,
         max: Number.parseInt(process.env.FILE_UPLOAD_MAX_PER_HOUR || "60", 10),
@@ -184,16 +166,10 @@ module.exports = (dependencies) => {
         handler: (_req, res) => res.status(429).json({ error: "업로드 요청이 너무 많습니다. 잠시 후 다시 시도해주세요." })
     });
 
-    // 디렉터리 사용량 캐시(성능)
-    const usageCache = new Map(); // key=userId -> { bytes, ts }
+    const usageCache = new Map(); 
     const USAGE_CACHE_TTL_MS = 30 * 1000;
 
-    /**
-     * 보안(중요): 업로드 quota 체크는 비동기 I/O(await) 사이에 레이스가 발생할 수 있음
-     * - 동시에 여러 업로드가 들어오면, 둘 다 캐시 기준으로 통과 → 총량 초과가 누락될 수 있음
-     * - userId 단위로 직렬화하여 TOCTOU/레이스를 방지
-     */
-    const quotaLocks = new Map(); // userId(string) -> Promise chain
+    const quotaLocks = new Map(); 
     function withQuotaLock(userId, fn) {
         const key = String(userId);
         const prev = quotaLocks.get(key) || Promise.resolve();
@@ -222,14 +198,12 @@ module.exports = (dependencies) => {
 
     async function enforceUploadQuotaOrThrow(userId, newFilePath) {
         return withQuotaLock(userId, async () => {
-            // 보안: paperclip, imgs, covers 세 곳의 용량을 모두 합산하여 사용자 총 할당량(Quota) 체크
             const dirs = [
                 path.join(__dirname, "..", "paperclip", String(userId)),
                 path.join(__dirname, "..", "imgs", String(userId)),
                 path.join(__dirname, "..", "covers", String(userId))
             ];
 
-            // 방어 심층화: newFilePath는 반드시 해당 userId의 업로드 디렉터리 내부여야만 stat/unlink 수행
             const bases = dirs.map(d => path.resolve(d) + path.sep);
             const resolvedNew = newFilePath ? path.resolve(newFilePath) : "";
             const isNewPathSafe =
@@ -244,11 +218,6 @@ module.exports = (dependencies) => {
             const now = Date.now();
             const cached = usageCache.get(userId);
 
-            /**
-             * 취약점 수정(핵심):
-             * - 캐시 fast-path에서도 이번 업로드 파일 크기를 반영하여 projected total로 판정해야 함
-             * - 그렇지 않으면 TTL 동안 여러 업로드로 quota 우회 → 디스크 고갈(DoS)
-             */
             if (cached && (now - cached.ts) < USAGE_CACHE_TTL_MS) {
                 let addedBytes = 0;
                 if (isNewPathSafe) {
@@ -265,7 +234,6 @@ module.exports = (dependencies) => {
                     throw new Error("UPLOAD_QUOTA_EXCEEDED");
                 }
 
-                // 캐시를 누적 갱신하여 TTL 동안 연속 업로드도 정확히 제한
                 usageCache.set(userId, { bytes: projected, ts: now });
                 return;
             }
@@ -277,41 +245,22 @@ module.exports = (dependencies) => {
             usageCache.set(userId, { bytes: totalBytes, ts: now });
 
             if (totalBytes > MAX_PAPERCLIP_BYTES_PER_USER) {
-                // quota 초과 시 방금 업로드한 파일은 즉시 삭제
                 safeUnlinkNewFile();
-                // 캐시 무효화 (다음 요청 때 다시 계산하도록)
                 usageCache.delete(userId);
                 throw new Error("UPLOAD_QUOTA_EXCEEDED");
             }
         });
     }
 
-    /**
-     * 보안: 암호화(is_encrypted=1) + 공유불가(share_allowed=0) 페이지는 작성자만 접근 가능해야 함
-     * - 기존에는 일부 Write 엔드포인트가 pool.execute("SELECT * FROM pages WHERE id=?")로 직접 로드하여
-     * - pageSqlPolicy(가시성 정책)를 우회 → 권한우회(Broken Access Control) 발생
-     * - 모든 mutation 전에 pagesRepo.getPageByIdForUser()로 객체 단위 권한 검증을 통일
-     */
     async function loadPageForMutationOr404(userId, pageId, res) {
         const page = await pagesRepo.getPageByIdForUser({ userId, pageId });
         if (!page) {
-            // 존재 여부 최소화: 숨김 페이지도 동일하게 404
             res.status(404).json({ error: "Not found" });
             return null;
         }
         return page;
     }
 
-    /**
-     * 데이터 유실 방지: REST 경로에서 수정된 메타데이터 동기화
-     * 
-     * 실시간 협업(WS) 중에는 디바운스 저장을 통해 title, icon, content 등을 DB에 덮어씁니다.
-     * 하지만 REST 경로(제목/아이콘/정렬 변경 등)는 DB만 갱신하고 메모리에 로드된 Yjs 문서는 갱신하지 않아,
-     * 이후 WS 저장이 발생할 때 오래된 Yjs 데이터로 DB를 덮어쓰는 Lost Update 현상이 발생할 수 있습니다.
-     * 
-     * 이를 해결하기 위해 REST에서 변경된 메타데이터를 해당 페이지의 Yjs 문서에도 즉시 반영하며,
-     * Yjs의 LWW(Last Write Wins) 특성을 이용해 클라이언트와 안전하게 병합되도록 합니다.
-     */
     function syncYjsMetadataFromRest(pageId, patch = {}) {
         try {
             const pid = String(pageId || '');
@@ -319,7 +268,6 @@ module.exports = (dependencies) => {
             const docInfo = yjsDocuments.get(pid);
             if (!docInfo?.ydoc) return;
 
-            // Yjs 변경사항 캡처
             let update = null;
             const handler = (u) => { update = u; };
             docInfo.ydoc.once('update', handler);
@@ -349,7 +297,6 @@ module.exports = (dependencies) => {
                 }
 
                 if (Object.prototype.hasOwnProperty.call(patch, 'content')) {
-                    // content는 서버 정책으로 정화된 HTML만 반영
                     const c = (typeof patch.content === 'string') ? patch.content : '';
                     yMeta.set('content', c);
                 }
@@ -357,24 +304,18 @@ module.exports = (dependencies) => {
 
             docInfo.ydoc.off('update', handler);
 
-            // 실시간 클라이언트들에게 Yjs 업데이트 전파 (UI 동기화)
             if (update && typeof wsBroadcastToPage === 'function') {
                 wsBroadcastToPage(pid, 'yjs-update', {
                     update: Buffer.from(update).toString('base64')
                 });
             }
 
-            // 레이스 방지: 진행 중인 WS 저장 시퀀스를 즉시 무효화 (epoch bump)
-            // 이를 통해 REST UPDATE가 진행되는 동안 또는 직후에 실행될 수도 있는
-            // 오래된 Yjs 메타데이터 기반의 DB 쓰기를 차단함
             if (typeof invalidateYjsPersistenceForPage === 'function') {
                 invalidateYjsPersistenceForPage(pid);
             }
 
-            // inactivity cleanup 대상이 되지 않도록 터치
             docInfo.lastAccess = Date.now();
         } catch (_) {
-            // best-effort
         }
     }
 
@@ -450,7 +391,6 @@ module.exports = (dependencies) => {
         }
     });
 
-    // 휴지통 목록 조회
     router.get("/trash", authMiddleware, async (req, res) => {
         try {
             const userId = req.user.id;
@@ -472,15 +412,11 @@ module.exports = (dependencies) => {
         }
     });
 
-    /**
-     * URL 메타데이터 가져오기 (Link Block용)
-     */
     router.get("/fetch-metadata", authMiddleware, outboundFetchLimiter, async (req, res) => {
         const { url } = req.query;
         if (!url) return res.status(400).json({ error: "URL이 필요합니다." });
 
         try {
-            // 1. URL 유효성 검사
             let targetUrl;
             try {
                 targetUrl = new URL(url);
@@ -492,7 +428,6 @@ module.exports = (dependencies) => {
                 return res.status(400).json({ error: "HTTP/HTTPS 프로토콜만 허용됩니다." });
             }
 
-            // 2. SSRF 방지: DNS 조회 및 IP 검증
             const hostname = targetUrl.hostname;
             const addresses = await dns.resolve4(hostname).catch(() => []);
             if (addresses.length === 0) {
@@ -510,15 +445,14 @@ module.exports = (dependencies) => {
                 }
             }
 
-            // 3. 메타데이터 요청
             const response = await axios.get(url, {
                 timeout: 5000,
-                maxContentLength: 2 * 1024 * 1024, // 2MB 제한
+                maxContentLength: 2 * 1024 * 1024, 
                 headers: {
                     'User-Agent': 'NTEOK-Link-Preview/1.0',
                     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
                 },
-                validateStatus: (status) => status < 400 // 4xx, 5xx 에러로 처리
+                validateStatus: (status) => status < 400 
             });
 
             if (typeof response.data !== 'string') {
@@ -528,7 +462,6 @@ module.exports = (dependencies) => {
             const $ = cheerio.load(response.data);
             const title = $('title').first().text() || $('meta[property="og:title"]').attr('content') || $('meta[name="twitter:title"]').attr('content') || targetUrl.hostname;
 
-            // 파비콘 추출 강화: 다양한 rel 속성 대응
             let favicon = null;
             const faviconSelectors = [
                 'link[rel="apple-touch-icon"]',
@@ -546,12 +479,10 @@ module.exports = (dependencies) => {
                 }
             }
 
-            // 파비콘이 없으면 기본 경로 시도
             if (!favicon) {
                 favicon = '/favicon.ico';
             }
 
-            // Favicon URL 정규화
             if (favicon && !favicon.startsWith('http') && !favicon.startsWith('data:')) {
                 if (favicon.startsWith('//')) {
                     favicon = targetUrl.protocol + favicon;
@@ -599,9 +530,6 @@ module.exports = (dependencies) => {
         } catch (error) { logError("GET /api/pages/:id", error); res.status(500).json({ error: "Failed" }); }
     });
 
-    // 보안: parentId는 객체 ID이므로 저장소 권한만으로 충분하지 않음
-    // - 현재 사용자에게 보이는 페이지인지(객체 단위 권한)
-    // - 같은 저장소인지(교차 저장소 참조 금지)
     async function validateParentForCreate({ userId, storageId, parentId }) {
         if (parentId == null) return { ok: true, parentId: null };
         if (typeof parentId !== "string") return { ok: false, status: 400, error: "Invalid parentId" };
@@ -610,15 +538,12 @@ module.exports = (dependencies) => {
         if (!normalizedParentId || normalizedParentId.length > 64)
             return { ok: false, status: 400, error: "Invalid parentId" };
 
-        // pagesRepo.getPageByIdForUser 는 pageSqlPolicy 를 통해 가시성(암호화/비공개 포함)까지 반영
         const parent = await pagesRepo.getPageByIdForUser({ userId, pageId: normalizedParentId });
         if (!parent) {
-            // 존재 여부/권한 여부를 구분하지 않아 정보 누출 방지
             return { ok: false, status: 404, error: "Parent page not found" };
         }
 
         if (String(parent.storage_id) !== String(storageId)) {
-            // 교차 저장소 부모 연결 금지 (무결성 + 테넌트 격리)
             return { ok: false, status: 404, error: "Parent page not found" };
         }
 
@@ -659,7 +584,6 @@ module.exports = (dependencies) => {
             if (isEncrypted) {
                 if (!encContent) return res.status(400).json({ error: "Encryption fields missing" });
 
-                // 보안: 암호화 필드 형식 및 크기 검증 (Stored XSS 및 DoS 방어)
                 if (salt) {
                     if (typeof salt !== "string" || salt.length > 512 || !/^[A-Za-z0-9+/=]*$/.test(salt))
                         return res.status(400).json({ error: "유효하지 않은 encryptionSalt 형식" });
@@ -689,11 +613,6 @@ module.exports = (dependencies) => {
                 ? ''
                 : sanitizeHtmlContent(hasContentField ? (req.body.content || '<p></p>') : '<p></p>');
 
-            // share_allowed 결정:
-            // - 저장소 레벨 E2EE (encryptionSalt 없음): 저장소 참여자 모두 볼 수 있어야 함 → 1
-            //   (내용은 저장소 키 없이 복호화 불가 → 실질적 접근 제어는 클라이언트 측 암호화)
-            // - 페이지 개별 암호화 (encryptionSalt 있음): 페이지 비밀번호 소유자만 → 0
-            // - 평문: pageSqlPolicy에서 is_encrypted=1 조건 불충족 → 0이어도 무관
             const shareAllowed = (isEncrypted && !salt) ? 1 : 0;
 
             await pool.execute(`INSERT INTO pages (id, user_id, parent_id, title, content, sort_order, created_at, updated_at, storage_id, is_encrypted, encryption_salt, encrypted_content, share_allowed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -718,9 +637,6 @@ module.exports = (dependencies) => {
         const id = req.params.id;
         const userId = req.user.id;
         try {
-            // E2EE(저장소 암호화) 페이지인 경우 REST를 통한 콘텐츠(encryptedContent) 업데이트를 차단
-            // - E2EE 콘텐츠는 반드시 WebSocket(yjs-state-e2ee)을 통해서만 저장해야 함
-            // - REST로 저장하면 e2ee_yjs_state와 엇갈려 다음 로드 시 stale snapshot 롤백이 발생함
             const [pageRows] = await pool.execute(
                 `SELECT p.user_id,
                         p.storage_id,
@@ -747,11 +663,6 @@ module.exports = (dependencies) => {
             const existing = pageRows[0];
             const hasEncryptedContentField = Object.prototype.hasOwnProperty.call(req.body, "encryptedContent");
 
-            // 저장소 레벨 E2EE 페이지 판정:
-            // - storage.is_encrypted=1 (저장소 키 기반 E2EE)
-            // - page.is_encrypted=1 이면서 page.encryption_salt가 NULL (페이지 비밀번호 기반 암호화가 아닌 경우)
-            // ※ 이 페이지 타입은 encryptedContent(REST)로 저장하면 WS(e2ee_yjs_state)와 불일치가 생겨
-            //    다음 로드에서 stale snapshot으로 롤백될 수 있으므로 차단
             const isE2eePage =
                 Number(existing.storage_is_encrypted) === 1 &&
                 Number(existing.is_encrypted) === 1 &&
@@ -764,11 +675,6 @@ module.exports = (dependencies) => {
             if (!permission || !['EDIT', 'ADMIN'].includes(permission))
                 return res.status(403).json({ error: "이 페이지를 수정할 권한이 없습니다." });
 
-            // 데이터 유실 방지(핵심): 실시간 협업(WS) 중인 페이지를 REST로 덮어쓰려 할 때 차단
-            // - WS 편집 중인 내용은 메모리(Yjs)에만 있고 아직 DB에 반영되지 않았을 수 있음
-            // - 이때 REST(PUT)로 content를 덮어쓰거나 암호화 정책을 바꾸면, WS 세션이 강제 종료되면서
-            //   편집 중이던 데이터가 증발(Silent Lost Update)함
-            // - 따라서 활성 연결이 있다면 409 Conflict를 응답해 사용자가 WS를 통해 편집하도록 유도
             const reqIsEncrypted = (req.body.isEncrypted === true || req.body.isEncrypted === false) ? req.body.isEncrypted : undefined;
             const isEncrypted = (reqIsEncrypted !== undefined) ? (reqIsEncrypted ? 1 : 0) : existing.is_encrypted;
             const encryptionStateChanged = Number(existing.is_encrypted) !== Number(isEncrypted);
@@ -784,12 +690,7 @@ module.exports = (dependencies) => {
                 }
             }
 
-            // NOTE: mysql2는 bind parameter에 undefined가 들어가면 에러가 날 수 있으므로,
 
-            // 데이터 유실 방지(중요): 암호화 페이지를 평문으로 전환(isEncrypted: false)할 때
-            // 클라이언트가 복호화된 평문(content)을 함께 보내지 않으면,
-            // 서버는 encrypted_content를 NULL로 지우고 content는 빈 문자열(기존값)로 남아
-            // 사용자 데이터가 영구 유실될 수 있음
             const turningOffEncryption =
                 encryptionStateChanged &&
                 Number(existing.is_encrypted) === 1 &&
@@ -805,16 +706,12 @@ module.exports = (dependencies) => {
             let encContent;
 
             if (Number(isEncrypted) === 1) {
-                // 암호화 페이지: 명시적으로 전달된 값만 반영, 없으면 기존값 유지
-                // (|| 사용 금지: '' 같은 falsy 값 때문에 기존값으로 되돌아가는 버그 방지)
                 salt = hasEncryptionSalt ? req.body.encryptionSalt : existing.encryption_salt;
                 encContent = hasEncryptedContent ? req.body.encryptedContent : existing.encrypted_content;
 
-                // 상태 전환(평문 -> 암호화) 시에는 최소한 암호문은 있어야 함 (솔트는 저장소 레벨일 경우 없을 수 있음)
                 if (encryptionStateChanged && !hasEncryptedContent)
                     return res.status(400).json({ error: "암호화 전환 시 encryptedContent가 필요합니다." });
 
-                // 보안: 암호화 필드 형식 및 크기 검증 (Stored XSS 및 DoS 방어)
                 if (salt != null) {
                     if (typeof salt !== "string" || salt.length > 512 || !/^[A-Za-z0-9+/=]*$/.test(salt))
                         return res.status(400).json({ error: "유효하지 않은 encryptionSalt 형식" });
@@ -836,12 +733,10 @@ module.exports = (dependencies) => {
                         return res.status(400).json({ error: "encryptedContent 형식이 올바르지 않거나 허용되지 않는 문자가 포함되어 있습니다." });
                 }
             } else {
-                // 보안: 평문 페이지로 저장될 때는 암호화 잔존 데이터 완전 제거
                 salt = null;
                 encContent = null;
             }
 
-            // 데이터 유실 방지: content 필드가 있으면 반드시 문자열이어야 함
             const hasContentField = Object.prototype.hasOwnProperty.call(req.body, 'content');
             if (!isEncrypted && hasContentField && typeof req.body.content !== 'string') {
                 return res.status(400).json({ error: 'content must be a string' });
@@ -856,33 +751,19 @@ module.exports = (dependencies) => {
             const hPadding = req.body.horizontalPadding !== undefined ? req.body.horizontalPadding : (existing.horizontal_padding ?? null);
             const nowStr = formatDateForDb(new Date());
 
-            // 데이터 유실 방지(중요): REST 경로에서 변경된 메타데이터를
-            // 서버 메모리의 Yjs 문서에도 먼저 반영해, 아래 DB UPDATE를 await 하는 동안
-            // 디바운스 WS 저장이 실행되더라도 오래된 title/icon 값으로 DB를 되돌리지 않게 함
-            // (content 업데이트는 shouldResetYjsState에서 문서를 drop 하므로 제외)
             if (Number(isEncrypted) === 0 && req.body.content === undefined) {
                 const patch = {};
                 if (req.body.title !== undefined) patch.title = title;
                 if (req.body.icon !== undefined) patch.icon = icon;
                 if (Object.keys(patch).length > 0) syncYjsMetadataFromRest(id, patch);
             }
-            // share_allowed 결정:
-            // - 저장소 레벨 E2EE (encryptionSalt 없음): 저장소 참여자 모두 볼 수 있어야 함 → 1
-            // - 페이지 개별 암호화 (encryptionSalt 있음): 페이지 비밀번호 소유자만 → 0
             const shareAllowed = (Number(isEncrypted) === 1 && !salt) ? 1 : 0;
             let sql = `UPDATE pages SET title=?, content=?, is_encrypted=?, encryption_salt=?, encrypted_content=?, icon=?, horizontal_padding=?, updated_at=?, share_allowed=?`;
             const params = [title, content, isEncrypted, salt, encContent, icon, hPadding, nowStr, shareAllowed];
-            // 보안: 암호화 페이지는 서버/DB 어디에도 평문이 남지 않아야 함
-            // - yjs_state는 협업 편집 상태(전체 문서 스냅샷)를 그대로 담을 수 있어(평문 잔존) 암호화 보안을 훼손
-            // - 따라서 (1) 콘텐츠가 직접 업데이트되거나, (2) 암호화 상태가 바뀌거나, (3) 암호화 상태인 경우에는
-            //   yjs_state를 항상 초기화하고, 서버 메모리의 Yjs 문서도 drop
             const shouldResetYjsState = (req.body.content !== undefined) || encryptionStateChanged || (Number(isEncrypted) === 1);
             if (shouldResetYjsState) {
-                invalidateYjsPersistenceForPage(id); // 핵심: 진행 중인 WS 저장을 즉시 무효화 (레이스 방지)
+                invalidateYjsPersistenceForPage(id); 
                 sql += `, yjs_state=NULL`;
-                // 중요: yjsDocuments 엔트리를 제거할 때 pending saveTimeout이 남아있으면
-                // REST 저장 이후에도 타이머 콜백이 실행되어 오래된 Yjs 상태가 DB를 덮어씌울 수 있음
-                // (데이터 유실/롤백) → 반드시 타이머를 먼저 정리한 후 delete
                 try {
                     const docInfo = yjsDocuments && yjsDocuments.get(id);
                     if (docInfo?.saveTimeout) {
@@ -892,9 +773,6 @@ module.exports = (dependencies) => {
                 } catch (_) {}
                 if (yjsDocuments && yjsDocuments.has(id)) yjsDocuments.delete(id);
 
-                // REST로 content를 갱신하는 동안 실시간 세션이 살아있으면
-                // 서버 Y.Doc 리셋과 클라이언트 incremental update가 충돌해 문서가 깨질 수 있으므로
-                // 연결을 강제로 종료해 클라이언트가 재구독/재동기화하도록 유도
                 if (req.body.content !== undefined && typeof wsCloseConnectionsForPage === 'function')
                     wsCloseConnectionsForPage(id, 1012, 'Page updated via REST');
             }
@@ -905,8 +783,6 @@ module.exports = (dependencies) => {
             if (!isEncrypted && content)
                 await syncPageFileRefs(id, userId, content);
 
-            // 보안: 페이지 암호화 정책 변경 시 기존 page WebSocket 구독 즉시 강제 종료
-            // - yjsDocuments.delete()만으론 이미 열려 있는 WS 연결이 살아남아 TOCTOU 권한 우회 가능
             if (encryptionStateChanged && typeof wsCloseConnectionsForPage === 'function')
                 wsCloseConnectionsForPage(id, 1008, 'Page access policy changed');
 
@@ -918,8 +794,6 @@ module.exports = (dependencies) => {
                 details: { title }
             });
 
-            // 보안: 브로드캐스트 필터링은 업데이트 후 가시성 상태 기준으로 수행
-            // - 업데이트 전(existing) 상태를 쓰면 정책 전환 타이밍에 잘못된 대상에게 알림이 전파될 수 있음
             const updatedVis = wsPageVisibilityFromRow({ ...existing, is_encrypted: Number(isEncrypted) });
             wsBroadcastToStorage(existing.storage_id, 'metadata-change', { pageId: id, field: 'title', value: title }, null, { pageVisibility: updatedVis });
             res.json({ id, title, updatedAt: new Date().toISOString() });
@@ -930,10 +804,6 @@ module.exports = (dependencies) => {
         const { storageId, pageIds, parentId } = req.body;
         const userId = req.user.id;
 
-        // 보안: 대량 변경 API는 반드시 객체 단위 권한(Object-level auth)을 다시 강제해야 함
-        // - storage 권한(EDIT/ADMIN)이 있어도, 특정 페이지는 is_encrypted=1 + share_allowed=0 정책으로 비가시일 수 있음
-        // - (특히) 과거에 접근 가능했던 페이지의 ID를 알고 있는 협업자가, 접근이 회수된 뒤에도
-        //   이 엔드포인트를 통해 sort_order를 변경하는 무단 변경(Broken Access Control)을 막기 위함
         try {
             if (typeof storageId !== "string" || !storageId.trim())
                 return res.status(400).json({ error: "storageId required" });
@@ -941,12 +811,10 @@ module.exports = (dependencies) => {
             if (!Array.isArray(pageIds) || pageIds.length === 0)
                 return res.status(400).json({ error: "pageIds required" });
 
-            // DoS 방지: 한 번에 너무 많은 업데이트 금지
             const MAX_REORDER_PAGES = Number(process.env.MAX_REORDER_PAGES || 2000);
             if (pageIds.length > MAX_REORDER_PAGES)
                 return res.status(413).json({ error: `Too many pageIds (max ${MAX_REORDER_PAGES})` });
 
-            // 입력 정규화 + 중복/이상치 차단
             const normalizedIds = [];
             const seen = new Set();
             for (const raw of pageIds) {
@@ -963,14 +831,12 @@ module.exports = (dependencies) => {
                 return res.status(403).json({ error: "이 저장소의 페이지 순서를 변경할 권한이 없습니다." });
             }
 
-            // (선택) parentId가 있으면, 해당 parent 페이지도 보이는지 확인
             if (parentId) {
                 const parent = await pagesRepo.getPageByIdForUser({ userId, pageId: parentId });
                 if (!parent || String(parent.storage_id) !== String(storageId))
                     return res.status(404).json({ error: "Not found" });
             }
 
-            // 핵심: 요청에 포함된 모든 pageId가 현재 사용자에게 보이는 페이지인지 DB에서 재검증
             const vis = (pageSqlPolicy && typeof pageSqlPolicy.andVisible === "function")
                 ? pageSqlPolicy.andVisible({ alias: "p", viewerUserId: userId })
                 : { sql: "AND NOT (p.is_encrypted = 1 AND p.share_allowed = 0 AND p.user_id != ?)", params: [userId] };
@@ -992,20 +858,13 @@ module.exports = (dependencies) => {
 
             const allowed = new Set((visibleRows || []).map(r => String(r.id)));
             if (allowed.size !== normalizedIds.length) {
-                // 존재/권한 여부를 섞어 404로 통일 (enumeration 완화)
                 return res.status(404).json({ error: "Not found" });
             }
 
-            // 데이터 유실 방지(중요): 정렬 변경(sort_order)이 DB에 반영되는 동안/이후
-            // WS 디바운스 저장이 오래된 sortOrder 메타로 DB를 덮어쓰면
-            // 사용자가 바꾼 페이지 순서가 되돌아갈 수 있음
-            // 따라서: 서버 메모리의 Yjs metadata.sortOrder(있을 때)를 먼저 동기화하여
-            // 이후 저장(saveYjsDocToDatabase)도 새 순서를 유지하도록 함
             for (let i = 0; i < normalizedIds.length; i++) {
                 syncYjsMetadataFromRest(normalizedIds[i], { sortOrder: i * 10 });
             }
 
-            // 일관성: 트랜잭션으로 sort_order 일괄 적용
             const conn = await pool.getConnection();
             try {
                 await conn.beginTransaction();
@@ -1039,7 +898,6 @@ module.exports = (dependencies) => {
         }
     });
 
-    // 페이지 복구
     router.post("/:id/restore", authMiddleware, async (req, res) => {
         try {
             const userId = req.user.id;
@@ -1086,7 +944,6 @@ module.exports = (dependencies) => {
         }
     });
 
-    // 페이지 영구 삭제
     router.delete("/:id/permanent", authMiddleware, async (req, res) => {
         try {
             const userId = req.user.id;
@@ -1142,12 +999,6 @@ module.exports = (dependencies) => {
                 return res.status(403).json({ error: "이 페이지를 삭제할 권한이 없습니다." });
             }
 
-            /**
-             * 권한 정책 강화 (Broken Access Control 방지)
-             * - ADMIN: 어떤 페이지든 삭제 가능
-             * - EDIT : 본인이 작성한 페이미 삭제 가능
-             * - READ : 삭제 불가
-             */
             const isOwnerOfPage = Number(existing.user_id) === Number(userId);
             const canDelete =
                 permission === 'ADMIN' ||
@@ -1159,7 +1010,6 @@ module.exports = (dependencies) => {
                 });
             }
 
-            // Soft delete: 자신과 모든 하위 페이지의 deleted_at 설정
             const delResult = await pagesRepo.softDeletePageAndDescendants({
                 rootPageId: id,
                 storageId: existing.storage_id,
@@ -1173,16 +1023,11 @@ module.exports = (dependencies) => {
                 : [id];
 
             for (const pid of deletedPageIds) {
-                // 핵심: 진행 중인 WS 저장을 즉시 무효화 (레이스 방지)
                 invalidateYjsPersistenceForPage(pid);
 
-                // 메모리에 로드된 Yjs 문서 정리
                 try {
                     const docInfo = yjsDocuments.get(pid);
                     if (docInfo?.ydoc) {
-                        // soft-delete 직후에는 deleted_at이 세팅되어 saveYjsDocToDatabase가 기본적으로 중단되므로,
-                        // allowDeleted=true로 휴지통에서 복구 시 최신 편집 내용이 보존되도록 함
-                        // 데이터 유실 방지: 직렬화 큐(enqueueYjsDbSave)를 사용하여 병렬 저장 레이스 차단
                         await enqueueYjsDbSave(pid, () => saveYjsDocToDatabase(pool, sanitizeHtmlContent, pid, docInfo.ydoc, { allowDeleted: true }));
                     }
                 } catch (_) {}
@@ -1196,14 +1041,11 @@ module.exports = (dependencies) => {
                     yjsDocuments.delete(pid);
                 } catch (_) {}
 
-                // 실시간 구독(WebSocket) 정리
                 try {
                     const conns = wsConnections?.pages?.get(pid);
                     if (conns && conns.size) {
-                        // 구독자들에게 페이지 삭제 알림 전송 (클라이언트 UI 반영용)
                         try { wsBroadcastToPage(pid, 'page-deleted', { pageId: pid }); } catch (_) {}
 
-                        // 연결 강제 종료 (Broken Access Control 차단)
                         for (const c of Array.from(conns)) {
                             try {
                                 if (c.ws) {
@@ -1240,8 +1082,6 @@ module.exports = (dependencies) => {
                 return res.status(400).json({ error: "Invalid filename" });
             }
 
-            // 데이터 유실 방지: 아직 어떤 페이지에서 cover_image로 사용 중이면 삭제를 거부
-            // (삭제하면 페이지 UI가 깨지며, 사용자가 원치 않는 커버 유실로 인식될 수 있음)
             const coverRef = `${userId}/${filename}`;
             const [useRows] = await pool.execute(
                 `SELECT COUNT(*) AS cnt
@@ -1341,11 +1181,7 @@ module.exports = (dependencies) => {
             const sig = await assertImageFileSignature(req.file.path);
             normalizeUploadedImageFile(req.file, sig.ext);
 
-            // 보안: 업로드 총량 강제 (디스크 고갈 DoS 방지)
             try {
-                // cover 이미지는 covers 디렉토리에 저장되지만, paperclip 기준으로 quota를 통합 적용할 수도 있음
-                // 여기서는 paperclip/ userId 디렉토리와 cover/ userId 디렉토리를 각각 관리하거나
-                // enforceUploadQuotaOrThrow가 paperclip을 체크하므로, cover도 동일한 userId별 자원 정책 적용
                 await enforceUploadQuotaOrThrow(userId, req.file.path);
             } catch (e) {
                 if (String(e?.message) === "UPLOAD_QUOTA_EXCEEDED")
@@ -1423,7 +1259,6 @@ module.exports = (dependencies) => {
                 return res.status(403).json({ error: "Forbidden" });
             }
 
-            // 보안: 파일 시그니처 검증 (이미지인 경우) 및 파일명 정규화
             const ext = path.extname(req.file.originalname).toLowerCase();
             const isImageExt = ['.jpg', '.jpeg', '.png', '.gif', '.webp'].includes(ext);
 
@@ -1432,7 +1267,6 @@ module.exports = (dependencies) => {
                 if (sig) normalizeUploadedImageFile(req.file, sig.ext);
             }
 
-            // 보안: 업로드 총량 강제 (디스크 고갈 DoS 방지)
             try {
                 await enforceUploadQuotaOrThrow(userId, req.file.path);
             } catch (e) {
@@ -1443,9 +1277,6 @@ module.exports = (dependencies) => {
 
             const fileUrl = `/paperclip/${userId}/${req.file.filename}`;
 
-            // 보안: 첨부파일-페이지 정당 참조 레지스트리 등록
-            // - 다운로드 권한 검증 시 본문 문자열 LIKE 만으로 판단하면 위조 가능(IDOR/BOLA)
-            // - 서버가 업로드 성공 시점에만 레지스트리를 기록하여 정당한 첨부를 증명
             await pool.execute(
                 `INSERT IGNORE INTO page_file_refs
                     (page_id, owner_user_id, stored_filename, file_type, created_at)
@@ -1465,33 +1296,27 @@ module.exports = (dependencies) => {
         }
     });
 
-    // paperclip URL/filename 검증(경로 조작 방지)
-    // - /paperclip/<userId>/<storedFilename> 형태만 허용
-    // - storedFilename은 업로드 저장 규칙(서버에서 생성)과 일치하는 안전한 문자만 허용
     const PAPERCLIP_PATH_RE = /^\/paperclip\/(\d{1,12})\/([A-Za-z0-9][A-Za-z0-9._-]{0,199})$/;
     function parsePaperclipPathFromUserInput(raw) {
         if (typeof raw !== "string") return null;
         const s = raw.trim();
         if (!s) return null;
 
-        // 절대 URL이 들어와도 pathname만 추출 (호스트/스킴 무시)
         let pathname = s;
         try {
-            // base는 어떤 값이든 무방(상대경로 파싱용)
             pathname = new URL(s, "http://local").pathname;
         } catch (_) {
-            pathname = s; // 상대경로 등 파싱 실패 시 원문 그대로(아래 정규식에서 걸러짐)
+            pathname = s; 
         }
 
         const m = pathname.match(PAPERCLIP_PATH_RE);
         if (!m) return null;
         const urlUserId = m[1];
         const filename = m[2];
-        if (filename.includes("..")) return null; // 점-점 시퀀스는 명시 차단
+        if (filename.includes("..")) return null; 
         return { urlUserId, filename };
     }
 
-    // (추가) 레지스트리 누락/flush 지연을 고려한 paperclip 삭제 보호 로직
     function escapeLikeForSql(s) {
         return String(s).replace(/[\\%_]/g, (m) => `\\${m}`);
     }
@@ -1594,18 +1419,6 @@ module.exports = (dependencies) => {
         }
     }
 
-    // 데이터 유실 방지(중요): 첨부파일 정리(file-cleanup)
-    // 기존 구현은 이 페이지에서 삭제 요청이 오면 즉시 실제 파일을 삭제했음
-    // 하지만 동일 파일 URL이 다른 페이지에서도 재사용(복사/붙여넣기)될 수 있어
-    // 다른 페이지가 이미 참조 중이거나, 다른 페이지가 아직 저장되기 전(레지스트리 미등록)인데도
-    // 실제 파일을 지워버려 사용자 데이터(첨부) 유실이 발생할 수 있음
-    //
-    // 해결:
-    //  - 먼저 이 페이지의 레지스트리(page_file_refs)만 제거
-    //  - 남은 레지스트리 참조 개수를 확인
-    //  - 0일 때만 실제 파일을 삭제 (그 외는 보존)
-    //  - DB 정합성을 위해 트랜잭션 사용, 파일 삭제는 커밋 이후 수행
-    // =====================================================================
     router.delete("/:id/file-cleanup", authMiddleware, async (req, res) => {
         const id = req.params.id;
         const userId = req.user.id;
@@ -1624,7 +1437,6 @@ module.exports = (dependencies) => {
 
             const parsed = parsePaperclipPathFromUserInput(fileUrl);
             if (!parsed) {
-                // 입력 검증 실패는 400 (경로 조작/이상치 차단)
                 return res.status(400).json({ error: "Invalid fileUrl" });
             }
 
@@ -1634,7 +1446,6 @@ module.exports = (dependencies) => {
                 return res.status(403).json({ error: "자신의 파일만 삭제할 수 있습니다." });
             }
 
-            // 경로 정규화 + 디렉터리 경계 체크 (Windows/절대경로/드라이브 경로 등 방어)
             const baseDir = path.resolve(__dirname, "..", "paperclip", String(userId));
             const targetPath = path.resolve(baseDir, filename);
             const rel = path.relative(baseDir, targetPath);
@@ -1649,7 +1460,6 @@ module.exports = (dependencies) => {
                 connection = await pool.getConnection();
                 await connection.beginTransaction();
 
-                // 이 페이지의 참조만 제거 (다른 페이지 참조는 건드리지 않음)
                 await connection.execute(
                     `DELETE FROM page_file_refs
                       WHERE page_id = ?
@@ -1659,7 +1469,6 @@ module.exports = (dependencies) => {
                     [id, userId, filename]
                 );
 
-                // 남아있는 전체 참조 카운트 확인
                 const [cntRows] = await connection.execute(
                     `SELECT COUNT(*) AS cnt
                        FROM page_file_refs
@@ -1678,8 +1487,6 @@ module.exports = (dependencies) => {
                 try { if (connection) connection.release(); } catch (_) {}
             }
 
-            // 트랜잭션 커밋 이후 실제 파일 삭제(정합성 우선)
-            //  - remaining=0 이더라도 레지스트리 누락/flush 지연이 있을 수 있어 추가 검증 + self-heal
             let blockedByPlaintextRefs = false;
             let blockedByActiveYjsRefs = false;
             let selfHealedRegistry = false;
@@ -1692,9 +1499,6 @@ module.exports = (dependencies) => {
                     await backfillPaperclipRefsFromPlaintextContentForUser(userId, filename);
                 }
 
-                // 2.5차 방어: id(현재 페이지) 자체도 여전히 참조 중일 수 있음 (fail-closed)
-                // - DELETE 요청 당시에는 content가 변했다고 가정했으나,
-                // - 실제 DB 상의 content에 여전히 링크가 남아있다면 유실 방지를 위해 차단함
                 try {
                     const fileUrlPart = `/paperclip/${userId}/${filename}`;
                     const likePattern = `%${escapeLikeForSql(fileUrlPart)}%`;
@@ -1756,13 +1560,6 @@ module.exports = (dependencies) => {
         }
     });
 
-    // 데이터 유실 방지(중요): 에디터에서 파일/이미지를 복사/붙여넣기로 재사용할 때
-    // 저장 전에 page_file_refs 레지스트리가 비어 있어, 다른 페이지에서 삭제 시
-    // 참조 중인 파일이 오판 삭제될 수 있음
-    //
-    // 해결: 클라이언트(NodeView)가 렌더링 시점에 이 엔드포인트를 best-effort로 호출해
-    //       현재 페이지와 자산의 참조 관계를 선등록 진행
-    // =====================================================================
     const IMG_PATH_RE = /^\/imgs\/(\d{1,12})\/([A-Za-z0-9][A-Za-z0-9._-]{0,199})$/;
     function parseImgsPathFromUserInput(raw) {
         if (typeof raw !== "string") return null;
@@ -1803,7 +1600,6 @@ module.exports = (dependencies) => {
             const filename = parsedPaper ? parsedPaper.filename : parsedImg.filename;
             const fileType = parsedPaper ? 'paperclip' : 'imgs';
 
-            // 본인 자산만 레지스트리 선등록 (타인 파일에 대한 위조/오염 방지)
             if (String(urlUserId) !== String(userId))
                 return res.status(403).json({ error: "자신의 자산만 등록할 수 있습니다." });
 
@@ -1842,11 +1638,7 @@ module.exports = (dependencies) => {
             const sig = await assertImageFileSignature(req.file.path);
             normalizeUploadedImageFile(req.file, sig.ext);
 
-            // 보안: 업로드 총량 강제 (디스크 고갈 DoS 방지)
             try {
-                // editor-image는 imgs 디렉토리에 저장되지만, paperclip 기준으로 quota를 통합 적용하거나
-                // enforceUploadQuotaOrThrow를 그대로 호출 (내부적으로 paperclip을 보더라도
-                // 동일한 userId별 자원 정책의 일환으로 작동)
                 await enforceUploadQuotaOrThrow(userId, req.file.path);
             } catch (e) {
                 if (String(e?.message) === "UPLOAD_QUOTA_EXCEEDED")
@@ -1856,9 +1648,6 @@ module.exports = (dependencies) => {
 
             const imageUrl = `/imgs/${userId}/${req.file.filename}`;
 
-            // 보안: 이미지-페이지 정당 참조 레지스트리 등록
-            // - 다운로드 권한 검증 시 본문 문자열 LIKE 만으로 판단하면 위조 가능(IDOR/BOLA)
-            // - 서버가 업로드 성공 시점에만 레지스트리를 기록하여 정당한 첨부를 증명
             await pool.execute(
                 `INSERT IGNORE INTO page_file_refs
                     (page_id, owner_user_id, stored_filename, file_type, created_at)
@@ -1874,10 +1663,7 @@ module.exports = (dependencies) => {
         }
     });
 
-    // 페이지 발행 링크(공유 URL)는 사실상 URL 안의 비밀 토큰(capability URL)
-    // 따라서 읽기 권한만 있는 협업자(READ)에게 토큰을 노출하지 않도록 최소권한을 적용
     function canManagePublish(permission, ownerUserId, currentUserId) {
-        // 소유자이거나, 저장소 권한이 ADMIN 인 경우만 발행 링크를 관리/열람 가능
         return String(ownerUserId) === String(currentUserId) || permission === 'ADMIN';
     }
 
@@ -1893,7 +1679,6 @@ module.exports = (dependencies) => {
                 return res.status(403).json({ error: "권한이 없습니다." });
             }
 
-            // 암호화 페이지는 공개 발행 대상이 아니므로, 토큰/URL은 반환하지 않음
             if (existing.is_encrypted === 1) {
                 return res.json({ published: false });
             }
@@ -1907,7 +1692,6 @@ module.exports = (dependencies) => {
             const base = (process.env.BASE_URL || '').replace(/\/$/, '');
             const allowComments = pub[0].allow_comments === 1;
 
-            // READ 협업자에게는 발행됨 상태만 알려주고, 토큰은 숨김(정보 노출/오남용 방지)
             if (!canManagePublish(permission, existing.user_id, userId)) {
                 return res.json({
                     published: true,
@@ -1929,7 +1713,6 @@ module.exports = (dependencies) => {
         }
     });
 
-    // 발행(또는 allow_comments 설정 갱신)
     router.post("/:id/publish", authMiddleware, async (req, res) => {
         const id = req.params.id;
         const userId = req.user.id;
@@ -1955,7 +1738,6 @@ module.exports = (dependencies) => {
             const now = new Date();
             const nowStr = now.toISOString().slice(0, 19).replace('T', ' ');
 
-            // 이미 발행된 경우: 토큰은 유지하고 설정만 업데이트
             const [active] = await pool.execute(
                 `SELECT id, token FROM page_publish_links WHERE page_id=? AND is_active=1 LIMIT 1`,
                 [id]
@@ -1969,7 +1751,6 @@ module.exports = (dependencies) => {
                     [allowComments ? 1 : 0, nowStr, active[0].id]
                 );
             } else {
-                // 최초 발행: 새 토큰 발급
                 let inserted = false;
                 for (let i = 0; i < 3; i++) {
                     try {
@@ -1982,7 +1763,6 @@ module.exports = (dependencies) => {
                         inserted = true;
                         break;
                     } catch (err) {
-                        // 토큰 충돌(UNIQUE) 시 재시도
                         if (err && err.code === 'ER_DUP_ENTRY') continue;
                         throw err;
                     }
@@ -2001,7 +1781,6 @@ module.exports = (dependencies) => {
         }
     });
 
-    // 발행 취소
     router.delete("/:id/publish", authMiddleware, async (req, res) => {
         const id = req.params.id;
         const userId = req.user.id;

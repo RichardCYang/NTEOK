@@ -1,6 +1,5 @@
 @charset "UTF-8";
 
-/* Comments Section */
 #page-comments-section {
     width: 100%;
     margin: 0;
@@ -8,10 +7,9 @@
     font-family: var(--font-family);
     color: var(--font-color);
     box-sizing: border-box;
-    flex-shrink: 0; /* 스크롤 시 축소 방지 */
+    flex-shrink: 0; 
 }
 
-/* Match .editor breakpoints */
 @media (max-width: 1200px) {
     #page-comments-section {
         padding: 0 80px;
@@ -31,10 +29,8 @@
 }
 
 .comments-wrapper {
-    /* transition: all 0.2s ease; */
 }
 
-/* 토글 버튼 스타일 */
 .comment-toggle-btn {
     background: transparent;
     border: none;
@@ -52,7 +48,6 @@
     color: var(--font-color);
 }
 
-/* 펼쳐진 영역 스타일 */
 .comments-body {
     border-top: 1px solid var(--border-color);
     padding-top: 16px;
@@ -98,7 +93,6 @@
     font-style: italic;
 }
 
-/* 기존 스타일 유지 및 조정 */
 .comments-loading, .comments-error {
     padding: 10px 0;
     text-align: left;
@@ -151,7 +145,6 @@
     color: var(--sub-font-color);
 }
 
-/* Edit Mode Styles */
 .edit-comment-wrapper {
     margin-top: 4px;
 }
@@ -198,7 +191,6 @@
     border: none;
 }
 
-/* Comment Item Actions */
 .comment-actions-group {
     display: flex;
     gap: 4px;
@@ -237,7 +229,6 @@
     color: var(--danger-color);
 }
 
-/* New Comment Block Input Styles */
 .new-comment-item {
     opacity: 0.8;
     transition: opacity 0.2s;
@@ -308,7 +299,6 @@
     opacity: 0;
 }
 
-/* Show button on hover or focus or when active */
 .new-comment-item:hover .comment-send-btn-block,
 .new-comment-item:focus-within .comment-send-btn-block,
 .comment-send-btn-block.active {
@@ -320,7 +310,6 @@
     color: var(--font-color);
 }
 
-/* Active state (when not disabled) */
 .comment-send-btn-block:not(:disabled) {
     color: var(--point-color);
     background-color: transparent;
@@ -342,14 +331,12 @@
     background-color: transparent;
 }
 
-/* Clean up old styles */
 .comment-input-area, .comment-input-row {
     display: none;
 }
 
 
 
-/* Shared Page Specifics */
 body.shared-page #page-comments-section {
     padding: 0;
     max-width: 100%;

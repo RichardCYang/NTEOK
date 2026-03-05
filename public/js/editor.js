@@ -1,4 +1,3 @@
-// 예제 콘텐츠
 export const EXAMPLE_CONTENT = `
     <h1>NTEOK에 오신 것을 환영합니다! 👋</h1>
     <p>NTEOK은 지능형 블록 기반 협업 에디터입니다. 아래 예제를 통해 다양한 블록의 사용법을 익혀보세요.</p>
@@ -47,97 +46,65 @@ export const EXAMPLE_CONTENT = `
     <p>이 외에도 <strong>보드 뷰</strong>, <strong>이미지</strong>, <strong>YouTube</strong> 등 다양한 블록을 활용해 보세요!</p>
 `;
 
-/**
- * Tiptap 에디터 모듈
- * 에디터 초기화, 툴바, 슬래시 명령 등을 관리
- */
 
-// UI Utils import
 import { secureFetch, syncPageUpdatedAtPadding, escapeHtml } from './ui-utils.js';
 
-// 문단 정렬(TextAlign) 익스텐션 ESM import
 import { TextAlign } from "@tiptap/extension-text-align";
 
-// 텍스트 색상(Color) / TextStyle 익스텐션 ESM import
 import Color from "@tiptap/extension-color";
 import TextStyle from "@tiptap/extension-text-style";
 
-// 폰트 패밀리(FontFamily) 익스텐션 ESM import
 import FontFamily from "@tiptap/extension-font-family";
 
-// TaskList / TaskItem 익스텐션 ESM import
 import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
 
-// Table 익스텐션 ESM import
 import Table from "@tiptap/extension-table";
 import TableRow from "@tiptap/extension-table-row";
 import TableHeader from "@tiptap/extension-table-header";
 import TableCell from "@tiptap/extension-table-cell";
 
-// Math 노드 import
 import { MathBlock, MathInline } from './math-node.js';
 
-// ImageWithCaption 노드 import
 import { ImageWithCaption } from './image-with-caption-node.js';
 
-// CalloutBlock 노드 import
 import { CalloutBlock } from './callout-node.js';
 
-// ToggleBlock 노드 import
 import { ToggleBlock } from './toggle-node.js';
 
-// BoardBlock 노드 import
 import { BoardBlock } from './board-node.js';
 
-// YoutubeBlock 노드 import
 import { YoutubeBlock } from './youtube-node.js';
 
-// FileBlock 노드 import
 import { FileBlock } from './file-node.js';
 
-// CalendarBlock 노드 import
 import { CalendarBlock } from './calendar-node.js';
 
-// DatabaseBlock 노드 import
 import { DatabaseBlock } from './database-node.js';
 
-// TabBlock / TabItem 노드 import
 import { TabBlock, TabItem } from './tab-node.js';
 
-// BookmarkBlock 노드 import
 import { BookmarkBlock } from './bookmark-node.js';
 
-// DragHandle extension import
 import { DragHandle } from './drag-handle-extension.js';
 
-// ProseMirror Plugin import
 import { Plugin, PluginKey } from "prosemirror-state";
 import { Decoration, DecorationSet } from "prosemirror-view";
 
-// 전역 Tiptap 번들에서 Editor / StarterKit 가져오기
 const Editor = Tiptap.Core.Editor;
 const StarterKit = Tiptap.StarterKit;
 const Extension = Tiptap.Core.Extension;
 
-/**
- * 공통 이미지 업로드 처리 함수
- * @param {Editor} editor Tiptap 에디터 인스턴스
- * @param {File} file 업로드할 이미지 파일
- */
 async function handleImageUpload(editor, file) {
-    // 페이지 ID 가져오기
     const pageId = window.appState?.currentPageId;
     if (!pageId) {
         alert('페이지 ID를 찾을 수 없습니다.');
         return;
     }
 
-    // FormData 생성
     const formData = new FormData();
     formData.append('image', file);
 
-    // 서버에 업로드 (secureFetch 사용)
     const response = await secureFetch(`/api/pages/${pageId}/editor-image`, {
         method: 'POST',
         body: formData
@@ -149,7 +116,6 @@ async function handleImageUpload(editor, file) {
 
     const data = await response.json();
 
-    // 에디터에 이미지 삽입 (ImageWithCaption 노드 사용)
     editor.chain().focus().setImageWithCaption({
         src: data.url,
         alt: file.name || 'uploaded image',
@@ -157,10 +123,6 @@ async function handleImageUpload(editor, file) {
     }).run();
 }
 
-/**
- * Placeholder 익스텐션
- * 에디터가 비어있을 때 안내 문구를 표시
- */
 const Placeholder = Extension.create({
     name: 'placeholder',
     addOptions() {
@@ -190,7 +152,6 @@ const Placeholder = Extension.create({
                         const { $anchor } = selection;
                         const node = $anchor.parent;
 
-                        // 현재 블록이 텍스트 블록이고 비어있는지 확인
                         if (node.type.isTextblock && node.content.size === 0) {
                             const pos = $anchor.before($anchor.depth);
                             const decoration = Decoration.node(pos, pos + node.nodeSize, {
@@ -210,9 +171,6 @@ const Placeholder = Extension.create({
     },
 });
 
-/**
- * 클립보드 이미지 붙여넣기 처리를 위한 익스텐션
- */
 const ImagePaste = Extension.create({
     name: 'imagePaste',
     addProseMirrorPlugins() {
@@ -230,9 +188,7 @@ const ImagePaste = Extension.create({
                             if (item.type.indexOf('image') === 0) {
                                 const file = item.getAsFile();
                                 if (file) {
-                                    // 기본 붙여넣기 동작 방지
                                     event.preventDefault();
-                                    // 비동기로 업로드 처리 (this.editor 참조 전달)
                                     handleImageUpload(editor, file).catch(err => {
                                         console.error('이미지 붙여넣기 업로드 실패:', err);
                                         alert('이미지 업로드에 실패했습니다.');
@@ -241,7 +197,6 @@ const ImagePaste = Extension.create({
                                 }
                             }
                         }
-                        // 이미지가 처리되었다면 true 반환하여 브라우저 기본 동작 차단
                         return handled;
                     }
                 }
@@ -250,7 +205,6 @@ const ImagePaste = Extension.create({
     }
 });
 
-// 시스템 폰트 리스트
 export const SYSTEM_FONTS = [
     { name: "기본 폰트", value: null },
     { name: "Arial", value: "Arial, sans-serif" },
@@ -277,7 +231,6 @@ export const SYSTEM_FONTS = [
     { name: "Noto Sans KR", value: "'Noto Sans KR', sans-serif" }
 ];
 
-// 슬래시 명령 메뉴 항목들
 export const SLASH_ITEMS = [
     {
         id: "text",
@@ -420,7 +373,6 @@ export const SLASH_ITEMS = [
         description: "이미지 파일 업로드",
         icon: "🖼",
         command(editor) {
-            // 파일 선택 다이얼로그 생성
             const input = document.createElement('input');
             input.type = 'file';
             input.accept = 'image/jpeg,image/jpg,image/png,image/gif,image/webp';
@@ -429,20 +381,17 @@ export const SLASH_ITEMS = [
                 const file = e.target.files[0];
                 if (!file) return;
 
-                // 파일 크기 체크 (5MB)
                 if (file.size > 5 * 1024 * 1024) {
                     alert('이미지 파일 크기는 5MB 이하여야 합니다.');
                     return;
                 }
 
-                // 이미지 타입 체크
                 if (!file.type.match(/^image\/(jpeg|jpg|png|gif|webp)$/)) {
                     alert('jpg, png, gif, webp 형식의 이미지만 업로드 가능합니다.');
                     return;
                 }
 
                 try {
-                    // 공통 이미지 업로드 함수 사용
                     await handleImageUpload(editor, file);
                 } catch (error) {
                     console.error('이미지 업로드 오류:', error);
@@ -459,7 +408,6 @@ export const SLASH_ITEMS = [
         description: "파일 첨부 (50MB 제한)",
         icon: "📎",
         command(editor) {
-            // 빈 파일 블록 삽입 (Placeholder 상태로 렌더링됨)
             editor.chain().focus().setFileBlock().run();
         }
     },
@@ -490,7 +438,6 @@ export const SLASH_ITEMS = [
             const url = window.prompt("YouTube 동영상 URL을 입력하세요:");
             if (!url) return;
 
-            // YouTube ID 추출 정규식
             const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/;
             const match = url.match(regExp);
 
@@ -540,7 +487,6 @@ export const SLASH_ITEMS = [
     }
 ];
 
-// 테이블 컨텍스트 메뉴 항목들
 const TABLE_MENU_ITEMS = [
     {
         id: "addColumnBefore",
@@ -598,29 +544,23 @@ const TABLE_MENU_ITEMS = [
     }
 ];
 
-/**
- * 안전하게 행 삭제 (최소 1행 유지)
- */
 function deleteRowSafe(editor) {
     const { state } = editor.view;
 
-    // 테이블의 전체 행 수 확인
     let rowCount = 0;
     let tableNode = null;
 
     state.doc.descendants((node, pos) => {
         if (node.type.name === "table") {
-            // 현재 선택된 위치가 이 테이블 안에 있는지 확인
             const $anchor = state.selection.$anchor;
             if ($anchor.pos >= pos && $anchor.pos <= pos + node.nodeSize) {
                 tableNode = node;
                 rowCount = node.childCount;
-                return false; // 테이블을 찾았으므로 더 이상 순회하지 않음
+                return false; 
             }
         }
     });
 
-    // 마지막 행인 경우 삭제 방지
     if (rowCount <= 1) {
         alert("표에는 최소 1개의 행이 있어야 합니다.");
         return false;
@@ -629,30 +569,24 @@ function deleteRowSafe(editor) {
     return editor.chain().focus().deleteRow().run();
 }
 
-/**
- * 안전하게 열 삭제 (최소 1열 유지)
- */
 function deleteColumnSafe(editor) {
     const { state } = editor.view;
 
-    // 테이블의 전체 열 수 확인
     let colCount = 0;
 
     state.doc.descendants((node, pos) => {
         if (node.type.name === "table") {
-            // 현재 선택된 위치가 이 테이블 안에 있는지 확인
             const $anchor = state.selection.$anchor;
             if ($anchor.pos >= pos && $anchor.pos <= pos + node.nodeSize) {
                 const firstRow = node.firstChild;
                 if (firstRow) {
                     colCount = firstRow.childCount;
                 }
-                return false; // 테이블을 찾았으므로 더 이상 순회하지 않음
+                return false; 
             }
         }
     });
 
-    // 마지막 열인 경우 삭제 방지
     if (colCount <= 1) {
         alert("표에는 최소 1개의 열이 있어야 합니다.");
         return false;
@@ -661,7 +595,6 @@ function deleteColumnSafe(editor) {
     return editor.chain().focus().deleteColumn().run();
 }
 
-// CustomEnter extension
 const CustomEnter = Extension.create({
     name: "customEnter",
     addKeyboardShortcuts() {
@@ -693,47 +626,40 @@ const CustomEnter = Extension.create({
     }
 });
 
-// 테이블 키보드 단축키 확장
 const TableKeyboardShortcuts = Extension.create({
     name: "tableKeyboardShortcuts",
     addKeyboardShortcuts() {
         return {
-            // Ctrl+Shift+↑: 위에 행 추가
             "Mod-Shift-ArrowUp": ({ editor }) => {
                 if (editor.isActive("table") && editor.can().addRowBefore()) {
                     return editor.chain().focus().addRowBefore().run();
                 }
                 return false;
             },
-            // Ctrl+Shift+↓: 아래에 행 추가
             "Mod-Shift-ArrowDown": ({ editor }) => {
                 if (editor.isActive("table") && editor.can().addRowAfter()) {
                     return editor.chain().focus().addRowAfter().run();
                 }
                 return false;
             },
-            // Ctrl+Shift+←: 왼쪽에 열 추가
             "Mod-Shift-ArrowLeft": ({ editor }) => {
                 if (editor.isActive("table") && editor.can().addColumnBefore()) {
                     return editor.chain().focus().addColumnBefore().run();
                 }
                 return false;
             },
-            // Ctrl+Shift+→: 오른쪽에 열 추가
             "Mod-Shift-ArrowRight": ({ editor }) => {
                 if (editor.isActive("table") && editor.can().addColumnAfter()) {
                     return editor.chain().focus().addColumnAfter().run();
                 }
                 return false;
             },
-            // Ctrl+Backspace: 행 삭제
             "Mod-Backspace": ({ editor }) => {
                 if (editor.isActive("table") && editor.can().deleteRow()) {
                     return deleteRowSafe(editor);
                 }
                 return false;
             },
-            // Ctrl+Shift+Backspace: 열 삭제
             "Mod-Shift-Backspace": ({ editor }) => {
                 if (editor.isActive("table") && editor.can().deleteColumn()) {
                     return deleteColumnSafe(editor);
@@ -744,7 +670,6 @@ const TableKeyboardShortcuts = Extension.create({
     }
 });
 
-// 슬래시 메뉴 상태
 let slashMenuEl = null;
 let slashActiveIndex = 0;
 let slashState = {
@@ -755,16 +680,8 @@ let slashState = {
     filteredItems: []
 };
 
-// 일부 브라우저/IME 조합에서는 ProseMirror의 view.composing 플래그가
-// compositionupdate 타이밍에 false로 유지되는 경우가 있어(특히 Windows + 일부 Chromium 계열)
-// slash 필터 텍스트를 state.doc에서 읽으면 마지막에 스페이스(조합 확정)를 치기 전까지
-// 검색어가 갱신되지 않는 현상이 발생할 수 있음 -> composition 이벤트로 IME 조합 상태를 직접 트래킹해서, 필요 시 DOM 기준으로 검색어를 추출
 let slashImeComposing = false;
 
-/**
- * 현재 pos가 속한 가장 가까운 textblock(문단/제목/테이블 셀 내 문단 등)의 시작 포지션을 반환
- * - slash 명령은 "같은 textblock 안"에서만 유효해야 하므로 context 검증에 사용
- */
 function getNearestTextblockStart(doc, pos) {
     const $pos = doc.resolve(pos);
     for (let d = $pos.depth; d > 0; d--) {
@@ -775,29 +692,19 @@ function getNearestTextblockStart(doc, pos) {
     return null;
 }
 
-/**
- * slash 메뉴가 계속 열려있어야 하는 컨텍스트인지 검증
- * - 슬래시가 실제로 존재해야 함
- * - 커서는 슬래시 뒤에 있어야 함
- * - 커서/슬래시가 같은 textblock에 있어야 함
- * - 범위 선택(드래그 선택 등) 상태면 닫음
- */
 function isSlashContextValid(editor) {
     if (!slashState.active || typeof slashState.fromPos !== 'number') return false;
 
     const { doc, selection } = editor.state;
     if (!selection.empty) return false;
 
-    // 커서가 슬래시 앞(또는 동일 위치)으로 이동하면 더 이상 slash 명령 컨텍스트가 아님
     if (selection.from < slashState.fromPos + 1) return false;
 
-    // 동일 textblock 안에서만 유효
     const selBlockStart = getNearestTextblockStart(doc, selection.from);
     const slashBlockStart = getNearestTextblockStart(doc, slashState.fromPos);
     if (selBlockStart == null || slashBlockStart == null || selBlockStart !== slashBlockStart)
         return false;
 
-    // fromPos 위치의 문자가 정말 "/"인지 확인
     try {
         const char = doc.textBetween(slashState.fromPos, slashState.fromPos + 1);
         if (char !== '/') return false;
@@ -808,11 +715,6 @@ function isSlashContextValid(editor) {
     return true;
 }
 
-/**
- * slash 메뉴 상태를 에디터 상태(doc/selection)에 맞게 동기화
- * - keydown에서 열린 직후에는 doc에 '/'가 아직 없을 수 있으므로(ready=false) 그 전엔 닫지 않음
- * - '/'가 실제로 doc에 들어온 이후(ready=true)부터는 엄격하게 컨텍스트 검증
- */
 function syncSlashMenu(editor, opts = {}) {
     if (!slashState.active || slashState.fromPos === null) return;
 
@@ -820,33 +722,22 @@ function syncSlashMenu(editor, opts = {}) {
 	const composing = !!(slashImeComposing || editor?.view?.composing);
 	const forceDom = !!opts.forceDom;
 
-    // 범위 선택이면 slash 컨텍스트가 아님
-	// IME(한글/일본어/중국어 등) 조합 중에는 ProseMirror 상태(selection/doc)가
-	// 실제 화면(DOM)과 잠시 불일치할 수 있어, 이 타이밍에 닫아버리면
-	// 초성만 남고 입력이 끊기는 현상이 생길 수 있음.
-	// keydown에서 메뉴를 연 직후에는 아직 '/'가 doc에 반영되기 전 프레임이 있을 수 있음.
-	// (특히 input 이벤트가 먼저 들어오면 selection.from이 fromPos와 같아져서 즉시 닫히는 버그 발생)
-	// => '/'가 실제로 doc에 들어온 이후(ready=true)부터만 엄격하게 닫기 조건을 적용한다. (slashState.ready 조건 추가)
     if (slashState.ready && !selection.empty && !composing) {
         closeSlashMenu();
         return;
     }
 
-    // 커서가 '/' 이전(또는 같은 위치)으로 오면 닫기
     if (slashState.ready && !composing && selection.from <= slashState.fromPos) {
         closeSlashMenu();
         return;
     }
 
-    // keydown 직후 첫 업데이트에서 '/'가 실제로 삽입되었는지 확인 -> ready 전환
     try {
         const ch = doc.textBetween(slashState.fromPos, slashState.fromPos + 1);
         if (ch === "/") {
             slashState.ready = true;
         } else {
-            // 아직 '/'가 doc에 없으면(삽입 전 프레임) 닫지 말고 대기
             if (!slashState.ready) return;
-            // ready인데 '/'가 아니라면(삭제/치환됨) 닫기
             closeSlashMenu();
             return;
         }
@@ -855,7 +746,6 @@ function syncSlashMenu(editor, opts = {}) {
         return;
     }
 
-    // 필터 텍스트/목록 업데이트
     const text = getSlashCommandText(editor, { forceDom });
     if (text === slashState.filterText) return;
     slashState.filterText = text;
@@ -863,9 +753,6 @@ function syncSlashMenu(editor, opts = {}) {
     renderSlashMenuItems();
 }
 
-/**
- * 슬래시 메뉴 필터링 함수
- */
 function filterSlashItems(filterText) {
 	const normalized = (filterText || '').trim().toLowerCase();
 	if (!normalized) return SLASH_ITEMS;
@@ -876,9 +763,6 @@ function filterSlashItems(filterText) {
     );
 }
 
-/**
- * 슬래시 메뉴 DOM 요소 생성
- */
 function createSlashMenuElement() {
     if (slashMenuEl) {
         return;
@@ -903,19 +787,14 @@ function createSlashMenuElement() {
     });
 }
 
-/**
- * 슬래시 메뉴 항목 렌더링
- */
 function renderSlashMenuItems() {
     if (!slashMenuEl) return;
 
     const listEl = slashMenuEl.querySelector("#slash-menu-list");
     if (!listEl) return;
 
-    // 기존 항목 제거
     listEl.innerHTML = "";
 
-    // 필터 텍스트가 있으면 검색 결과 표시
     const displayFilter = (slashState.filterText || '').trim();
     if (displayFilter) {
         const filterInfo = document.createElement("li");
@@ -928,7 +807,6 @@ function renderSlashMenuItems() {
         listEl.appendChild(filterInfo);
     }
 
-    // 필터링된 항목 렌더링
     if (slashState.filteredItems.length === 0) {
         const noResults = document.createElement("li");
         noResults.className = "slash-menu-no-results";
@@ -962,9 +840,6 @@ function renderSlashMenuItems() {
     slashActiveIndex = 0;
 }
 
-/**
- * 슬래시 메뉴 열기
- */
 function openSlashMenu(coords, fromPos, editor) {
     if (!slashMenuEl) {
         createSlashMenuElement();
@@ -978,38 +853,30 @@ function openSlashMenu(coords, fromPos, editor) {
     slashState.filteredItems = filterSlashItems('');
     slashActiveIndex = 0;
 
-    // 메뉴 항목 렌더링
     renderSlashMenuItems();
 
-    // 임시로 메뉴를 보여서 실제 높이를 계산
     slashMenuEl.classList.remove("hidden");
-    slashMenuEl.style.visibility = "hidden"; // 화면에 나타나지 않게 함
+    slashMenuEl.style.visibility = "hidden"; 
     slashMenuEl.style.left = `${coords.left}px`;
     slashMenuEl.style.top = `${coords.bottom + 4}px`;
 
-    // 다음 프레임에서 높이를 계산하고 위치 조정
     requestAnimationFrame(() => {
         const menuHeight = slashMenuEl.offsetHeight;
         const windowHeight = window.innerHeight;
         let top = coords.bottom + 4;
 
-        // 메뉴가 화면 아래로 나갈 경우, 커서 위쪽에 표시
         if (top + menuHeight > windowHeight) {
             top = coords.top - menuHeight - 4;
-            // 메뉴가 화면 위로 나가지 않도록 조정
             if (top < 0) {
                 top = coords.bottom + 4;
             }
         }
 
         slashMenuEl.style.top = `${top}px`;
-        slashMenuEl.style.visibility = "visible"; // 계산 후 표시
+        slashMenuEl.style.visibility = "visible"; 
     });
 }
 
-/**
- * 슬래시 메뉴 닫기
- */
 function closeSlashMenu() {
     slashState.active = false;
     slashState.ready = false;
@@ -1020,14 +887,10 @@ function closeSlashMenu() {
     slashImeComposing = false;
     if (slashMenuEl) {
         slashMenuEl.classList.add("hidden");
-		// 열기(open)에서 visibility를 쓰기 때문에 닫을 때도 명시적으로 숨김
 		slashMenuEl.style.visibility = "hidden";
     }
 }
 
-/**
- * 슬래시 메뉴 항목 이동
- */
 function moveSlashActive(delta) {
     if (!slashMenuEl) return;
 
@@ -1045,9 +908,6 @@ function moveSlashActive(delta) {
     });
 }
 
-/**
- * 슬래시 명령 실행
- */
 function runSlashCommand(id) {
     const editor = slashState.editor;
     if (!editor) return;
@@ -1061,7 +921,6 @@ function runSlashCommand(id) {
     editor.chain().focus();
 
     if (typeof slashState.fromPos === "number") {
-        // "/" 부터 현재 커서까지의 텍스트 모두 삭제
         const selection = editor.state.selection;
         editor
             .chain()
@@ -1072,10 +931,6 @@ function runSlashCommand(id) {
             })
             .run();
 
-        // [버그 수정] deleteRange 실행 후 빈 문단이 제거되어 바로 아래의 블록(표, 콜아웃 등)이 
-        // NodeSelection 상태로 선택되는 현상 방지.
-        // 이 상태에서 명령을 실행하면 아래 블록이 교체되어 사라지므로, 
-        // 강제로 빈 문단을 삽입하여 새 블록이 해당 위치에 추가되도록 함.
         if (editor.state.selection.node) {
             editor.chain().insertContentAt(editor.state.selection.from, "<p></p>").focus(editor.state.selection.from).run();
         }
@@ -1085,9 +940,6 @@ function runSlashCommand(id) {
     closeSlashMenu();
 }
 
-/**
- * 현재 활성화된 슬래시 명령 실행
- */
 function runSlashCommandActive() {
     if (!slashMenuEl) return;
 
@@ -1099,19 +951,13 @@ function runSlashCommandActive() {
     runSlashCommand(id);
 }
 
-/**
- * 슬래시 메뉴 텍스트 추출 (fromPos부터 현재 커서까지)
- */
 function getSlashCommandText(editor, opts = {}) {
     if (!slashState.active || slashState.fromPos === null) return '';
 
     const view = editor?.view;
-    const from = slashState.fromPos + 1; // "/" 다음 위치부터
+    const from = slashState.fromPos + 1; 
     const forceDom = !!opts.forceDom;
 
-    // IME 조합 중에는 state.doc/state.selection이 즉시 반영되지 않아
-    // textBetween 결과가 "ㄱ" 처럼 초성만 나오거나 아예 갱신이 멈출 수 있음.
-    // 이때는 DOM selection 기준으로 범위를 잘라 실제 화면에 보이는 텍스트를 사용.
     if (forceDom || view?.composing || slashImeComposing) {
         try {
             const sel = view.dom.ownerDocument.getSelection();
@@ -1134,23 +980,16 @@ function getSlashCommandText(editor, opts = {}) {
 	return editor.state.doc.textBetween(from, to);
 }
 
-/**
- * 슬래시 명령 키보드 바인딩
- */
 export function bindSlashKeyHandlers(editor) {
     document.addEventListener("keydown", (event) => {
         if (!editor) return;
 
-        // IME 조합(한글/일본어/중국어 등) 중에는 Enter/Arrow 등이
-        // 조합 확정/후보 선택에 쓰일 수 있으므로 slash 메뉴 단축키로 가로채면
-        // 조합이 깨져 초성만 남고 입력이 멈추는 현상이 발생할 수 있음.
 		const imeComp = (typeof slashImeComposing !== 'undefined') && slashImeComposing;
 		const composing = !!(imeComp || event.isComposing || editor?.view?.composing || event.key === 'Process' || event.keyCode === 229);
 
         const target = event.target;
         const inEditor = target && target.closest && target.closest(".ProseMirror");
 
-        // 에디터 안에서 "/" 입력 시 슬래시 메뉴 활성화
         if (!slashState.active && event.key === "/" && inEditor) {
             try {
                 const selection = editor.state.selection;
@@ -1163,10 +1002,7 @@ export function bindSlashKeyHandlers(editor) {
             return;
         }
 
-        // 슬래시 메뉴가 열려 있을 때의 키 처리
         if (slashState.active) {
-			// IME 조합 중엔 메뉴 내 키바인딩을 적용하지 않고, 입력 자체를 우선.
-			// (필터링은 composition 이벤트에서 DOM 기준으로 동기화)
 			if (composing)
 			    return;
 
@@ -1191,42 +1027,30 @@ export function bindSlashKeyHandlers(editor) {
                 return;
             }
 
-            // '/' 자체가 삭제되는 케이스면 즉시 닫기 (onUpdate 타이밍 꼬임 방지)
             if ((event.key === "Backspace" || event.key === "Delete") && slashState.fromPos !== null) {
                 const sel = editor.state.selection;
                 if (!sel.empty) {
-                    // 선택 범위가 '/'를 포함하면 닫기
                     if (sel.from <= slashState.fromPos && sel.to >= slashState.fromPos + 1) {
                         closeSlashMenu();
                     }
                     return;
                 }
-                // 커서가 '/' 바로 뒤에서 Backspace -> '/' 삭제
                 if (event.key === "Backspace" && sel.from === slashState.fromPos + 1) {
                     closeSlashMenu();
                     return;
                 }
-                // 커서가 '/' 바로 앞에서 Delete -> '/' 삭제
                 if (event.key === "Delete" && sel.from === slashState.fromPos) {
                     closeSlashMenu();
                     return;
                 }
             }
 
-            // "/" 다음 문자가 입력/삭제되면 메뉴 필터링 업데이트
-            // 실제 입력은 에디터의 기본 동작에 맡기고,
-            // 다음 업데이트에서 필터링 적용
             if (event.key === "Backspace" || (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey)) {
-                // 기본 동작 허용 (preventDefault 하지 않음)
-                // onUpdate에서 필터링 처리
                 return;
             }
         }
     });
 
-    // IME 조합 중에는 editor.onUpdate가 즉시 호출되지 않는 경우가 있어
-    // composition/input 이벤트에서 필터 텍스트를 DOM 기준으로 동기화한다.
-    // (bindSlashKeyHandlers가 여러 번 호출될 수 있으므로 한 번만 바인딩)
     if (!bindSlashKeyHandlers.__imeBound && editor?.view?.dom) {
         bindSlashKeyHandlers.__imeBound = true;
         const dom = editor.view.dom;
@@ -1239,17 +1063,14 @@ export function bindSlashKeyHandlers(editor) {
         };
         const onCompEnd = () => {
             slashImeComposing = false;
-            // 조합 확정 후에는 state.doc에도 반영되므로 일반 동기화로 정리
             if (slashState.active) syncSlashMenu(editor);
         };
 
         dom.addEventListener('compositionstart', onCompStart);
         dom.addEventListener('compositionupdate', syncDom);
         dom.addEventListener('compositionend', onCompEnd);
-        // 일부 환경에서는 compositionupdate만으로는 즉시 반영이 안 되는 경우가 있어 input도 보조로 사용
         dom.addEventListener('input', () => {
             if (!slashState.active) return;
-            // input이 ProseMirror transaction 반영보다 먼저 들어오는 환경이 있어서 1프레임 지연
             requestAnimationFrame(() => {
                 if (!slashState.active) return;
                 if (slashImeComposing) syncSlashMenu(editor, { forceDom: true });
@@ -1258,10 +1079,8 @@ export function bindSlashKeyHandlers(editor) {
         });
     }
 
-    // 외부 영역 클릭 시 슬래시 메뉴 닫기
     document.addEventListener("click", (event) => {
         if (slashState.active && slashMenuEl) {
-            // 클릭한 요소가 슬래시 메뉴 내부가 아니면 닫기
             if (!slashMenuEl.contains(event.target)) {
                 closeSlashMenu();
             }
@@ -1269,9 +1088,6 @@ export function bindSlashKeyHandlers(editor) {
     });
 }
 
-/**
- * 에디터 초기화
- */
 export function initEditor() {
     const element = document.querySelector("#editor");
 
@@ -1359,11 +1175,9 @@ export function initEditor() {
         content: EXAMPLE_CONTENT,
         onSelectionUpdate() {
             updateToolbarState(editor);
-            // 마우스가 눌려있지 않을 때만 (키보드 선택 등) 즉시 업데이트
             if (!isMouseDown) {
                 updateBubbleMenuPosition(editor);
             }
-            // 문서 변경 없이 커서만 이동해도(←/→ 클릭 이동) 메뉴 컨텍스트가 깨지면 닫혀야 함
             if (slashState.active)
             	syncSlashMenu(editor);
         },
@@ -1373,12 +1187,10 @@ export function initEditor() {
                 updateBubbleMenuPosition(editor);
             }
 
-            // 크기 조절 중이 아닐 때만 핸들 재생성
             if (!isResizingTable) {
                 setTimeout(() => addTableResizeHandles(editor), 50);
             }
 
-            // doc이 바뀌면 fromPos가 틀어질 수 있어 mapping 보정(삽입 경계 왼쪽에 붙도록 assoc=-1)
             if (slashState.active && slashState.fromPos !== null && transaction?.docChanged) {
                 try {
                     slashState.fromPos = transaction.mapping.map(slashState.fromPos, -1);
@@ -1389,14 +1201,11 @@ export function initEditor() {
         },
         onCreate() {
             updateToolbarState(editor);
-            // 에디터 생성 시 핸들 추가
             setTimeout(() => addTableResizeHandles(editor), 50);
         },
         onUpdate() {
-            // 내용 업데이트 시 핸들 재생성
             setTimeout(() => addTableResizeHandles(editor), 50);
 
-			// 슬래시 메뉴 동기화(삭제/이동/필터 등)
 			if (slashState.active)
 				syncSlashMenu(editor);
             
@@ -1406,10 +1215,8 @@ export function initEditor() {
         }
     });
 
-    // 테이블 컨텍스트 메뉴 바인딩
     bindTableContextMenu(editor);
 
-    // 마우스 드래그 종료 시 버블 메뉴 표시
     const proseMirrorEl = document.querySelector("#editor .ProseMirror");
     if (proseMirrorEl) {
         proseMirrorEl.addEventListener("mousedown", () => {
@@ -1418,7 +1225,6 @@ export function initEditor() {
         window.addEventListener("mouseup", () => {
             if (isMouseDown) {
                 isMouseDown = false;
-                // 약간의 지연을 주어 selection이 확정된 후 위치 계산
                 setTimeout(() => {
                     updateBubbleMenuPosition(editor);
                 }, 10);
@@ -1426,7 +1232,6 @@ export function initEditor() {
         });
     }
 
-    // 스크롤 시 버블 메뉴 위치 업데이트
     const scrollHandler = () => {
         if (editor && window.appState?.isWriteMode && !isMouseDown) {
             updateBubbleMenuPosition(editor);
@@ -1441,9 +1246,6 @@ export function initEditor() {
 
 let isMouseDown = false;
 
-/**
- * 버블 메뉴(툴바) 위치 업데이트
- */
 export function updateBubbleMenuPosition(editor) {
     const toolbar = document.querySelector(".editor-toolbar");
     if (!toolbar) return;
@@ -1453,12 +1255,9 @@ export function updateBubbleMenuPosition(editor) {
     const { state, view } = editor;
     const { selection } = state;
 
-    // 현재 포커스가 에디터 내부에 있거나, 툴바(드롭다운 포함) 내부에 있는지 확인
     const isFocused = editor.isFocused || (document.activeElement && toolbar.contains(document.activeElement));
 
-    // 쓰기 모드이고, 포커스가 유효하며, 선택 영역이 비어있지 않은 경우
     if (window.appState?.isWriteMode && isFocused && !selection.empty) {
-        // 모드 전환 버튼을 클릭한 직후에는 메뉴를 띄우지 않음
         if (document.activeElement && document.activeElement.closest('#mode-toggle-btn')) {
             return;
         }
@@ -1466,7 +1265,6 @@ export function updateBubbleMenuPosition(editor) {
         try {
             let rect;
             if (selection.node) {
-                // 노드 선택 (이미지 등)
                 const node = view.nodeDOM(selection.from);
                 if (node instanceof HTMLElement) {
                     rect = node.getBoundingClientRect();
@@ -1474,7 +1272,6 @@ export function updateBubbleMenuPosition(editor) {
             }
 
             if (!rect) {
-                // 텍스트 선택
                 const domSelection = window.getSelection();
                 if (domSelection.rangeCount > 0) {
                     const range = domSelection.getRangeAt(0);
@@ -1483,7 +1280,6 @@ export function updateBubbleMenuPosition(editor) {
             }
 
             if (!rect || (rect.width === 0 && rect.height === 0)) {
-                // Fallback to coordsAtPos
                 const startCoords = view.coordsAtPos(selection.from);
                 const endCoords = view.coordsAtPos(selection.to);
                 rect = {
@@ -1501,22 +1297,18 @@ export function updateBubbleMenuPosition(editor) {
             
             toolbar.classList.add("visible");
             
-            // 툴바 크기 측정
             const toolbarWidth = toolbar.offsetWidth;
             const toolbarHeight = toolbar.offsetHeight;
             
-            // 위치 설정
             let finalLeft = left - (toolbarWidth / 2);
             let finalTop = top - toolbarHeight - 10;
             
-            // 화면 경계 체크
             if (finalLeft < 10) finalLeft = 10;
             if (finalLeft + toolbarWidth > window.innerWidth - 10) {
                 finalLeft = window.innerWidth - toolbarWidth - 10;
             }
             
             if (finalTop < 10) {
-                // 상단 공간 부족 시 선택 영역 아래에 표시
                 finalTop = rect.bottom + 10;
             }
 
@@ -1526,7 +1318,6 @@ export function updateBubbleMenuPosition(editor) {
             console.error("버블 메뉴 위치 계산 오류:", e);
         }
     } else {
-        // 드롭다운이나 확장 메뉴가 열려있는 동안은 닫지 않음
         const isDropdownOpen = toolbar.querySelector(".toolbar-color-dropdown.open") || 
                                toolbar.querySelector(".toolbar-font-dropdown.open") ||
                                toolbar.querySelector(".toolbar-padding-dropdown.open") ||
@@ -1534,7 +1325,6 @@ export function updateBubbleMenuPosition(editor) {
         
         if (!isDropdownOpen) {
             toolbar.classList.remove("visible");
-            // 툴바가 숨겨질 때 확장 메뉴도 확실히 숨김
             const moreMenu = toolbar.querySelector(".toolbar-more-menu");
             const moreBtn = toolbar.querySelector("[data-command='toggleMoreMenu']");
             if (moreMenu) moreMenu.classList.add("hidden");
@@ -1543,9 +1333,6 @@ export function updateBubbleMenuPosition(editor) {
     }
 }
 
-/**
- * 현재 텍스트 정렬 상태 가져오기
- */
 function getCurrentTextAlign(editor) {
     if (!editor) return null;
 
@@ -1562,9 +1349,6 @@ function getCurrentTextAlign(editor) {
     return null;
 }
 
-/**
- * 툴바 상태 업데이트
- */
 export function updateToolbarState(editor) {
     if (!editor) return;
 
@@ -1639,9 +1423,6 @@ export function updateToolbarState(editor) {
     });
 }
 
-/**
- * 툴바 이벤트 바인딩
- */
 export function bindToolbar(editor) {
     const toolbar = document.querySelector(".editor-toolbar");
     if (!toolbar) return;
@@ -1661,7 +1442,6 @@ export function bindToolbar(editor) {
         ? paddingDropdownElement.querySelector("[data-padding-menu]")
         : null;
 
-    // 폰트 드롭다운 메뉴에 폰트 옵션 동적 생성
     if (fontMenuElement) {
         fontMenuElement.innerHTML = "";
         SYSTEM_FONTS.forEach((font) => {
@@ -1677,17 +1457,13 @@ export function bindToolbar(editor) {
         });
     }
 
-    // 보드 카드 포커스 추적을 위한 변수
     let lastFocusedBoardCard = null;
 
-    // 툴바 클릭 시 에디터 포커스 및 선택 해제 방지
     toolbar.addEventListener("mousedown", (event) => {
-        // 드롭다운 내부 입력창(커스텀 여백 등)은 제외
         if (event.target.closest('input')) return;
         
         const button = event.target.closest("button[data-command]");
         if (button) {
-            // 보드 카드 내부 편집 중이라면 포커스 이동 방지
             const activeCard = document.activeElement.closest('.board-card-content');
             if (activeCard) {
                 lastFocusedBoardCard = activeCard;
@@ -1705,16 +1481,13 @@ export function bindToolbar(editor) {
         const colorValue = button.getAttribute("data-color");
         const fontFamilyValue = button.getAttribute("data-font-family");
 
-        // 보드 카드 내부 편집 중인지 확인 (현재 포커스 또는 마지막 포커스된 카드)
         const activeCard = document.activeElement.closest('.board-card-content') || lastFocusedBoardCard;
         
-        // 보드 카드 내부가 아니면 추적 변수 초기화
         if (!document.activeElement.closest('.board-card-content')) {
             lastFocusedBoardCard = null;
         }
 
         if (activeCard && ['bold', 'italic', 'strike', 'setColor', 'setFont', 'unsetColor', 'h1', 'h2', 'h3', 'h4', 'h5'].includes(command)) {
-            // 보드 카드 내부 편집 중이면 브라우저 기본 execCommand 사용
             if (activeCard !== document.activeElement) {
                 activeCard.focus();
             }
@@ -1755,7 +1528,6 @@ export function bindToolbar(editor) {
                     break;
             }
             
-            // 드롭다운 닫기 처리
             if (command === "setColor" || command === "unsetColor") {
                 if (colorMenuElement && colorDropdownElement) {
                     colorMenuElement.setAttribute("hidden", "");
@@ -1771,7 +1543,6 @@ export function bindToolbar(editor) {
             return;
         }
 
-        // 색상 드롭다운 토글
         if (command === "toggleColorDropdown") {
             if (!colorMenuElement || !colorDropdownElement) return;
 
@@ -1781,7 +1552,6 @@ export function bindToolbar(editor) {
                 colorMenuElement.setAttribute("hidden", "");
                 colorDropdownElement.classList.remove("open");
             } else {
-                // 버튼 위치 계산
                 const buttonRect = button.getBoundingClientRect();
                 colorMenuElement.style.top = `${buttonRect.bottom + 4}px`;
                 colorMenuElement.style.left = `${buttonRect.left}px`;
@@ -1792,7 +1562,6 @@ export function bindToolbar(editor) {
             return;
         }
 
-        // 폰트 드롭다운 토글
         if (command === "toggleFontDropdown") {
             if (!fontMenuElement || !fontDropdownElement) return;
 
@@ -1802,7 +1571,6 @@ export function bindToolbar(editor) {
                 fontMenuElement.setAttribute("hidden", "");
                 fontDropdownElement.classList.remove("open");
             } else {
-                // 버튼 위치 계산
                 const buttonRect = button.getBoundingClientRect();
                 fontMenuElement.style.top = `${buttonRect.bottom + 4}px`;
                 fontMenuElement.style.left = `${buttonRect.left}px`;
@@ -1813,7 +1581,6 @@ export function bindToolbar(editor) {
             return;
         }
 
-        // 여백 드롭다운 토글
         if (command === "togglePaddingDropdown") {
             if (!paddingMenuElement || !paddingDropdownElement) return;
 
@@ -1823,12 +1590,10 @@ export function bindToolbar(editor) {
                 paddingMenuElement.setAttribute("hidden", "");
                 paddingDropdownElement.classList.remove("open");
             } else {
-                // 버튼 위치 계산
                 const buttonRect = button.getBoundingClientRect();
                 paddingMenuElement.style.top = `${buttonRect.bottom + 4}px`;
                 paddingMenuElement.style.left = `${buttonRect.left}px`;
 
-                // 현재 여백 값 표시
                 updatePaddingMenuState();
 
                 paddingMenuElement.removeAttribute("hidden");
@@ -1837,14 +1602,12 @@ export function bindToolbar(editor) {
             return;
         }
 
-        // 확장 메뉴 토글
         if (command === "toggleMoreMenu") {
             const moreMenu = toolbar.querySelector(".toolbar-more-menu");
             if (!moreMenu) return;
 
             const isOpen = !moreMenu.classList.contains("hidden");
             
-            // 다른 드롭다운 닫기
             if (colorMenuElement) colorMenuElement.setAttribute("hidden", "");
             if (fontMenuElement) fontMenuElement.setAttribute("hidden", "");
 
@@ -1854,14 +1617,13 @@ export function bindToolbar(editor) {
             } else {
                 const buttonRect = button.getBoundingClientRect();
                 moreMenu.style.top = `${buttonRect.bottom + 8}px`;
-                moreMenu.style.left = `${buttonRect.left - 80}px`; // 중앙 정렬 비슷하게 조정
+                moreMenu.style.left = `${buttonRect.left - 80}px`; 
                 moreMenu.classList.remove("hidden");
                 button.classList.add("active");
             }
             return;
         }
 
-        // 색상 선택
         if (command === "setColor" && colorValue) {
             editor.chain().focus().setColor(colorValue).run();
 
@@ -1874,7 +1636,6 @@ export function bindToolbar(editor) {
             return;
         }
 
-        // 색상 초기화
         if (command === "unsetColor") {
             editor.chain().focus().unsetColor().run();
 
@@ -1887,7 +1648,6 @@ export function bindToolbar(editor) {
             return;
         }
 
-        // 폰트 선택
         if (command === "setFont") {
             if (fontFamilyValue === "") {
                 editor.chain().focus().unsetFontFamily().run();
@@ -1904,7 +1664,6 @@ export function bindToolbar(editor) {
             return;
         }
 
-        // 여백 설정
         if (command === "setPadding") {
             const paddingValue = button.getAttribute("data-padding");
             handlePaddingChange(paddingValue);
@@ -1916,7 +1675,6 @@ export function bindToolbar(editor) {
             return;
         }
 
-        // 커스텀 여백 적용
         if (command === "applyCustomPadding") {
             const input = document.getElementById("padding-custom-input");
             if (input && input.value) {
@@ -1936,7 +1694,6 @@ export function bindToolbar(editor) {
             return;
         }
 
-        // 기본 편집 명령들
         switch (command) {
             case "bold":
                 editor.chain().focus().toggleBold().run();
@@ -1992,7 +1749,6 @@ export function bindToolbar(editor) {
 
         updateToolbarState(editor);
 
-        // 확장 메뉴 내부 버튼 클릭 시 확장 메뉴 닫기
         const moreMenu = toolbar.querySelector(".toolbar-more-menu");
         const moreBtn = toolbar.querySelector("[data-command='toggleMoreMenu']");
         if (moreMenu && !moreMenu.classList.contains("hidden") && command !== "toggleMoreMenu") {
@@ -2002,12 +1758,9 @@ export function bindToolbar(editor) {
     });
 }
 
-/**
- * 테이블 크기 조절 핸들 추가 및 관리
- */
 let resizingState = {
     isResizing: false,
-    resizeType: null, // 'column' or 'row'
+    resizeType: null, 
     startX: 0,
     startY: 0,
     startWidth: 0,
@@ -2017,33 +1770,24 @@ let resizingState = {
     editor: null
 };
 
-// 크기 조절 중인지 확인하는 플래그
 let isResizingTable = false;
 
-/**
- * 테이블에 크기 조절 핸들 추가
- */
 export function addTableResizeHandles(editor) {
     const editorElement = document.querySelector("#editor .ProseMirror");
     if (!editorElement) return;
 
-    // 기존 핸들 컨테이너 제거
     document.querySelectorAll(".table-resize-overlay").forEach(el => el.remove());
 
-    // 모든 테이블 찾기
     const tables = editorElement.querySelectorAll("table");
     if (tables.length === 0) return;
 
-    // editor 인스턴스 저장
     if (editor) {
         resizingState.editor = editor;
     }
 
     tables.forEach((table, tableIndex) => {
-        // 테이블 위치 가져오기
         const tableRect = table.getBoundingClientRect();
 
-        // overlay 생성 (fixed position 사용)
         const overlay = document.createElement("div");
         overlay.className = "table-resize-overlay";
         overlay.style.position = "fixed";
@@ -2062,7 +1806,6 @@ export function addTableResizeHandles(editor) {
             cells.forEach((cell, cellIndex) => {
                 const cellRect = cell.getBoundingClientRect();
 
-                // 열 크기 조절 핸들 (마지막 열이 아닌 경우)
                 if (cellIndex < cells.length - 1) {
                     const colHandle = document.createElement("div");
                     colHandle.className = "custom-resize-handle custom-resize-handle-col";
@@ -2083,7 +1826,6 @@ export function addTableResizeHandles(editor) {
                     colHandle.addEventListener("mousedown", startColumnResize);
                 }
 
-                // 행 크기 조절 핸들 (마지막 행이 아닌 경우)
                 if (rowIndex < rows.length - 1) {
                     const rowHandle = document.createElement("div");
                     rowHandle.className = "custom-resize-handle custom-resize-handle-row";
@@ -2110,14 +1852,12 @@ export function addTableResizeHandles(editor) {
     });
 }
 
-// 스크롤 시 핸들 위치 업데이트
 window.addEventListener("scroll", () => {
     if (resizingState.editor) {
         addTableResizeHandles(resizingState.editor);
     }
 }, true);
 
-// 창 크기 변경 시 핸들 위치 실시간 업데이트
 window.addEventListener("resize", () => {
     if (resizingState.editor) {
         addTableResizeHandles(resizingState.editor);
@@ -2128,9 +1868,6 @@ window.addEventListener("resize", () => {
     syncPageUpdatedAtPadding();
 });
 
-/**
- * 테이블 크기 초기화
- */
 function resetTableSize(e) {
     e.preventDefault();
     e.stopPropagation();
@@ -2150,7 +1887,6 @@ function resetTableSize(e) {
 
     if (tables.length === 0) return;
 
-    // 모든 테이블의 모든 셀 초기화
     const { state } = editor.view;
     const { tr } = state;
     let updated = false;
@@ -2169,7 +1905,6 @@ function resetTableSize(e) {
             if (cellNode && (cellNode.type.name === "tableCell" || cellNode.type.name === "tableHeader")) {
                 console.log(`셀 초기화 전 attrs:`, cellNode.attrs);
 
-                // style과 colwidth 속성을 null로 설정
                 const newAttrs = {
                     ...cellNode.attrs,
                     style: null,
@@ -2186,26 +1921,20 @@ function resetTableSize(e) {
 
     console.log(`업데이트 여부: ${updated}`);
 
-    // 트랜잭션 적용
     if (updated) {
         editor.view.dispatch(tr);
         console.log("트랜잭션 적용 완료");
 
-        // 핸들 재생성
         setTimeout(() => {
             addTableResizeHandles(editor);
         }, 50);
     }
 }
 
-/**
- * 열 크기 조절 시작
- */
 function startColumnResize(e) {
     e.preventDefault();
     e.stopPropagation();
 
-    // 더블클릭인 경우 크기 초기화
     if (e.detail === 2) {
         console.log("더블클릭 감지 - 테이블 크기 초기화");
         resetTableSize(e);
@@ -2218,7 +1947,6 @@ function startColumnResize(e) {
 
     console.log(`열 크기 조절 시작: 행${rowIndex}, 열${cellIndex}`);
 
-    // 에디터에서 테이블 찾기
     const editorElement = document.querySelector("#editor .ProseMirror");
     const table = editorElement.querySelector("table");
     if (!table) {
@@ -2242,7 +1970,7 @@ function startColumnResize(e) {
 
     console.log(`셀 찾음, 현재 너비: ${cell.offsetWidth}px`);
 
-    isResizingTable = true; // TipTap 재렌더링 방지
+    isResizingTable = true; 
     resizingState.isResizing = true;
     resizingState.resizeType = "column";
     resizingState.startX = e.pageX;
@@ -2259,9 +1987,6 @@ function startColumnResize(e) {
     console.log("이벤트 리스너 등록 완료, TipTap 재렌더링 중단");
 }
 
-/**
- * 열 크기 조절 중
- */
 function doColumnResize(e) {
     if (!resizingState.isResizing || resizingState.resizeType !== "column") return;
     if (!resizingState.editor) return;
@@ -2273,28 +1998,23 @@ function doColumnResize(e) {
     const cellIndex = resizingState.cellIndex;
     const table = resizingState.table;
 
-    // TipTap의 문서 모델을 업데이트
     const { state } = editor.view;
     const { tr } = state;
     let updated = false;
 
-    // 테이블의 모든 행을 순회하며 해당 열의 셀에 width 설정
     const rows = table.querySelectorAll("tr");
     rows.forEach((row, rowIndex) => {
         const cells = row.querySelectorAll("td, th");
         const cell = cells[cellIndex];
         if (!cell) return;
 
-        // DOM 위치에서 Prosemirror 위치 찾기
         const pos = editor.view.posAtDOM(cell, 0);
         if (pos === null || pos === undefined) return;
 
-        // 셀 노드의 시작 위치 찾기
         const $pos = state.doc.resolve(pos);
         const cellNode = $pos.node($pos.depth);
 
         if (cellNode && (cellNode.type.name === "tableCell" || cellNode.type.name === "tableHeader")) {
-            // colwidth 속성 업데이트와 함께 인라인 스타일도 설정
             const roundedWidth = Math.round(newWidth);
             const attrs = {
                 ...cellNode.attrs,
@@ -2306,20 +2026,15 @@ function doColumnResize(e) {
         }
     });
 
-    // 트랜잭션 적용
     if (updated) {
         editor.view.dispatch(tr);
     }
 }
 
-/**
- * 행 크기 조절 시작
- */
 function startRowResize(e) {
     e.preventDefault();
     e.stopPropagation();
 
-    // 더블클릭인 경우 크기 초기화
     if (e.detail === 2) {
         console.log("더블클릭 감지 - 테이블 크기 초기화");
         resetTableSize(e);
@@ -2329,7 +2044,6 @@ function startRowResize(e) {
     const handle = e.target;
     const rowIndex = parseInt(handle.dataset.rowIndex);
 
-    // 에디터에서 테이블 찾기
     const editorElement = document.querySelector("#editor .ProseMirror");
     const table = editorElement.querySelector("table");
     if (!table) return;
@@ -2338,7 +2052,7 @@ function startRowResize(e) {
     const row = rows[rowIndex];
     if (!row) return;
 
-    isResizingTable = true; // TipTap 재렌더링 방지
+    isResizingTable = true; 
     resizingState.isResizing = true;
     resizingState.resizeType = "row";
     resizingState.startY = e.pageY;
@@ -2352,9 +2066,6 @@ function startRowResize(e) {
     document.body.style.userSelect = "none";
 }
 
-/**
- * 행 크기 조절 중
- */
 function doRowResize(e) {
     if (!resizingState.isResizing || resizingState.resizeType !== "row") return;
     if (!resizingState.editor) return;
@@ -2365,24 +2076,19 @@ function doRowResize(e) {
     const editor = resizingState.editor;
     const targetRow = resizingState.targetRow;
 
-    // TipTap의 문서 모델을 업데이트
     const { state } = editor.view;
     const { tr } = state;
     let updated = false;
 
-    // 행의 모든 셀에 높이 설정
     const cells = targetRow.querySelectorAll("td, th");
     cells.forEach(cell => {
-        // DOM 위치에서 Prosemirror 위치 찾기
         const pos = editor.view.posAtDOM(cell, 0);
         if (pos === null || pos === undefined) return;
 
-        // 셀 노드의 시작 위치 찾기
         const $pos = state.doc.resolve(pos);
         const cellNode = $pos.node($pos.depth);
 
         if (cellNode && (cellNode.type.name === "tableCell" || cellNode.type.name === "tableHeader")) {
-            // 높이 속성 업데이트 (rowspan과 colspan 유지)
             const attrs = {
                 ...cellNode.attrs,
                 style: `height: ${newHeight}px; min-height: ${newHeight}px;`
@@ -2392,15 +2098,11 @@ function doRowResize(e) {
         }
     });
 
-    // 트랜잭션 적용
     if (updated) {
         editor.view.dispatch(tr);
     }
 }
 
-/**
- * 크기 조절 종료
- */
 function stopResize() {
     if (resizingState.isResizing) {
         document.removeEventListener("mousemove", doColumnResize);
@@ -2417,7 +2119,6 @@ function stopResize() {
 
         console.log("크기 조절 종료, TipTap 재렌더링 재개");
 
-        // 크기 조절 완료 후 플래그 해제 및 핸들 재생성
         setTimeout(() => {
             isResizingTable = false;
             if (resizingState.editor) {
@@ -2427,9 +2128,6 @@ function stopResize() {
     }
 }
 
-/**
- * 테이블 컨텍스트 메뉴 숨기기
- */
 function hideTableContextMenu() {
     const menuEl = document.getElementById("context-menu");
     if (menuEl) {
@@ -2437,9 +2135,6 @@ function hideTableContextMenu() {
     }
 }
 
-/**
- * 테이블 컨텍스트 메뉴 표시
- */
 function showTableContextMenu(x, y, editor) {
     const menuEl = document.getElementById("context-menu");
     const contentEl = document.getElementById("context-menu-content");
@@ -2449,7 +2144,6 @@ function showTableContextMenu(x, y, editor) {
         return;
     }
 
-    // 메뉴 내용 생성
     contentEl.innerHTML = "";
     TABLE_MENU_ITEMS.forEach(item => {
         if (item.type === "separator") {
@@ -2465,7 +2159,6 @@ function showTableContextMenu(x, y, editor) {
             button.classList.add("danger");
         }
 
-        // 명령 실행 가능 여부 확인
         const enabled = item.isEnabled(editor);
         if (!enabled) {
             button.disabled = true;
@@ -2487,12 +2180,10 @@ function showTableContextMenu(x, y, editor) {
         contentEl.appendChild(button);
     });
 
-    // 위치 설정
     menuEl.classList.remove("hidden");
     menuEl.style.left = `${x}px`;
     menuEl.style.top = `${y}px`;
 
-    // 다음 프레임에서 위치 조정 (화면 밖으로 나가지 않도록)
     requestAnimationFrame(() => {
         const rect = menuEl.getBoundingClientRect();
         if (rect.right > window.innerWidth) {
@@ -2504,27 +2195,19 @@ function showTableContextMenu(x, y, editor) {
     });
 }
 
-/**
- * 테이블 컨텍스트 메뉴 이벤트 바인딩
- */
 export function bindTableContextMenu(editor) {
     const editorElement = document.querySelector("#editor .ProseMirror");
     if (!editorElement) return;
 
-    // 우클릭 이벤트 리스너
     editorElement.addEventListener("contextmenu", (event) => {
-        // 테이블 셀 클릭 여부 확인
         const target = event.target.closest("td, th");
         if (!target) return;
 
-        // 읽기 모드에서는 메뉴 표시하지 않음
         if (!editor.isEditable) return;
 
-        // 기본 컨텍스트 메뉴 방지
         event.preventDefault();
         event.stopPropagation();
 
-        // 셀에 포커스 설정
         try {
             const pos = editor.view.posAtDOM(target, 0);
             editor.chain().focus().setTextSelection(pos).run();
@@ -2532,17 +2215,14 @@ export function bindTableContextMenu(editor) {
             console.error("셀 포커스 설정 오류:", error);
         }
 
-        // 컨텍스트 메뉴 표시
         showTableContextMenu(event.clientX, event.clientY, editor);
     });
 
-    // 다른 곳 클릭 시 메뉴 닫기
     document.addEventListener("click", () => {
         hideTableContextMenu();
     });
 }
 
-// 여백 변경 처리
 async function handlePaddingChange(paddingValue) {
     const state = window.appState;
     if (!state || !state.currentPageId) return;
@@ -2550,7 +2230,6 @@ async function handlePaddingChange(paddingValue) {
     const editorEl = document.querySelector('.editor');
     const padding = paddingValue === 'default' ? null : parseInt(paddingValue);
 
-    // UI 즉시 업데이트 (모바일에서는 기본 CSS 사용)
     if (editorEl) {
         const isMobile = window.innerWidth <= 900;
         if (padding === null || isMobile) {
@@ -2564,7 +2243,6 @@ async function handlePaddingChange(paddingValue) {
 
     syncPageUpdatedAtPadding();
 
-    // 서버에 저장
     try {
         const res = await secureFetch(`/api/pages/${state.currentPageId}`, {
             method: 'PUT',
@@ -2576,7 +2254,6 @@ async function handlePaddingChange(paddingValue) {
 
         if (!res.ok) throw new Error('여백 저장 실패');
 
-        // 로컬 상태 업데이트
         const page = state.pages.find(p => p.id === state.currentPageId);
         if (page) page.horizontalPadding = padding;
 
@@ -2587,7 +2264,6 @@ async function handlePaddingChange(paddingValue) {
     }
 }
 
-// 메뉴 상태 업데이트
 function updatePaddingMenuState() {
     const state = window.appState;
     if (!state || !state.currentPageId) return;

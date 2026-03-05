@@ -1,6 +1,3 @@
-/**
- * 저장소 관리자
- */
 import * as api from './api-utils.js';
 import { showLoadingOverlay, hideLoadingOverlay, escapeHtml, escapeHtmlAttr } from './ui-utils.js';
 
@@ -11,7 +8,6 @@ export function initStoragesManager(appState, onStorageSelected) {
     const logoutBtn = document.getElementById('storage-logout-btn');
     const appEl = document.querySelector('.app');
 
-    // 저장소 목록 렌더링
     function renderStorages(storages) {
         storageList.innerHTML = '';
         
@@ -34,7 +30,6 @@ export function initStoragesManager(appState, onStorageSelected) {
             const isAdmin = isOwner || storage.permission === 'ADMIN';
             const isEncrypted = !!(Number(storage.is_encrypted) === 1 || storage.isEncrypted);
             
-            // 보안: innerHTML 템플릿에 들어가는 값은 반드시 이스케이프 처리
             const safeStorageId = escapeHtmlAttr(storage.id);
             const safeStorageName = escapeHtml(storage.name || '');
             const safeOwnerName = escapeHtml(storage.owner_name || '');
@@ -75,7 +70,6 @@ export function initStoragesManager(appState, onStorageSelected) {
             `;
             
             item.addEventListener('click', (e) => {
-                // 삭제/참여자/이름변경 버튼 클릭 시 이벤트 전파 방지
                 if (e.target.closest('.storage-action-btn')) return;
                 selectStorage(storage.id);
             });
@@ -132,7 +126,6 @@ export function initStoragesManager(appState, onStorageSelected) {
                     appState.storages = appState.storages.filter(s => s.id !== storage.id);
                     renderStorages(appState.storages);
 
-                    // 데이터 이관 리포트 표시
                     if (result?.transferred && Object.keys(result.transferred).length > 0) {
                         const userCount = Object.keys(result.transferred).length;
                         const totalPages = Object.values(result.transferred).reduce((sum, item) => sum + (item.movedPages || 0), 0);
@@ -150,7 +143,6 @@ export function initStoragesManager(appState, onStorageSelected) {
         });
     }
 
-    // 참여자 관리 모달
     const collabModal = document.getElementById('storage-collaborators-modal');
     const closeCollabBtn = document.getElementById('close-storage-collaborators-btn');
     const searchInput = document.getElementById('collaborator-search-input');
@@ -198,7 +190,6 @@ export function initStoragesManager(appState, onStorageSelected) {
             const item = document.createElement('div');
             item.className = 'collaborator-item';
             
-            // 보안: 사용자명/권한 문자열은 신뢰할 수 없으므로 HTML 이스케이프
             const safeCollabName = escapeHtml(collab.username || '');
             const safeCollabId = escapeHtmlAttr(collab.id);
 
@@ -228,7 +219,6 @@ export function initStoragesManager(appState, onStorageSelected) {
                     });
                 } catch (error) {
                     alert('권한 수정 실패: ' + error.message);
-                    // 실패 시 원래 값으로 복구하기 위해 목록 재요청
                     loadCollaborators();
                 }
             });
@@ -309,28 +299,23 @@ export function initStoragesManager(appState, onStorageSelected) {
         collabModal.classList.add('hidden');
     });
 
-    // 외부 클릭 시 검색 결과 닫기
     document.addEventListener('click', (e) => {
         if (!searchInput.contains(e.target) && !searchResults.contains(e.target)) {
             searchResults.classList.add('hidden');
         }
     });
 
-    // 저장소 선택
     async function selectStorage(storageId, skipHistory = false) {
-        // 보안: 저장소 진입 시 무조건 이전 키 삭제 (메모리 잔존 방지)
         window.cryptoManager.clearStorageKey();
 
         const storage = appState.storages.find(s => s.id === storageId);
         if (!storage) return;
 
-        // 속성명 및 타입 호환성 체크 (DB snake_case, API camelCase, String/Number/Boolean 혼용 대응)
         const isEncryptedStorage = !!(Number(storage.is_encrypted) === 1 || storage.isEncrypted === true || storage.isEncrypted === 1);
 
-        // 암호화된 저장소인 경우 잠금 해제 확인
         if (isEncryptedStorage) {
             const unlocked = await openUnlockStorageModal(storage);
-            if (!unlocked) return; // 취소거나 실패
+            if (!unlocked) return; 
         }
 
         showLoadingOverlay();
@@ -341,18 +326,15 @@ export function initStoragesManager(appState, onStorageSelected) {
             
             appState.currentStorageId = storageId;
             appState.currentStoragePermission = permission;
-            appState.currentStorageIsEncrypted = isEncryptedStorage; // 상태 저장
+            appState.currentStorageIsEncrypted = isEncryptedStorage; 
             
-            // 화면 전환
             storageScreen.classList.add('hidden');
             appEl.classList.remove('hidden');
             
-            // 히스토리 관리
             if (!skipHistory) {
                 history.pushState({ view: 'app', storageId }, '', window.location.pathname);
             }
 
-            // 콜백 호출 (컬렉션 및 페이지 데이터 전달)
             if (onStorageSelected) {
                 onStorageSelected({ ...data, permission, isEncryptedStorage });
             }
@@ -364,7 +346,6 @@ export function initStoragesManager(appState, onStorageSelected) {
         }
     }
 
-    // --- 저장소 잠금 해제 모달 ---
     const unlockModal = document.getElementById('unlock-storage-modal');
     const unlockForm = document.getElementById('unlock-storage-form');
     const unlockInput = document.getElementById('unlock-storage-password');
@@ -383,14 +364,12 @@ export function initStoragesManager(appState, onStorageSelected) {
             unlockModal.classList.remove('hidden');
             unlockInput.focus();
             
-            // 모달 닫기 버튼 처리 (취소)
             const closeHandler = () => {
                 unlockModal.classList.add('hidden');
                 cleanup();
                 resolve(false);
             };
             
-            // 이벤트 리스너 임시 등록
             closeUnlockBtn.onclick = closeHandler;
             
             const submitHandler = async (e) => {
@@ -400,7 +379,6 @@ export function initStoragesManager(appState, onStorageSelected) {
 
                 unlockError.textContent = '확인 중...';
                 
-                // 암호 검증 및 키 설정
                 const success = await window.cryptoManager.verifyAndSetStorageKey(
                     password,
                     storage.encryption_salt,
@@ -426,7 +404,6 @@ export function initStoragesManager(appState, onStorageSelected) {
         });
     }
 
-    // --- 저장소 생성 모달 ---
     const createModal = document.getElementById('create-storage-modal');
     const createForm = document.getElementById('create-storage-form');
     const createName = document.getElementById('new-storage-name');
@@ -438,7 +415,6 @@ export function initStoragesManager(appState, onStorageSelected) {
     const closeCreateBtn = document.getElementById('close-create-storage-btn');
     const cancelCreateBtn = document.getElementById('cancel-create-storage-btn');
 
-    // 새 저장소 만들기 버튼
     addStorageBtn.addEventListener('click', () => {
         createName.value = '';
         createEncrypt.checked = false;
@@ -492,8 +468,7 @@ export function initStoragesManager(appState, onStorageSelected) {
                 return;
             }
 
-            // 암호화 데이터 생성
-            createError.style.color = '#3b82f6'; // 파란색 (진행 중)
+            createError.style.color = '#3b82f6'; 
             createError.textContent = '강력한 암호화 키 생성 중...';
             try {
                 const cryptoData = await window.cryptoManager.createStorageEncryptionData(pw);
@@ -501,7 +476,7 @@ export function initStoragesManager(appState, onStorageSelected) {
                 encryptionCheck = cryptoData.check;
             } catch (err) {
                 console.error("Crypto generation failed", err);
-                createError.style.color = '#ef4444'; // 빨간색 (에러)
+                createError.style.color = '#ef4444'; 
                 createError.textContent = '암호화 설정 생성 실패';
                 return;
             }
@@ -522,14 +497,13 @@ export function initStoragesManager(appState, onStorageSelected) {
             closeCreateModal();
         } catch (error) {
             console.error('저장소 생성 실패:', error);
-            createError.style.color = '#ef4444'; // 빨간색 (에러)
+            createError.style.color = '#ef4444'; 
             createError.textContent = error.message || '저장소 생성에 실패했습니다.';
         } finally {
             hideLoadingOverlay();
         }
     });
 
-    // 로그아웃
     logoutBtn.addEventListener('click', async () => {
         try {
             await api.post('/api/auth/logout');

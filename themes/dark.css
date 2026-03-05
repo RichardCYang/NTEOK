@@ -1,15 +1,15 @@
 :root {
-    --primary-color: #1e1e1e; /* App header, editor background */
-    --secondary-color: #121212; /* Body background */
-    --tertiary-color: #2c2c2c; /* Sidebar background */
-    --quaternary-color: #3c3c3c; /* Sidebar header background */
-    --font-color: #e0e0e0; /* Main font color */
-    --sub-font-color: #b0b0b0; /* Sub font color */
-    --point-color: #5d9cec; /* Primary button, active elements */
+    --primary-color: #1e1e1e; 
+    --secondary-color: #121212; 
+    --tertiary-color: #2c2c2c; 
+    --quaternary-color: #3c3c3c; 
+    --font-color: #e0e0e0; 
+    --sub-font-color: #b0b0b0; 
+    --point-color: #5d9cec; 
     --point-hover-color: #4a8dcf;
     --danger-color: #ff4d4f;
     --danger-hover-color: #d9363e;
-    --border-color: #444444; /* General border color */
+    --border-color: #444444; 
     --modal-backdrop-color: rgba(0, 0, 0, 0.7);
     --box-shadow-color: rgba(255, 255, 255, 0.05);
     --editor-bg-color: #1e1e1e;
@@ -30,16 +30,14 @@
     --scrollbar-thumb-color: #444444;
     --scrollbar-thumb-hover-color: #5d9cec;
 
-    /* 포스트잇 다크 테마 색상 (채도를 낮춘 톤) */
     --board-card-yellow: #45401b;
     --board-card-blue: #1b2e45;
     --board-card-green: #1b4522;
     --board-card-pink: #451b2e;
     --board-card-purple: #2e1b45;
     --board-card-orange: #452b1b;
-    --board-card-text: #e0e0e0; /* 다크 모드 글씨색 */
+    --board-card-text: #e0e0e0; 
 
-    /* 콜아웃 블록 테마 변수 (다크 모드 전용) */
     --callout-info-bg: #1e293b;
     --callout-info-border: #334155;
     --callout-warning-bg: #451a03;
@@ -52,11 +50,7 @@
     --callout-sub-text-color: #94a3b8;
 }
 
-/* =================================================================
-계정, 보안, 로그 모달 다크 테마 스타일
-================================================================= */
 
-/* --- 공용 입력 필드 --- */
 .settings-select,
 #delete-account-password,
 #delete-account-confirm-text,
@@ -80,7 +74,6 @@
     box-shadow: 0 0 0 1px var(--point-color);
 }
 
-/* --- 설정, 보안, 계정 삭제 모달 --- */
 #settings-modal .settings-section h3,
 #security-settings-modal .settings-section h3 {
     color: var(--font-color);
@@ -117,7 +110,6 @@
     color: var(--font-color);
 }
 
-/* 경고 및 안내 메시지 박스 */
 #delete-account-modal div[style*="background: #fef2f2"],
 #page-encryption-modal div[style*="background: #f3f4f6"],
 #totp-setup-step2 div[style*="background: #f3f4f6"],
@@ -150,13 +142,11 @@
 }
 
 
-/* --- 로그인 로그 모달 --- */
 #login-logs-modal .modal-content {
     background-color: var(--primary-color);
     color: var(--font-color);
 }
 
-/* 통계 섹션 */
 #login-logs-stats > div {
     background-color: var(--tertiary-color) !important;
     border-color: var(--border-color) !important;
@@ -171,7 +161,6 @@
 #login-logs-unique-ips { color: #3b82f6 !important; }
 #login-logs-last-login { color: #a855f7 !important; }
 
-/* 로그 테이블 */
 #login-logs-modal div[style*="overflow-x: auto"] {
     border-color: var(--border-color);
 }
@@ -202,13 +191,11 @@
     color: var(--sub-font-color);
 }
 
-/* 하단 설명 */
 #login-logs-modal div[style*="background: #f3f4f6"] {
     background-color: var(--tertiary-color) !important;
     color: var(--sub-font-color) !important;
 }
 
-/* --- 국가 선택 모달 --- */
 #country-list-container {
     border-color: var(--border-color) !important;
 }

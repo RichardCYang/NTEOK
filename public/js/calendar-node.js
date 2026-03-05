@@ -1,7 +1,3 @@
-/**
- * Tiptap Calendar Node Extension
- * 날짜 선택 및 표시, 메모가 가능한 캘린더 블록
- */
 
 const Node = Tiptap.Core.Node;
 
@@ -10,7 +6,6 @@ export const CalendarBlock = Node.create({
 
     group: 'block',
 
-    // 다시 atom: true로 설정 (BoardBlock과 동일한 방식)
     atom: true,
 
     addAttributes() {
@@ -89,7 +84,6 @@ export const CalendarBlock = Node.create({
             currentViewDate.setDate(1);
             let lastIsEditable = editor.isEditable;
 
-            // Alignment Menu
             const alignMenu = document.createElement('div');
             alignMenu.className = 'calendar-align-menu';
             
@@ -98,7 +92,6 @@ export const CalendarBlock = Node.create({
                 alignMenu.style.display = isEditable ? 'flex' : 'none';
                 if (resizeHandle) resizeHandle.style.display = isEditable ? 'block' : 'none';
                 
-                // 메모장 편집 가능 여부 업데이트
                 wrapper.querySelectorAll('.calendar-day-memo').forEach(memo => {
                     memo.contentEditable = isEditable ? 'true' : 'false';
                 });
@@ -156,7 +149,6 @@ export const CalendarBlock = Node.create({
             wrapper.appendChild(resizeHandle);
 
             const renderCalendar = () => {
-                // 입력 중일 때는 전체 재렌더링 차단 (포커스 유지 핵심)
                 if (document.activeElement && document.activeElement.classList.contains('calendar-day-memo') && wrapper.contains(document.activeElement)) {
                     return;
                 }
@@ -248,14 +240,12 @@ export const CalendarBlock = Node.create({
                     };
                     day.appendChild(num);
 
-                    // BoardBlock 방식: div + contentEditable 사용
                     const memoArea = document.createElement('div');
                     memoArea.className = 'calendar-day-memo';
                     memoArea.contentEditable = editor.isEditable ? 'true' : 'false';
                     memoArea.innerText = memos[dateStr] || '';
                     memoArea.setAttribute('data-placeholder', '메모...');
                     
-                    // 이벤트 차단 (에디터가 포커스를 가로채지 못하게 함)
                     const stopEvents = (e) => e.stopPropagation();
                     memoArea.onmousedown = stopEvents;
                     memoArea.onclick = stopEvents;
@@ -350,7 +340,6 @@ export const CalendarBlock = Node.create({
             updateVisibility();
             renderCalendar();
 
-            // 편집 모드 변경 감지
             const checkEditable = () => {
                 if (editor.isEditable !== lastIsEditable) {
                     lastIsEditable = editor.isEditable;

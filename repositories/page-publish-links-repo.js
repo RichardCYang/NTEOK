@@ -1,7 +1,3 @@
-/**
- * 페이지 발행 링크 저장소
- * - DB page_publish_links 테이블 접근
- */
 
 module.exports = ({ pool }) => {
     if (!pool) throw new Error("pool 필요");
@@ -11,9 +7,6 @@ module.exports = ({ pool }) => {
     }
 
     return {
-        /**
-         * 백업 내보내기: 활성화된 발행 링크 조회
-         */
         async listActiveLinksForPageIds(pageIds) {
             if (!Array.isArray(pageIds) || pageIds.length === 0) {
                 return [];

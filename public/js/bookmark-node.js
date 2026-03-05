@@ -1,7 +1,3 @@
-/**
- * Tiptap Bookmark Node Extension
- * 링크 블록 (북마크) 노드
- */
 
 const Node = Tiptap.Core.Node;
 
@@ -62,7 +58,6 @@ export const BookmarkBlock = Node.create({
                 container.innerHTML = '';
 
                 if (!node.attrs.url) {
-                    // 빈 상태: URL 입력창 표시
                     const inputWrapper = document.createElement('div');
                     inputWrapper.className = 'bookmark-input-wrapper';
 
@@ -79,7 +74,6 @@ export const BookmarkBlock = Node.create({
                         const url = input.value.trim();
                         if (!url) return;
 
-                        // 간단한 URL 형식 검사
                         if (!url.startsWith('http://') && !url.startsWith('https://')) {
                              alert('http:// 또는 https:// 로 시작하는 올바른 URL을 입력함');                             return;
                         }
@@ -141,21 +135,18 @@ export const BookmarkBlock = Node.create({
                         setTimeout(() => input.focus(), 10);
                     }
                 } else {
-                    // 채워진 상태: 컴팩트한 북마크 링크 표시
                     const card = document.createElement('a');
                     card.href = node.attrs.url;
                     card.target = '_blank';
                     card.rel = 'noopener noreferrer';
                     card.className = 'bookmark-compact-link';
 
-                    // 파비콘/아이콘 영역
                     if (node.attrs.favicon) {
                         const icon = document.createElement('img');
                         icon.src = node.attrs.favicon;
                         icon.className = 'bookmark-compact-favicon';
                         icon.alt = '';
                         icon.onerror = () => {
-                            // 이미지 로드 실패 시 아이콘으로 교체
                             const fallbackIcon = document.createElement('i');
                             fallbackIcon.className = 'fa-solid fa-link bookmark-compact-icon';
                             if (card.contains(icon)) {
@@ -169,7 +160,6 @@ export const BookmarkBlock = Node.create({
                         card.appendChild(icon);
                     }
 
-                    // 제목 영역
                     const title = document.createElement('span');
                     title.className = 'bookmark-compact-title';
                     title.textContent = node.attrs.title || node.attrs.url;
@@ -177,7 +167,6 @@ export const BookmarkBlock = Node.create({
 
                     container.appendChild(card);
                     
-                    // 삭제 버튼 (편집 모드에서만)
                     if (editor.isEditable) {
                         const removeBtn = document.createElement('button');
                         removeBtn.className = 'bookmark-remove-btn';
@@ -206,7 +195,6 @@ export const BookmarkBlock = Node.create({
                         updatedNode.attrs.title !== node.attrs.title ||
                         updatedNode.attrs.favicon !== node.attrs.favicon) {
                         
-                        // 속성 업데이트
                         node.attrs.url = updatedNode.attrs.url;
                         node.attrs.title = updatedNode.attrs.title;
                         node.attrs.favicon = updatedNode.attrs.favicon;

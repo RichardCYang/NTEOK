@@ -1,14 +1,8 @@
-/**
- * 페이지 저장소
- * - DB pages 테이블 접근
- * - 페이지 접근 권한 정책을 중앙에서 강제 (pageSqlPolicy)
- */
 
 module.exports = ({ pool, pageSqlPolicy }) => {
     if (!pool) throw new Error("pool 필요");
     if (!pageSqlPolicy) throw new Error("pageSqlPolicy 필요");
 
-    // ====== subtree mutation helpers (access control safe) ======
     const SUBTREE_BATCH_SIZE = (() => {
         const n = Number.parseInt(process.env.PAGE_SUBTREE_BATCH_SIZE || "500", 10);
         if (!Number.isFinite(n)) return 500;
@@ -69,11 +63,7 @@ module.exports = ({ pool, pageSqlPolicy }) => {
     }
 
     return {
-        /**
-         * 페이지 목록 조회 (특정 저장소의 페이지: 소유한 페이지 + 공유받은 페이지)
-         */
         async listPagesForUser({ userId, storageId = null }) {
-            // storageId가 없으면 빈 목록 반환 (저장소별 격리 강제)
             if (!storageId) return [];
 
             const visOwner = pageSqlPolicy.andVisible({ alias: "p", viewerUserId: userId });
@@ -114,9 +104,6 @@ module.exports = ({ pool, pageSqlPolicy }) => {
             return rows || [];
         },
 
-        /**
-         * 단일 페이지 조회
-         */
         async getPageByIdForUser({ userId, pageId, includeDeleted = false }) {
             const vis = pageSqlPolicy.andVisible({ alias: "p", viewerUserId: userId });
             let sql = `SELECT p.id, p.title, p.content, p.encryption_salt, p.encrypted_content,
@@ -137,9 +124,6 @@ module.exports = ({ pool, pageSqlPolicy }) => {
             return rows?.[0] || null;
         },
 
-        /**
-         * 휴지통 목록 조회
-         */
         async listTrashedPagesForUser({ userId, storageId }) {
             const vis = pageSqlPolicy.andVisible({ alias: "p", viewerUserId: userId });
             const [rows] = await pool.execute(
@@ -156,24 +140,13 @@ module.exports = ({ pool, pageSqlPolicy }) => {
             return rows || [];
         },
 
-        /**
-         * 페이지 복구
-         */
         async restorePage(pageId, userId) {
-            // 권한 체크: 본인 소유이거나 저장소 관리 권한이 있어야 함 (단순하게 소유자만 가능하게 하거나, 저장소 권한 연동)
-            // 여기서는 페이지 작성자 혹은 저장소 소유자만 복구 가능하게 함
             await pool.execute(
                 `UPDATE pages SET deleted_at = NULL WHERE id = ? AND (user_id = ? OR storage_id IN (SELECT id FROM storages WHERE user_id = ?))`,
                 [pageId, userId, userId]
             );
         },
 
-        /**
-         * 페이지 및 모든 하위 페이지 복구
-         * 보안: 하위 트리 업데이트는 반드시 객체 단위 권한(Object-level auth)을 강제해야 함
-         * - ADMIN: 서브트리 전체 복구
-         * - EDIT : 본인 소유 페이지(및 그 하위 중 본인 소유)만 복구
-         */
         async restorePageAndDescendants({ rootPageId, storageId, actorUserId, isAdmin = false }) {
             if (!rootPageId || !storageId) return;
 
@@ -188,7 +161,6 @@ module.exports = ({ pool, pageSqlPolicy }) => {
             const subtreeIds = collectSubtreeIds(allPages || [], rootPageId);
             const { allowed: restorableIds } = splitIdsByPermission(rowsById, subtreeIds, actorUserId, isAdmin);
 
-            // 복구할 대상이 없으면 종료
             if (!restorableIds || restorableIds.length === 0) return;
 
             await updateByIdInBatches(
@@ -197,41 +169,19 @@ module.exports = ({ pool, pageSqlPolicy }) => {
             );
         },
 
-        /**
-         * 페이지 영구 삭제 (하위 페이지 포함)
-         * - 보안: 하위 페이지 중 다른 사용자가 소유한 페이지는 삭제하지 않고 분리(orphan)
-         * - DB ON DELETE CASCADE에 의존하되, 삭제 전 타인 소유 페이지는 트리를 끊어 보호함
-         */
         async permanentlyDeletePageAndDescendants({ pageId, userId, isAdmin = false }) {
-            // 대상 페이지 정보 조회
             const [rootRows] = await pool.execute('SELECT storage_id, user_id FROM pages WHERE id = ?', [pageId]);
             if (!rootRows.length) return;
             const storageId = rootRows[0].storage_id;
 
-            // 전체 서브트리 구조 파악을 위해 저장소 내 모든 페이지 조회
             const [allPages] = await pool.execute(
                 `SELECT id, parent_id, user_id FROM pages WHERE storage_id = ?`,
                 [storageId]
             );
 
-            // 서브트리 ID 목록 추출
             const subtreeIds = collectSubtreeIds(allPages || [], pageId);
             const rowsById = new Map((allPages || []).map(r => [r.id, r]));
 
-            // 보존해야 할 페이지 식별 (타인 소유 페이지)
-            // 기존 구현은 서브트리 안에 있고, 소유자가 다른 페이지를 전부 parent_id=NULL 처리함
-            // 하지만 협업자 페이지가 서로 부모-자식 관계를 이루는 경우까지 끊어버려,
-            // 협업자의 하위 트리가 모두 루트로 풀려(Flatten) 페이지 구조(계층)가 영구적으로 유실됨
-            //
-            // 원하는 동작:
-            //  - 삭제 대상(내 소유 페이지) 때문에 함께 삭제될 위험이 있는 경계 협업자 페이미만
-            //    부모 연결을 끊음
-            //  - 협업자 페이지들끼리의 parent-child 관계는 그대로 유지
-            //
-            // 구현:
-            //  - deletableSet: 이번 삭제로 실제로 사라질 페이지(내 소유)
-            //  - keptRootIds : kept 페이지 중, 부모가 deletableSet 에 속한 경우만 detach
-            // =========================
             if (!isAdmin) {
                 const deletableSet = new Set();
                 for (const id of subtreeIds) {
@@ -255,21 +205,12 @@ module.exports = ({ pool, pageSqlPolicy }) => {
                 }
             }
 
-            // 루트 페이지 삭제
-            // - 내가 소유한(또는 isAdmin인 경우 모든) 하위 페이지는
-            //   DB의 ON DELETE CASCADE 설정에 의해 자동 삭제됨
             await pool.execute(
                 `DELETE FROM pages WHERE id = ?`,
                 [pageId]
             );
         },
 
-        /**
-         * 페이지 및 모든 하위 페이지 휴지통으로 이동
-         * 보안: 내가 삭제할 수 있는 페이미만 soft-delete 해야 함
-         * - ADMIN: 서브트리 전체 삭제
-         * - EDIT : 본인 소유 페이미만 삭제(다른 사용자의 하위 페이지는 삭제하지 않고 부모를 재연결)
-         */
         async softDeletePageAndDescendants({ rootPageId, storageId, rootParentId = null, actorUserId, isAdmin = false }) {
             if (!rootPageId || !storageId) return;
 
@@ -286,19 +227,9 @@ module.exports = ({ pool, pageSqlPolicy }) => {
             const { allowed: deletableIds, disallowed: keptIds } =
                 splitIdsByPermission(rowsById, subtreeIds, actorUserId, isAdmin);
 
-            // 기존 구현은 삭제 권한이 없는(=keptIds) 페이지를 전부 rootParentId 로 재부모화함
-            // 이러면 협업자 페이지가 서로 부모-자식 관계를 이루는 경우까지 강제로 끊겨,
-            // 협업자 트리 구조가 평평하게 풀리는(Flatten) 문제 발생
-            //
-            // 원하는 동작:
-            //  - 이번 soft-delete로 실제로 삭제될 페이지(deletableIds) 아래에 붙어있던
-            //    협업자 페이지의 경계 루트만 안전한 부모(rootParentId 또는 NULL)로 옮김
-            //  - 협업자 페이지들끼리의 parent-child 관계는 그대로 유지
-            // =========================
             if (!isAdmin && keptIds && keptIds.length > 0) {
                 const deletableSet = new Set(deletableIds || []);
 
-                // 안전한 부모: rootParentId가 이번 삭제 범위(deletable)에 포함되면 NULL로 강등
                 const safeParentId = (rootParentId && !deletableSet.has(rootParentId)) ? rootParentId : null;
 
                 const keptRootIds = [];
@@ -324,9 +255,6 @@ module.exports = ({ pool, pageSqlPolicy }) => {
                 deletableIds
             );
 
-            // 보안: 휴지통 이동 시 기존 공개 발행 링크(베어러 토큰)가 남아있으면
-            // 삭제된 페이지가 계속 외부에 노출될 수 있으므로 즉시 비활성화
-            // (하위 페이지들도 동일 적용)
             await updateByIdInBatches(
                 `UPDATE page_publish_links SET is_active = 0, updated_at = NOW() WHERE is_active = 1 AND page_id IN`,
                 deletableIds
@@ -335,9 +263,6 @@ module.exports = ({ pool, pageSqlPolicy }) => {
             return { deletedPageIds: deletableIds, keptPageIds: keptIds || [] };
         },
 
-        /**
-         * 백업 내보내기: 내 저장소에 속한 모든 페이지
-         */
         async listPagesForBackupExport({ userId }) {
             const vis = pageSqlPolicy.andVisible({ alias: "p", viewerUserId: userId });
             const [rows] = await pool.execute(
@@ -355,9 +280,6 @@ module.exports = ({ pool, pageSqlPolicy }) => {
             return rows || [];
         },
 
-        /**
-         * 백업 내보내기용: 여러 페이지 ID들에 대한 파일 참조(레지스트리) 목록 조회
-         */
         async listFileRefsForPageIds(pageIds) {
             if (!Array.isArray(pageIds) || pageIds.length === 0) return [];
             const placeholders = pageIds.map(() => '?').join(',');
@@ -370,9 +292,6 @@ module.exports = ({ pool, pageSqlPolicy }) => {
             return rows || [];
         },
 
-                    /**
-                     * 업데이트 히스토리 기록
-                     */
                     async recordUpdateHistory({ userId, storageId, pageId, action, details }) {
                         const detailsStr = details ? JSON.stringify(details) : null;
                         await pool.execute(
@@ -382,16 +301,9 @@ module.exports = ({ pool, pageSqlPolicy }) => {
                         );
                     },
 
-        /**
-         * 업데이트 히스토리 조회
-         */
         async getUpdateHistory({ userId, storageId, limit = 50 }) {
-            // 보안: 히스토리 API에서도 페이지 단위 가시성 정책을 동일하게 적용해야 함
-            // 그렇지 않으면 공유 저장소의 READ 협업자가 비공개/암호화 페이지의 제목/메타를
-            // updates_history + pages 조인 결과로 추론할 수 있음 (BOLA/Access Control 누락)
             const vis = pageSqlPolicy.visiblePredicate({ alias: "p", viewerUserId: userId });
 
-            // 내가 접근 가능한 저장소의 히스토리만 조회 (소유 또는 공유)
             const [rows] = await pool.execute(
                 `SELECT h.*, u.username, p.title as page_title
                  FROM updates_history h
@@ -410,10 +322,10 @@ module.exports = ({ pool, pageSqlPolicy }) => {
                  ORDER BY h.created_at DESC
                  LIMIT ?`,
                 [
-                    userId,          // ss.shared_with_user_id
-                    storageId,       // h.storage_id
-                    userId,          // s.user_id
-                    ...vis.params,   // p.user_id != ? (viewer)
+                    userId,          
+                    storageId,       
+                    userId,          
+                    ...vis.params,   
                     limit
                 ]
             );

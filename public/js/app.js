@@ -1,9 +1,4 @@
-/**
- * NTEOK 메인 애플리케이션
- * 컬렉션 제거 및 계층식 페이지 전용 버전
- */
 
-// ==================== Imports ====================
 import {
     secureFetch,
     escapeHtml,
@@ -119,14 +114,12 @@ import {
     initStoragesManager
 } from './storages-manager.js';
 
-// ==================== Global State ====================
 const appState = {
     editor: null,
     storages: [],
     currentStorageId: null,
     pages: [],
     currentPageId: null,
-    // 현재 로드된 페이지의 updatedAt(REST 기준) — E2EE init에서 stale snapshot 적용을 막는 용도
     currentPageUpdatedAt: null,
     expandedPages: new Set(),
     isWriteMode: false,
@@ -142,19 +135,13 @@ const appState = {
     fetchPageList: null
 };
 
-// 전역 변수
 let colorDropdownElement = null;
 let colorMenuElement = null;
 let fontDropdownElement = null;
 let fontMenuElement = null;
 
-// ==================== Helper Functions ====================
 
-/**
- * 페이지 리스트 클릭 핸들러
- */
 async function handlePageListClick(event, state) {
-    // 페이지 접기/펼치기 토글
     const pageToggle = event.target.closest(".page-toggle");
     if (pageToggle) {
         event.stopPropagation();
@@ -170,7 +157,6 @@ async function handlePageListClick(event, state) {
         return;
     }
 
-    // 하위 페이지 추가 버튼
     const addSubpageBtn = event.target.closest(".page-add-subpage-btn");
     if (addSubpageBtn) {
         event.stopPropagation();
@@ -195,13 +181,11 @@ async function handlePageListClick(event, state) {
         return;
     }
 
-    // 페이지 메뉴 토글
     const pageMenuBtn = event.target.closest(".page-menu-btn");
     if (pageMenuBtn) {
         event.stopPropagation();
         const pageId = pageMenuBtn.dataset.pageId;
 
-        // 권한 체크: ADMIN이거나, EDIT이면서 본인 페이지인 경우만 삭제 가능
         const page = state.pages.find(p => p.id === pageId);
         const isOwner = page && state.currentUser && Number(page.userId) === Number(state.currentUser.id);
         const isAdmin = state.currentStoragePermission === 'ADMIN';
@@ -216,7 +200,6 @@ async function handlePageListClick(event, state) {
             }
         ];
 
-        // 편집 권한이 있는 경우 이름 변경 추가
         const canEdit = state.currentStoragePermission === 'EDIT' || state.currentStoragePermission === 'ADMIN';
         if (canEdit) {
             menuItems.push({
@@ -239,20 +222,16 @@ async function handlePageListClick(event, state) {
         return;
     }
 
-    // 메뉴 액션
     const menuAction = event.target.closest("#context-menu button[data-action]");
     if (menuAction) {
         const { action, pageId } = menuAction.dataset;
         if (action === "delete-page") {
             if (!confirm("이 페이지를 휴지통으로 이동하시겠습니까?")) return;
             try {
-                // 데이터 유실 방지(중요): 현재 열려 있는 페이지를 삭제하기 전에
-                // WS force-save(=DB 저장)를 best-effort로 한 번 수행
                 if (state.currentPageId === pageId) {
                     try {
                         await requestImmediateSave(pageId, { includeSnapshot: true, waitForAck: true });
                     } catch (_) {
-                        // best-effort
                     }
                 }
                 await api.del("/api/pages/" + encodeURIComponent(pageId));
@@ -270,9 +249,7 @@ async function handlePageListClick(event, state) {
             if (newTitle && newTitle.trim() && (!page || newTitle.trim() !== page.title)) {
                 try {
                     await api.put("/api/pages/" + encodeURIComponent(pageId), { title: newTitle.trim() });
-                    // 로컬 상태 업데이트
                     if (page) page.title = newTitle.trim();
-                    // 현재 열려있는 페이지라면 제목 입력 필드도 업데이트
                     if (state.currentPageId === pageId) {
                         const titleInput = document.querySelector("#page-title-input");
                         if (titleInput) titleInput.value = newTitle.trim();
@@ -289,7 +266,6 @@ async function handlePageListClick(event, state) {
         return;
     }
 
-    // 페이지 선택
     const li = event.target.closest("li.page-list-item");
     if (li) {
         const pageId = li.dataset.pageId;
@@ -299,9 +275,6 @@ async function handlePageListClick(event, state) {
     }
 }
 
-/**
- * 로그아웃 버튼 바인딩
- */
 function bindLogoutButton() {
     document.querySelector("#logout-btn")?.addEventListener("click", async () => {
         await api.post("/api/auth/logout");
@@ -309,9 +282,6 @@ function bindLogoutButton() {
     });
 }
 
-/**
- * 모바일 사이드바 바인딩
- */
 function bindMobileSidebar() {
     const mobileMenuBtn = document.querySelector("#mobile-menu-btn");
     const overlay = document.querySelector("#sidebar-overlay");
@@ -319,9 +289,6 @@ function bindMobileSidebar() {
     if (overlay) overlay.addEventListener("click", closeSidebar);
 }
 
-/**
- * 글로벌 이벤트 초기화
- */
 function initEvent() {
     document.addEventListener("click", (event) => {
         if (!event.target.closest(".page-menu-btn, #context-menu")) {
@@ -339,7 +306,6 @@ function initToolbarElements() {
     fontMenuElement = fontDropdownElement?.querySelector("[data-font-menu]");
 }
 
-// ==================== Initialization ====================
 async function init() {
     showLoadingOverlay();
     try {
@@ -373,7 +339,6 @@ async function init() {
             if (Array.isArray(data.pages))
                 applyPagesData(data.pages, data.isEncryptedStorage);
 
-            // 저장소 전환 시 UI 초기화 및 권한 적용
             clearCurrentPage();
             renderPageList();
             startStorageSync(appState.currentStorageId);
@@ -421,17 +386,14 @@ async function init() {
         if (bootstrap.user) applyCurrentUser(bootstrap.user);
         if (Array.isArray(bootstrap.storages)) {
             appState.storages = bootstrap.storages;
-            // 초기 화면 설정 (히스토리에 남기지 않음/기존 항목 대체)
             storagesManager.show(true);
             history.replaceState({ view: 'storages' }, '', window.location.pathname);
         }
 
-        // 초기 저장소 동기화 시작 (이미 선택된 경우 대비)
         if (appState.currentStorageId) {
             startStorageSync(appState.currentStorageId);
         }
 
-        // 브라우저 뒤로 가기/앞으로 가기 처리
         window.addEventListener('popstate', (e) => {
             if (!e.state) return;
             
@@ -441,7 +403,7 @@ async function init() {
                 if (appState.currentStorageId !== e.state.storageId) {
                     storagesManager.selectStorage(e.state.storageId, true);
                 } else {
-                    storagesManager.hide(); // 이미 해당 저장소라면 화면만 전환 (사실 selectStorage 내부에서도 처리되지만 skipHistory가 중요)
+                    storagesManager.hide(); 
                 }
             }
         });
@@ -452,13 +414,7 @@ async function init() {
     }
 }
 
-// 아이콘 선택 및 기타 기능 (기존 로직 유지)
-// ... (Icon Picker, Search logic from previous app.js can be added back here if needed)
 
-// ==================== Search System ====================
-/**
- * 검색 기능 초기화
- */
 function initSearch() {
     const searchInput = document.getElementById('search-input');
     const searchModal = document.getElementById('quick-search-modal');
@@ -479,22 +435,17 @@ function initSearch() {
         }, 300);
     });
 
-    // ESC 키로 닫기
     window.addEventListener('keydown', (e) => {
         if (e.key === 'Escape' && !searchModal.classList.contains('hidden')) {
             toggleModal(searchModal, false);
         }
     });
 
-    // 오버레이 클릭 시 닫기
     searchModal.querySelector('.modal-overlay')?.addEventListener('click', () => {
         toggleModal(searchModal, false);
     });
 }
 
-/**
- * 검색 실행
- */
 async function performSearch(query) {
     const results = [];
     const queryLower = query.toLowerCase();
@@ -504,14 +455,12 @@ async function performSearch(query) {
         let shouldInclude = false;
 
         if (page.isEncrypted) {
-            // 암호화된 페이지는 제목만 검색 (내용은 서버에만 암호화된 상태로 있음)
             titleToSearch = page.title || '';
             shouldInclude = titleToSearch.toLowerCase().includes(queryLower);
         } else {
             titleToSearch = page.title || '';
             const content = page.content || '';
 
-            // 보안: innerHTML로 사용자 콘텐츠를 파싱하지 않음 (DOM 기반 XSS 방어)
             const textContent = htmlToPlainText(content, { maxLength: 20000 });
 
             const fullText = titleToSearch + ' ' + textContent;
@@ -531,9 +480,6 @@ async function performSearch(query) {
     displaySearchResults(results, query);
 }
 
-/**
- * 검색 결과 표시
- */
 function displaySearchResults(results, query) {
     const searchCountEl = document.getElementById('search-count');
     const searchResultsList = document.getElementById('search-results-list');
@@ -575,9 +521,6 @@ function displaySearchResults(results, query) {
     }
 }
 
-/**
- * 검색 결과 숨기기
- */
 function hideSearchResults() {
     const searchResultsList = document.getElementById('search-results-list');
     const searchPlaceholder = document.getElementById('search-placeholder');
@@ -588,9 +531,6 @@ function hideSearchResults() {
     if (searchResultsHeader) searchResultsHeader.style.display = 'none';
 }
 
-/**
- * 검색 입력 초기화
- */
 function clearSearchInput() {
     const searchInput = document.getElementById('search-input');
     if (searchInput) {

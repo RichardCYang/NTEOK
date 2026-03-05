@@ -1,8 +1,3 @@
-﻿/**
- * 부모 모달을 숨기고, 자식 모달에 어떤 부모를 복구해야 하는지를 기록합니다.
- * @param {string} parentSelector
- * @param {HTMLElement} childModalEl
- */
 const childModalObservers = new WeakMap();
 
 export function hideParentModalForChild(parentSelector, childModalEl) {
@@ -11,7 +6,6 @@ export function hideParentModalForChild(parentSelector, childModalEl) {
     const parent = document.querySelector(parentSelector);
     if (!parent) return;
 
-    // 이미 안 보이는 상태면 아무 것도 하지 않음
     if (parent.classList.contains('hidden')) return;
 
     childModalEl.dataset.restoreParentModal = parentSelector;
@@ -40,10 +34,6 @@ export function hideParentModalForChild(parentSelector, childModalEl) {
     childModalObservers.set(childModalEl, observer);
 }
 
-/**
- * 자식 모달에 기록된 부모 모달을 다시 표시합니다.
- * @param {HTMLElement} childModalEl 자식 모달 엘리먼트
- */
 export function restoreParentModalFromChild(childModalEl) {
     if (!childModalEl) return;
 

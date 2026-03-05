@@ -1,6 +1,3 @@
-/**
- * 휴지통 매니저
- */
 import { get, post, del } from './api-utils.js';
 import { toggleModal, escapeHtml } from './ui-utils.js';
 import { fetchPageList } from './pages-manager.js';
@@ -100,7 +97,6 @@ function renderTrashList(pages) {
         trashList.appendChild(item);
     });
 
-    // 전역 번역 적용 함수가 있다면 호출 (예: window.applyTranslations)
     if (window.i18n && typeof window.i18n.applyTranslations === 'function') {
         window.i18n.applyTranslations(trashList);
     }
@@ -109,9 +105,9 @@ function renderTrashList(pages) {
 async function restorePage(pageId) {
     try {
         await post(`/api/pages/${pageId}/restore`);
-        await openTrashModal(); // 목록 새로고침
+        await openTrashModal(); 
         if (typeof fetchPageList === 'function') {
-            await fetchPageList(); // 사이드바 새로고침
+            await fetchPageList(); 
         }
     } catch (error) {
         console.error('Failed to restore page:', error);
@@ -126,7 +122,7 @@ async function permanentlyDeletePage(pageId) {
 
     try {
         await del(`/api/pages/${pageId}/permanent`);
-        await openTrashModal(); // 목록 새로고침
+        await openTrashModal(); 
     } catch (error) {
         console.error('Failed to permanently delete page:', error);
         alert('페이지 삭제에 실패했습니다.');

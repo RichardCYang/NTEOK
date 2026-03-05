@@ -1,7 +1,3 @@
-/**
- * 저장소 생성자
- * - 공유 의존성 기반으로 저장소 생성
- */
 
 module.exports = ({ pool, pageSqlPolicy }) => {
     if (!pool) throw new Error("pool 필요");
@@ -12,7 +8,6 @@ module.exports = ({ pool, pageSqlPolicy }) => {
     const pagePublishLinksRepo = require('./page-publish-links-repo')({ pool });
     const pagesRepo = require('./pages-repo')({ pool, pageSqlPolicy });
 
-    // 조합자
     const bootstrapRepo = require('./bootstrap-repo')({
         usersRepo,
         storagesRepo,

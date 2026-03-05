@@ -1,11 +1,6 @@
-/**
- * Tiptap YouTube Node Extension
- * 유튜브 동영상 임베드 노드
- */
 
 const Node = Tiptap.Core.Node;
 
-// 보안: YouTube embed URL allowlist + 정규화 (Defense-in-Depth)
 const _YT_ALLOWED_HOSTS = new Set([
     'youtube.com',
     'www.youtube.com',
@@ -131,7 +126,6 @@ export const YoutubeBlock = Node.create({
 
     addNodeView() {
         return ({ node, editor, getPos }) => {
-            // 전체 wrapper
             const wrapper = document.createElement('div');
             wrapper.className = 'youtube-block-wrapper';
             wrapper.contentEditable = 'false';
@@ -142,16 +136,14 @@ export const YoutubeBlock = Node.create({
             let currentAlign = node.attrs.align || 'center';
             let currentCaption = node.attrs.caption || '';
 
-            // 유튜브 컨테이너
             const container = document.createElement('div');
             container.className = 'youtube-container';
             container.style.position = 'relative';
-            container.style.paddingBottom = '56.25%'; // 16:9 비율
+            container.style.paddingBottom = '56.25%'; 
             container.style.height = '0';
             container.style.overflow = 'hidden';
-            container.style.backgroundColor = '#000'; // 로딩 전 배경
+            container.style.backgroundColor = '#000'; 
 
-            // Iframe
             const safeSrc = normalizeYouTubeEmbedUrl(node.attrs.src || '');
             const iframe = document.createElement('iframe');
             iframe.src = safeSrc || 'about:blank';
@@ -166,7 +158,6 @@ export const YoutubeBlock = Node.create({
             iframe.sandbox = 'allow-scripts allow-same-origin allow-presentation allow-popups';
             iframe.referrerPolicy = 'strict-origin-when-cross-origin';
 
-            // 드래그/리사이즈 중 iframe 이벤트 방지용 오버레이
             const overlay = document.createElement('div');
             overlay.style.position = 'absolute';
             overlay.style.top = '0';
@@ -174,19 +165,15 @@ export const YoutubeBlock = Node.create({
             overlay.style.width = '100%';
             overlay.style.height = '100%';
             overlay.style.zIndex = '1';
-            overlay.style.display = editor.isEditable ? 'block' : 'none'; // 쓰기 모드에서만 클릭 방지 (재생을 원하면 읽기 모드로)
-            // 더블 클릭시 재생 가능하게 하거나, 별도 버튼을 둘 수도 있음.
-            // 여기서는 쓰기 모드에서 오버레이를 두어 선택이 용이하게 함.
+            overlay.style.display = editor.isEditable ? 'block' : 'none'; 
 
             container.appendChild(iframe);
             container.appendChild(overlay);
 
-            // 정렬 메뉴 (쓰기모드에서만)
             const alignMenu = document.createElement('div');
-            alignMenu.className = 'image-align-menu'; // 기존 CSS 재사용
+            alignMenu.className = 'image-align-menu'; 
             alignMenu.style.display = editor.isEditable ? 'flex' : 'none';
 
-            // 정렬 아이콘 SVG 생성 함수 (ImageWithCaption과 동일)
             const createAlignIcon = (align) => {
                 const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
                 svg.setAttribute('width', '16');
@@ -246,15 +233,13 @@ export const YoutubeBlock = Node.create({
 
             container.appendChild(alignMenu);
 
-            // Resize Handle (쓰기모드에서만)
             const resizeHandle = document.createElement('div');
-            resizeHandle.className = 'image-resize-handle'; // 기존 CSS 재사용
+            resizeHandle.className = 'image-resize-handle'; 
             resizeHandle.style.display = editor.isEditable ? 'block' : 'none';
             container.appendChild(resizeHandle);
 
-            // 캡션 영역
             const captionContainer = document.createElement('div');
-            captionContainer.className = 'image-caption-container'; // 기존 CSS 재사용
+            captionContainer.className = 'image-caption-container'; 
 
             const captionInput = document.createElement('input');
             captionInput.type = 'text';
@@ -285,7 +270,6 @@ export const YoutubeBlock = Node.create({
                 }, 500);
             };
 
-            // 키보드 이벤트 차단 (엔터 등)
             captionInput.onkeydown = (e) => {
                 e.stopPropagation();
                 if (e.key === 'Enter') {
@@ -299,7 +283,6 @@ export const YoutubeBlock = Node.create({
             wrapper.appendChild(container);
             wrapper.appendChild(captionContainer);
 
-            // 리사이즈 로직
             let isResizing = false;
             let startX = 0;
             let startWidth = 0;
@@ -347,7 +330,6 @@ export const YoutubeBlock = Node.create({
 
             resizeHandle.addEventListener('mousedown', onResizeStart);
 
-            // 에디터 모드 변경 감지
             let lastEditableState = editor.isEditable;
             const stateCheckInterval = setInterval(() => {
                 if (editor.isEditable !== lastEditableState) {

@@ -1,16 +1,6 @@
 const express = require('express');
 const router = express.Router();
 
-/**
- * Authentication Routes
- *
- * 이 파일은 인증 관련 라우트를 처리합니다.
- * - 로그인, 로그아웃, 회원가입
- * - 계정 삭제
- * - 현재 사용자 정보 조회
- * - 암호화 Salt 업데이트
- * - 비밀번호 재확인
- */
 
 module.exports = (dependencies) => {
     const {
@@ -40,16 +30,8 @@ module.exports = (dependencies) => {
         getClientIpFromRequest
 	} = dependencies;
 
-    // bcrypt 계열 구현은 NUL(0x00) 등 제어문자 처리 방식이 환경별로 달라
-    // 인증 모호성/강도 정책 우회를 유발할 수 있으므로 공통적으로 차단
     const PASSWORD_CONTROL_CHARS_RE = /[\u0000-\u001F\u007F]/;
 
-    // 저장형 XSS 방어: username은 여러 화면에서 표시되므로
-    // HTML/엔티티 기반 우회("&lt;...&gt;")까지 고려해 안전한 문자 집합으로 제한
-    // - \p{L}: 모든 유니코드 문자(한글 포함)
-    // - \p{N}: 숫자
-    // - 그 외: . _ - 만 허용
-    // (Node.js가 unicode property escapes를 지원하지 않는 경우를 대비해 ASCII fallback 제공)
     let USERNAME_SAFE_RE;
     try {
         USERNAME_SAFE_RE = new RegExp('^[\\p{L}\\p{N}._-]{3,64}$', 'u');
@@ -58,23 +40,14 @@ module.exports = (dependencies) => {
     }
     const USERNAME_CONTROL_CHARS_RE = /[\u0000-\u001F\u007F]/;
 
-    /**
-     * 로그인 타이밍 기반 사용자 열거(CWE-208) 완화용 더미 bcrypt 해시
-     * - 존재하지 않는 사용자일 때도 bcrypt.compare()를 1회 수행하여
-     *   존재함/존재하지 않음 경로의 처리 시간 차이를 줄임
-     * - 기본값은 cost=12 해시(서버 기본 BCRYPT_SALT_ROUNDS와 맞춤)
-     * - 운영 환경에서 BCRYPT_SALT_ROUNDS를 다르게 쓰는 경우, 동일 cost의 해시로
-     *   DUMMY_LOGIN_BCRYPT_HASH 환경변수를 설정하는 것을 권장
-     */
     const DUMMY_LOGIN_BCRYPT_HASH =
         process.env.DUMMY_LOGIN_BCRYPT_HASH ||
-        '$2b$12$IfuyBUTMgc9Y2heW2QrSjuqKjPP3nkXvKvTnSxfpVNIVqdzuXvbsS'; // "NTEOK::dummy-login-password"
+        '$2b$12$IfuyBUTMgc9Y2heW2QrSjuqKjPP3nkXvKvTnSxfpVNIVqdzuXvbsS'; 
 
     async function consumeBcryptCostForTiming(password) {
         try {
             await bcrypt.compare(password, DUMMY_LOGIN_BCRYPT_HASH);
         } catch (_) {
-            // 타이밍 완화용 방어 코드 실패가 로그인 동작 자체를 깨지 않도록 무시
         }
     }
 
@@ -89,12 +62,6 @@ module.exports = (dependencies) => {
         );
     }
 
-    /**
-    * Login CSRF 방지: 로그인/회원가입은 CSRF 토큰이 없더라도 호출되기 쉬우므로,
-    * Origin/Referer + Sec-Fetch-Site 기반으로 동일 출처 요청만 허용합니다.
-    *
-    * 참고: BASE_URL은 server.js에서 주입됩니다.
-    */
     function requireSameOriginForAuth(req, res, next) {
         try {
             const allowedOrigins = new Set(
@@ -105,7 +72,6 @@ module.exports = (dependencies) => {
                     .map(u => new URL(u).origin)
             );
 
-            // Sec-Fetch-Site: modern browsers (recommended hardening)
             const sfs = req.headers["sec-fetch-site"];
             if (typeof sfs === "string" && sfs && sfs !== "same-origin" && sfs !== "same-site") {
                 return res.status(403).json({ error: "요청 출처가 유효하지 않습니다." });
@@ -121,7 +87,6 @@ module.exports = (dependencies) => {
                 reqOrigin = new URL(referer).origin;
             }
 
-            // Origin/Referer가 없으면 차단 (Login CSRF 방지)
             if (!reqOrigin)
                 return res.status(403).json({ error: "요청 출처가 유효하지 않습니다." });
 
@@ -134,20 +99,13 @@ module.exports = (dependencies) => {
         }
     }
 
-    /**
-     * 로그인
-     * POST /api/auth/login
-     * body: { username: string, password: string }
-     */
     router.post("/login", authLimiter, requireSameOriginForAuth, async (req, res) => {
         const { username, password } = req.body || {};
 
         if (typeof username !== "string" || typeof password !== "string")
             return res.status(400).json({ error: "아이디와 비밀번호를 모두 입력해 주세요." });
 
-        // 보안: 제어문자 포함 비밀번호 차단 (bcrypt 입력 처리 모호성/정책 우회 방지)
         if (PASSWORD_CONTROL_CHARS_RE.test(password)) {
-            // 사용자 존재/정책 노출 방지: 동일한 실패 메시지 유지
             console.warn(`[로그인 실패] IP: ${getClientIp(req)}, 사유: 비정상 비밀번호 입력`);
             return res.status(401).json({ error: "아이디 또는 비밀번호가 올바르지 않습니다." });
         }
@@ -166,11 +124,8 @@ module.exports = (dependencies) => {
             );
 
             if (!rows.length) {
-                // 보안: 타이밍 기반 사용자 열거 완화 -> 존재하지 않는 사용자여도 bcrypt 비용을 소모하여
-                // 존재하는 사용자(비밀번호 불일치) 경로와 처리 시간 차이를 줄임
                 await consumeBcryptCostForTiming(password);
 
-                // 로그인 로그 기록
                 await recordLoginAttempt(pool, {
                     userId: null,
                     username: trimmedUsername,
@@ -181,7 +136,6 @@ module.exports = (dependencies) => {
                     userAgent: req.headers['user-agent'] || null
                 });
 
-                // 보안: 사용자 존재 여부를 노출하지 않도록 통일된 메시지 사용
                 console.warn(`[로그인 실패] IP: ${getClientIp(req)}, 사유: 인증 실패`);
                 return res.status(401).json({ error: "아이디 또는 비밀번호가 올바르지 않습니다." });
             }
@@ -190,7 +144,6 @@ module.exports = (dependencies) => {
 
             const ok = await bcrypt.compare(password, user.password_hash);
             if (!ok) {
-                // 로그인 로그 기록
                 await recordLoginAttempt(pool, {
                     userId: user.id,
                     username: user.username,
@@ -201,12 +154,10 @@ module.exports = (dependencies) => {
                     userAgent: req.headers['user-agent'] || null
                 });
 
-                // 보안: 사용자 존재 여부를 노출하지 않도록 통일된 메시지 사용
                 console.warn(`[로그인 실패] IP: ${getClientIp(req)}, 사유: 인증 실패`);
                 return res.status(401).json({ error: "아이디 또는 비밀번호가 올바르지 않습니다." });
             }
 
-            // 국가 화이트리스트 체크
             const countryCheck = checkCountryWhitelist(
                 {
                     country_whitelist_enabled: user.country_whitelist_enabled,
@@ -232,9 +183,7 @@ module.exports = (dependencies) => {
                 });
             }
 
-            // 2FA(TOTP 또는 패스키) 활성화 확인
             if (user.totp_enabled || user.passkey_enabled) {
-                // 임시 세션 생성 (2FA 검증 대기)
                 const tempSessionId = crypto.randomBytes(32).toString("hex");
                 const now = new Date();
                 const clientIp = getClientIp(req);
@@ -245,19 +194,16 @@ module.exports = (dependencies) => {
                 	type: "2fa",
                     pendingUserId: user.id,
                     createdAt: now.getTime(),
-                    expiresAt: now.getTime() + 10 * 60 * 1000, // 2단계 인증을 위한 임시 세션 만료 시간 : 10분
+                    expiresAt: now.getTime() + 10 * 60 * 1000, 
                     lastAccessedAt: now.getTime(),
-                    // 2FA 임시 세션 탈취/재사용 방지: 발급 당시 환경에 느슨하게 바인딩
                     ipKey: clientIp,
                     uaHash
                 });
 
-                // 사용 가능한 2FA 방법 목록
                 const availableMethods = [];
                 if (user.totp_enabled) availableMethods.push('totp');
                 if (user.passkey_enabled) availableMethods.push('passkey');
 
-                // 2FA 검증 필요 응답
                 return res.json({
                     ok: false,
                     requires2FA: true,
@@ -266,14 +212,12 @@ module.exports = (dependencies) => {
                 });
             }
 
-            // TOTP 비활성화 상태 - 정상 로그인 진행
             const sessionResult = createSession({
                 id: user.id,
                 username: user.username,
                 blockDuplicateLogin: user.block_duplicate_login
             });
 
-            // 중복 로그인 차단 모드에서 거부된 경우
             if (!sessionResult.success) {
                 return res.status(409).json({
                     error: sessionResult.error,
@@ -308,7 +252,6 @@ module.exports = (dependencies) => {
                 }
             });
 
-            // 로그인 로그 기록 (비동기, 응답 후)
             recordLoginAttempt(pool, {
                 userId: user.id,
                 username: user.username,
@@ -324,22 +267,16 @@ module.exports = (dependencies) => {
         }
     });
 
-    /**
-     * 로그아웃
-     * POST /api/auth/logout
-     */
     router.post("/logout", (req, res) => {
         const { getSessionFromRequest, wsCloseConnectionsForSession } = dependencies;
         const session = getSessionFromRequest(req);
 		if (session) {
-			// 로그아웃 시 해당 세션의 WebSocket 연결을 즉시 종료
 			try {
 			    wsCloseConnectionsForSession(session.id, 1008, 'Logout');
 			} catch (e) {}
 
             sessions.delete(session.id);
 
-            // userSessions에서도 제거
             if (session.userId) {
                 const userSessionSet = userSessions.get(session.userId);
                 if (userSessionSet) {
@@ -361,18 +298,12 @@ module.exports = (dependencies) => {
         res.json({ ok: true });
     });
 
-    /**
-     * 계정 삭제
-     * DELETE /api/auth/account
-     * body: { password: string, confirmText: string }
-     */
     router.delete("/account", authMiddleware, async (req, res) => {
         const { password, confirmText } = req.body || {};
 
         if (typeof password !== "string" || !password.trim())
             return res.status(400).json({ error: "비밀번호를 입력해 주세요." });
 
-        // 계정 삭제도 bcrypt.compare()가 들어가므로 동일하게 제어문자 차단
         if (PASSWORD_CONTROL_CHARS_RE.test(password))
             return res.status(400).json({ error: "비밀번호 형식이 올바르지 않습니다." });
 
@@ -393,41 +324,26 @@ module.exports = (dependencies) => {
 
             const ok = await bcrypt.compare(password, user.password_hash);
             if (!ok) {
-                // 보안: 민감 정보 마스킹 (사용자명 일부만 표시)
                 const maskedUsername = req.user.username.substring(0, 2) + '***';
                 console.warn(`[계정 삭제 실패] 사용자: ${maskedUsername}, IP: ${getClientIp(req)}, 사유: 비밀번호 불일치`);
                 return res.status(401).json({ error: "비밀번호가 올바르지 않습니다." });
             }
 
-            // ==================== 데이터 유실 방지(중요) ====================
-            // 문제:
-            //  - users -> storages, storages -> pages 관계가 모두 ON DELETE CASCADE 이므로,
-            //    계정 삭제 시 해당 사용자가 소유한 저장소가 삭제되고, 그 저장소에 속한 모든 페이지 삭제
-            //  - 협업 저장소에서는 다른 사용자(user_id != owner)가 생성한 페이지도 같은 storage_id를 쓰므로,
-            //    소유자 계정 삭제로 협업자 데이터까지 함께 영구 삭제될 수 있음
-            //
-            // 해결:
-            //  - 계정 삭제 전에, 소유 저장소에서 협업자 소유 페이지를 협업자 개인 저장소로 이관 후
-            //    원래 저장소를 삭제(=계정 삭제로 인한 CASCADE 영향 범위 축소)
-            // ===============================================================
             try {
                 if (storagesRepo && typeof storagesRepo.safeDeleteAllOwnedStoragesPreservingCollaborators === 'function') {
                     await storagesRepo.safeDeleteAllOwnedStoragesPreservingCollaborators(req.user.id);
                 }
             } catch (e) {
-                // 이관 실패 시 계정 삭제를 중단해 협업자 데이터 유실을 방지
                 logError('DELETE /api/auth/account (pre-delete transfer)', e);
                 return res.status(500).json({ error: '계정 삭제 전 데이터 이관에 실패했습니다. 잠시 후 다시 시도해 주세요.' });
             }
 
             await pool.execute(`DELETE FROM users WHERE id = ?`, [req.user.id]);
 
-            // 보안: 민감 정보 마스킹 (사용자명 일부만 표시)
             const maskedUsername = req.user.username.substring(0, 2) + '***';
             console.log(`[계정 삭제 완료] 사용자 ID: ${req.user.id}, 사용자명: ${maskedUsername}`);
 
             const { wsCloseConnectionsForSession } = dependencies;
-            // 계정 삭제 시 해당 사용자의 모든 세션/WS 연결을 즉시 파기
             const userId = req.user.id;
             const sessionIds = userSessions.get(userId);
             if (sessionIds && sessionIds.size > 0) {
@@ -452,11 +368,6 @@ module.exports = (dependencies) => {
         }
     });
 
-    /**
-     * 회원가입
-     * POST /api/auth/register
-     * body: { username: string, password: string }
-     */
     router.post("/register", authLimiter, requireSameOriginForAuth, async (req, res) => {
         const { username, password } = req.body || {};
 
@@ -470,7 +381,6 @@ module.exports = (dependencies) => {
             return res.status(400).json({ error: "아이디는 3~64자 사이로 입력해 주세요." });
         }
 
-        // username 캐릭터 정책 (저장형 XSS / 혼동 문자 기반 우회 방어)
         if (USERNAME_CONTROL_CHARS_RE.test(trimmedUsername) || !USERNAME_SAFE_RE.test(trimmedUsername)) {
             return res.status(400).json({
                 error: "아이디는 한글/영문/숫자 및 . _ - 만 사용할 수 있습니다. (공백/특수문자/HTML 엔티티 불가)"
@@ -512,10 +422,9 @@ module.exports = (dependencies) => {
             const user = {
                 id: result.insertId,
                 username: trimmedUsername,
-                blockDuplicateLogin: false // 신규 가입자는 기본값 false
+                blockDuplicateLogin: false 
             };
 
-            // 1. 기본 저장소 생성
             const storageId = 'stg-' + now.getTime() + '-' + crypto.randomBytes(4).toString('hex');
             await storagesRepo.createStorage({
                 userId: user.id,
@@ -528,7 +437,6 @@ module.exports = (dependencies) => {
 
             const sessionResult = createSession(user);
 
-            // 회원가입 시에는 중복 로그인이 발생할 수 없지만 방어적 코딩
             if (!sessionResult.success) {
                 return res.status(409).json({
                     error: sessionResult.error,
@@ -568,10 +476,6 @@ module.exports = (dependencies) => {
         }
     });
 
-    /**
-     * 현재 로그인한 사용자 정보 확인
-     * GET /api/auth/me
-     */
     router.get("/me", authMiddleware, async (req, res) => {
         try {
             const [rows] = await pool.execute(
@@ -596,14 +500,7 @@ module.exports = (dependencies) => {
         }
     });
 
-    // ==================== 마스터 키 시스템 제거됨 ====================
-    // encryption-salt, master-key-salt, verify-password 엔드포인트 제거됨 (선택적 암호화 시스템으로 변경)
 
-    /**
-     * 사용자 일반 설정 업데이트
-     * PUT /api/auth/settings
-     * body: { stickyHeader: boolean }
-     */
     router.put("/settings", authMiddleware, async (req, res) => {
         const { stickyHeader } = req.body;
 
@@ -638,10 +535,6 @@ module.exports = (dependencies) => {
         }
     });
 
-    /**
-     * 보안 설정 조회
-     * GET /api/auth/security-settings
-     */
     router.get("/security-settings", authMiddleware, async (req, res) => {
         try {
             const [rows] = await pool.execute(
@@ -673,15 +566,9 @@ module.exports = (dependencies) => {
         }
     });
 
-    /**
-     * 보안 설정 업데이트
-     * PUT /api/auth/security-settings
-     * body: { blockDuplicateLogin: boolean }
-     */
     router.put("/security-settings", authMiddleware, async (req, res) => {
         const { blockDuplicateLogin, countryWhitelistEnabled, allowedLoginCountries } = req.body;
 
-        // 유효성 검증
         if (blockDuplicateLogin !== undefined && typeof blockDuplicateLogin !== "boolean") {
             return res.status(400).json({ error: "올바른 설정 값이 아닙니다." });
         }
@@ -695,7 +582,6 @@ module.exports = (dependencies) => {
                 return res.status(400).json({ error: "허용 국가 목록은 배열이어야 합니다." });
             }
 
-            // 국가 코드 형식 검증 (ISO 3166-1 alpha-2: 2자리 대문자)
             const invalidCountry = allowedLoginCountries.find(
                 code => typeof code !== 'string' || !/^[A-Z]{2}$/.test(code)
             );
@@ -705,7 +591,6 @@ module.exports = (dependencies) => {
         }
 
         try {
-            // 동적 UPDATE 쿼리 생성
             const updates = [];
             const values = [];
 
@@ -735,7 +620,6 @@ module.exports = (dependencies) => {
                 values
             );
 
-            // 보안: 사용자명 일부만 표시
             const maskedUsername = req.user.username.substring(0, 2) + '***';
             console.log(`[보안 설정] 사용자 ID ${req.user.id} (${maskedUsername}): 설정 업데이트 완료`);
 
@@ -746,11 +630,6 @@ module.exports = (dependencies) => {
         }
     });
 
-    /**
-     * 로그인 로그 조회
-     * GET /api/auth/login-logs
-     * query: { limit?: number, offset?: number }
-     */
     router.get("/login-logs", authMiddleware, async (req, res) => {
         try {
             const limit = Math.min(parseInt(req.query.limit) || 100, 500);
@@ -794,10 +673,6 @@ module.exports = (dependencies) => {
         }
     });
 
-    /**
-     * 로그인 로그 통계 조회
-     * GET /api/auth/login-logs/stats
-     */
     router.get("/login-logs/stats", authMiddleware, async (req, res) => {
         try {
             const thirtyDaysAgo = new Date();
@@ -840,10 +715,6 @@ module.exports = (dependencies) => {
         }
     });
 
-    /**
-     * 국가 목록 조회
-     * GET /api/auth/countries
-     */
     router.get("/countries", authMiddleware, (req, res) => {
         const countries = [
             { code: 'KR', name: '대한민국' },

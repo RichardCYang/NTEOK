@@ -4,16 +4,13 @@
     <meta charset="UTF-8" />
     <title>NTEOK - 로그인</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <!-- 아이콘 -->
     <link rel="stylesheet" href="/lib/font-awesome/css/all.min.css" />
 
-    <!-- Pretendard -->
     <link
         rel="stylesheet"
         href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css"
     />
 
-    <!-- 메모앱 느낌의 영어 폰트 (Nunito) -->
     <link
         rel="stylesheet"
         href="https://fonts.googleapis.com/css2?family=Nunito:wght@600;700&display=swap"
@@ -25,7 +22,6 @@
 <body class="login-body">
     <div class="login-shell">
         <section class="login-card" aria-label="NTEOK 로그인">
-            <!-- 카드 상단 로고 + 서비스 이름 -->
             <header class="login-card-header">
                 <div class="login-logo-row">
                     <img src="/icon.png" class="login-logo-mark" alt="NTEOK">
@@ -35,7 +31,6 @@
                 <p class="login-desc">NTEOK 계정으로 계속 진행합니다.</p>
             </header>
 
-            <!-- 로그인 폼 -->
             <form id="login-form" class="login-form">
                 <div class="login-field">
                     <label for="username">아이디</label>
@@ -76,20 +71,17 @@
                     로그인
                 </button>
 
-                <!-- 구분선 -->
                 <div style="display: flex; align-items: center; margin: 20px 0; gap: 12px;">
                     <div style="flex: 1; height: 1px; background: #d4cfc4;"></div>
                     <span style="color: #9ca3af; font-size: 13px;">또는</span>
                     <div style="flex: 1; height: 1px; background: #d4cfc4;"></div>
                 </div>
 
-                <!-- 패스키로 로그인 버튼 -->
                 <button type="button" id="passkey-login-btn" class="login-submit" style="background: #6b7280; display: flex; align-items: center; justify-content: center; gap: 8px;">
                     <i class="fa-solid fa-key"></i>
                     패스키로 로그인
                 </button>
 
-                <!-- 에러 있을 때만 공간 차지 -->
                 <p id="login-error" class="login-error" aria-live="polite"></p>
 
                 <p class="login-sub-links">
@@ -100,7 +92,6 @@
         </section>
     </div>
 
-    <!-- TOTP 로그인 검증 모달 -->
     <div id="totp-verify-modal" class="modal hidden">
         <div class="modal-overlay"></div>
         <div class="modal-content" style="max-width: 400px;">
@@ -143,7 +134,6 @@
         </div>
     </div>
 
-    <!-- 2FA 방식 선택 모달 -->
     <div id="twofa-method-select-modal" class="modal hidden">
         <div class="modal-overlay"></div>
         <div class="modal-content" style="max-width: 400px;">
@@ -173,7 +163,6 @@
         </div>
     </div>
 
-    <!-- 패스키 인증 모달 -->
     <div id="passkey-auth-modal" class="modal hidden">
         <div class="modal-overlay"></div>
         <div class="modal-content" style="max-width: 400px;">
@@ -205,7 +194,6 @@
         </div>
     </div>
 
-    <!-- 보안: CSRF 토큰 유틸리티 -->
     <script src="/js/csrf-utils.js"></script>
     <script src="/js/crypto.js"></script>
     <script type="module" src="/js/login.js"></script>

@@ -1,13 +1,7 @@
-/**
- * TOTP 2단계 인증 관리 모듈
- */
 
 import { hideParentModalForChild, restoreParentModalFromChild } from './modal-parent-manager.js';
 import { secureFetch, escapeHtml } from './ui-utils.js';
 
-/**
- * TOTP 상태 업데이트
- */
 export async function updateTotpStatus() {
     try {
         const response = await secureFetch('/api/totp/status', {
@@ -38,9 +32,6 @@ export async function updateTotpStatus() {
     }
 }
 
-/**
- * TOTP 설정 모달 열기
- */
 export async function openTotpSetupModal() {
     const statusEl = document.querySelector('#totp-status');
     const isEnabled = statusEl && statusEl.textContent === '활성화';
@@ -52,16 +43,13 @@ export async function openTotpSetupModal() {
 
     if (!modal) return;
 
-	// 보안 설정 모달(부모)을 잠깐 닫고, TOTP 모달만 단독으로 띄움
 	hideParentModalForChild('#security-settings-modal', modal);
 
-    // 모든 단계 숨기기
     if (step1) step1.style.display = 'none';
     if (step2) step2.style.display = 'none';
     if (disableConfirm) disableConfirm.style.display = 'none';
 
     if (isEnabled) {
-        // TOTP 비활성화 화면 표시
         if (disableConfirm) {
             disableConfirm.style.display = 'block';
             const passwordInput = document.querySelector('#totp-disable-password');
@@ -70,7 +58,6 @@ export async function openTotpSetupModal() {
             if (errorEl) errorEl.textContent = '';
         }
     } else {
-        // TOTP 설정 시작
         try {
             const response = await secureFetch('/api/totp/setup', {
                 method: 'POST',
@@ -81,24 +68,19 @@ export async function openTotpSetupModal() {
 
             if (!response.ok) {
                 alert('TOTP 설정을 시작할 수 없습니다.');
-				// 부모 모달 복구
 				restoreParentModalFromChild(modal);
                 return;
             }
 
             const data = await response.json();
 
-            // QR 코드 표시
             const qrcodeEl = document.querySelector('#totp-qrcode');
             const secretEl = document.querySelector('#totp-secret-display');
             if (qrcodeEl) {
-            	// 보안: innerHTML 대신 DOM API 사용
                 qrcodeEl.textContent = "";
                 const img = document.createElement("img");
-                // qrCode는 일반적으로 data:image/png;base64,... 형태를 기대
                 const src = String(data.qrCode || "");
                 if (!src.startsWith("data:image/")) {
-                    // 예상치 못한 스키마 차단
                     throw new Error("Invalid QR code image source");
                 }
                 img.src = src;
@@ -110,7 +92,6 @@ export async function openTotpSetupModal() {
                 secretEl.textContent = data.secret;
             }
 
-            // Step 1 표시
             if (step1) {
                 step1.style.display = 'block';
                 const codeInput = document.querySelector('#totp-verify-code');
@@ -122,7 +103,6 @@ export async function openTotpSetupModal() {
         } catch (error) {
             console.error('TOTP 설정 실패:', error);
             alert('TOTP 설정 중 오류가 발생했습니다.');
-			// 부모 모달 복구
 			restoreParentModalFromChild(modal);
             return;
         }
@@ -131,21 +111,14 @@ export async function openTotpSetupModal() {
     modal.classList.remove('hidden');
 }
 
-/**
- * TOTP 설정 모달 닫기
- */
 export function closeTotpSetupModal() {
     const modal = document.querySelector('#totp-setup-modal');
     if (modal) {
         modal.classList.add('hidden');
-		// 부모 모달(보안 설정) 복구
 		restoreParentModalFromChild(modal);
     }
 }
 
-/**
- * TOTP 활성화 검증
- */
 export async function verifyTotpSetup() {
     const codeInput = document.querySelector('#totp-verify-code');
     const errorEl = document.querySelector('#totp-setup-error');
@@ -176,7 +149,6 @@ export async function verifyTotpSetup() {
             return;
         }
 
-        // Step 2로 이동 (백업 코드 표시)
         const step1 = document.querySelector('#totp-setup-step1');
         const step2 = document.querySelector('#totp-setup-step2');
         const backupCodesEl = document.querySelector('#totp-backup-codes');
@@ -197,9 +169,6 @@ export async function verifyTotpSetup() {
     }
 }
 
-/**
- * 백업 코드 복사
- */
 export function copyBackupCodes() {
     const backupCodesEl = document.querySelector('#totp-backup-codes');
     if (!backupCodesEl) return;
@@ -216,9 +185,6 @@ export function copyBackupCodes() {
     });
 }
 
-/**
- * TOTP 비활성화
- */
 export async function disableTotp() {
     const passwordInput = document.querySelector('#totp-disable-password');
     const errorEl = document.querySelector('#totp-disable-error');
@@ -258,11 +224,7 @@ export async function disableTotp() {
     }
 }
 
-/**
- * TOTP 모달 이벤트 바인딩
- */
 export function bindTotpModals() {
-    // TOTP 설정 버튼
     const setupBtn = document.querySelector('#totp-setup-btn');
     if (setupBtn) {
         setupBtn.addEventListener('click', () => {
@@ -270,7 +232,6 @@ export function bindTotpModals() {
         });
     }
 
-    // TOTP 모달 닫기 버튼들
     const closeBtn = document.querySelector('#close-totp-setup-btn');
     const cancelSetupBtn = document.querySelector('#cancel-totp-setup-btn');
     const cancelDisableBtn = document.querySelector('#cancel-totp-disable-btn');
@@ -289,25 +250,21 @@ export function bindTotpModals() {
         closeSuccessBtn.addEventListener('click', closeTotpSetupModal);
     }
 
-    // TOTP 활성화 버튼
     const verifyBtn = document.querySelector('#verify-totp-btn');
     if (verifyBtn) {
         verifyBtn.addEventListener('click', verifyTotpSetup);
     }
 
-    // TOTP 비활성화 버튼
     const confirmDisableBtn = document.querySelector('#confirm-totp-disable-btn');
     if (confirmDisableBtn) {
         confirmDisableBtn.addEventListener('click', disableTotp);
     }
 
-    // 백업 코드 복사 버튼
     const copyBtn = document.querySelector('#copy-backup-codes-btn');
     if (copyBtn) {
         copyBtn.addEventListener('click', copyBackupCodes);
     }
 
-    // 설정 모달이 열릴 때 TOTP 상태 업데이트
     const settingsBtn = document.querySelector('#settings-btn');
     if (settingsBtn) {
         settingsBtn.addEventListener('click', () => {

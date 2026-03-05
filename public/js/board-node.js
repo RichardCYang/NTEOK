@@ -1,17 +1,9 @@
-/**
- * Tiptap Board View Extension
- * 칸반 보드 블록
- */
 
 import { addIcon } from './ui-utils.js';
 import DOMPurify from 'dompurify';
 
 const Node = Tiptap.Core.Node;
 
-// 보안: Board 카드 Rich Text XSS 방어
-// Board 카드의 content는 사용자 입력(붙여넣기 포함)이며, 이 값이 innerHTML로 직접 주입되면
-// 저장형 XSS가 발생할 수 있음 (공유된 페이지에서 타 사용자 세션 컨텍스트로 실행)
-// -> DOMPurify로 강력하게 정화 + 허용 목록 기반으로 최소한의 서식만 허용
 const BOARD_CARD_PURIFY_CONFIG = {
 	USE_PROFILES: { html: true },
 	ALLOWED_TAGS: [
@@ -27,7 +19,6 @@ const BOARD_CARD_PURIFY_CONFIG = {
 function sanitizeBoardCardHtml(html) {
 	const clean = DOMPurify.sanitize(String(html ?? ''), BOARD_CARD_PURIFY_CONFIG);
 
-	// target=_blank인 링크의 tabnabbing 방어
 	const tmp = document.createElement('div');
 	tmp.innerHTML = clean;
 	tmp.querySelectorAll('a').forEach((a) => {
@@ -55,7 +46,6 @@ function sanitizeBoardColumns(columns) {
 	return columns;
 }
 
-// 아이콘 선택용 기본 아이콘 목록
 const BOARD_THEME_ICONS = [
     'fa-solid fa-star', 'fa-solid fa-heart', 'fa-solid fa-flag',
     'fa-solid fa-circle-check', 'fa-solid fa-circle-info', 'fa-solid fa-circle-exclamation', 'fa-solid fa-circle-xmark',
@@ -70,7 +60,6 @@ const BOARD_EMOJI_ICONS = [
     '🏷️', '🎯', '🏆', '🎁'
 ];
 
-// 포스트잇 배경색 목록
 const BOARD_CARD_COLORS = [
     { name: '기본', value: 'default', bg: 'var(--primary-color)' },
     { name: '노랑', value: 'yellow', bg: 'var(--board-card-yellow)' },
@@ -107,7 +96,6 @@ export const BoardBlock = Node.create({
                     }
                 },
                 renderHTML: attributes => {
-					// 방어적 저장: attributes에 악성 HTML이 이미 섞여 있더라도 DB로 내려가기 전에 1차 정화
 					const safeColumns = sanitizeBoardColumns(JSON.parse(JSON.stringify(attributes.columns ?? [])));
 					return { 'data-columns': JSON.stringify(safeColumns) };
                 }
@@ -133,19 +121,15 @@ export const BoardBlock = Node.create({
             container.className = 'board-container';
             container.contentEditable = 'false';
 
-            // 상태 관리
-            // 서버/저장소에서 내려온 데이터에 저장형 XSS 페이로드가 섞였을 수 있으므로 NodeView 진입 시점에도 한 번 더 정화
-            let columns = sanitizeBoardColumns(JSON.parse(JSON.stringify(node.attrs.columns))); // 깊은 복사 + 정화
+            let columns = sanitizeBoardColumns(JSON.parse(JSON.stringify(node.attrs.columns))); 
             let draggedCardId = null;
             let draggedFromColId = null;
-            let lastIsEditable = editor.isEditable; // 편집 모드 상태 추적
+            let lastIsEditable = editor.isEditable; 
 
-            // 데이터 저장 함수
             const saveData = () => {
                 if (typeof getPos === 'function') {
                     const pos = getPos();
                     try {
-                        // 불필요한 트랜잭션 방지를 위해 현재 데이터와 비교
                         const currentAttrs = editor.state.doc.nodeAt(pos).attrs;
                         if (JSON.stringify(currentAttrs.columns) === JSON.stringify(columns)) {
                             return;
@@ -160,11 +144,9 @@ export const BoardBlock = Node.create({
                 }
             };
 
-            // 아이콘 선택 팝업 생성 함수
             const showIconPickerPopup = (targetEl, onSelect) => {
                 if (!editor.isEditable) return;
 
-                // 기존 팝업 제거
                 const existingPopup = document.querySelector('.board-icon-picker-popup');
                 if (existingPopup) existingPopup.remove();
 
@@ -181,7 +163,6 @@ export const BoardBlock = Node.create({
                     max-width: 250px;
                 `;
 
-                // 탭 버튼
                 const tabContainer = document.createElement('div');
                 tabContainer.style.cssText = 'display: flex; gap: 4px; margin-bottom: 8px; border-bottom: 1px solid var(--border-color); padding-bottom: 8px;';
 
@@ -231,7 +212,6 @@ export const BoardBlock = Node.create({
                 themeTab.onclick = (e) => { e.stopPropagation(); renderGrid('theme'); };
                 emojiTab.onclick = (e) => { e.stopPropagation(); renderGrid('emoji'); };
 
-                // 삭제 버튼 추가
                 const removeBtn = document.createElement('button');
                 removeBtn.textContent = '아이콘 삭제';
                 removeBtn.style.cssText = 'width: 100%; margin-top: 8px; padding: 4px; border: none; background: var(--secondary-color); color: var(--danger-color, #ef4444); cursor: pointer; border-radius: 4px; font-size: 11px;';
@@ -249,7 +229,6 @@ export const BoardBlock = Node.create({
                 popup.style.left = `${rect.left}px`;
                 popup.style.top = `${rect.bottom + 5}px`;
 
-                // 외부 클릭 시 닫기
                 const closePopup = (e) => {
                     if (!popup.contains(e.target) && !targetEl.contains(e.target)) {
                         popup.remove();
@@ -259,11 +238,9 @@ export const BoardBlock = Node.create({
                 document.addEventListener('mousedown', closePopup);
             };
 
-            // 색상 선택 팝업 생성 함수
             const showColorPickerPopup = (targetEl, onSelect) => {
                 if (!editor.isEditable) return;
 
-                // 기존 팝업 제거
                 const existingPopup = document.querySelector('.board-color-picker-popup');
                 if (existingPopup) existingPopup.remove();
 
@@ -325,12 +302,10 @@ export const BoardBlock = Node.create({
                 document.addEventListener('mousedown', closePopup);
             };
 
-            // 렌더링 함수
             const render = () => {
-                lastIsEditable = editor.isEditable; // 현재 상태 저장
+                lastIsEditable = editor.isEditable; 
                 container.innerHTML = '';
 
-                // 컬럼 컨테이너
                 const columnsWrapper = document.createElement('div');
                 columnsWrapper.className = 'board-columns-wrapper';
 
@@ -339,7 +314,6 @@ export const BoardBlock = Node.create({
                     colEl.className = 'board-column';
                     colEl.dataset.colId = column.id;
 
-                    // 헤더
                     const header = document.createElement('div');
                     header.className = 'board-column-header';
 
@@ -357,7 +331,6 @@ export const BoardBlock = Node.create({
                         titleInput.readOnly = true;
                     }
 
-                    // 컬럼 삭제 버튼 (옵션)
                     const deleteColBtn = document.createElement('button');
                     deleteColBtn.className = 'board-column-delete-btn';
                     deleteColBtn.innerHTML = '×';
@@ -367,7 +340,7 @@ export const BoardBlock = Node.create({
                             if (confirm('이 컬럼과 포함된 모든 카드를 삭제하시겠습니까?')) {
                                 columns = columns.filter(c => c.id !== column.id);
                                 saveData();
-                                render(); // 전체 다시 렌더링
+                                render(); 
                             }
                         };
                     } else {
@@ -378,12 +351,10 @@ export const BoardBlock = Node.create({
                     header.appendChild(deleteColBtn);
                     colEl.appendChild(header);
 
-                    // 카드 리스트
                     const cardList = document.createElement('div');
                     cardList.className = 'board-card-list';
                     cardList.dataset.colId = column.id;
 
-                    // 드래그 앤 드롭 이벤트 (리스트 영역)
                     if (editor.isEditable) {
                         cardList.ondragover = (e) => {
                             e.preventDefault();
@@ -399,13 +370,11 @@ export const BoardBlock = Node.create({
 
                             const toColId = column.id;
 
-                            // 원본 찾기 및 제거
                             const fromCol = columns.find(c => c.id === draggedFromColId);
                             const cardIndex = fromCol.cards.findIndex(c => c.id === draggedCardId);
                             if (cardIndex === -1) return;
                             const [card] = fromCol.cards.splice(cardIndex, 1);
 
-                            // 대상 컬럼에 추가
                             const toCol = columns.find(c => c.id === toColId);
                             toCol.cards.push(card);
 
@@ -421,19 +390,16 @@ export const BoardBlock = Node.create({
                         cardEl.className = `board-card ${card.color ? 'color-' + card.color : ''}`;
                         cardEl.dataset.cardId = card.id;
 
-                        // 카드 드래그 제어: 헤더를 잡았을 때만 드래그 가능하도록 설정
                         cardEl.draggable = false;
 
                         if (editor.isEditable) {
                             cardEl.ondragstart = (e) => {
-                                // 팝업이 열려있으면 닫기
                                 const existingPopup = document.querySelector('.board-icon-picker-popup') || document.querySelector('.board-color-picker-popup');
                                 if (existingPopup) existingPopup.remove();
 
                                 draggedCardId = card.id;
                                 draggedFromColId = column.id;
                                 e.dataTransfer.effectAllowed = 'move';
-                                // 드래그 데이터 설정 (일부 브라우저 필수)
                                 e.dataTransfer.setData('text/plain', card.id);
 
                                 setTimeout(() => cardEl.classList.add('dragging'), 0);
@@ -445,11 +411,9 @@ export const BoardBlock = Node.create({
                             };
                         }
 
-                        // 카드 상단 영역 (아이콘 + 도구 + 삭제 버튼)
                         const cardHeader = document.createElement('div');
                         cardHeader.className = 'board-card-header';
 
-                        // 헤더 영역 표시 여부 결정: 편집 모드이거나 아이콘이 설정된 경우에만 표시
                         const hasIcon = !!card.icon;
                         if (!editor.isEditable && !hasIcon) {
                             cardHeader.style.display = 'none';
@@ -457,7 +421,6 @@ export const BoardBlock = Node.create({
                             cardHeader.style.display = 'flex';
                         }
 
-                        // 헤더 영역에 마우스가 있을 때만 드래그 활성화 (편집 모드에서만)
                         if (editor.isEditable) {
                             cardHeader.onmouseenter = () => { cardEl.draggable = true; };
                             cardHeader.onmouseleave = () => { cardEl.draggable = false; };
@@ -467,13 +430,11 @@ export const BoardBlock = Node.create({
                         cardHeader.style.alignItems = 'flex-start';
                         cardHeader.style.marginBottom = '4px';
 
-                        // 카드 상단 왼쪽 영역 (아이콘 + 색상 선택)
                         const cardHeaderLeft = document.createElement('div');
                         cardHeaderLeft.style.display = 'flex';
                         cardHeaderLeft.style.gap = '4px';
                         cardHeaderLeft.style.alignItems = 'center';
 
-                        // 아이콘 영역
                         const iconBtn = document.createElement('div');
                         iconBtn.className = 'board-card-icon-btn';
                         iconBtn.style.cursor = editor.isEditable ? 'pointer' : 'default';
@@ -494,7 +455,6 @@ export const BoardBlock = Node.create({
                                     iconBtn.textContent = card.icon;
                                 }
                             } else if (editor.isEditable) {
-                                // 아이콘이 없지만 편집 모드일 때 투명한 아이콘 또는 플러스 표시 가능
                                 iconBtn.innerHTML = '<i class="fa-regular fa-face-smile" style="opacity: 0.3;"></i>';
                             }
                         };
@@ -511,7 +471,6 @@ export const BoardBlock = Node.create({
                             };
                         }
 
-                        // 색상 선택 버튼
                         const colorBtn = document.createElement('div');
                         colorBtn.className = 'board-card-color-btn';
                         colorBtn.innerHTML = '<i class="fa-solid fa-palette" style="font-size: 12px; opacity: 0.5;"></i>';
@@ -529,7 +488,7 @@ export const BoardBlock = Node.create({
                                 showColorPickerPopup(colorBtn, (newColor) => {
                                     card.color = newColor;
                                     saveData();
-                                    render(); // 배경색 적용을 위해 전체 다시 렌더링
+                                    render(); 
                                 });
                             };
                         }
@@ -538,13 +497,12 @@ export const BoardBlock = Node.create({
                         cardHeaderLeft.appendChild(colorBtn);
                         cardHeader.appendChild(cardHeaderLeft);
 
-                        // 카드 삭제 버튼
                         const deleteCardBtn = document.createElement('button');
                         deleteCardBtn.className = 'board-card-delete-btn';
                         deleteCardBtn.innerHTML = '×';
                         if (editor.isEditable) {
                             deleteCardBtn.onclick = (e) => {
-                                e.stopPropagation(); // 카드 드래그 방지
+                                e.stopPropagation(); 
                                 if (confirm('이 카드를 삭제하시겠습니까?')) {
                                     column.cards = column.cards.filter(c => c.id !== card.id);
                                     saveData();
@@ -560,19 +518,16 @@ export const BoardBlock = Node.create({
 
                         const cardContent = document.createElement('div');
                         cardContent.className = 'board-card-content';
-                        cardContent.contentEditable = editor.isEditable ? 'true' : 'false'; // 텍스트 편집 가능하게
+                        cardContent.contentEditable = editor.isEditable ? 'true' : 'false'; 
 
-                        // rich text 지원을 위해 innerHTML 사용하되, 저장형 XSS 방지를 위해 정화 후 주입
                         const safeInitial = sanitizeBoardCardHtml(card.content);
 						if (safeInitial !== card.content)
 							card.content = safeInitial;
 
 						cardContent.innerHTML = safeInitial;
 
-                        // 카드 내용 수정 시 저장
                         if (editor.isEditable) {
                             cardContent.onfocus = () => {
-                                // 툴바 표시
                                 const toolbar = document.querySelector('.editor-toolbar');
                                 if (toolbar) toolbar.classList.add('visible');
                             };
@@ -585,15 +540,13 @@ export const BoardBlock = Node.create({
 									saveData();
 								}
                             };
-                            // 키 입력 이벤트 처리
                             cardContent.onkeydown = (e) => {
-                                // Ctrl+B, Ctrl+I 등 기본 서식 단축키는 브라우저가 처리하도록 허용 (stopPropagation 안 함)
                                 if (e.ctrlKey || e.metaKey) {
                                     if (['b', 'i', 'u', 's'].includes(e.key.toLowerCase())) {
                                         return;
                                     }
                                 }
-                                e.stopPropagation(); // 그 외 에디터의 이벤트 간섭 방지
+                                e.stopPropagation(); 
                             };
                         }
 
@@ -603,7 +556,6 @@ export const BoardBlock = Node.create({
 
                     colEl.appendChild(cardList);
 
-                    // 카드 추가 버튼
                     if (editor.isEditable) {
                         const addCardBtn = document.createElement('button');
                         addCardBtn.className = 'board-add-card-btn';
@@ -625,7 +577,6 @@ export const BoardBlock = Node.create({
                     columnsWrapper.appendChild(colEl);
                 });
 
-                // 컬럼 추가 버튼
                 if (editor.isEditable) {
                     const addColBtn = document.createElement('button');
                     addColBtn.className = 'board-add-column-btn';
@@ -646,20 +597,16 @@ export const BoardBlock = Node.create({
                 container.appendChild(columnsWrapper);
             };
 
-            // 초기 렌더링
             render();
 
-            // 편집 모드 변경 감지 로직
             const checkEditable = () => {
                 if (editor.isEditable !== lastIsEditable) {
                     render();
                 }
             };
 
-            // 1. Transaction 이벤트 리스너 (상태 변경 감지 보조)
             editor.on('transaction', checkEditable);
 
-            // 2. MutationObserver (contenteditable 속성 변경 감지 - 확실한 방법)
             const observer = new MutationObserver((mutations) => {
                 checkEditable();
             });
@@ -688,18 +635,13 @@ export const BoardBlock = Node.create({
                     return true;
                 },
                 stopEvent: (event) => {
-                    // 드래그 앤 드롭, 입력 이벤트 등이 에디터로 전파되지 않도록 차단
-                    // contentEditable 영역 내의 이벤트는 허용해야 함
                     const target = event.target;
-                    // 카드 내용 입력 중이거나 input 태그 등에서는 이벤트 전파 막기
                     if (target.classList.contains('board-card-content') || target.tagName === 'INPUT' || target.tagName === 'BUTTON' || target.closest('.board-icon-picker-popup')) {
                         return true;
                     }
                     return false;
                 },
                 ignoreMutation: (mutation) => {
-                    // DOM 내부 변경은 ProseMirror가 무시하고 우리가 직접 관리
-                    // 단, selection 변경 등은 허용해야 할 수도 있음
                     return !container.contains(mutation.target) || mutation.target === container;
                 },
                 destroy: () => {

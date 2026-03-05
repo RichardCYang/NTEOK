@@ -1,16 +1,7 @@
-/**
- * PDF 내보내기 모듈
- * jsPDF와 html2canvas를 직접 사용하여 고품질 PDF 생성
- */
 
 import { secureFetch, escapeHtml, escapeHtmlAttr, addIcon } from './ui-utils.js';
 import DOMPurify from 'dompurify';
 
-// ------------------------------------------------------------
-// Security fix: Board(Kanban) block XSS hardening in PDF export
-// ------------------------------------------------------------
-// pdf-export.js는 data-columns(JSON)에서 파싱한 card.content를 innerHTML로 주입함
-// export 시점에도 allow-list 기반 정화가 없으면 저장형/DOM XSS가 발생할 수 있음
 const BOARD_CARD_PURIFY_CONFIG = {
     USE_PROFILES: { html: true },
     ALLOWED_TAGS: [
@@ -23,16 +14,11 @@ const BOARD_CARD_PURIFY_CONFIG = {
     FORBID_TAGS: ['style', 'script', 'svg', 'math'],
 };
 
-/**
- * 보안(CVE-2026-22787): HTML 문자열을 DOM에 직접 부착할 때 XSS 위험 방어
- * - PDF export 시 문자열 소스 사용을 지양하고 항상 HTMLElement를 사용하도록 유도
- * - 부득이하게 문자열을 다룰 경우 RETURN_DOM_FRAGMENT 옵션으로 정화 후 부착
- */
 const MAIN_CONTENT_PURIFY_CONFIG = {
     USE_PROFILES: { html: true },
     RETURN_DOM_FRAGMENT: true,
     FORBID_TAGS: ['style', 'script', 'iframe', 'object', 'embed', 'link'],
-    FORBID_ATTR: ['onerror', 'onload', 'onclick', 'onmouseover', 'onfocus'], // 주요 이벤트 핸들러 명시적 차단
+    FORBID_ATTR: ['onerror', 'onload', 'onclick', 'onmouseover', 'onfocus'], 
 };
 
 function ensureElementSource(source) {
@@ -47,9 +33,7 @@ function ensureElementSource(source) {
 
 function buildSafeCloneForExport(element) {
     const clone = element.cloneNode(true);
-    // 보안: script, iframe, object 등 잠재적 위험 태그 제거
     clone.querySelectorAll('script, iframe, object, embed, link[rel="import"], style').forEach(n => n.remove());
-    // 보안: 모든 인라인 이벤트 핸들러 제거
     clone.querySelectorAll('*').forEach((node) => {
         [...node.attributes].forEach((attr) => {
             if (/^on/i.test(attr.name)) node.removeAttribute(attr.name);
@@ -61,7 +45,6 @@ function buildSafeCloneForExport(element) {
 function sanitizeBoardCardHtmlForPdf(html) {
     const clean = DOMPurify.sanitize(String(html ?? ''), BOARD_CARD_PURIFY_CONFIG);
 
-    // target=_blank tabnabbing 방어
     const tmp = document.createElement('div');
     tmp.innerHTML = clean;
     tmp.querySelectorAll('a').forEach((a) => {
@@ -81,16 +64,12 @@ function sanitizeBoardCardHtmlForPdf(html) {
     return tmp.innerHTML;
 }
 
-// card.color는 class attribute로 들어가므로 허용값 allow-list로 제한
 const BOARD_ALLOWED_COLORS = new Set(['default', 'yellow', 'blue', 'green', 'pink', 'purple', 'orange']);
 function normalizeBoardColor(value) {
     const c = String(value || '').toLowerCase().trim();
     return BOARD_ALLOWED_COLORS.has(c) ? c : '';
 }
 
-/**
- * 라이브러리 로드 대기 (jsPDF, html2canvas)
- */
 async function waitForLibraries() {
     const check = () => {
         return typeof window.jspdf !== 'undefined' && typeof window.html2canvas !== 'undefined';
@@ -111,52 +90,39 @@ async function waitForLibraries() {
     return check();
 }
 
-/**
- * 페이지를 PDF로 내보내기
- * @param {string} pageId - 내보낼 페이지 ID
- */
 export async function exportPageToPDF(pageId) {
     let pdfContainer = null;
     let overlay = null;
     try {
-        // 라이브러리 로드 확인
         const isLoaded = await waitForLibraries();
         if (!isLoaded) {
             alert('PDF 생성 라이브러리(jsPDF, html2canvas)를 로드할 수 없습니다. 페이지를 새로고침 후 다시 시도해주세요.');
             return;
         }
 
-        // 페이지 데이터 가져오기
         const pageData = await fetchPageData(pageId);
         if (!pageData) {
             alert('페이지를 불러올 수 없습니다.');
             return;
         }
 
-        // 암호화된 페이지 확인
         if (pageData.isEncrypted && !pageData.content) {
             alert('암호화된 페이지는 복호화 후 내보낼 수 있습니다.');
             return;
         }
 
-        // 로딩 오버레이 표시
         overlay = createLoadingOverlay();
         document.body.appendChild(overlay);
 
-        // 스크롤을 최상단으로 이동
         window.scrollTo(0, 0);
 
-        // PDF용 임시 컨테이너 생성
         pdfContainer = createPDFContainer(pageData);
         document.body.insertBefore(pdfContainer, document.body.firstChild);
 
-        // 커스텀 블록 렌더링 (KaTeX, 북마크, Callout 등)
         await renderCustomBlocks(pdfContainer);
 
-        // 레이아웃/스타일 계산 대기
         await new Promise(resolve => setTimeout(resolve, 1000));
 
-        // PDF 생성 시작
         const { jsPDF } = window.jspdf;
         const doc = new jsPDF({
             orientation: 'p',
@@ -165,13 +131,11 @@ export async function exportPageToPDF(pageId) {
             compress: true
         });
 
-        // A4 규격 설정 (mm)
         const pageWidth = 210;
         const pageHeight = 297;
         
-        // 캔버스 캡처 옵션
         const canvasOptions = {
-            scale: 2, // 고해상도 캡처
+            scale: 2, 
             useCORS: true,
             logging: false,
             allowTaint: true,
@@ -180,23 +144,18 @@ export async function exportPageToPDF(pageId) {
             height: pdfContainer.offsetHeight
         };
 
-        // html2canvas로 컨테이너 캡처
         const canvas = await window.html2canvas(pdfContainer, canvasOptions);
         const imgData = canvas.toDataURL('image/jpeg', 0.95);
         
-        // 캔버스 크기를 PDF mm 단위로 변환
-        // pdfContainer 너비(850px)를 210mm에 맞춤
         const imgWidth = pageWidth;
         const imgHeight = (canvas.height * imgWidth) / canvas.width;
         
         let heightLeft = imgHeight;
         let position = 0;
 
-        // 첫 페이지 추가
         doc.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight, undefined, 'FAST');
         heightLeft -= pageHeight;
 
-        // 남은 내용이 있으면 새 페이지 추가
         while (heightLeft > 0) {
             position = heightLeft - imgHeight;
             doc.addPage();
@@ -204,7 +163,6 @@ export async function exportPageToPDF(pageId) {
             heightLeft -= pageHeight;
         }
 
-        // PDF 저장
         doc.save(`${sanitizeFileName(pageData.title)}.pdf`);
 
         console.log('[PDF Export] PDF 생성 및 다운로드 완료');
@@ -212,7 +170,6 @@ export async function exportPageToPDF(pageId) {
         console.error('PDF 내보내기 오류:', error);
         alert('PDF 내보내기 중 오류가 발생했습니다: ' + error.message);
     } finally {
-        // 리소스 정리
         if (pdfContainer && pdfContainer.parentNode) {
             pdfContainer.parentNode.removeChild(pdfContainer);
         }
@@ -222,9 +179,6 @@ export async function exportPageToPDF(pageId) {
     }
 }
 
-/**
- * 페이지 데이터 가져오기
- */
 async function fetchPageData(pageId) {
     const res = await secureFetch(`/api/pages/${encodeURIComponent(pageId)}`);
     if (!res.ok) {
@@ -233,14 +187,10 @@ async function fetchPageData(pageId) {
     return await res.json();
 }
 
-/**
- * PDF용 컨테이너 생성
- */
 function createPDFContainer(pageData) {
     const container = document.createElement('div');
     container.id = 'pdf-export-container';
 
-    // PDF 캡처 안정화 스타일
     const styleEl = document.createElement('style');
     styleEl.textContent = `
         #pdf-export-container {
@@ -428,7 +378,6 @@ function createPDFContainer(pageData) {
         visibility: visible;
     `;
 
-    // 커버 이미지
     if (pageData.coverImage) {
         const coverUrl = `/imgs/${pageData.coverImage}`;
         const coverPosition = pageData.coverPosition || 50;
@@ -455,7 +404,6 @@ function createPDFContainer(pageData) {
         container.appendChild(coverDiv);
     }
 
-    // 제목 및 아이콘
     const titleH1 = document.createElement('h1');
     titleH1.style.cssText = `
         font-size: 32px;
@@ -474,7 +422,6 @@ function createPDFContainer(pageData) {
     titleH1.appendChild(document.createTextNode(pageData.title));
     container.appendChild(titleH1);
 
-    // 메타데이터
     const metadataDiv = document.createElement('div');
     metadataDiv.style.cssText = `
         font-size: 13px;
@@ -491,7 +438,6 @@ function createPDFContainer(pageData) {
     metadataDiv.appendChild(updatedDiv);
     container.appendChild(metadataDiv);
 
-    // 콘텐츠
     const contentDiv = document.createElement('div');
     contentDiv.className = 'pdf-content';
     contentDiv.style.cssText = `
@@ -505,7 +451,6 @@ function createPDFContainer(pageData) {
                                      .replace(/<td><\/td>/g, '<td><p>&nbsp;</p></td>')
                                      .replace(/<th><\/th>/g, '<th><p>&nbsp;</p></th>');
 
-    // 보안: RETURN_DOM_FRAGMENT로 정화하여 부착
     const cleanFrag = DOMPurify.sanitize(processedContent, MAIN_CONTENT_PURIFY_CONFIG);
     contentDiv.appendChild(cleanFrag);
     container.appendChild(contentDiv);
@@ -513,11 +458,7 @@ function createPDFContainer(pageData) {
     return container;
 }
 
-/**
- * 커스텀 블록 렌더링
- */
 async function renderCustomBlocks(container) {
-    // KaTeX 수식 렌더링
     const mathBlocks = container.querySelectorAll('[data-type="math-block"]');
     mathBlocks.forEach((el) => {
         const latex = el.getAttribute('data-latex') || '';
@@ -538,7 +479,6 @@ async function renderCustomBlocks(container) {
         }
     });
 
-    // Callout 블록
     const callouts = container.querySelectorAll('[data-type="callout-block"]');
     callouts.forEach((el) => {
         const type = el.getAttribute('data-callout-type') || 'info';
@@ -559,7 +499,6 @@ async function renderCustomBlocks(container) {
         `;
     });
 
-    // Board (Kanban) 블록
     const boards = container.querySelectorAll('[data-type="board-block"]');
     boards.forEach((el) => {
         const dataStr = el.getAttribute('data-columns');
@@ -625,7 +564,6 @@ async function renderCustomBlocks(container) {
         `;
     });
 
-    // 체크리스트
     const taskLists = container.querySelectorAll('ul[data-type="taskList"]');
     taskLists.forEach((ul) => {
         ul.style.listStyle = 'none';
@@ -645,7 +583,6 @@ async function renderCustomBlocks(container) {
         });
     });
 
-    // 테이블 컬럼 너비 동기화 (TipTap 전용 처리)
     const tables = container.querySelectorAll('table');
     tables.forEach(table => {
         const colgroup = table.querySelector('colgroup');
@@ -675,13 +612,11 @@ async function renderCustomBlocks(container) {
             colIndex += colspan;
         });
 
-        // 사용자가 직접 너비를 지정한 경우에만 fixed 레이아웃 적용
-        const availableWidth = 850 - 160; // 850px (container) - 160px (padding) = 690px
+        const availableWidth = 850 - 160; 
 
         if (hasCustomWidth) {
             table.style.tableLayout = 'fixed';
             if (totalCustomWidth > availableWidth) {
-                // 너비가 가용 범위를 초과하면 비율에 맞춰 각 컬럼 너비 축소 (왜곡 방지)
                 const ratio = availableWidth / totalCustomWidth;
                 let adjustedTotal = 0;
                 cols.forEach((col, idx) => {
@@ -697,13 +632,11 @@ async function renderCustomBlocks(container) {
                 table.style.width = `${totalCustomWidth}px`;
             }
         } else {
-            // 커스텀 너비가 없는 경우에도 fixed 레이아웃으로 균등 배분 유도
             table.style.tableLayout = 'fixed';
             table.style.width = '100%';
         }
     });
 
-    // 외부 이미지 프록시 처리 및 모든 이미지 로딩 대기
     const images = container.querySelectorAll('img');
     const promises = Array.from(images).map(img => {
         const src = img.getAttribute('src');
@@ -730,9 +663,6 @@ function getProxiedImageUrl(url) {
     return url;
 }
 
-/**
- * 파일명 정리
- */
 function sanitizeFileName(filename) {
     return filename
         .replace(/[<>:"/\\|?*\x00-\x1F]/g, '')
@@ -740,9 +670,6 @@ function sanitizeFileName(filename) {
         .substring(0, 200) || 'NTEOK_Export';
 }
 
-/**
- * 로딩 오버레이 생성
- */
 function createLoadingOverlay() {
     const overlay = document.createElement('div');
     overlay.style.cssText = `
@@ -759,5 +686,4 @@ function createLoadingOverlay() {
     return overlay;
 }
 
-// 전역 등록
 window.exportPageToPDF = exportPageToPDF;

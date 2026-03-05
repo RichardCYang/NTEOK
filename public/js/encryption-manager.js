@@ -1,13 +1,9 @@
-/**
- * 페이지 암호화/복호화 관리 모듈
- */
 
 import { secureFetch } from './ui-utils.js';
 import { loadPage, renderPageList, fetchPageList } from './pages-manager.js';
 import { sanitizeEditorHtml } from './sanitize.js';
 import { stopPageSync, flushPendingUpdates } from './sync-manager.js';
 
-// 전역 상태
 let state = {
     currentEncryptingPageId: null,
     currentDecryptingPage: null,
@@ -16,16 +12,10 @@ let state = {
     fetchPageList: null
 };
 
-/**
- * 상태 초기화
- */
 export function initEncryptionManager(appState) {
     state = appState;
 }
 
-/**
- * 암호화 모달 표시
- */
 export function showEncryptionModal(pageId) {
     state.currentEncryptingPageId = pageId;
     const modal = document.querySelector("#page-encryption-modal");
@@ -41,9 +31,6 @@ export function showEncryptionModal(pageId) {
     }
 }
 
-/**
- * 암호화 모달 닫기
- */
 export function closeEncryptionModal() {
     const modal = document.querySelector("#page-encryption-modal");
     if (modal) {
@@ -52,9 +39,6 @@ export function closeEncryptionModal() {
     state.currentEncryptingPageId = null;
 }
 
-/**
- * 페이지 암호화 처리
- */
 export async function handleEncryption(event) {
     event.preventDefault();
 
@@ -92,18 +76,8 @@ export async function handleEncryption(event) {
         return;
     }
 
-    // 보안/정합성: 실시간 협업(Yjs) 편집 중 암호화를 수행하면
-    // 아직 DB에 저장되지 않은 로컬 편집 내용이 누락되거나,
-    // 암호화 전의 평문 스냅샷이 yjs_state 등에 남는 경쟁 조건이 발생할 수 있음
-    //
-    // 데이터 유실 방지(핵심):
-    // - 기존 구현은 stopPageSync() 후 서버에서 다시 page.content를 GET 해서 암호화했는데,
-    //   WS 디바운스 저장(비동기) 타이밍 때문에 마지막 로컬 편집분이 DB에 반영되기 전이라면
-    //   누락된 내용으로 암호화되어 영구 유실될 수 있음
-    // - 따라서 현재 페이지라면 에디터(로컬)에서 최신 HTML 스냅샷을 확보한 뒤 암호화 진행
     const wasActivePage = state.currentPageId === state.currentEncryptingPageId;
 
-    // 현재 페이지의 경우 로컬 스냅샷(제목/본문)을 우선 확보
     let localTitle = null;
     let localContent = null;
     if (wasActivePage) {
@@ -120,15 +94,12 @@ export async function handleEncryption(event) {
             }
         } catch (_) {}
 
-        // 로컬 스냅샷을 확보한 뒤에 WS 구독을 해제(레이스/평문 잔존 위험 완화)
         try { stopPageSync(); } catch (_) {}
 
-        // stopPageSync()가 선택된 페이지 상태까지 null로 만들므로, UI 관점의 선택 상태는 복구
         state.currentPageId = state.currentEncryptingPageId;
     }
 
     try {
-        // 암호화할 평문 스냅샷 확보 (로컬 우선, 없으면 서버)
         let page = null;
         let plainTitle = localTitle;
         let plainContent = localContent;
@@ -142,14 +113,11 @@ export async function handleEncryption(event) {
             if (plainContent == null) plainContent = page.content;
         }
 
-        // 암호화 키 초기화 (새 salt 생성)
         const saltBase64 = await cryptoManager.initializeKey(password);
 
-        // 콘텐츠 암호화 (클라이언트 정화 후 암호화)
         const safePlainContent = sanitizeEditorHtml(plainContent || "<p></p>");
         const encryptedData = await cryptoManager.encrypt(safePlainContent);
 
-        // 암호화된 콘텐츠 저장
         const updateRes = await secureFetch(`/api/pages/${encodeURIComponent(state.currentEncryptingPageId)}`, {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
@@ -169,7 +137,6 @@ export async function handleEncryption(event) {
         alert("페이지가 성공적으로 암호화되었습니다!");
         closeEncryptionModal();
 
-        // 암호화 완료 - 쓰기 모드 차단
         if (wasActivePage) {
             state.currentPageIsEncrypted = true;
         }
@@ -183,11 +150,9 @@ export async function handleEncryption(event) {
                 titleInput.value = (plainTitle != null ? plainTitle : (page ? page.title : ''));
             }
             if (state.editor) {
-                // 암호화 직전의 로컬 스냅샷을 그대로 유지해서, 사용자가 화면에서 내용을 확인할 수 있게 함
                 state.editor.commands.setContent(safePlainContent, { emitUpdate: false });
             }
 
-            // 암호화 후 쓰기 모드 비활성화
             if (state.isWriteMode) {
                 const modeToggleBtn = document.querySelector("#mode-toggle-btn");
                 const toolbar = document.querySelector(".editor-toolbar");
@@ -228,9 +193,6 @@ export async function handleEncryption(event) {
     }
 }
 
-/**
- * 복호화 모달 표시
- */
 export function showDecryptionModal(page) {
     state.currentDecryptingPage = page;
     const modal = document.querySelector("#page-decryption-modal");
@@ -244,9 +206,6 @@ export function showDecryptionModal(page) {
     }
 }
 
-/**
- * 복호화 모달 닫기
- */
 export function closeDecryptionModal() {
     const modal = document.querySelector("#page-decryption-modal");
     if (modal) {
@@ -255,9 +214,6 @@ export function closeDecryptionModal() {
     state.currentDecryptingPage = null;
 }
 
-/**
- * 페이지 임시 복호화 처리 (메모리에서만 복호화, DB는 암호화 상태 유지)
- */
 export async function handleDecryption(event) {
     event.preventDefault();
 
@@ -284,10 +240,8 @@ export async function handleDecryption(event) {
     try {
         const page = state.currentDecryptingPage;
 
-        // 이전 페이지의 실시간 동기화 중지 (중요!)
         stopPageSync();
 
-        // 페이지 데이터 가져오기 (encryptionSalt, encryptedContent)
         const res = await secureFetch(`/api/pages/${encodeURIComponent(page.id)}`);
         if (!res.ok) {
             throw new Error("페이지를 불러올 수 없습니다.");
@@ -299,21 +253,17 @@ export async function handleDecryption(event) {
             throw new Error("암호화 데이터가 없습니다.");
         }
 
-        // 비밀번호로 키 생성 (기존 salt 사용)
         await cryptoManager.initializeKey(password, pageData.encryptionSalt);
-        state.decryptionKeyIsInMemory = true; // 키가 메모리에 있음을 표시
+        state.decryptionKeyIsInMemory = true; 
 
-        // 콘텐츠 복호화 (메모리에서만)
 		const decryptedContentRaw = await cryptoManager.decrypt(pageData.encryptedContent);
 
-		// 보안: 암호화 콘텐츠는 서버에서 정화할 수 없으므로, 클라이언트에서 반드시 정화
 		const decryptedContent = sanitizeEditorHtml(decryptedContentRaw);
 
 		closeDecryptionModal();
 
-        // 에디터에 복호화된 콘텐츠를 표시하고 읽기 모드로 유지
         state.currentPageId = page.id;
-        state.currentPageIsEncrypted = true; // 저장 시 재암호화를 위해 상태 유지
+        state.currentPageIsEncrypted = true; 
 
         const titleInput = document.querySelector("#page-title-input");
         const modeToggleBtn = document.querySelector("#mode-toggle-btn");
@@ -321,16 +271,14 @@ export async function handleDecryption(event) {
 
         if (titleInput) {
             titleInput.value = pageData.title;
-            titleInput.setAttribute("readonly", ""); // 읽기 모드이므로 제목도 읽기 전용
+            titleInput.setAttribute("readonly", ""); 
         }
 
         if (state.editor) {
             state.editor.commands.setContent(decryptedContent, { emitUpdate: false });
-            // 복호화 직후에는 읽기 모드를 유지해야 하므로 편집 불가능 상태로 설정
             state.editor.setEditable(false);
         }
 
-        // UI는 읽기 모드로 유지
         state.isWriteMode = false;
         if (toolbar) {
             toolbar.classList.remove("visible");
@@ -343,21 +291,16 @@ export async function handleDecryption(event) {
             if (textEl) textEl.textContent = "쓰기모드";
         }
 
-        // 페이지 목록 갱신 (선택 표시)
         renderPageList();
 
-        // cryptoManager.clearKey(); // 저장 시 재암호화를 위해 키를 유지
     } catch (error) {
         console.error("임시 복호화 오류:", error);
         errorEl.textContent = "비밀번호가 올바르지 않거나 복호화에 실패했습니다.";
-        cryptoManager.clearKey(); // 오류 발생 시 키 삭제
-        state.decryptionKeyIsInMemory = false; // 오류 발생 시 플래그 초기화
+        cryptoManager.clearKey(); 
+        state.decryptionKeyIsInMemory = false; 
     }
 }
 
-/**
- * 암호화 모달 이벤트 바인딩
- */
 export function bindEncryptionModal() {
     const form = document.querySelector("#encryption-form");
     const closeBtn = document.querySelector("#close-encryption-modal-btn");
@@ -376,9 +319,6 @@ export function bindEncryptionModal() {
     }
 }
 
-/**
- * 복호화 모달 이벤트 바인딩
- */
 export function bindDecryptionModal() {
     const form = document.querySelector("#decryption-form");
     const closeBtn = document.querySelector("#close-decryption-modal-btn");

@@ -1,6 +1,3 @@
-/**
- * 업데이트 히스토리 매니저
- */
 import { get } from './api-utils.js';
 import { toggleModal, escapeHtml } from './ui-utils.js';
 import { loadPage } from './pages-manager.js';
@@ -82,7 +79,6 @@ function renderUpdatesHistory(history) {
         updatesList.appendChild(updateItem);
     });
 
-    // 페이지 링크 클릭 이벤트 바인딩
     updatesList.querySelectorAll('.update-page-link').forEach(link => {
         link.addEventListener('click', (e) => {
             const pageId = e.target.dataset.pageId;
@@ -112,7 +108,6 @@ function getActionMessage(item) {
     const action = item.action;
     const pageTitle = item.pageTitle || (item.details && item.details.title) || '제목 없음';
     
-    // 삭제된 페이지는 링크를 걸지 않음
     const isDeleted = action === 'DELETE_PAGE' || action === 'PERMANENT_DELETE_PAGE';
     const pageLink = (item.pageId && !isDeleted) 
         ? `<span class="update-page-link" data-page-id="${item.pageId}">${escapeHtml(pageTitle)}</span>` 

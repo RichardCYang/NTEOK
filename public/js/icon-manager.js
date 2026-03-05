@@ -1,11 +1,7 @@
-/**
- * 아이콘 선택기 관리 모듈
- */
 
 import { toggleModal, addIcon } from './ui-utils.js';
 import * as api from './api-utils.js';
 
-// 아이콘 목록 정의
 const THEME_ICONS = [
     'fa-solid fa-star', 'fa-solid fa-heart', 'fa-solid fa-flag',
     'fa-solid fa-circle-check', 'fa-solid fa-circle-info', 'fa-solid fa-circle-exclamation', 'fa-solid fa-circle-xmark',
@@ -32,30 +28,24 @@ const COLOR_ICONS = [
 
 let state = {
     currentPageId: null,
-    currentTab: 'theme', // 'theme' | 'color'
+    currentTab: 'theme', 
     appState: null
 };
 
-/**
- * 아이콘 선택기 초기화
- */
 export function initIconPicker(appState) {
     state.appState = appState;
     
     const modal = document.getElementById('icon-picker-modal');
     if (!modal) return;
 
-    // 닫기 버튼
     document.getElementById('close-icon-picker-btn')?.addEventListener('click', () => {
         toggleModal(modal, false);
     });
 
-    // 오버레이 클릭 시 닫기
     modal.querySelector('.modal-overlay')?.addEventListener('click', () => {
         toggleModal(modal, false);
     });
 
-    // 탭 전환
     document.getElementById('icon-tab-theme')?.addEventListener('click', () => {
         switchTab('theme');
     });
@@ -64,31 +54,23 @@ export function initIconPicker(appState) {
         switchTab('color');
     });
 
-    // 아이콘 제거 버튼
     document.getElementById('remove-icon-btn')?.addEventListener('click', () => {
         selectIcon(null);
     });
 }
 
-/**
- * 아이콘 선택 모달 표시
- */
 export function showIconPickerModal(pageId) {
     state.currentPageId = pageId;
     const modal = document.getElementById('icon-picker-modal');
     if (!modal) return;
 
-    switchTab('theme'); // 기본 탭으로 시작
+    switchTab('theme'); 
     toggleModal(modal, true);
 }
 
-/**
- * 탭 전환
- */
 function switchTab(tab) {
     state.currentTab = tab;
     
-    // UI 업데이트
     const themeBtn = document.getElementById('icon-tab-theme');
     const colorBtn = document.getElementById('icon-tab-color');
     
@@ -103,9 +85,6 @@ function switchTab(tab) {
     renderIconGrid();
 }
 
-/**
- * 아이콘 그리드 렌더링
- */
 function renderIconGrid() {
     const grid = document.getElementById('icon-picker-grid');
     if (!grid) return;
@@ -133,9 +112,6 @@ function renderIconGrid() {
     });
 }
 
-/**
- * 아이콘 선택 처리
- */
 async function selectIcon(iconValue) {
     if (!state.currentPageId) return;
 
@@ -144,7 +120,6 @@ async function selectIcon(iconValue) {
             icon: iconValue
         });
 
-        // 로컬 상태 업데이트
         if (state.appState && state.appState.pages) {
             const page = state.appState.pages.find(p => p.id === state.currentPageId);
             if (page) {
@@ -152,19 +127,16 @@ async function selectIcon(iconValue) {
             }
         }
 
-        // UI 갱신 (전역 renderPageList가 app.js에 있으므로 window를 통해 호출하거나 fetchPageList 호출)
         if (typeof window.renderPageList === 'function') {
             window.renderPageList();
         } else if (state.appState && typeof state.appState.renderPageList === 'function') {
             state.appState.renderPageList();
         } else {
-            // 차선책: 새로고침 또는 목록 다시 가져오기
             if (state.appState && typeof state.appState.fetchPageList === 'function') {
                 await state.appState.fetchPageList();
             }
         }
 
-        // 모달 닫기
         toggleModal('#icon-picker-modal', false);
     } catch (error) {
         console.error('Failed to set icon:', error);

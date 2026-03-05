@@ -5,18 +5,15 @@ const erl = require("express-rate-limit");
 const rateLimit = erl.rateLimit || erl;
 const { ipKeyGenerator } = erl;
 
-// IPv6 우회 방지(프로젝트 다른 파일과 동일한 정책)
 const RATE_LIMIT_IPV6_SUBNET = (() => {
     const n = Number(process.env.RATE_LIMIT_IPV6_SUBNET ?? 56);
     if (!Number.isFinite(n)) return 56;
     return Math.max(0, Math.min(128, n));
 })();
 
-// 실패 누적 잠금(메모리 기반: 운영은 DB 컬럼 권장)
-// key: accountKey(userId/username/tempSessionId)
-const totpLockMap = new Map(); // accountKey -> { failCount, lockedUntil }
+const totpLockMap = new Map(); 
 const TOTP_MAX_FAILS = Number(process.env.TOTP_MAX_FAILS || 8);
-const TOTP_LOCK_MS = Number(process.env.TOTP_LOCK_MS || (10 * 60 * 1000)); // 10분
+const TOTP_LOCK_MS = Number(process.env.TOTP_LOCK_MS || (10 * 60 * 1000)); 
 
 function assertNotLocked(accountKey) {
     const st = totpLockMap.get(accountKey);
@@ -32,7 +29,7 @@ function recordTotpFailure(accountKey) {
     cur.failCount += 1;
     if (cur.failCount >= TOTP_MAX_FAILS) {
         cur.lockedUntil = Date.now() + TOTP_LOCK_MS;
-        cur.failCount = 0; // 잠금 시 카운터 리셋
+        cur.failCount = 0; 
     }
     totpLockMap.set(accountKey, cur);
 }
@@ -51,11 +48,9 @@ function buildStable2FAAccountKeyFromTempSessionId(sessions, tempSessionId) {
     if (!sid) return "unknown";
 
     const s = sessions.get(sid);
-    // 유효한 2FA 임시 세션이면 pendingUserId 기반의 안정 키 사용
     if (s && s.type === "2fa" && s.pendingUserId)
         return `uid:${String(s.pendingUserId)}`;
 
-    // 유효하지 않은 tempSessionId 요청 남발 방어용 fallback (계정 보호 목적 아님)
     return `tmp:${sid}`;
 }
 
@@ -65,17 +60,6 @@ function buildStable2FAAccountKeyFromSession(tempSession) {
     return "unknown";
 }
 
-/**
- * TOTP (2FA) Routes
- *
- * 이 파일은 2단계 인증(TOTP) 관련 라우트를 처리합니다.
- * - TOTP 활성화 상태 확인
- * - TOTP 설정 시작 (QR 코드 생성)
- * - TOTP 설정 검증 및 활성화
- * - TOTP 비활성화
- * - 로그인 시 TOTP 검증
- * - 백업 코드로 로그인
- */
 
 module.exports = (dependencies) => {
     const {
@@ -117,17 +101,14 @@ module.exports = (dependencies) => {
         );
     }
 
-    // TOTP 검증 전용 레이트 리밋 (계정키 + IP 결합)
     const totpVerifyLimiter = rateLimit({
-        windowMs: 5 * 60 * 1000, // 5분
-        max: 12,                 // 계정키+IP당 5분에 12회
+        windowMs: 5 * 60 * 1000, 
+        max: 12,                 
         standardHeaders: true,
         legacyHeaders: false,
         message: { error: "TOTP 인증 시도가 너무 많습니다. 잠시 후 다시 시도해 주세요." },
         keyGenerator: (req) => {
             const body = req.body || {};
-            // 보안: tempSessionId 자체가 아니라 tempSession에 매핑된 pendingUserId 기반으로 key 구성
-            // (새 tempSession 발급으로 limit reset 우회 방지)
             const accountKey = buildStable2FAAccountKeyFromTempSessionId(
                 sessions,
                 body.tempSessionId
@@ -138,11 +119,6 @@ module.exports = (dependencies) => {
         }
     });
 
-    /**
-     * Login CSRF 방지(2FA 검증 엔드포인트용)
-     * - CSRF 토큰 예외가 필요한 인증 단계(/verify-*)는
-     *   Origin/Referer + Sec-Fetch-Site 기반 동일 출처만 허용
-     */
     function requireSameOriginForAuth(req, res, next) {
         try {
             const allowedOrigins = new Set(
@@ -177,12 +153,6 @@ module.exports = (dependencies) => {
         }
     }
 
-    /**
-     * 2FA 임시 세션 검증
-     * - type=2fa 확인
-     * - expiresAt 즉시 검증 (주기적 정리 지연 보완)
-     * - (선택) 발급 당시 IP/UA 바인딩 검사
-     */
     function getValid2FATempSession(req, tempSessionId) {
         const s = sessions.get(tempSessionId);
         if (!s || s.type !== "2fa" || !s.pendingUserId) return null;
@@ -193,7 +163,6 @@ module.exports = (dependencies) => {
             return null;
         }
 
-        // 발급 당시 환경 바인딩(느슨)
         const ipNow = getClientIp(req);
         if (s.ipKey && ipNow && s.ipKey !== ipNow) {
             sessions.delete(tempSessionId);
@@ -211,10 +180,6 @@ module.exports = (dependencies) => {
         return s;
     }
 
-    /**
-     * TOTP 활성화 상태 확인
-     * GET /api/totp/status
-     */
     router.get("/status", authMiddleware, async (req, res) => {
         try {
             const userId = req.user.id;
@@ -234,10 +199,6 @@ module.exports = (dependencies) => {
         }
     });
 
-    /**
-     * TOTP 설정 시작 - 시크릿 생성 및 QR 코드 URL 반환
-     * POST /api/totp/setup
-     */
     router.post("/setup", authMiddleware, csrfMiddleware, async (req, res) => {
         try {
             const userId = req.user.id;
@@ -267,10 +228,6 @@ module.exports = (dependencies) => {
         }
     });
 
-    /**
-     * TOTP 설정 검증 및 활성화
-     * POST /api/totp/verify-setup
-     */
     router.post("/verify-setup", authMiddleware, csrfMiddleware, totpLimiter, async (req, res) => {
         try {
             const userId = req.user.id;
@@ -331,10 +288,6 @@ module.exports = (dependencies) => {
         }
     });
 
-    /**
-     * TOTP 비활성화
-     * POST /api/totp/disable
-     */
     router.post("/disable", authMiddleware, csrfMiddleware, async (req, res) => {
         try {
             const userId = req.user.id;
@@ -375,10 +328,6 @@ module.exports = (dependencies) => {
         }
     });
 
-    /**
-     * 로그인 시 TOTP 검증
-     * POST /api/totp/verify-login
-     */
     router.post("/verify-login", totpVerifyLimiter, requireSameOriginForAuth, async (req, res) => {
         const { token, tempSessionId } = req.body;
 
@@ -395,7 +344,6 @@ module.exports = (dependencies) => {
 
             const accountKey = buildStable2FAAccountKeyFromSession(tempSession);
 
-            // 계정 단위 잠금 체크 (tempSessionId가 아니라 pendingUserId 기반)
             const lock = assertNotLocked(accountKey);
             if (!lock.ok) {
                 return res.status(429).json({
@@ -425,10 +373,8 @@ module.exports = (dependencies) => {
             });
 
             if (!verified) {
-                // 실패 누적
                 recordTotpFailure(accountKey);
 
-                // 로그인 로그 기록
                 await recordLoginAttempt(pool, {
                     userId: userId,
                     username: username,
@@ -442,10 +388,8 @@ module.exports = (dependencies) => {
                 return res.status(401).json({ error: "잘못된 인증 코드입니다." });
             }
 
-            // 성공 시 실패 카운터 제거
             clearTotpFailures(accountKey);
 
-            // 국가 화이트리스트 체크
             const countryCheck = checkCountryWhitelist(
                 {
                     country_whitelist_enabled: country_whitelist_enabled,
@@ -472,14 +416,12 @@ module.exports = (dependencies) => {
                 });
             }
 
-            // 세션 생성
             const sessionResult = createSession({
                 id: userId,
                 username: username,
                 blockDuplicateLogin: block_duplicate_login
             });
 
-            // 중복 로그인 차단 모드에서 거부된 경우
             if (!sessionResult.success) {
                 sessions.delete(tempSessionId);
                 return res.status(409).json({
@@ -490,7 +432,6 @@ module.exports = (dependencies) => {
 
             const sessionId = sessionResult.sessionId;
 
-            // 임시 세션 삭제
             sessions.delete(tempSessionId);
 
             res.cookie(SESSION_COOKIE_NAME, sessionId, {
@@ -512,7 +453,6 @@ module.exports = (dependencies) => {
 
             res.json({ success: true });
 
-            // 로그인 로그 기록 (비동기, 응답 후)
             recordLoginAttempt(pool, {
                 userId: userId,
                 username: username,
@@ -528,10 +468,6 @@ module.exports = (dependencies) => {
         }
     });
 
-    /**
-     * 백업 코드로 로그인
-     * POST /api/totp/verify-backup-code
-     */
     router.post("/verify-backup-code", totpVerifyLimiter, requireSameOriginForAuth, async (req, res) => {
         const { backupCode, tempSessionId } = req.body;
 
@@ -548,7 +484,6 @@ module.exports = (dependencies) => {
 
             const accountKey = buildStable2FAAccountKeyFromSession(tempSession);
 
-            // 계정 단위 잠금 체크 (tempSessionId가 아니라 pendingUserId 기반)
             const lock = assertNotLocked(accountKey);
             if (!lock.ok) {
                 return res.status(429).json({
@@ -559,7 +494,6 @@ module.exports = (dependencies) => {
 
             const userId = tempSession.pendingUserId;
 
-            // 사용자 정보(국가 화이트리스트 포함) 조회
             const [userRows] = await pool.execute(
                 "SELECT username, block_duplicate_login, country_whitelist_enabled, allowed_login_countries FROM users WHERE id = ?",
                 [userId]
@@ -572,7 +506,6 @@ module.exports = (dependencies) => {
 
             const { username, block_duplicate_login, country_whitelist_enabled, allowed_login_countries } = userRows[0];
 
-            // 국가 화이트리스트 체크 (※ 기존 취약점: 백업코드 경로에서 누락되어 우회 가능)
             const countryCheck = checkCountryWhitelist(
                 { country_whitelist_enabled, allowed_login_countries },
                 getClientIp(req)
@@ -610,7 +543,6 @@ module.exports = (dependencies) => {
             }
 
             if (!validCodeId) {
-                // 실패 누적
                 recordTotpFailure(accountKey);
 
                 await recordLoginAttempt(pool, {
@@ -628,9 +560,6 @@ module.exports = (dependencies) => {
             const now = new Date();
             const nowStr = formatDateForDb(now);
 
-            // 보안(TOCTOU Race Condition 방지):
-            // - 백업 코드는 1회용이어야 하므로 소비(mark used)는 원자적으로 수행해야 함
-            // - 동시 요청이 들어와도 정확히 1개만 성공해야 함
             const [consumeResult] = await pool.execute(
                 `UPDATE backup_codes
                  SET used = 1, used_at = ?
@@ -638,9 +567,7 @@ module.exports = (dependencies) => {
                 [nowStr, validCodeId, userId]
             );
 
-            // 이미 다른 요청이 먼저 소비했거나(경합), 재사용 시도인 경우
             if (!consumeResult || Number(consumeResult.affectedRows || 0) !== 1) {
-                // 실패 누적 처리 (재사용/경합도 인증 실패로 취급)
                 recordTotpFailure(accountKey);
 
                 await recordLoginAttempt(pool, {
@@ -653,21 +580,17 @@ module.exports = (dependencies) => {
                     userAgent: req.headers['user-agent'] || null
                 });
 
-                // 계정/코드 존재 여부 노출 최소화를 위해 기존과 동일한 일반 오류 사용
                 return res.status(401).json({ error: "잘못된 백업 코드입니다." });
             }
 
-            // 성공 시 실패 카운터 제거 (반드시 원자적 소비 성공 이후에)
             clearTotpFailures(accountKey);
 
-            // 세션 생성
             const sessionResult = createSession({
                 id: userId,
                 username: username,
                 blockDuplicateLogin: block_duplicate_login
             });
 
-            // 중복 로그인 차단 모드에서 거부된 경우
             if (!sessionResult.success) {
                 sessions.delete(tempSessionId);
                 return res.status(409).json({
@@ -678,7 +601,6 @@ module.exports = (dependencies) => {
 
             const sessionId = sessionResult.sessionId;
 
-            // 임시 세션 삭제
             sessions.delete(tempSessionId);
 
             res.cookie(SESSION_COOKIE_NAME, sessionId, {
@@ -700,7 +622,6 @@ module.exports = (dependencies) => {
 
             res.json({ success: true });
 
-            // 로그인 로그 기록(성공)
             recordLoginAttempt(pool, {
                 userId,
                 username,

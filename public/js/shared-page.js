@@ -3,12 +3,7 @@ import { escapeHtml, addIcon, secureFetch } from './ui-utils.js';
 import { loadAndRenderComments, initCommentsManager } from './comments-manager.js';
 import DOMPurify from 'dompurify';
 
-/**
- * 공개 페이지 스크립트
- */
 
-// 보안: 공유(공개) 페이지는 외부 사용자가 만든 HTML을 표시하므로, 방어적으로 한 번 더 정화
-// - 서버에서도 정화하지만(저장 시), 공개 뷰어에서 innerHTML을 사용하므로 클라이언트에서도 추가 정화(Defense in Depth)
 const _CONTROL_CHARS_RE = /[\u0000-\u001F\u007F]/;
 function _isSafeHttpUrlOrRelative(value) {
     if (typeof value !== 'string') return false;
@@ -28,7 +23,6 @@ const _purifier = (typeof DOMPurify === 'function' && !DOMPurify.sanitize)
     ? DOMPurify(window)
     : DOMPurify;
 
-// DOMPurify 훅: data-url / data-thumbnail에 javascript: 등 위험 스킴이 들어가는 것을 추가로 차단
 if (typeof _purifier?.addHook === 'function') {
     _purifier.addHook('uponSanitizeAttribute', (_node, hookEvent) => {
         const name = String(hookEvent?.attrName || '').toLowerCase();
@@ -40,7 +34,6 @@ if (typeof _purifier?.addHook === 'function') {
         }
     });
 
-    // Reverse Tabnabbing 방어: target="_blank"인 경우 rel="noopener noreferrer" 강제
     _purifier.addHook('afterSanitizeAttributes', (node) => {
         if (String(node.tagName).toLowerCase() === 'a') {
             const target = String(node.getAttribute('target') || '').trim().toLowerCase();
@@ -95,41 +88,30 @@ function buildSafeCoverUrl(ref) {
     return `/covers/${encodeURIComponent(scope)}/${encodeURIComponent(filename)}`;
 }
 
-/**
- * 체크박스(to-do list) 렌더링 함수
- * @param {HTMLElement} container - 렌더링 대상 컨테이너
- */
 function renderCheckboxes(container) {
-    // taskList 타입의 ul 요소를 모두 찾아서 처리
     container.querySelectorAll('ul[data-type="taskList"]').forEach((ul) => {
-        // 각 li 항목 처리
         ul.querySelectorAll('li').forEach((li) => {
             const isChecked = li.getAttribute('data-checked') === 'true';
 
-            // 이미 렌더링된 경우 건너뛰기
             if (li.querySelector('input[type="checkbox"]')) {
                 const checkbox = li.querySelector('input[type="checkbox"]');
                 checkbox.checked = isChecked;
                 return;
             }
 
-            // 기존 내용 백업
             const content = li.innerHTML;
 
-            // li 내용 재구성
             li.innerHTML = '';
 
-            // label과 checkbox 생성
             const label = document.createElement('label');
             const checkbox = document.createElement('input');
             checkbox.type = 'checkbox';
             checkbox.checked = isChecked;
-            checkbox.disabled = true; // 공개 페이지에서는 체크박스 비활성화
+            checkbox.disabled = true; 
 
             label.appendChild(checkbox);
             li.appendChild(label);
 
-            // 콘텐츠 div 생성
             const contentDiv = document.createElement('div');
             contentDiv.innerHTML = sanitizeSharedHtml(content);
             li.appendChild(contentDiv);
@@ -137,9 +119,6 @@ function renderCheckboxes(container) {
     });
 }
 
-/**
- * 북마크(Link Block) 렌더링 함수
- */
 function renderBookmarks(container) {
     container.querySelectorAll('div[data-type="bookmark"]').forEach((el) => {
         const url = el.getAttribute('data-url');
@@ -160,7 +139,6 @@ function renderBookmarks(container) {
         card.rel = 'noopener noreferrer';
         card.className = 'bookmark-compact-link';
 
-        // 파비콘/아이콘 영역
         if (favicon) {
             const icon = document.createElement('img');
             icon.src = favicon;
@@ -180,7 +158,6 @@ function renderBookmarks(container) {
             card.appendChild(icon);
         }
 
-        // 제목 영역
         const titleEl = document.createElement('span');
         titleEl.className = 'bookmark-compact-title';
         titleEl.textContent = title || url;
@@ -193,13 +170,11 @@ function renderBookmarks(container) {
 
 (async () => {
     try {
-        // URL에서 토큰 추출
         const token = window.location.pathname.split('/').pop();
         if (!token) {
             throw new Error('토큰이 없습니다.');
         }
 
-        // 페이지 데이터 로드
         const response = await secureFetch(`/api/shared/page/${encodeURIComponent(token)}`);
         if (!response.ok) {
             throw new Error('페이지를 찾을 수 없습니다.');
@@ -207,11 +182,9 @@ function renderBookmarks(container) {
 
         const data = await response.json();
 
-        // 제목 설정
         document.title = `${data.title || '제목 없음'} - NTEOK`;
         document.getElementById('page-title-text').textContent = data.title || '제목 없음';
 
-        // 아이콘 표시
         if (data.icon) {
             const iconEl = document.getElementById('page-icon');
             if (data.icon.includes('fa-')) {
@@ -222,7 +195,6 @@ function renderBookmarks(container) {
             iconEl.style.display = 'inline';
         }
 
-        // 커버 이미지 표시
         if (data.coverImage) {
             const coverEl = document.getElementById('page-cover');
             const coverUrl = buildSafeCoverUrl(data.coverImage);
@@ -235,20 +207,15 @@ function renderBookmarks(container) {
             }
         }
 
-        // 콘텐츠 표시
         const editorEl = document.getElementById('page-editor');
         editorEl.innerHTML = sanitizeSharedHtml(data.content || '<p></p>');
         editorEl.classList.remove('shared-page-loading');
 
-        // 체크박스 렌더링
         renderCheckboxes(editorEl);
 
-        // 북마크 렌더링
         renderBookmarks(editorEl);
 
-        // KaTeX 수식 렌더링
         if (window.katex) {
-            // 수식 블록 렌더링
             editorEl.querySelectorAll('[data-type="math-block"]').forEach((el) => {
                 try {
                     const latex = el.getAttribute('data-latex') || el.textContent;
@@ -264,7 +231,6 @@ function renderBookmarks(container) {
                 }
             });
 
-            // 인라인 수식 렌더링 (혹시 있을 경우)
             editorEl.querySelectorAll('[data-type="math-inline"]').forEach((el) => {
                 try {
                     const latex = el.getAttribute('data-latex') || el.textContent;
@@ -280,7 +246,6 @@ function renderBookmarks(container) {
                 }
             });
 
-            // 레거시: 이전 형식 지원 (.katex-block, .katex-inline)
             document.querySelectorAll('.katex-block, .katex-inline').forEach((el) => {
                 try {
                     const isDisplay = el.classList.contains('katex-block');
@@ -293,17 +258,12 @@ function renderBookmarks(container) {
             });
         }
 
-        // 댓글 시스템 초기화 (게스트 모드)
         initCommentsManager({ currentUser: null });
-        // 보안: 댓글 로드 -> 공개 댓글은 pageId가 아니라 발행 링크 token으로 접근
         loadAndRenderComments(data.id, 'page-comments-section', token);
     } catch (error) {
         console.error('페이지 로드 오류:', error);
         const editorEl = document.getElementById('page-editor');
 
-        // 보안: error.message는 (직/간접적으로) 사용자 제어 문자열이 섞일 수 있으므로
-        // innerHTML로 주입하면 DOM XSS/HTML Injection Sink가 됨
-        // 안전한 방식: DOM API + textContent 사용
         const msg = (error && typeof error.message === 'string' && error.message)
             ? error.message
             : '페이지를 불러올 수 없습니다.';

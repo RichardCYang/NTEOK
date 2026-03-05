@@ -1,15 +1,15 @@
 :root {
-    --primary-color: #faf8f3; /* App header, editor background */
-    --secondary-color: #f5f2ed; /* Body background */
-    --tertiary-color: #ebe8e1; /* Sidebar background */
-    --quaternary-color: #e6e3db; /* Sidebar header background */
-    --font-color: #2d2d2d; /* Main font color */
-    --sub-font-color: #5a6169; /* Sub font color */
-    --point-color: #2d5f5d; /* Primary button, active elements */
+    --primary-color: #faf8f3; 
+    --secondary-color: #f5f2ed; 
+    --tertiary-color: #ebe8e1; 
+    --quaternary-color: #e6e3db; 
+    --font-color: #2d2d2d; 
+    --sub-font-color: #5a6169; 
+    --point-color: #2d5f5d; 
     --point-hover-color: #1e4d4a;
     --danger-color: #9b5555;
     --danger-hover-color: #7d4444;
-    --border-color: #d4cfc4; /* General border color */
+    --border-color: #d4cfc4; 
     --modal-backdrop-color: rgba(0, 0, 0, 0.5);
     --box-shadow-color: rgba(0, 0, 0, 0.05);
     --editor-bg-color: #faf8f3;
@@ -30,7 +30,6 @@
     --scrollbar-thumb-color: #d4cfc4;
     --scrollbar-thumb-hover-color: #2d5f5d;
 
-    /* 콜아웃 블록 테마 변수 */
     --callout-info-bg: #f1f5f9;
     --callout-info-border: #e2e8f0;
     --callout-warning-bg: #fffbeb;

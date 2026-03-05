@@ -1,18 +1,10 @@
-/**
- * 로그인 로그 관리 모듈
- * 로그인 성공/실패 기록을 조회하고 표시하는 기능을 제공합니다.
- */
 
 import { hideParentModalForChild, restoreParentModalFromChild } from './modal-parent-manager.js';
 import { secureFetch } from './ui-utils.js';
 
-// 페이지네이션 설정
 const LOGS_PER_PAGE = 20;
 let currentPage = 1;
 
-/**
- * HTML 이스케이프 (XSS 방지)
- */
 function escapeHtml(text) {
     if (!text) return '';
     const div = document.createElement('div');
@@ -20,9 +12,6 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
-/**
- * 날짜/시간 포맷팅
- */
 function formatDateTime(dateStr) {
     if (!dateStr) return '-';
     const date = new Date(dateStr);
@@ -35,9 +24,6 @@ function formatDateTime(dateStr) {
     return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
 }
 
-/**
- * 위치 정보 포맷팅
- */
 function formatLocation(log) {
     const parts = [];
     if (log.city) parts.push(log.city);
@@ -48,15 +34,11 @@ function formatLocation(log) {
     return parts.join(', ');
 }
 
-/**
- * User Agent 파싱 (간단한 버전)
- */
 function parseUserAgent(userAgent) {
     if (!userAgent) return { device: '알 수 없음', icon: 'fa-question' };
 
     const ua = userAgent.toLowerCase();
 
-    // 모바일 디바이스 체크
     if (ua.includes('mobile') || ua.includes('android') || ua.includes('iphone') || ua.includes('ipad')) {
         if (ua.includes('android')) {
             return { device: 'Android 모바일', icon: 'fa-mobile-screen-button' };
@@ -68,7 +50,6 @@ function parseUserAgent(userAgent) {
         return { device: '모바일', icon: 'fa-mobile-screen-button' };
     }
 
-    // 데스크톱 OS 체크
     if (ua.includes('windows')) {
         return { device: 'Windows PC', icon: 'fa-desktop' };
     } else if (ua.includes('mac os')) {
@@ -80,9 +61,6 @@ function parseUserAgent(userAgent) {
     return { device: '데스크톱', icon: 'fa-desktop' };
 }
 
-/**
- * 로그인 로그 통계 로드
- */
 async function loadLoginLogsStats() {
     try {
         const response = await secureFetch('/api/auth/login-logs/stats', {
@@ -95,7 +73,6 @@ async function loadLoginLogsStats() {
 
         const stats = await response.json();
 
-        // 통계 카드 업데이트
         document.getElementById('login-logs-success-count').textContent = stats.successCount || 0;
         document.getElementById('login-logs-failure-count').textContent = stats.failureCount || 0;
         document.getElementById('login-logs-unique-ips').textContent = stats.uniqueIPs || 0;
@@ -111,9 +88,6 @@ async function loadLoginLogsStats() {
     }
 }
 
-/**
- * 로그인 로그 목록 로드
- */
 async function loadLoginLogs(page = 1) {
     try {
         const offset = (page - 1) * LOGS_PER_PAGE;
@@ -127,10 +101,8 @@ async function loadLoginLogs(page = 1) {
 
         const data = await response.json();
 
-        // 테이블 렌더링
         renderLoginLogsTable(data.logs);
 
-        // 페이지네이션 렌더링
         renderPagination(data.total, page);
 
         currentPage = page;
@@ -141,9 +113,6 @@ async function loadLoginLogs(page = 1) {
     }
 }
 
-/**
- * 로그인 로그 테이블 렌더링
- */
 function renderLoginLogsTable(logs) {
     const tbody = document.getElementById('login-logs-table-body');
 
@@ -176,9 +145,6 @@ function renderLoginLogsTable(logs) {
     }).join('');
 }
 
-/**
- * 페이지네이션 렌더링
- */
 function renderPagination(total, currentPage) {
     const totalPages = Math.ceil(total / LOGS_PER_PAGE);
     const container = document.getElementById('login-logs-pagination');
@@ -190,7 +156,6 @@ function renderPagination(total, currentPage) {
 
     let html = '';
 
-    // 이전 버튼
     if (currentPage > 1) {
         html += `<button class="pagination-btn" data-page="${currentPage - 1}">
             <i class="fa-solid fa-chevron-left"></i> 이전
@@ -201,7 +166,6 @@ function renderPagination(total, currentPage) {
         </button>`;
     }
 
-    // 페이지 번호 버튼
     const maxButtons = 5;
     let startPage = Math.max(1, currentPage - Math.floor(maxButtons / 2));
     let endPage = Math.min(totalPages, startPage + maxButtons - 1);
@@ -218,7 +182,6 @@ function renderPagination(total, currentPage) {
         }
     }
 
-    // 다음 버튼
     if (currentPage < totalPages) {
         html += `<button class="pagination-btn" data-page="${currentPage + 1}">
             다음 <i class="fa-solid fa-chevron-right"></i>
@@ -232,47 +195,32 @@ function renderPagination(total, currentPage) {
     container.innerHTML = html;
 }
 
-/**
- * 특정 페이지로 이동
- */
 function goToPage(page) {
     loadLoginLogs(page);
 }
 
-/**
- * 로그인 로그 모달 열기
- */
 function openLoginLogsModal() {
 	const modal = document.getElementById('login-logs-modal');
 	if (!modal) return;
 
-	// 보안 설정 모달(부모)을 잠깐 닫고, 로그인 로그 모달만 단독으로 띄움
 	hideParentModalForChild('#security-settings-modal', modal);
 
 	modal.classList.remove('hidden');
 
-	// 데이터 로드
     currentPage = 1;
     loadLoginLogsStats();
     loadLoginLogs(1);
 }
 
-/**
- * 로그인 로그 모달 닫기
- */
 function closeLoginLogsModal() {
 	const modal = document.getElementById('login-logs-modal');
 	if (!modal) return;
 
 	modal.classList.add('hidden');
 
-	// 부모 모달(보안 설정) 복구
 	restoreParentModalFromChild(modal);
 }
 
-/**
- * 이벤트 바인딩
- */
 export function bindLoginLogsModal() {
     const viewLogsBtn = document.getElementById('view-login-logs-btn');
     const closeBtn = document.getElementById('close-login-logs-btn');
@@ -286,7 +234,6 @@ export function bindLoginLogsModal() {
         closeBtn.addEventListener('click', closeLoginLogsModal);
     }
 
-    // 모달 오버레이(바깥 영역) 클릭 시 닫기
     if (modal) {
 	   	const overlay = modal.querySelector('.modal-overlay');
 	    if (overlay)
@@ -308,7 +255,6 @@ export function bindLoginLogsModal() {
 
 }
 
-// 전역 객체로 export (페이지네이션 버튼에서 접근하기 위해)
 window.loginLogsManager = {
     goToPage
 };

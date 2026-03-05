@@ -1,7 +1,3 @@
-/**
- * 저장소(Storage) 저장소
- * - DB storages 테이블 접근
- */
 
 const crypto = require('crypto');
 
@@ -42,9 +38,6 @@ module.exports = ({ pool }) => {
     }
 
     return {
-        /**
-         * 사용자가 소유하거나 공유받은 저장소 목록 조회
-         */
         async listStoragesForUser(userId) {
             const [rows] = await pool.execute(
                 `SELECT s.id, s.name, s.sort_order, s.created_at, s.updated_at, s.user_id as owner_id,
@@ -62,9 +55,6 @@ module.exports = ({ pool }) => {
             return rows || [];
         },
 
-        /**
-         * 단일 저장소 조회 (소유 또는 공유 권한 확인)
-         */
         async getStorageByIdForUser(userId, storageId) {
             const [rows] = await pool.execute(
                 `SELECT s.id, s.name, s.sort_order, s.created_at, s.updated_at, s.user_id as owner_id,
@@ -79,9 +69,6 @@ module.exports = ({ pool }) => {
             return rows?.[0] || null;
         },
 
-        /**
-         * 저장소 참여자 목록 조회
-         */
         async listCollaborators(storageId) {
             const [rows] = await pool.execute(
                 `SELECT ss.shared_with_user_id as id, u.username, ss.permission
@@ -94,9 +81,6 @@ module.exports = ({ pool }) => {
             return rows;
         },
 
-        /**
-         * 저장소 참여자 추가
-         */
         async addCollaborator({ storageId, ownerUserId, sharedWithUserId, permission, createdAt, updatedAt }) {
             await pool.execute(
                 `INSERT INTO storage_shares (storage_id, owner_user_id, shared_with_user_id, permission, created_at, updated_at)
@@ -106,9 +90,6 @@ module.exports = ({ pool }) => {
             );
         },
 
-        /**
-         * 저장소 참여자 삭제
-         */
         async removeCollaborator(storageId, userId) {
             await pool.execute(
                 `DELETE FROM storage_shares WHERE storage_id = ? AND shared_with_user_id = ?`,
@@ -116,9 +97,6 @@ module.exports = ({ pool }) => {
             );
         },
 
-        /**
-         * 사용자의 저장소 권한 조회
-         */
         async getPermission(userId, storageId) {
             const storage = await this.getStorageByIdForUser(userId, storageId);
             if (!storage) return null;
@@ -126,9 +104,6 @@ module.exports = ({ pool }) => {
             return storage.permission || null;
         },
 
-        /**
-         * 저장소 생성
-         */
         async createStorage({ userId, id, name, sortOrder, createdAt, updatedAt, isEncrypted, encryptionSalt, encryptionCheck }) {
             await pool.execute(
                 `INSERT INTO storages (id, user_id, name, sort_order, created_at, updated_at, is_encrypted, encryption_salt, encryption_check)
@@ -138,9 +113,6 @@ module.exports = ({ pool }) => {
             return { id, userId, name, sortOrder, createdAt, updatedAt, isEncrypted, encryptionSalt, encryptionCheck };
         },
 
-        /**
-         * 저장소 업데이트
-         */
         async updateStorage(userId, storageId, { name, updatedAt }) {
             await pool.execute(
                 `UPDATE storages SET name = ?, updated_at = ? WHERE id = ? AND user_id = ?`,
@@ -148,9 +120,6 @@ module.exports = ({ pool }) => {
             );
         },
 
-        /**
-         * 저장소 삭제
-         */
         async deleteStorage(userId, storageId) {
             await pool.execute(
                 `DELETE FROM storages WHERE id = ? AND user_id = ?`,
@@ -158,17 +127,6 @@ module.exports = ({ pool }) => {
             );
         },
 
-        /**
-         * 데이터 유실 방지: 협업 저장소 삭제 안전화
-         * 
-         * 저장소(storages) 삭제 시 pages.storage_id(FK ON DELETE CASCADE) 설정으로 인해 해당 저장소의 모든 페이지가 함께 삭제될 수 있음
-         * 특히 협업 저장소에서는 저장소 소유자가 아닌 다른 참여자가 생성한 페이지도 존재할 수 있는데, 소유자가 저장소를 삭제할 때 참여자의 데이터까지 영구 삭제되는 것을 방지해야 함
-         * 
-         * 이를 해결하기 위해 저장소를 삭제하기 전, 협업자 소유의 페이지들을 각자의 개인 저장소로 이관함
-         * 또한 부모 페이지 삭제 시 연쇄 삭제되지 않도록 부모 관계(parent_id)를 해제하여 데이터를 보존함
-         * 
-         * @returns {Object} transferred - 사용자별 이관 정보 (개인 저장소 ID 및 이동된 페이지 목록)
-         */
         async safeDeleteStoragePreservingCollaborators(ownerUserId, storageId) {
             const ownerId = Number(ownerUserId);
             const sid = String(storageId || '').trim();
@@ -178,7 +136,6 @@ module.exports = ({ pool }) => {
             try {
                 await conn.beginTransaction();
 
-                // 저장소 소유 확인 + 암호화 메타 확보
                 const [stRows] = await conn.execute(
                     `SELECT id, user_id, name, is_encrypted, encryption_salt, encryption_check
                        FROM storages
@@ -192,7 +149,6 @@ module.exports = ({ pool }) => {
                 }
                 const storage = stRows[0];
 
-                // 해당 저장소의 모든 페이지(휴지통 포함) 조회
                 const [pageRows] = await conn.execute(
                     `SELECT id, user_id, parent_id
                        FROM pages
@@ -200,8 +156,7 @@ module.exports = ({ pool }) => {
                     [sid]
                 );
 
-                // 협업자별 페이지 그룹화
-                const byUser = new Map(); // userId -> { pageIds: Set, rows: [] }
+                const byUser = new Map(); 
                 for (const r of (pageRows || [])) {
                     const uid = Number(r.user_id);
                     if (!Number.isFinite(uid)) continue;
@@ -213,14 +168,12 @@ module.exports = ({ pool }) => {
 
                 const transferred = {};
 
-                // 협업자 페이지가 없다면 안전하게 기존 동작(삭제) 수행
                 if (byUser.size === 0) {
                     await conn.execute(`DELETE FROM storages WHERE id = ? AND user_id = ?`, [sid, ownerId]);
                     await conn.commit();
                     return { ok: true, transferred };
                 }
 
-                // 협업자별 이관 저장소 생성 + 페이지 이동
                 for (const [uid, info] of byUser.entries()) {
                     const newStorageId = makeStorageId();
                     const sortOrder = await getNextSortOrderTx(conn, uid);
@@ -240,7 +193,6 @@ module.exports = ({ pool }) => {
                         ]
                     );
 
-                    // 경계 detach: 부모가 본인 소유 페이지 집합에 없으면 parent_id=NULL
                     const boundaryIds = [];
                     for (const row of info.rows) {
                         if (!row.parent_id) continue;
@@ -254,7 +206,6 @@ module.exports = ({ pool }) => {
                         );
                     }
 
-                    // 페이지 이관: storage_id를 새 저장소로 변경
                     const pageIdsArr = Array.from(info.pageIds);
                     await updatePagesInBatches(
                         conn,
@@ -266,7 +217,6 @@ module.exports = ({ pool }) => {
                     transferred[String(uid)] = { newStorageId, movedPages: pageIdsArr.length };
                 }
 
-                // 원래 저장소 삭제(소유자 페이지는 FK CASCADE로 정리)
                 await conn.execute(`DELETE FROM storages WHERE id = ? AND user_id = ?`, [sid, ownerId]);
 
                 await conn.commit();
@@ -279,10 +229,6 @@ module.exports = ({ pool }) => {
             }
         },
 
-        /**
-         * 계정 삭제(또는 대량 삭제) 전에, 사용자가 소유한 모든 저장소에서
-         * 협업자 소유 페이지가 유실되지 않도록 이관 후 저장소 삭제
-         */
         async safeDeleteAllOwnedStoragesPreservingCollaborators(ownerUserId) {
             const ownerId = Number(ownerUserId);
             if (!Number.isFinite(ownerId)) throw new Error('Invalid ownerUserId');
@@ -301,9 +247,6 @@ module.exports = ({ pool }) => {
             return results;
         },
 
-        /**
-         * 다음 정렬 순서 조회
-         */
         async getNextSortOrder(userId) {
             const [rows] = await pool.execute(
                 `SELECT COALESCE(MAX(sort_order), -1) AS maxOrder FROM storages WHERE user_id = ?`,

@@ -1,17 +1,10 @@
-/**
- * Tiptap File Block Node Extension
- * Notion 스타일의 파일 첨부 블록 (Placeholder & Upload)
- */
 
 import { secureFetch } from './ui-utils.js';
 import { sanitizeHttpHref } from './url-utils.js';
 
 const Node = Tiptap.Core.Node;
 
-// 복사/붙여넣기 등으로 기존 자산 URL이 다른 페이지에 들어오는 경우,
-// 저장 전에도 서버 레지스트리(page_file_refs)에 선등록하여
-// 다른 페이지에서 삭제 시 오판 삭제로 인한 데이터 유실을 방지
-const _registeredAssetRefs = new Set(); // key: `${pageId}|${assetUrl}`
+const _registeredAssetRefs = new Set(); 
 async function registerAssetRefOnce(pageId, assetUrl) {
     if (!pageId || !assetUrl) return;
     const key = `${pageId}|${assetUrl}`;
@@ -24,7 +17,6 @@ async function registerAssetRefOnce(pageId, assetUrl) {
             body: JSON.stringify({ assetUrl })
         });
     } catch (_) {
-        // best-effort
     }
 }
 
@@ -91,7 +83,6 @@ export const FileBlock = Node.create({
             wrapper.className = 'file-block-wrapper';
             wrapper.contentEditable = 'false';
 
-            // 파일 업로드 처리 함수
             const handleUpload = async (file) => {
                 if (!file) return;
 
@@ -152,10 +143,7 @@ export const FileBlock = Node.create({
                 input.click();
             };
 
-            // 드래그 앤 드롭 이벤트 설정 (데스크탑 환경 권장)
             const setupDragAndDrop = (target) => {
-                // 터치 환경이 아닌 경우(데스크탑 등)에만 활성화하거나,
-                // 일반적인 드래그 앤 드롭은 모바일에서 무시되므로 기본 적용 가능
 
                 target.addEventListener('dragover', (e) => {
                     if (!editor.isEditable) return;
@@ -186,7 +174,6 @@ export const FileBlock = Node.create({
             const render = () => {
                 wrapper.innerHTML = '';
 
-                // 무채색 클립 아이콘 SVG
                 const clipIconSvg = `
                     <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                         <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path>
@@ -194,7 +181,6 @@ export const FileBlock = Node.create({
                 `;
 
                 if (!node.attrs.src) {
-                    // 미지정 상태 (업로드 폼 스타일)
                     const placeholder = document.createElement('div');
                     placeholder.className = 'file-placeholder';
 
@@ -217,7 +203,7 @@ export const FileBlock = Node.create({
 
                     const uploadBtn = document.createElement('button');
                     uploadBtn.className = 'file-upload-btn';
-                    uploadBtn.innerHTML = '&#43;'; // Plus sign (+)
+                    uploadBtn.innerHTML = '&#43;'; 
                     uploadBtn.title = '파일 업로드';
 
                     uploadBtn.onclick = (e) => {
@@ -230,7 +216,6 @@ export const FileBlock = Node.create({
                          if (editor.isEditable) triggerFileUpload();
                     };
 
-                    // 데스크탑 환경을 위한 드래그 앤 드롭 설정
                     setupDragAndDrop(placeholder);
 
                     rightPart.appendChild(uploadBtn);
@@ -240,7 +225,6 @@ export const FileBlock = Node.create({
                     wrapper.appendChild(placeholder);
 
                 } else {
-                    // 완료 상태 (파일 카드 스타일)
                     const container = document.createElement('div');
                     container.className = 'file-block';
 
@@ -289,14 +273,12 @@ export const FileBlock = Node.create({
                                 const pageId = window.appState?.currentPageId;
                                 if (!pageId) throw new Error('페이지 ID 없음');
 
-                                // 서버에 파일 정리 요청
                                 await secureFetch(`/api/pages/${pageId}/file-cleanup`, {
                                     method: 'DELETE',
                                     headers: { 'Content-Type': 'application/json' },
                                     body: JSON.stringify({ fileUrl })
                                 });
 
-                                // 에디터 노드 속성 초기화
                                 if (typeof getPos === 'function') {
                                     const pos = getPos();
                                     const tr = editor.view.state.tr;
@@ -317,7 +299,6 @@ export const FileBlock = Node.create({
                     rightPart.appendChild(deleteBtn);
                     container.appendChild(rightPart);
 
-                    // 선등록(best-effort): 렌더링 시점에 현재 페이지의 참조를 기록
                     try {
                         const pageId = window.appState?.currentPageId;
                         const safe = sanitizeHttpHref(node.attrs.src, { allowRelative: true, addHttpsIfMissing: false });
@@ -331,15 +312,12 @@ export const FileBlock = Node.create({
                         e.preventDefault();
 
 						if (node.attrs.src) {
-							// allowRelative=true로 내부 경로 허용, addHttpsIfMissing=false로 스킴 자동추가 방지
 							const safe = sanitizeHttpHref(node.attrs.src, {
 							    allowRelative: true,
 							    addHttpsIfMissing: false
 							});
 
-							// file-block는 내부 첨부만 허용
 							if (safe && safe.startsWith('/paperclip/')) {
-								// 다운로드 파일명은 서버에서 ?name= 으로 받아 Content-Disposition에 안전하게 반영
 								const name = (node.attrs.filename || '').trim();
 								const sep = safe.includes('?') ? '&' : '?';
 								const href = name ? `${safe}${sep}name=${encodeURIComponent(name)}` : safe;
@@ -350,7 +328,6 @@ export const FileBlock = Node.create({
 						}
                     };
 
-                    // 이미 파일이 있는 경우에도 드래그 앤 드롭으로 교체 가능하게 설정
                     setupDragAndDrop(container);
 
                     wrapper.appendChild(container);
@@ -392,9 +369,6 @@ export const FileBlock = Node.create({
     }
 });
 
-/**
- * 파일 크기 포맷팅 유틸리티
- */
 function formatBytes(bytes, decimals = 1) {
     if (bytes === 0) return '0 B';
 

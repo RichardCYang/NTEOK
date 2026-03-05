@@ -17,7 +17,6 @@ async function handleRegister(event) {
 
     errorEl.textContent = "";
 
-    // 간단한 클라이언트 측 검증
     if (!username || !password || !passwordConfirm) {
         errorEl.textContent = "아이디와 비밀번호를 모두 입력해 주세요.";
         return;
@@ -33,14 +32,11 @@ async function handleRegister(event) {
         return;
     }
 
-    // 보안 개선: 비밀번호 강도 검증 강화
     if (password.length < 10) {
         errorEl.textContent = "비밀번호는 10자 이상이어야 합니다.";
         return;
     }
 
-    // bcrypt 입력은 72바이트까지만 유효할 수 있으므로(UTF-8 기준) 회원가입 단계에서 제한
-    // (한글/이모지 포함 시 바이트 수가 빠르게 증가할 수 있음)
     const BCRYPT_MAX_PASSWORD_BYTES = 72;
     const passwordBytes = new TextEncoder().encode(password).length;
     if (passwordBytes > BCRYPT_MAX_PASSWORD_BYTES) {
@@ -62,7 +58,6 @@ async function handleRegister(event) {
     }
 
     try {
-        // 보안: CSRF 토큰 추가 (일관성 유지)
         const options = window.csrfUtils.addCsrfHeader({
             method: "POST",
             headers: {
@@ -81,13 +76,11 @@ async function handleRegister(event) {
                     message = data.error;
                 }
             } catch (_) {
-                // ignore
             }
             errorEl.textContent = message;
             return;
         }
 
-        // 회원가입 성공 → 서버에서 세션도 만들어주므로 바로 메인으로 이동
         window.location.href = "/";
     } catch (error) {
         console.error("회원가입 요청 오류:", error);

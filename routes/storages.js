@@ -17,20 +17,17 @@ module.exports = (dependencies) => {
         getClientIpFromRequest
     } = dependencies;
 
-    // 회원가입 username 정책과 유사하게 검색어도 제한 (검색 오용/열거 완화)
     const USER_SEARCH_CONTROL_CHARS_RE = /[\u0000-\u001F\u007F]/;
     const USER_SEARCH_SAFE_RE = /^[가-힣A-Za-z0-9._-]+$/u;
 
     function normalizeUserSearchQuery(input) {
         if (typeof input !== 'string') return null;
 
-        // 유니코드 정규화로 혼동 문자/우회 가능성 축소
         const normalized = (typeof input.normalize === 'function'
             ? input.normalize('NFKC')
             : input
         ).trim();
 
-        // 기존 2자 -> 3자로 상향 (열거 난이도 증가)
         if (normalized.length < 3 || normalized.length > 64) return null;
         if (USER_SEARCH_CONTROL_CHARS_RE.test(normalized)) return null;
         if (!USER_SEARCH_SAFE_RE.test(normalized)) return null;
@@ -38,11 +35,9 @@ module.exports = (dependencies) => {
         return normalized;
     }
 
-    // 참여자 검색 API 전용 rate limit
-    // - 인증 사용자라도 자동화로 전체 계정 수집/대량 스캔 방지
     const collaboratorUserSearchLimiter = rateLimit({
-        windowMs: 60 * 1000, // 1분
-        max: 30,             // 사용자+IP 기준 분당 30회
+        windowMs: 60 * 1000, 
+        max: 30,             
         standardHeaders: true,
         legacyHeaders: false,
         keyGenerator: (req) => {
@@ -60,8 +55,6 @@ module.exports = (dependencies) => {
         }
     });
 
-    // 저장형 XSS/HTML 엔티티 우회 방어:
-    // storage 이름은 여러 화면에서 표시되므로, < > & 및 제어문자를 금지하고 길이를 제한
     const CONTROL_CHARS_RE = /[\u0000-\u001F\u007F]/;
     const HTML_META_CHARS_RE = /[<>&]/;
     function validateStorageName(name) {
@@ -77,9 +70,6 @@ module.exports = (dependencies) => {
         return { ok: true, value: trimmed };
     }
 
-    /**
-     * 저장소 목록 조회
-     */
     router.get('/', authMiddleware, async (req, res) => {
         try {
             const storages = await storagesRepo.listStoragesForUser(req.user.id);
@@ -94,15 +84,11 @@ module.exports = (dependencies) => {
         }
     });
 
-    /**
-     * 특정 저장소의 데이터(페이지) 조회
-     */
     router.get('/:id/data', authMiddleware, async (req, res) => {
         try {
             const userId = req.user.id;
             const storageId = req.params.id;
 
-            // 저장소 소유 확인
             const storage = await storagesRepo.getStorageByIdForUser(userId, storageId);
             if (!storage) {
                 return res.status(404).json({ error: '저장소를 찾을 수 없거나 권한이 없습니다.' });
@@ -133,9 +119,6 @@ module.exports = (dependencies) => {
         }
     });
 
-    /**
-     * 저장소 생성
-     */
     router.post('/', authMiddleware, async (req, res) => {
         try {
             const { name, isEncrypted, encryptionSalt, encryptionCheck } = req.body;
@@ -148,12 +131,10 @@ module.exports = (dependencies) => {
             }
             const storageName = check.value;
 
-            // 암호화 저장소 생성 시 필수 필드 검증
             if (isEncrypted) {
                 if (!encryptionSalt || !encryptionCheck) {
                     return res.status(400).json({ error: '암호화 저장소 생성에 필요한 정보가 부족합니다.' });
                 }
-                // 간단한 형식 검증 (Base64 등)
                 if (typeof encryptionSalt !== 'string' || typeof encryptionCheck !== 'string') {
                      return res.status(400).json({ error: '암호화 정보 형식이 올바르지 않습니다.' });
                 }
@@ -180,7 +161,7 @@ module.exports = (dependencies) => {
             res.json({
                 ...storage,
                 is_encrypted: isEncrypted ? 1 : 0,
-                isEncrypted: isEncrypted ? 1 : 0, // 하위 호환성 위해 둘 다 제공
+                isEncrypted: isEncrypted ? 1 : 0, 
                 encryption_salt: isEncrypted ? encryptionSalt : null,
                 encryption_check: isEncrypted ? encryptionCheck : null,
                 is_owner: 1,
@@ -194,9 +175,6 @@ module.exports = (dependencies) => {
         }
     });
 
-    /**
-     * 저장소 이름 수정
-     */
     router.put('/:id', authMiddleware, async (req, res) => {
         try {
             const { name } = req.body;
@@ -226,36 +204,25 @@ module.exports = (dependencies) => {
         }
     });
 
-    /**
-     * 저장소 삭제
-     */
     router.delete('/:id', authMiddleware, async (req, res) => {
         try {
             const userId = req.user.id;
             const storageId = req.params.id;
 
-            // 최소 하나는 남겨둬야 함 (선택사항이지만 안전을 위해)
             const storages = await storagesRepo.listStoragesForUser(userId);
-            // 소유한 저장소만 카운트
             const ownedStorages = storages.filter(s => s.is_owner);
 
-            // 삭제하려는 저장소가 소유한 것이고, 소유한 게 하나뿐이라면 삭제 방지
             const storageToDelete = storages.find(s => s.id === storageId);
             if (storageToDelete && storageToDelete.is_owner && ownedStorages.length <= 1) {
                 return res.status(400).json({ error: '최소 하나의 소유한 저장소는 유지해야 합니다.' });
             }
 
-            // 만약 공유받은 저장소라면 참여자 목록에서 삭제
             if (storageToDelete && !storageToDelete.is_owner) {
                 await storagesRepo.removeCollaborator(storageId, userId);
                 res.json({ success: true });
             } else {
-                // 데이터 유실 방지(중요): 협업 저장소 삭제 시
-                // 다른 사용자 소유 페이지가 FK CASCADE로 함께 삭제되는 것을 방지하기 위해
-                // 협업자 페이지를 협업자 개인 저장소로 이관 후 삭제
                 const result = await storagesRepo.safeDeleteStoragePreservingCollaborators(userId, storageId);
                 if (!result?.ok) {
-                    // 권한/존재 여부는 기존 UX와 동일하게 처리
                     return res.status(404).json({ error: '저장소를 찾을 수 없거나 권한이 없습니다.' });
                 }
                 res.json({ success: true, transferred: result.transferred });
@@ -266,9 +233,6 @@ module.exports = (dependencies) => {
         }
     });
 
-    /**
-     * 참여자 추가를 위한 사용자 검색
-     */
     router.get('/users/search', authMiddleware, collaboratorUserSearchLimiter, async (req, res) => {
         try {
             const normalizedQuery = normalizeUserSearchQuery(req.query.q);
@@ -287,9 +251,6 @@ module.exports = (dependencies) => {
         }
     });
 
-    /**
-     * 저장소 참여자 목록 조회
-     */
     router.get('/:id/collaborators', authMiddleware, async (req, res) => {
         try {
             const userId = req.user.id;
@@ -300,7 +261,6 @@ module.exports = (dependencies) => {
                 return res.status(404).json({ error: '저장소를 찾을 수 없습니다.' });
             }
 
-            // 보안: 저장소 소유자 또는 관리 권한(ADMIN)이 있는 사용자만 참여자 목록을 조회할 수 있도록 함
             if (!storage.is_owner && storage.permission !== 'ADMIN') {
                 return res.status(403).json({ error: '참여자 목록을 조회할 권한이 없습니다.' });
             }
@@ -313,9 +273,6 @@ module.exports = (dependencies) => {
         }
     });
 
-    /**
-     * 저장소 참여자 추가
-     */
     router.post('/:id/collaborators', authMiddleware, async (req, res) => {
         try {
             const userId = req.user.id;
@@ -325,7 +282,6 @@ module.exports = (dependencies) => {
             if (!targetUserId)
                 return res.status(400).json({ error: '참여할 사용자를 지정해주세요.' });
 
-            // 권한값 방어적 검증/정규화 (권한 오타/임의 문자열 저장 방지)
             const normalizedPermission = String(permission || 'READ').toUpperCase();
             if (!['READ', 'EDIT', 'ADMIN'].includes(normalizedPermission))
                 return res.status(400).json({ error: '유효하지 않은 권한입니다. (READ, EDIT 또는 ADMIN)' });
@@ -346,10 +302,6 @@ module.exports = (dependencies) => {
                 updatedAt: nowStr
             });
 
-            // 보안: addCollaborator는 ON DUPLICATE KEY UPDATE를 사용하므로
-            // 참여자 추가뿐 아니라 권한 변경(예: EDIT -> READ)도 담당
-            // 기존 WebSocket 연결이 살아 있으면 권한 캐시/지연 반영으로 쓰기 지속이 가능하므로
-            // 즉시 연결을 끊어 재연결 + 재권한 검사 강제
             try {
                 if (typeof wsKickUserFromStorage === 'function')
                     wsKickUserFromStorage(storageId, targetUserId, 1008, 'Storage permission changed');
@@ -362,9 +314,6 @@ module.exports = (dependencies) => {
         }
     });
 
-    /**
-     * 저장소 참여자 삭제
-     */
     router.delete('/:id/collaborators/:targetUserId', authMiddleware, async (req, res) => {
         try {
             const userId = req.user.id;
@@ -378,7 +327,6 @@ module.exports = (dependencies) => {
 
             await storagesRepo.removeCollaborator(storageId, targetUserId);
 
-            // 권한 회수 즉시 반영: 기존 WebSocket 구독(열려 있는 실시간 연결) 강제 해제
             try {
                 if (typeof wsKickUserFromStorage === 'function') {
                     wsKickUserFromStorage(storageId, targetUserId, 1008, 'Storage access revoked');

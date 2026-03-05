@@ -1,6 +1,3 @@
-/**
- * 페이지 관리 모듈 (컬렉션 제거 버전)
- */
 
 import { escapeHtml, showErrorInEditor, syncPageUpdatedAtPadding, closeSidebar } from './ui-utils.js';
 import * as api from './api-utils.js';
@@ -12,7 +9,6 @@ import { loadAndRenderSubpages, onEditModeChange } from './subpages-manager.js';
 import { sanitizeEditorHtml } from './sanitize.js';
 import { EXAMPLE_CONTENT } from './editor.js';
 
-// 전역 상태
 let state = {
     editor: null,
     pages: [],
@@ -24,17 +20,11 @@ let state = {
     currentPageIsEncrypted: false
 };
 
-/**
- * 상태 초기화
- */
 export function initPagesManager(appState) {
     state = appState;
     if (state.currentStorageIsEncrypted === undefined) state.currentStorageIsEncrypted = false;
 }
 
-/**
- * 페이지 목록 가져오기
- */
 export async function fetchPageList() {
     if (!state.currentStorageId) {
         console.warn("페이지 목록 요청 중단: 선택된 저장소가 없습니다.");
@@ -72,9 +62,6 @@ export function applyPagesData(data, isEncryptedStorage = false) {
     state.currentStorageIsEncrypted = !!isEncryptedStorage;
 }
 
-/**
- * 트리 구조 생성
- */
 export function buildPageTree(flatPages) {
     const map = new Map();
     flatPages.forEach((p) => {
@@ -110,9 +97,6 @@ export function buildPageTree(flatPages) {
     return roots;
 }
 
-/**
- * 페이지 목록 렌더링
- */
 export function renderPageList() {
     const listEl = document.querySelector("#page-list");
     if (!listEl) return;
@@ -227,12 +211,8 @@ export function renderPageList() {
     tree.forEach(node => renderNode(node, 0));
     listEl.appendChild(fragment);
 
-    // 드래그 앤 드롭 (추후 저장소 단위로 재구현 필요 시 확장)
 }
 
-/**
- * 현재 페이지 상태 초기화 (저장소 전환 시 등)
- */
 export async function clearCurrentPage() {
     state.currentPageId = null;
     state.currentPageIsEncrypted = false;
@@ -259,14 +239,12 @@ export async function clearCurrentPage() {
         modeToggleBtn.style.display = 'none';
     }
 
-    // 저장소 권한에 따라 새 페이지 버튼 표시 여부 결정
     const canEdit = state.currentStoragePermission === 'EDIT' || state.currentStoragePermission === 'ADMIN';
     const newPageBtn = document.querySelector("#new-page-btn");
     if (newPageBtn) {
         newPageBtn.style.display = canEdit ? 'flex' : 'none';
     }
 
-    // 서브페이지 및 댓글 영역 초기화
     const subpagesContainer = document.querySelector("#subpages-container");
     if (subpagesContainer) subpagesContainer.innerHTML = "";
 
@@ -279,9 +257,6 @@ export async function clearCurrentPage() {
     updatePublishButton();
 }
 
-/**
- * 페이지 로드
- */
 export async function loadPage(id) {
     if (!id) {
         await clearCurrentPage();
@@ -290,7 +265,6 @@ export async function loadPage(id) {
 
     if (state.isWriteMode && state.currentPageId) {
         await saveCurrentPage();
-        // 읽기 모드로 전환 로직 (생략 - app.js 등에서 통합 관리 권장)
     }
 
     await flushE2eeState();
@@ -301,7 +275,6 @@ export async function loadPage(id) {
         state.currentPageId = page.id;
         state.currentPageUpdatedAt = page.updatedAt || null;
 
-        // 부모 확장
         let curr = page.parentId;
         while (curr) {
             state.expandedPages.add(curr);
@@ -318,8 +291,6 @@ export async function loadPage(id) {
             const storageKey = window.cryptoManager.getStorageKey();
             if (storageKey) {
                 try {
-                    // encrypted_content는 카멜케이스 변환에 따라 encryptedContent로 올 수 있음.
-                    // API 응답 확인 필요하지만 보통 JSON 응답은 encryptedContent
                     const encrypted = page.encryptedContent || page.encrypted_content;
                     if (encrypted) {
                         content = await window.cryptoManager.decryptWithKey(encrypted, storageKey);
@@ -339,7 +310,6 @@ export async function loadPage(id) {
         const titleInput = document.querySelector("#page-title-input");
         if (titleInput) titleInput.value = title;
 
-        // 권한에 따른 UI 처리
         const canEdit = state.currentStoragePermission === 'EDIT' || state.currentStoragePermission === 'ADMIN';
         const modeToggleBtn = document.querySelector("#mode-toggle-btn");
         const newPageBtn = document.querySelector("#new-page-btn");
@@ -360,13 +330,10 @@ export async function loadPage(id) {
         else hideCover();
 
         if (!page.isEncrypted) {
-            // 일반 페이지: 표준 Yjs 동기화
             startPageSync(page.id, false, false);
         } else if (state.currentStorageIsEncrypted && window.cryptoManager.getStorageKey()) {
-            // 저장소 E2EE 암호화 페이지: 클라이언트 사이드 암호화 실시간 협업
             startPageSync(page.id, true, true);
         } else {
-            // 페이지 개별 암호화(비밀번호 설정): 서버 실시간 동기화 미지원
             stopPageSync();
         }
 
@@ -381,18 +348,12 @@ export async function loadPage(id) {
     }
 }
 
-/**
- * 현재 페이지 저장
- */
 export async function saveCurrentPage() {
     if (!state.currentPageId || !state.editor) return true;
 
     const titleInput = document.querySelector("#page-title-input");
     const title = titleInput ? titleInput.value || "제목 없음" : "제목 없음";
 
-    // 비암호화 페이지: REST(content) 저장 대신 WS force-save 사용
-    // - REST 저장은 서버에서 Y.Doc를 리셋하므로, 살아있는 WS 세션의 증분 업데이트와 충돌해
-    //   저장 직후 롤백 또는 문서 일부 소실 등 데이터 유실이 발생할 수 있음
     if (!state.currentStorageIsEncrypted && !state.currentPageIsEncrypted) {
         try {
             flushPendingUpdates();
@@ -407,7 +368,6 @@ export async function saveCurrentPage() {
                 }
                 return true;
             }
-            // ACK 없이 타임아웃된 경우도 저장은 시도된 것으로 간주
             return true;
         } catch (error) {
             console.error("Save error (force-save):", error);
@@ -417,29 +377,18 @@ export async function saveCurrentPage() {
 
     try {
         const storageKey = window.cryptoManager.getStorageKey();
-        /**
-         * 저장소 레벨 E2EE 페이지 저장
-         * 
-         * E2EE 페이지를 REST로 저장하면 encrypted_content만 갱신되고 협업 상태(e2ee_yjs_state)가 갱신되지 않을 수 있음
-         * 이 경우 이후 로딩 시 오래된 스냅샷이 적용되어 데이터가 롤백될 위험이 있음
-         * 
-         * 이를 방지하기 위해 콘텐츠는 반드시 WebSocket(yjs-state-e2ee + force-save-e2ee)을 통해 저장하며,
-         * REST는 제목이나 아이콘과 같은 평문 메타데이터 업데이트에만 사용함
-         */
         if (state.currentStorageIsEncrypted) {
             if (!storageKey) {
                 alert("암호화 키가 없어 저장할 수 없습니다. 저장소를 다시 열어주세요.");
                 return false;
             }
 
-            // 메타(제목) 업데이트 — content/encryptedContent는 보내지 않음
             try {
                 await api.put("/api/pages/" + encodeURIComponent(state.currentPageId), { title });
             } catch (e) {
                 console.error("Save meta error:", e);
             }
 
-            // 콘텐츠 스냅샷을 WS로 전송 + 서버 디바운스 플러시
             const result = await requestImmediateSave(state.currentPageId, { includeSnapshot: true, waitForAck: true });
             const updatedAt = result?.updatedAt || new Date().toISOString();
 
@@ -451,7 +400,6 @@ export async function saveCurrentPage() {
             return true;
         }
 
-        // 일반/비E2EE 저장 (기존 로직)
         let content = sanitizeEditorHtml(state.editor.getHTML());
         let body = {
             title,
@@ -461,16 +409,14 @@ export async function saveCurrentPage() {
         };
 
         if (state.currentPageIsEncrypted) {
-            // 이미 암호화된 페이지인데 키가 없다면? (수정 불가 상태여야 함)
             if (!storageKey) {
                 alert("암호화 키가 없어 저장할 수 없습니다.");
                 return false;
             }
-            // 암호화 수행
             const encryptedContent = await window.cryptoManager.encryptWithKey(content, storageKey);
             body.isEncrypted = true;
             body.encryptedContent = encryptedContent;
-            body.content = ""; // 서버에는 평문 전송 안 함 (빈 문자열)
+            body.content = ""; 
         }
 
         const page = await api.put("/api/pages/" + encodeURIComponent(state.currentPageId), body);
@@ -486,9 +432,6 @@ export async function saveCurrentPage() {
     }
 }
 
-/**
- * 편집 모드 토글
- */
 export async function toggleEditMode() {
     const canEdit = state.currentStoragePermission === 'EDIT' || state.currentStoragePermission === 'ADMIN';
     if (!canEdit) {
@@ -504,9 +447,7 @@ export async function toggleEditMode() {
         state.isWriteMode = false;
         state.editor.setEditable(false);
         btn.classList.remove("write-mode");
-        // UI 아이콘 업데이트 등
     } else {
-        // 암호화 페이지인데 키가 없으면 편집 불가
         if (state.currentPageIsEncrypted && !window.cryptoManager.getStorageKey()) {
             alert("암호화된 페이지를 편집하려면 저장소 잠금을 해제해야 합니다.");
             return;
@@ -528,9 +469,6 @@ export function bindModeToggle() {
     btn.addEventListener("click", toggleEditMode);
 }
 
-/**
- * 새 페이지 버튼 바인딩
- */
 export function bindNewPageButton() {
     const btn = document.querySelector("#new-page-btn");
     if (!btn) return;
@@ -548,7 +486,6 @@ export function bindNewPageButton() {
         try {
             const storageKey = window.cryptoManager.getStorageKey();
 
-            // 암호화 저장소 검증
             if (state.currentStorageIsEncrypted && !storageKey) {
                 alert("암호화 키가 없어 페이지를 생성할 수 없습니다. 저장소를 다시 열어주세요.");
                 return;

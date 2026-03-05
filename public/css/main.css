@@ -10,10 +10,9 @@ body {
     padding: 0;
     height: 100%;
     font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Malgun Gothic", sans-serif;
-    overflow: hidden; /* Prevent body scrollbar */
+    overflow: hidden; 
 }
 
-/* Global Scrollbar Style */
 * {
     scrollbar-width: thin;
     scrollbar-color: var(--scrollbar-thumb-color) transparent;
@@ -47,7 +46,6 @@ body {
     background-color: var(--secondary-color);
 }
 
-/* 저장소 선택 화면 (대시보드 그리드 스타일) */
 .storage-selection-screen {
     position: fixed;
     top: 0;
@@ -65,7 +63,6 @@ body {
     display: none;
 }
 
-/* 대시보드 헤더 */
 .storage-selection-header {
     width: 100%;
     padding: 40px 60px;
@@ -109,7 +106,6 @@ body {
     gap: 12px;
 }
 
-/* 메인 컨텐츠 그리드 영역 */
 .storage-selection-content {
     flex: 1;
     padding: 60px;
@@ -135,7 +131,6 @@ body {
     margin-bottom: 60px;
 }
 
-/* 개별 저장소 카드 */
 .storage-item {
     background-color: var(--primary-color);
     border: 1px solid var(--border-color);
@@ -206,7 +201,6 @@ body {
     font-weight: 400;
 }
 
-/* 추가 버튼 커스텀 */
 .storage-selection-header .primary-button {
     padding: 12px 24px;
     font-size: 14px;
@@ -234,7 +228,6 @@ body {
     }
 }
 
-/* 사이드바 footer 조정 */
 .sidebar-footer {
     padding: 12px 16px;
     border-top: 1px solid var(--border-color);
@@ -253,7 +246,6 @@ body {
     display: none;
 }
 
-/* 기존 스타일 유지 */
 .app {
     display: flex;
     flex-direction: column;
@@ -326,10 +318,9 @@ body {
     flex: 1;
     display: flex;
     min-height: 0;
-    overflow: hidden; /* Prevent child scrollbars from reaching the app-header level */
+    overflow: hidden; 
 }
 
-/* 사이드바 */
 .sidebar {
     width: 260px;
     border-right: 1px solid var(--border-color);
@@ -374,11 +365,11 @@ body {
     height: 64px;
     box-sizing: border-box;
     border-bottom: 1px solid var(--border-color);
-    flex-shrink: 0; /* 스크롤 시 축소 방지 */
+    flex-shrink: 0; 
     position: sticky;
     top: 0;
     z-index: 100;
-    background-color: var(--primary-color); /* 스크롤 시 배경 불투명 유지 */
+    background-color: var(--primary-color); 
 }
 
 .user-profile {
@@ -456,7 +447,6 @@ body {
     padding: 0;
 }
 
-/* 드롭다운 메뉴 */
     position: absolute;
     left: calc(100% + 6px);
     top: 0;
@@ -496,7 +486,6 @@ body {
     background-color: var(--menu-hover-bg-color);
 }
 
-/* 확장 메뉴 (More Menu) */
 .toolbar-more-menu {
     position: fixed;
     background-color: var(--menu-bg-color);
@@ -611,7 +600,6 @@ body {
     border-top: 1px solid transparent;
 }
 
-/* 페이지 제목: 한국적 미니멀 */
 .page-list-item {
     padding: 7px 10px 7px 32px;
     cursor: pointer;
@@ -638,18 +626,16 @@ body {
     color: var(--font-color);
 }
 
-/* 페이지 리스트 항목에 + 버튼 추가 */
 .page-add-subpage-btn {
     border: none;
     background: none;
     padding: 4px 6px;
     border-radius: 3px;
     cursor: pointer;
-    color: #a0a0a0; /* 채도를 낮추고 더 연하게 변경 */
+    color: #a0a0a0; 
     transition: opacity 0.15s ease;
 }
 
-/* 데스크탑에서는 컬렉션/페이지 메뉴 버튼을 호버 시에만 표시 */
 @media (min-width: 769px) {
     .collection-menu-btn,
     .collection-add-page-btn,
@@ -672,16 +658,14 @@ body {
     color: #1a1a1a;
 }
 
-/* 에디터 영역 */
 .editor-area {
     flex: 1;
     display: flex;
     flex-direction: column;
     min-width: 0;
-    overflow: hidden; /* Prevent editor-area from having its own scrollbar */
+    overflow: hidden; 
 }
 
-/* 스크롤 가능한 본문 래퍼 */
 .editor-scroll-container {
     flex: 1;
     overflow-y: auto;
@@ -690,13 +674,12 @@ body {
     min-height: 0;
 }
 
-/* 고정 헤더 설정 시 */
 .editor-area.sticky-header-enabled {
     overflow: hidden;
 }
 
 .editor-area.sticky-header-enabled .editor-scroll-container {
-    overflow-y: hidden; /* 상단 고정 시에는 내부 에디터가 스크롤을 담당 */
+    overflow-y: hidden; 
 }
 
 .page-title-input {
@@ -711,11 +694,10 @@ body {
     color: var(--font-color);
 }
 
-/* 페이지 업데이트 시간 표시 (문서 메인 영역 상단) */
 .page-updated-at-container {
     padding: 12px 16px 8px;
     border-bottom: 1px solid #e5e7eb;
-    flex-shrink: 0; /* 스크롤 시 축소 방지 */
+    flex-shrink: 0; 
 }
 
 .page-updated-at {
@@ -792,7 +774,6 @@ body {
     color: #4a545e;
 }
 
-/* 색상 드롭다운 전체 래퍼 */
 .toolbar-color-dropdown {
     position: relative;
     display: inline-block;
@@ -812,7 +793,6 @@ body {
     transform: rotate(180deg);
 }
 
-/* 색상 선택 메뉴 */
 .toolbar-color-menu {
     position: fixed;
     padding: 4px;
@@ -860,7 +840,6 @@ body {
     font-size: 14px;
 }
 
-/* 폰트 선택 메뉴 */
 .toolbar-font-menu {
     position: fixed;
     padding: 4px;
@@ -896,7 +875,6 @@ body {
     flex-shrink: 0;
 }
 
-/* 여백 조절 드롭다운 */
 .toolbar-padding-dropdown {
     position: relative;
     display: inline-block;
@@ -910,7 +888,6 @@ body {
     transform: rotate(180deg);
 }
 
-/* 여백 선택 메뉴 */
 .toolbar-padding-menu {
     position: fixed;
     padding: 8px;
@@ -954,7 +931,6 @@ body {
     margin: 6px 0;
 }
 
-/* 커스텀 입력 */
 .padding-custom {
     padding: 8px 12px;
 }
@@ -999,7 +975,6 @@ body {
     background-color: var(--point-hover-color);
 }
 
-/* 모바일에서는 여백 조절 버튼 숨김 및 헤더 레이아웃 조정 */
 @media (max-width: 900px) {
     .toolbar-padding-dropdown {
         display: none;
@@ -1014,15 +989,14 @@ body {
 	position: relative;
     flex: 1;
     min-height: 0;
-    overflow-y: visible; /* 기본값: 전체 스크롤을 위해 visible */
+    overflow-y: visible; 
     padding: 32px 120px 32px 120px;
 }
 
 .sticky-header-enabled .editor {
-    overflow-y: auto; /* 고정 헤더 시 에디터만 스크롤 */
+    overflow-y: auto; 
 }
 
-/* 에디터 여백 반응형 */
 @media (max-width: 1200px) {
     .editor {
         padding: 28px 80px 28px 80px;
@@ -1035,7 +1009,6 @@ body {
     }
 }
 
-/* 에디터 블록: 한지 느낌 */
 .editor .ProseMirror {
     outline: none;
     padding: 16px 18px;
@@ -1051,7 +1024,6 @@ body {
     transition: background-color 0.1s ease;
 }
 
-/* Tiptap Placeholder extension 스타일 */
 .editor .ProseMirror .is-empty::before {
     content: attr(data-placeholder);
     float: left;
@@ -1064,7 +1036,6 @@ body {
     background-color: var(--code-bg-color);
 }
 
-/* 인용구 스타일 */
 .editor .ProseMirror blockquote {
     border-left: 4px solid var(--blockquote-border-color);
     padding-left: 16px;
@@ -1078,7 +1049,6 @@ body {
     padding: 4px 0;
 }
 
-/* 버튼 스타일: 한국적 절제된 디자인 */
 .primary-button {
 	border: none;
     border-radius: 3px;
@@ -1143,7 +1113,6 @@ body {
     background-color: var(--danger-hover-color);
 }
 
-/* 슬래시 명령 메뉴: 한국적 미니멀 */
 #slash-menu {
     position: fixed;
     z-index: 50;
@@ -1211,7 +1180,6 @@ body {
     color: #6b7280;
 }
 
-/* 체크리스트 스타일 */
 .editor .ProseMirror ul[data-type="taskList"] {
     list-style: none;
     padding: 0;
@@ -1220,7 +1188,7 @@ body {
 
 .editor .ProseMirror ul[data-type="taskList"] li {
     display: flex;
-    align-items: flex-start; /* 상단 정렬로 변경하여 텍스트가 여러 줄일 때도 체크박스가 첫 줄에 고정되도록 함 */
+    align-items: flex-start; 
     margin: 4px 0;
 }
 
@@ -1228,7 +1196,7 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
-    height: 36px; /* p 태그의 line-height와 일치시켜 수직 중앙 정렬 유지 */
+    height: 36px; 
     margin-right: 8px;
     user-select: none;
     cursor: pointer;
@@ -1257,7 +1225,7 @@ body {
 }
 
 .editor .ProseMirror ul[data-type="taskList"] li > div p {
-    min-height: 36px; /* 고정 높이 대신 최소 높이 사용 (텍스트 줄바꿈 대응) */
+    min-height: 36px; 
     margin: 0;
     line-height: 36px;
     padding: 0;
@@ -1268,7 +1236,6 @@ body {
     color: #6b7280;
 }
 
-/* 사이드바 하단 버튼: 한국적 절제된 스타일 */
 .sidebar-footer {
     padding: 12px 14px 14px;
     border-top: 1px solid var(--border-color);
@@ -1312,7 +1279,6 @@ body {
     display: none;
 }
 
-/* 모달 */
 .modal {
     opacity: 1;
     visibility: visible;
@@ -1488,7 +1454,6 @@ body {
     border-color: var(--point-color);
 }
 
-/* 반응형 */
 @media (max-width: 768px) {
     .mobile-menu-btn {
         display: flex;
@@ -1530,7 +1495,6 @@ body {
         padding: 20px 24px 20px 24px;
     }
 
-    /* 에디터 모바일 최적화 */
     .editor-toolbar {
         padding: 6px 8px;
         gap: 3px;
@@ -1545,7 +1509,6 @@ body {
         height: 16px;
     }
 
-    /* 색상/폰트 드롭다운 버튼 최적화 */
     .toolbar-color-dropdown > .toolbar-button,
     .toolbar-font-dropdown > .toolbar-button {
         padding: 4px 6px;
@@ -1575,7 +1538,6 @@ body {
         padding: 16px 16px 16px 16px;
     }
 
-    /* 에디터 모바일 (가로형) 최적화 */
     .editor-toolbar {
         padding: 4px 6px;
         gap: 2px;
@@ -1590,7 +1552,6 @@ body {
         height: 14px;
     }
 
-    /* 드롭다운 메뉴 모바일 조정 */
     .toolbar-color-menu,
     .toolbar-font-menu {
         min-width: 130px;
@@ -1604,7 +1565,6 @@ body {
     }
 }
 
-/* 초소형 화면 (iPhone SE 1세대 등) */
 @media (max-width: 375px) {
     .editor-header {
         padding: 8px 10px;
@@ -1627,7 +1587,6 @@ body {
     }
 }
 
-/* 공유 모달 스타일 */
 .share-item {
     display: flex;
     align-items: center;
@@ -1660,7 +1619,6 @@ body {
     gap: 6px;
 }
 
-/* 수식 블록 스타일 */
 .math-block-wrapper {
     margin: 4px 0;
     padding: 0;
@@ -1687,12 +1645,10 @@ body {
     display: flex;
     justify-content: center;
     align-items: center;
-    /* Computer Modern Family 서체 계열 설정 */
     font-size: 1.25em;
     line-height: 1.1;
 }
 
-/* KaTeX 내부 서체를 Computer Modern Family로 고정 */
 .math-rendered .katex {
     font-family: KaTeX_Main, "Computer Modern Serf", "Computer Modern", "Times New Roman", serif !important;
     text-rendering: auto;
@@ -1700,7 +1656,6 @@ body {
     font-feature-settings: "lnum";
 }
 
-/* 수식 내 모든 텍스트 및 기호 서체 강제 */
 .math-rendered .katex * {
     font-family: inherit !important;
 }
@@ -1709,7 +1664,6 @@ body {
     background: transparent;
 }
 
-/* KaTeX 디스플레이 모드 최적화 */
 .math-rendered .katex-display {
     margin: 0.5em 0;
     padding: 0;
@@ -1783,20 +1737,17 @@ body {
     background: #dcd9d2;
 }
 
-/* 인라인 수식 - 읽기 전용 */
 .math-inline-view {
     display: inline;
     padding: 2px 4px;
     margin: 0 1px;
     background: transparent;
     border-radius: 3px;
-    /* 수식 전용 폰트 설정 */
     font-family: KaTeX_Main, "Times New Roman", serif;
     font-size: 1.05em;
     vertical-align: baseline;
 }
 
-/* KaTeX 렌더링 최적화 */
 .katex-display {
     margin: 0;
 }
@@ -1806,7 +1757,6 @@ body {
     font-family: KaTeX_Main, "Times New Roman", serif;
 }
 
-/* ==================== Image with Caption Styles ==================== */
 .image-with-caption-wrapper {
     margin: 1em auto;
     padding: 0;
@@ -1880,7 +1830,6 @@ body {
     text-align: center;
 }
 
-/* Resize handle */
 .image-resize-handle {
     position: absolute;
     right: 0;
@@ -1906,7 +1855,6 @@ body {
     transform: scale(1.2);
 }
 
-/* 정렬 메뉴 */
 .image-align-menu {
     position: absolute;
     top: 8px;
@@ -1960,7 +1908,6 @@ body {
     transform: scale(0.95);
 }
 
-/* 정렬 스타일 */
 .image-with-caption-wrapper[data-align="left"] {
     margin-left: 0;
     margin-right: auto;
@@ -1976,10 +1923,8 @@ body {
     margin-right: 0;
 }
 
-/* ==================== Board View Styles ==================== */
 .board-container {
     margin: 1.5em 0;
-    /* overflow-x: auto;  <-- Removed horizontal scroll */
     padding-bottom: 10px;
 }
 
@@ -1987,14 +1932,13 @@ body {
     display: flex;
     gap: 12px;
     align-items: flex-start;
-    flex-wrap: wrap; /* <-- Added wrapping */
+    flex-wrap: wrap; 
     width: 100%;
 }
 
 .board-column {
-    flex: 1 1 260px; /* <-- Allow grow/shrink, base width 260px */
+    flex: 1 1 260px; 
     min-width: 260px;
-    /* width: 260px; <-- Removed fixed width */
     background-color: var(--secondary-color);
     border-radius: 6px;
     display: flex;
@@ -2044,7 +1988,7 @@ body {
     display: flex;
     flex-direction: column;
     gap: 8px;
-    min-height: 50px; /* 드롭 영역 확보 */
+    min-height: 50px; 
 }
 
 .board-card-list.drag-over {
@@ -2052,14 +1996,13 @@ body {
 }@import url('comments.css');
 
 :root {
-    /* 포스트잇 기본 테마 색상 (라이트) */
     --board-card-yellow: #fff9c4;
     --board-card-blue: #e3f2fd;
     --board-card-green: #e8f5e9;
     --board-card-pink: #fce4ec;
     --board-card-purple: #f3e5f5;
     --board-card-orange: #fff3e0;
-    --board-card-text: #333; /* 라이트 모드 글씨색 */
+    --board-card-text: #333; 
 }
 
 .board-card {
@@ -2068,14 +2011,13 @@ body {
     border-radius: 4px;
     padding: 10px 12px;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-    cursor: default; /* 카드 전체는 기본 커서 */
+    cursor: default; 
     position: relative;
     transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s, background-color 0.2s;
     display: flex;
     flex-direction: column;
 }
 
-/* 테마별 카드 배경색 클래스 */
 .board-card.color-yellow { background-color: var(--board-card-yellow); border-color: rgba(0,0,0,0.05); }
 .board-card.color-blue { background-color: var(--board-card-blue); border-color: rgba(0,0,0,0.05); }
 .board-card.color-green { background-color: var(--board-card-green); border-color: rgba(0,0,0,0.05); }
@@ -2083,7 +2025,6 @@ body {
 .board-card.color-purple { background-color: var(--board-card-purple); border-color: rgba(0,0,0,0.05); }
 .board-card.color-orange { background-color: var(--board-card-orange); border-color: rgba(0,0,0,0.05); }
 
-/* 접힘 효과 제거 */
 .board-card::before,
 .board-card::after {
     display: none !important;
@@ -2103,16 +2044,15 @@ body {
 .board-card-content {
     font-size: inherit;
     line-height: 1.6;
-    color: var(--board-card-text); /* 테마 변수 적용 */
+    color: var(--board-card-text); 
     outline: none;
     white-space: pre-wrap;
     word-break: break-word;
     flex: 1;
     font-family: inherit;
-    cursor: text; /* 컨텐츠 영역은 텍스트 커서 */
+    cursor: text; 
 }
 
-/* 헤더가 있을 때만 상단 여백 추가 */
 .board-card-header + .board-card-content {
     margin-top: 4px;
 }
@@ -2121,7 +2061,7 @@ body {
     display: flex;
     justify-content: space-between;
     align-items: flex-start;
-    cursor: grab; /* 헤더 영역은 드래그 핸들 (grab 커서) */
+    cursor: grab; 
     padding: 4px;
     border-radius: 4px;
 }
@@ -2192,7 +2132,7 @@ body {
 }
 
 .board-add-column-btn {
-    flex: 1 1 260px; /* <-- Adjusted for flex wrap */
+    flex: 1 1 260px; 
     min-width: 260px;
     height: 40px;
     background-color: transparent;
@@ -2212,20 +2152,17 @@ body {
     color: var(--font-color);
 }
 
-/* 설정 모달 콘텐츠 */
 .settings-modal-content {
     width: 90vw;
     max-width: 600px;
     max-height: 85vh;
 }
 
-/* 설정 모달 바디 */
 .settings-modal-body {
     overflow-y: auto;
     max-height: calc(85vh - 140px);
 }
 
-/* 설정 섹션 */
 .settings-section {
     margin-bottom: 24px;
     padding-bottom: 24px;
@@ -2244,7 +2181,6 @@ body {
     margin-bottom: 16px;
 }
 
-/* 설정 아이템 */
 .settings-item {
     display: flex;
     justify-content: space-between;
@@ -2273,21 +2209,18 @@ body {
     color: #9ca3af !important;
 }
 
-/* 설정 컨트롤 */
 .settings-controls {
     display: flex;
     align-items: center;
     gap: 12px;
 }
 
-/* 백업/복구 버튼이 있는 컨트롤은 수직 정렬 */
 .settings-controls:has(> button.settings-button) {
     flex-direction: column;
     align-items: flex-end;
     gap: 8px;
 }
 
-/* 설정 버튼 */
 .settings-button {
     padding: 0 8px !important;
     font-size: 13px !important;
@@ -2305,7 +2238,6 @@ body {
     cursor: not-allowed;
 }
 
-/* 설정 선택창 (콤보박스) */
 .settings-select {
     padding: 0 12px;
     border: 1px solid #d4cfc4;
@@ -2319,7 +2251,6 @@ body {
     box-sizing: border-box;
 }
 
-/* 설정 모달 내의 버튼과 셀렉트 박스 너비 통일 */
 .settings-modal-content .settings-button,
 .settings-modal-content .settings-select {
     width: 140px;
@@ -2330,7 +2261,6 @@ body {
     border-color: #2d5f5d;
 }
 
-/* 계정 관리 위험 구역 */
 .settings-danger-zone {
     padding: 12px 0;
 }
@@ -2347,9 +2277,7 @@ body {
     line-height: 1.5;
 }
 
-/* ==================== Settings Modal - Responsive ==================== */
 
-/* 태블릿 이하 */
 @media (max-width: 768px) {
     .settings-modal-content {
         width: 95vw;
@@ -2377,7 +2305,6 @@ body {
     }
 }
 
-/* 모바일 */
 @media (max-width: 480px) {
     .settings-modal-content {
         width: 100vw;
@@ -2450,16 +2377,13 @@ body {
     }
 }
 
-/* ==================== Icon Picker Modal - Responsive Design ==================== */
 
-/* 모달 콘텐츠 */
 .icon-picker-modal-content {
     width: 90vw;
     max-width: 800px;
     max-height: 85vh;
 }
 
-/* 모달 바디 */
 .icon-picker-modal-body {
     overflow: hidden;
     display: flex;
@@ -2467,7 +2391,6 @@ body {
     max-height: calc(85vh - 80px);
 }
 
-/* 설명 텍스트 */
 .icon-picker-description {
     margin-bottom: 16px;
     color: #6b7280;
@@ -2475,7 +2398,6 @@ body {
     flex-shrink: 0;
 }
 
-/* 헤더 (탭 + 해제 버튼) */
 .icon-picker-header {
     display: flex;
     justify-content: space-between;
@@ -2486,7 +2408,6 @@ body {
     gap: 12px;
 }
 
-/* 탭 컨테이너 */
 .icon-picker-tabs {
     display: flex;
     gap: 8px;
@@ -2494,7 +2415,6 @@ body {
     min-width: 0;
 }
 
-/* 탭 버튼 */
 .icon-tab-btn {
     flex: 1;
     min-width: 0;
@@ -2524,7 +2444,6 @@ body {
     font-weight: 600;
 }
 
-/* ?꾩씠肄??댁젣 踰꾪듉 */
 .icon-remove-btn {
     padding: 8px 16px;
     background: transparent;
@@ -2548,7 +2467,6 @@ body {
     color: #2d5f5d;
 }
 
-/* ?꾩씠肄?洹몃━??*/
 .icon-picker-grid {
     display: grid;
     grid-template-columns: repeat(8, 1fr);
@@ -2561,7 +2479,6 @@ body {
     flex-shrink: 1;
 }
 
-/* ?꾩씠肄??꾩씠??*/
 .icon-picker-item {
     display: flex;
     align-items: center;
@@ -2595,7 +2512,6 @@ body {
     pointer-events: none;
 }
 
-/* ?ㅽ겕濡ㅻ컮 ?ㅽ???*/
 .icon-picker-grid::-webkit-scrollbar {
     display: none;
 }
@@ -2614,9 +2530,7 @@ body {
     background: #2d5f5d;
 }
 
-/* ==================== 諛섏쓳??誘몃뵒??荑쇰━ ==================== */
 
-/* ?쒕툝由??댄븯 */
 @media (max-width: 768px) {
     .icon-picker-modal-content {
         width: 95vw;
@@ -2654,7 +2568,6 @@ body {
     }
 }
 
-/* 紐⑤컮??*/
 @media (max-width: 480px) {
     .icon-picker-modal-content {
         width: 100vw;
@@ -2713,11 +2626,7 @@ body {
     }
 }
 
-/* ============================================================================
-   Real-time Collaboration UI Styles
-   ============================================================================ */
 
-/* ?묒뾽 而ㅼ꽌 ?ㅽ???*/
 .collaboration-cursor {
     position: absolute;
     pointer-events: none;
@@ -2747,7 +2656,6 @@ body {
     user-select: none;
 }
 
-/* ?ъ슜???뚮┝ ?좊땲硫붿씠??*/
 @keyframes slideIn {
     from {
         transform: translateX(100%);
@@ -2770,11 +2678,7 @@ body {
     }
 }
 
-/* ============================================================================
-   Table Styles
-   ============================================================================ */
 
-/* TipTap 테이블 스타일 (모던 디자인) */
 .editor .ProseMirror table {
     border-collapse: separate;
     border-spacing: 0;
@@ -2802,7 +2706,6 @@ body {
     transition: background-color 0.2s ease;
 }
 
-/* 마지막 열/행의 테두리 제거 (컨테이너 테두리와 중복 방지) */
 .ProseMirror td:last-child,
 .ProseMirror th:last-child {
     border-right: none;
@@ -2820,7 +2723,6 @@ body {
     font-size: 0.95em;
 }
 
-/* 선택된 셀 디자인 개선 */
 .ProseMirror .selectedCell {
     background-color: var(--item-hover-bg-color) !important;
 }
@@ -2837,14 +2739,12 @@ body {
     pointer-events: none;
 }
 
-/* 테이블 크기 조절 오버레이 */
 .table-resize-overlay {
     position: absolute;
     pointer-events: none;
     z-index: 999;
 }
 
-/* 커스텀 테이블 크기 조절 핸들 */
 .custom-resize-handle {
     position: absolute;
     pointer-events: auto;
@@ -2857,31 +2757,25 @@ body {
     opacity: 0.5;
 }
 
-/* 열 크기 조절 핸들 (세로선) */
 .custom-resize-handle-col {
     width: 4px;
     cursor: col-resize;
 }
 
-/* 행 크기 조절 핸들 (가로선) */
 .custom-resize-handle-row {
     height: 4px;
     cursor: row-resize;
 }
 
-/* ========== 테이블 컨텍스트 메뉴 ========== */
 
-/* 행(Row) 호버 피드백 */
 .ProseMirror tr:hover td {
     background-color: var(--secondary-color);
 }
 
-/* 테이블 셀 호버 피드백 (개별 셀 강조) */
 .ProseMirror table td:hover {
     background-color: var(--item-hover-bg-color);
 }
 
-/* 컨텍스트 메뉴 */
 .context-menu {
     position: fixed;
     background: var(--menu-bg-color);
@@ -2897,7 +2791,6 @@ body {
     display: none;
 }
 
-/* 컨텍스트 메뉴 아이템 */
 .context-menu-item {
     display: flex;
     align-items: center;
@@ -2923,7 +2816,6 @@ body {
     cursor: not-allowed;
 }
 
-/* 위험한 액션 (삭제) */
 .context-menu-item.danger {
     color: var(--danger-color);
 }
@@ -2933,21 +2825,18 @@ body {
     color: var(--button-text-color);
 }
 
-/* 컨텍스트 메뉴 아이콘 */
 .context-menu-icon {
     width: 20px;
     text-align: center;
     font-size: 14px;
 }
 
-/* 컨텍스트 메뉴 구분선 */
 .context-menu-separator {
     height: 1px;
     background: var(--menu-border-color);
     margin: 4px 0;
 }
 
-/* ========== 而ㅻ쾭 ?대?吏 ========== */
 
 .page-cover-container {
     position: relative;
@@ -2955,7 +2844,7 @@ body {
     height: 250px;
     overflow: hidden;
     background-color: #e5e5e5;
-    flex-shrink: 0; /* 스크롤 시 축소 방지 */
+    flex-shrink: 0; 
 }
 
 .page-cover-image {
@@ -3004,7 +2893,6 @@ body {
     font-size: 14px;
 }
 
-/* 而ㅻ쾭 ?꾩튂 議곗젙 紐⑤뱶 */
 .page-cover-container.repositioning .page-cover-image {
     cursor: ns-resize;
 }
@@ -3013,7 +2901,6 @@ body {
     opacity: 1;
 }
 
-/* 而ㅻ쾭 ?좏깮 紐⑤떖 */
 .cover-modal-content {
     max-width: 700px;
     width: 90%;
@@ -3090,7 +2977,6 @@ body {
     object-fit: cover;
 }
 
-/* ?ъ슜??而ㅻ쾭 ?대?吏 ?듭뀡 */
 .user-cover-option {
     position: relative;
     border-radius: 8px;
@@ -3177,7 +3063,6 @@ body {
     color: #999;
 }
 
-/* 諛섏쓳??*/
 @media (max-width: 768px) {
     .page-cover-container {
         height: 180px;
@@ -3195,14 +3080,13 @@ body {
     }
 
     .page-cover-btn span {
-        display: none; /* 紐⑤컮?쇱뿉?쒕뒗 ?꾩씠肄섎쭔 ?쒖떆 */
+        display: none; 
     }
 
     .cover-gallery {
         grid-template-columns: 1fr;
     }
 }
-/* ?좉? ?ㅼ쐞移?*/
 .toggle-switch {
     position: relative;
     display: inline-block;
@@ -3256,7 +3140,6 @@ body {
     box-shadow: 0 0 1px #2563eb;
 }
 
-/* ?ㅼ젙 ?ㅻ챸 ?띿뒪??*/
 .settings-description {
     margin: 0;
     font-size: 12px;
@@ -3265,12 +3148,10 @@ body {
     max-width: 400px;
 }
 
-/* 諛깆뾽/蹂듦뎄 踰꾪듉???ㅻ챸? ?곗륫 ?뺣젹 */
 .settings-controls:has(> button.settings-button) .settings-description {
     text-align: right;
 }
 
-/* 諛쒗뻾 踰꾪듉 ?ㅽ???*/
 #publish-btn {
     transition: background-color 0.2s ease;
 }
@@ -3284,13 +3165,12 @@ body {
     background-color: #15803d;
 }
 
-/* 濡쒓렇??濡쒓렇 ?뚯씠釉??ㅽ???*/
 #login-logs-modal table {
-    min-width: 800px; /* ?뚯씠釉?理쒖냼 ?덈퉬 ?ㅼ젙 */
+    min-width: 800px; 
 }
 
 #login-logs-modal table th {
-    white-space: nowrap; /* ?ㅻ뜑 ?띿뒪??以꾨컮轅?諛⑹? */
+    white-space: nowrap; 
 }
 
 #login-logs-table-body tr {
@@ -3305,10 +3185,9 @@ body {
 #login-logs-table-body td {
     padding: 12px;
     color: #374151;
-    white-space: nowrap; /* ? ?띿뒪??以꾨컮轅?諛⑹? */
+    white-space: nowrap; 
 }
 
-/* 濡쒓렇 ?곹깭 諭껋? */
 .login-log-status-badge {
     display: inline-flex;
     align-items: center;
@@ -3330,7 +3209,6 @@ body {
     color: #dc2626;
 }
 
-/* ?섏씠吏?ㅼ씠??踰꾪듉 */
 .pagination-btn {
     padding: 8px 12px;
     border: 1px solid #d1d5db;
@@ -3363,7 +3241,6 @@ body {
     color: #6b7280;
 }
 
-/* 諛섏쓳???붿옄??*/
 @media (max-width: 1024px) {
     #login-logs-modal .modal-content {
         max-width: 95vw;
@@ -3389,7 +3266,7 @@ body {
     }
 
     #login-logs-modal table {
-        min-width: 700px; /* 紐⑤컮?쇱뿉?쒕룄 理쒖냼 ?덈퉬 ?좎? */
+        min-width: 700px; 
         font-size: 13px;
     }
 
@@ -3447,9 +3324,7 @@ body {
     }
 }
 
-/* ==================== ?먭꺽 而ㅼ꽌 ?ㅽ???==================== */
 
-/* 而ㅼ꽌 而⑦뀒?대꼫 */
 .remote-cursor-container {
     position: absolute;
     pointer-events: none;
@@ -3457,7 +3332,6 @@ body {
     transition: all 0.1s ease-out;
 }
 
-/* 而ㅼ꽌 ?쇱씤 */
 .remote-cursor {
     position: absolute;
     width: 2px;
@@ -3465,13 +3339,11 @@ body {
     animation: cursor-blink 1s infinite;
 }
 
-/* 而ㅼ꽌 源쒕묀???좊땲硫붿씠??*/
 @keyframes cursor-blink {
     0%, 49% { opacity: 1; }
     50%, 100% { opacity: 0.3; }
 }
 
-/* ?ъ슜???대쫫 ?쇰꺼 */
 .remote-cursor-label {
     position: absolute;
     top: -24px;
@@ -3486,25 +3358,20 @@ body {
     pointer-events: none;
 }
 
-/* ?좏깮 ?곸뿭 ?섏씠?쇱씠??*/
 .remote-cursor.selection {
     opacity: 0.3;
     width: auto;
 }
 
-/* ?먮뵒???대??먯꽌留??쒖떆 */
 #editor .remote-cursor-container {
     display: block;
 }
 
-/* ==================== 援?? ?붿씠?몃━?ㅽ듃 ==================== */
 
-/* 援?? ?붿씠?몃━?ㅽ듃 而⑦뀒?대꼫 */
 #country-whitelist-container {
     width: 100%;
 }
 
-/* ?좏깮??援?? 紐⑸줉 ?쒖떆 */
 #selected-countries-list {
     padding: 8px;
     background-color: #f9f9f9;
@@ -3513,7 +3380,6 @@ body {
     font-size: 13px;
 }
 
-/* 援?? 紐⑸줉 而⑦뀒?대꼫 */
 #country-list-container {
     max-height: 400px;
     overflow-y: auto;
@@ -3522,7 +3388,6 @@ body {
     padding: 8px;
 }
 
-/* 援?? 紐⑸줉 ?꾩씠??*/
 #country-list-container label {
     display: flex;
     align-items: center;
@@ -3541,7 +3406,6 @@ body {
     cursor: pointer;
 }
 
-/* 蹂댁“ 踰꾪듉 ?ㅽ???*/
 .secondary-button {
     background-color: #6c757d;
     color: white;
@@ -3563,59 +3427,52 @@ body {
 
 .callout-block-wrapper {
     margin: 1.25em 0;
-    border-radius: 4px; /* 곡률을 더 세밀하게 조정 */
+    border-radius: 4px; 
     padding: 16px 16px;
     transition: all 0.2s ease;
     position: relative;
     border: 1px solid transparent;
 }
 
-/* 타입별 색상 구성 - 정보 */
 .callout-block-wrapper[data-callout-type="info"] {
     background-color: var(--callout-info-bg);
     border-color: var(--callout-info-border);
 }
 
-/* 타입별 색상 구성 - 경고 */
 .callout-block-wrapper[data-callout-type="warning"] {
     background-color: var(--callout-warning-bg);
     border-color: var(--callout-warning-border);
 }
 
-/* 타입별 색상 구성 - 에러 */
 .callout-block-wrapper[data-callout-type="error"] {
     background-color: var(--callout-error-bg);
     border-color: var(--callout-error-border);
 }
 
-/* 타입별 색상 구성 - 성공 */
 .callout-block-wrapper[data-callout-type="success"] {
     background-color: var(--callout-success-bg);
     border-color: var(--callout-success-border);
 }
 
-/* 전체 레이아웃 (아이콘과 본문 정렬 최적화) */
 .callout-header {
     display: flex;
     align-items: flex-start;
     gap: 10px;
-    line-height: 1.6; /* 본문 텍스트의 줄 높이와 일치 */
+    line-height: 1.6; 
 }
 
-/* 아이콘 스타일 (텍스트 첫 줄 중앙에 맞춤) */
 .callout-icon {
     font-size: 20px;
     width: 24px;
-    height: 24px; /* 본문 15px * 1.6 = 24px 에 맞춰 정렬 */
+    height: 24px; 
     display: flex;
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
     user-select: none;
-    margin-top: 0; /* 강제 여백 제거 */
+    margin-top: 0; 
 }
 
-/* 타입 변경 버튼 (오른쪽 상단에 배치) */
 .callout-type-selector {
     position: absolute;
     top: 8px;
@@ -3628,13 +3485,13 @@ body {
     cursor: pointer;
     font-size: 10px;
     font-weight: 500;
-    opacity: 0; /* 평소에는 숨김 */
+    opacity: 0; 
     transition: all 0.2s;
     flex-shrink: 0;
 }
 
 .callout-block-wrapper:hover .callout-type-selector {
-    opacity: 1; /* 마우스 호버 시 표시 */
+    opacity: 1; 
 }
 
 .callout-type-selector:hover {
@@ -3642,7 +3499,6 @@ body {
     border-color: var(--menu-border-color);
 }
 
-/* 타입 선택 팝업 */
 .callout-type-popup {
     position: fixed;
     background: var(--menu-bg-color);
@@ -3671,13 +3527,11 @@ body {
     background: var(--menu-hover-bg-color);
 }
 
-/* 내용 영역 */
 .callout-content {
     flex: 1;
     position: relative;
 }
 
-/* 내용 텍스트 영역 */
 .callout-content-textarea {
     width: 100%;
     border: none;
@@ -3698,38 +3552,29 @@ body {
     color: var(--placeholder-color);
 }
 
-/* 읽기 전용 상태 스타일 */
 .callout-block-wrapper.read-only .callout-content-textarea {
     cursor: default;
 }
 
-/* 읽기 전용 상태 스타일 */
 .callout-block-wrapper.read-only .callout-content-textarea {
     cursor: default;
 }
 
-/* 읽기 전용 상태 스타일 */
 .callout-block-wrapper.read-only .callout-title,
 .callout-block-wrapper.read-only .callout-content-textarea {
     cursor: default;
 }
 
-/* ============================================
-   ?쒕옒洹????쒕∼ ?ㅽ???
-   ============================================ */
 
-/* ?쒕옒洹?以묒씤 ?붿냼???먮옒 ?꾩튂 (諛섑닾紐? */
 .sortable-ghost {
     opacity: 0.4;
     background-color: #d4cfc4 !important;
 }
 
-/* ?쒕옒洹??쒖옉 ???좏깮???붿냼 */
 .sortable-chosen {
     background-color: #e6e3db !important;
 }
 
-/* ?쒕옒洹?以묒씤 ?붿냼 (留덉슦???곗튂瑜??곕씪?ㅻ떂) */
 .sortable-drag {
     opacity: 1;
     background-color: #faf8f3 !important;
@@ -3739,7 +3584,6 @@ body {
     transition: transform 0.2s ease;
 }
 
-/* 而щ젆???ㅻ뜑 ?쒕옒洹?而ㅼ꽌 */
 .collection-header {
     cursor: grab;
 }
@@ -3748,7 +3592,6 @@ body {
     cursor: grabbing;
 }
 
-/* ?섏씠吏 ?꾩씠???쒕옒洹?*/
 .page-list-item {
     cursor: grab;
     transition: background-color 0.1s ease, transform 0.1s ease;
@@ -3763,7 +3606,6 @@ body {
     transform: scale(1.02);
 }
 
-/* 紐⑤컮???곗튂 ?쇰뱶諛?媛뺥솕 */
 @media (max-width: 768px) {
     .sortable-drag {
         transform: rotate(3deg) scale(1.05);
@@ -3790,10 +3632,7 @@ body {
 	pointer-events: none;
 }
 
-/* ==================== PDF Export Styles ==================== */
-/* PDF ?대낫?닿린 ?꾩슜 ?ㅽ???*/
 #pdf-export-container {
-    /* 湲곕낯 ?ㅽ??쇱? JavaScript?먯꽌 ?몃씪?몄쑝濡??곸슜 */
 }
 
 #pdf-export-container h1,
@@ -3820,7 +3659,6 @@ body {
     page-break-inside: avoid;
 }
 
-/* KaTeX ?섏떇 ?ㅽ???蹂댁〈 */
 #pdf-export-container .katex {
     font-size: 1.1em;
 }
@@ -3830,12 +3668,9 @@ body {
     text-align: center;
 }
 
-/* ============================================
-   하위 페이지 섹션 (Subpages)
-   ============================================ */
 
 .page-content-wrapper {
-    flex: none; /* 기본값: 전체 스크롤을 위해 자동 확장 */
+    flex: none; 
     min-height: 0;
     width: 100%;
     display: flex;
@@ -3843,7 +3678,7 @@ body {
 }
 
 .sticky-header-enabled .page-content-wrapper {
-    flex: 1; /* 고정 헤더 시 남은 공간 채움 */
+    flex: 1; 
 }
 
 .subpages-section {
@@ -3852,7 +3687,6 @@ body {
     border-top: 1px solid #e5e7eb;
 }
 
-/* 하위 페이지 섹션 반응형 여백 (에디터와 동일) */
 @media (max-width: 1200px) {
     .subpages-section {
         padding: 24px 80px 48px 80px;
@@ -3878,14 +3712,12 @@ body {
     margin: 0;
 }
 
-/* 하위 페이지 리스트 */
 .subpages-grid {
     display: flex;
     flex-direction: column;
     gap: 2px;
 }
 
-/* 하위 페이지 아이템 */
 .subpage-card {
     display: flex;
     align-items: center;
@@ -3959,7 +3791,6 @@ body {
     color: #d97706;
 }
 
-/* 암호화 페이지 스타일 */
 .subpage-card.encrypted {
     background-color: #fffbeb;
 }
@@ -3973,7 +3804,6 @@ body {
     display: none;
 }
 
-/* Drag Handle Styles */
 .block-handle {
     width: 24px;
     height: 24px;
@@ -3996,7 +3826,6 @@ body {
     cursor: grabbing;
 }
 
-/* Drag Ghost Styles */
 .drag-ghost {
     background: white;
     border: 1px solid #e5e7eb;
@@ -4014,7 +3843,6 @@ body {
     white-space: nowrap;
 }
 
-/* Drop Indicator Styles */
 .drop-indicator {
     position: absolute;
     height: 2px;
@@ -4024,7 +3852,6 @@ body {
     transition: top 0.1s ease;
 }
 
-/* Context Menu Danger Button */
 .context-menu button.danger {
     color: #dc2626;
 }
@@ -4032,7 +3859,6 @@ body {
     background-color: #fef2f2;
 }
 
-/* ==================== YouTube Block Styles ==================== */
 .youtube-block-wrapper {
     margin: 1em auto;
     padding: 0;
@@ -4061,7 +3887,6 @@ body {
     text-align: center;
 }
 
-/* 정렬 스타일 */
 .youtube-block-wrapper[data-align='left'] {
     margin-left: 0;
     margin-right: auto;
@@ -4078,7 +3903,6 @@ body {
 }
 
 
-/* ==================== Toggle Block Styles ==================== */
 .toggle-block-wrapper {
     margin: 4px 0;
     padding: 0;
@@ -4101,9 +3925,9 @@ body {
     background: none;
     border: none;
     cursor: pointer;
-    font-size: 10px; /* 화살표 크기 조정 */
+    font-size: 10px; 
     width: 24px;
-    height: 24px; /* 줄 높이와 비슷하게 */
+    height: 24px; 
     display: flex;
     align-items: center;
     justify-content: center;
@@ -4111,7 +3935,7 @@ body {
     transition: color 0.1s ease;
     margin-right: 2px;
     padding: 0;
-    margin-top: 2px; /* 텍스트와 줄맞춤 */
+    margin-top: 2px; 
 }
 
 .toggle-btn:hover {
@@ -4129,9 +3953,8 @@ body {
 }
 
 .toggle-title.focused {
-    background-color: rgba(0, 0, 0, 0.05); /* light theme fallback */
+    background-color: rgba(0, 0, 0, 0.05); 
 }
-/* 다크 모드 대응 등을 위해 변수 사용 권장하지만 여기선 간단히 */
 
 .toggle-content {
     margin-left: 26px;
@@ -4159,9 +3982,7 @@ body {
 }
 
 
-/* ==================== 저장소 참여자 관리 개선 스타일 ==================== */
 
-/* 저장소 카드 액션 버튼 그룹 */
 .storage-item-actions {
     position: absolute !important;
     top: 16px !important;
@@ -4182,8 +4003,8 @@ body {
     width: 36px !important;
     height: 36px !important;
     border-radius: 10px !important;
-    border: 1px solid var(--border-color) !important; /* Added a subtle border to match the icon box if needed, or set to none */
-    background-color: var(--primary-color) !important; /* Changed from tertiary to primary for contrast */
+    border: 1px solid var(--border-color) !important; 
+    background-color: var(--primary-color) !important; 
     color: var(--sub-font-color) !important;
     display: inline-flex !important;
     align-items: center !important;
@@ -4208,7 +4029,6 @@ body {
     border-color: #fecaca !important;
 }
 
-/* 공유 배지 및 정보 */
 .storage-item-shared-badge {
     font-size: 10px;
     padding: 2px 8px;
@@ -4221,7 +4041,6 @@ body {
     margin-left: 8px;
 }
 
-/* 모달 내 섹션 스타일 */
 .modal-section-title {
     font-size: 14px;
     font-weight: 700;
@@ -4391,7 +4210,6 @@ body {
     color: #ef4444 !important;
 }
 
-/* Update History Styles */
 .updates-history-list {
     display: flex;
     flex-direction: column;
@@ -4514,7 +4332,6 @@ body {
     user-select: none;
 }
 
-/* ==================== 탭뷰 블록 ==================== */
 
 .tab-block-wrapper {
     margin: 4px 0;
@@ -4633,12 +4450,9 @@ body {
     color: var(--font-color);
 }
 
-/* 탭 패널 컨테이너 (모든 tabItem을 담는 contentDOM) */
 .tab-panels {
-    /* ProseMirror가 관리 — 별도 스타일 불필요 */
 }
 
-/* 개별 탭 패널: 기본 숨김, active일 때만 표시 */
 .tab-panel {
     display: none;
 }
@@ -4647,7 +4461,6 @@ body {
     display: block;
 }
 
-/* 탭 패널 내부 콘텐츠 여백 */
 .tab-panel-content {
     padding: 8px 4px;
     min-height: 60px;

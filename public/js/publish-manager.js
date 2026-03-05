@@ -1,10 +1,6 @@
-/**
- * 페이지 발행 관리 모듈
- */
 
 import { secureFetch } from './ui-utils.js';
 
-// 전역 상태
 let state = null;
 const publishState = {
     pageId: null,
@@ -14,16 +10,10 @@ const publishState = {
     allowComments: false
 };
 
-/**
- * 발행 관리자 초기화
- */
 export function initPublishManager(appState) {
     state = appState;
 }
 
-/**
- * 페이지 발행 상태 확인
- */
 export async function checkPublishStatus(pageId) {
     if (!pageId) return;
 
@@ -51,39 +41,28 @@ export async function checkPublishStatus(pageId) {
     }
 }
 
-/**
- * 발행 버튼 업데이트 (표시/숨김 및 상태 변경)
- */
 export function updatePublishButton() {
     const publishBtn = document.getElementById('publish-btn');
 
     if (!publishBtn) return;
 
-    // 쓰기 모드일 때는 숨김
     if (state?.isWriteMode) {
         publishBtn.style.display = 'none';
         return;
     }
 
-    // 읽기 모드일 때
-    // 암호화된 페이지는 숨김
     if (state?.currentPageIsEncrypted) {
         publishBtn.style.display = 'none';
         return;
     }
 
-    // 발행 링크는 사실상 비밀 토큰이 포함된 URL(capability URL)이므로,
-    // 최소 권한 원칙에 따라 저장소 ADMIN(또는 소유자)만 발행/관리하도록 UI에서도 제한
-    // (서버에서도 반드시 동일하게 강제해야 함)
     if (state?.currentStoragePermission !== 'ADMIN') {
         publishBtn.style.display = 'none';
         return;
     }
 
-    // 평문 페이지는 표시
     publishBtn.style.display = 'flex';
 
-    // 발행 상태에 따라 버튼 타이틀 및 클래스 변경
     if (publishState.published) {
         publishBtn.title = '발행 취소';
         publishBtn.classList.add('published');
@@ -93,9 +72,6 @@ export function updatePublishButton() {
     }
 }
 
-/**
- * 발행 모달 열기
- */
 export function openPublishModal() {
     const modal = document.getElementById('page-publish-modal');
     const beforeContent = document.getElementById('publish-before-content');
@@ -104,11 +80,9 @@ export function openPublishModal() {
 
     if (!modal) return;
 
-    // 상태 초기화
     errorDiv.textContent = '';
 
     if (publishState.published) {
-        // 이미 발행됨: 발행 후 화면 표시
         beforeContent.style.display = 'none';
         afterContent.style.display = 'block';
         const linkInput = document.getElementById('publish-link-input');
@@ -121,11 +95,9 @@ export function openPublishModal() {
             allowCommentsCheckbox.checked = publishState.allowComments;
         }
     } else {
-        // 발행되지 않음: 발행 전 화면 표시
         beforeContent.style.display = 'block';
         afterContent.style.display = 'none';
         
-        // 기본값 초기화 (원하면 여기서 false로)
         const allowCommentsCheckbox = document.getElementById('publish-allow-comments-before');
         if (allowCommentsCheckbox) {
             allowCommentsCheckbox.checked = false;
@@ -135,9 +107,6 @@ export function openPublishModal() {
     modal.classList.remove('hidden');
 }
 
-/**
- * 발행 모달 닫기
- */
 export function closePublishModal() {
     const modal = document.getElementById('page-publish-modal');
     if (modal) {
@@ -145,9 +114,6 @@ export function closePublishModal() {
     }
 }
 
-/**
- * 페이지 발행 (또는 설정 업데이트)
- */
 export async function publishPage() {
     if (!publishState.pageId) {
         showPublishError('페이지를 찾을 수 없습니다.');
@@ -158,7 +124,6 @@ export async function publishPage() {
     const afterContent = document.getElementById('publish-after-content');
     const confirmBtn = document.getElementById('confirm-publish-btn');
     
-    // 발행 전 화면에서 체크박스 값 가져오기
     let allowComments = false;
     const allowCommentsCheckboxBefore = document.getElementById('publish-allow-comments-before');
     if (allowCommentsCheckboxBefore) {
@@ -185,7 +150,6 @@ export async function publishPage() {
         publishState.published = true;
         publishState.allowComments = data.allowComments;
 
-        // UI 업데이트
         beforeContent.style.display = 'none';
         afterContent.style.display = 'block';
 
@@ -199,7 +163,6 @@ export async function publishPage() {
             allowCommentsCheckbox.checked = publishState.allowComments;
         }
 
-        // 버튼 상태 업데이트
         updatePublishButton();
 
         console.log('페이지 발행 완료:', data.url);
@@ -211,9 +174,6 @@ export async function publishPage() {
     }
 }
 
-/**
- * 발행 설정 업데이트 (이미 발행된 상태에서 체크박스 변경 시)
- */
 async function updatePublishSettings() {
     if (!publishState.published || !publishState.pageId) return;
     
@@ -238,16 +198,12 @@ async function updatePublishSettings() {
     } catch (error) {
         console.error('설정 업데이트 오류:', error);
         alert('설정을 업데이트하지 못했습니다.');
-        // 실패 시 체크박스 원복?
         if (allowCommentsCheckbox) {
             allowCommentsCheckbox.checked = !allowComments;
         }
     }
 }
 
-/**
- * 발행 취소
- */
 export async function unpublishPage() {
     if (!publishState.pageId) {
         showPublishError('페이지를 찾을 수 없습니다.');
@@ -271,13 +227,11 @@ export async function unpublishPage() {
         publishState.url = null;
         publishState.published = false;
 
-        // UI 업데이트
         const beforeContent = document.getElementById('publish-before-content');
         const afterContent = document.getElementById('publish-after-content');
         beforeContent.style.display = 'block';
         afterContent.style.display = 'none';
 
-        // 버튼 상태 업데이트
         updatePublishButton();
 
         console.log('발행 취소 완료');
@@ -289,9 +243,6 @@ export async function unpublishPage() {
     }
 }
 
-/**
- * 공유 링크 복사
- */
 export async function copyPublishLink() {
     if (!publishState.url) {
         showPublishError('복사할 링크가 없습니다.');
@@ -301,7 +252,6 @@ export async function copyPublishLink() {
     try {
         await navigator.clipboard.writeText(publishState.url);
 
-        // 성공 피드백
         const copyBtn = document.getElementById('copy-publish-link-btn');
         if (copyBtn) {
             const originalText = copyBtn.innerHTML;
@@ -319,9 +269,6 @@ export async function copyPublishLink() {
     }
 }
 
-/**
- * 에러 메시지 표시
- */
 function showPublishError(message) {
     const errorDiv = document.getElementById('publish-error');
     if (errorDiv) {
@@ -329,11 +276,7 @@ function showPublishError(message) {
     }
 }
 
-/**
- * 이벤트 바인딩
- */
 export function bindPublishEvents() {
-    // 발행 버튼 클릭
     const publishBtn = document.getElementById('publish-btn');
     if (publishBtn) {
         publishBtn.addEventListener('click', () => {
@@ -345,13 +288,11 @@ export function bindPublishEvents() {
         });
     }
 
-    // 모달 닫기 버튼
     const closeBtn = document.getElementById('close-publish-modal-btn');
     if (closeBtn) {
         closeBtn.addEventListener('click', closePublishModal);
     }
 
-    // 모달 오버레이 클릭 시 닫기
     const modal = document.getElementById('page-publish-modal');
     if (modal) {
         modal.addEventListener('click', (e) => {
@@ -361,37 +302,31 @@ export function bindPublishEvents() {
         });
     }
 
-    // 발행 전: 취소 버튼
     const cancelBtn = document.getElementById('cancel-publish-btn');
     if (cancelBtn) {
         cancelBtn.addEventListener('click', closePublishModal);
     }
 
-    // 발행 전: 발행하기 버튼
     const confirmBtn = document.getElementById('confirm-publish-btn');
     if (confirmBtn) {
         confirmBtn.addEventListener('click', publishPage);
     }
 
-    // 발행 후: 발행 취소 버튼
     const unpublishBtn = document.getElementById('unpublish-btn');
     if (unpublishBtn) {
         unpublishBtn.addEventListener('click', unpublishPage);
     }
 
-    // 발행 후: 링크 복사 버튼
     const copyBtn = document.getElementById('copy-publish-link-btn');
     if (copyBtn) {
         copyBtn.addEventListener('click', copyPublishLink);
     }
 
-    // 발행 후: 완료 버튼
     const closeSuccessBtn = document.getElementById('close-publish-success-btn');
     if (closeSuccessBtn) {
         closeSuccessBtn.addEventListener('click', closePublishModal);
     }
     
-    // 발행 후: 댓글 허용 체크박스 변경
     const allowCommentsCheckbox = document.getElementById('publish-allow-comments');
     if (allowCommentsCheckbox) {
         allowCommentsCheckbox.addEventListener('change', updatePublishSettings);

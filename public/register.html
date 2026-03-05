@@ -4,31 +4,26 @@
     <meta charset="UTF-8" />
     <title>NTEOK - 회원가입</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <!-- 아이콘 -->
     <link
         rel="stylesheet"
         href="/lib/font-awesome/css/all.min.css"
     />
 
-    <!-- Pretendard -->
     <link
         rel="stylesheet"
         href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css"
     />
 
-    <!-- 메모앱 느낌의 영어 폰트 (Nunito) -->
     <link
         rel="stylesheet"
         href="https://fonts.googleapis.com/css2?family=Nunito:wght@600;700&display=swap"
     />
 
-    <!-- 회원가입 전용 스타일 (login.css 재사용) -->
     <link rel="stylesheet" href="/css/login.css" />
 </head>
 <body class="login-body">
     <div class="login-shell">
         <section class="login-card" aria-label="NTEOK 회원가입">
-            <!-- 카드 상단 로고 + 서비스 이름 -->
             <header class="login-card-header">
                 <div class="login-logo-row">
                     <img src="/icon.png" class="login-logo-mark" alt="NTEOK">
@@ -38,7 +33,6 @@
                 <p class="login-desc">새 NTEOK 계정을 만들어 보세요.</p>
             </header>
 
-            <!-- 회원가입 폼 -->
             <form id="register-form" class="login-form">
                 <div class="login-field">
                     <label for="username">아이디</label>
@@ -78,7 +72,6 @@
                     </div>
                 </div>
 
-                <!-- 힌트/에러 표시 -->
                 <p class="login-helper">
                 	비밀번호는 10자 이상이며, UTF-8 기준 72바이트 이하여야 합니다.
                 </p>
@@ -87,7 +80,6 @@
                     회원가입
                 </button>
 
-                <!-- 에러 있을 때만 공간 차지 -->
                 <p id="register-error" class="login-error" aria-live="polite"></p>
 
                 <p class="login-sub-links">
@@ -96,7 +88,6 @@
                 </p>
             </form>
 
-            <!-- 카드 하단 설명 (로그인 페이지와 동일) -->
             <div class="login-info-bottom">
                 <p class="login-info-title">오늘 기록, 내일 정리</p>
                 <p class="login-info-text">
@@ -110,7 +101,6 @@
         </section>
     </div>
 
-    <!-- 보안: CSRF 토큰 유틸리티 -->
     <script src="/js/csrf-utils.js"></script>
     <script type="module" src="/js/register.js"></script>
 </body>

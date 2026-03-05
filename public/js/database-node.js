@@ -1,14 +1,9 @@
-/**
- * Tiptap Database Block Extension
- * 데이터베이스(테이블 뷰) 블록 (열/행 드래그 크기 조절 기능 포함)
- */
 
 import { addIcon } from './ui-utils.js';
 import DOMPurify from 'dompurify';
 
 const Node = Tiptap.Core.Node;
 
-// 보안: XSS 방어
 const DB_CELL_PURIFY_CONFIG = {
     USE_PROFILES: { html: true },
     ALLOWED_TAGS: ['br', 'span', 'strong', 'b', 'em', 'i', 'u', 's', 'code', 'a'],
@@ -71,22 +66,19 @@ export const DatabaseBlock = Node.create({
             container.className = 'database-container';
             container.contentEditable = 'false';
 
-            // updateAttributes 타이밍 오류 방지 guard: 함수가 아닌 경우 조용히 무시
             const updateAttrs = (newAttrs) => {
                 if (typeof updateAttributes === 'function') updateAttributes(newAttrs);
             };
 
             let { title, columns, rows } = node.attrs;
             let lastIsEditable = editor.isEditable;
-            let cancelActiveResize = null; // 활성 리사이즈 정리 함수
+            let cancelActiveResize = null; 
 
             const render = () => {
-                // render() 재호출 시 이전 리사이즈 이벤트 리스너 먼저 정리
                 if (cancelActiveResize) { cancelActiveResize(); cancelActiveResize = null; }
                 lastIsEditable = editor.isEditable;
                 container.innerHTML = '';
                 
-                // 헤더 영역
                 const header = document.createElement('div');
                 header.className = 'database-header';
                 const titleInput = document.createElement('input');
@@ -101,13 +93,11 @@ export const DatabaseBlock = Node.create({
                 header.appendChild(titleInput);
                 container.appendChild(header);
 
-                // 테이블 영역
                 const tableWrapper = document.createElement('div');
                 tableWrapper.className = 'database-table-wrapper';
                 const table = document.createElement('table');
                 table.className = 'database-table';
 
-                // ---- Column sizing via <colgroup> (tbody/thead 모두 동일하게 반영) ----
                 const colgroup = document.createElement('colgroup');
                 const colEls = [];
                 columns.forEach((col) => {
@@ -123,17 +113,14 @@ export const DatabaseBlock = Node.create({
                 }
                 table.appendChild(colgroup);
 
-                // ---- Drag resize helpers (Pointer Events) ----
                 const startColResize = (e, colIndex, handleEl) => {
                     if (typeof e.button === 'number' && e.button !== 0) return;
                     e.preventDefault(); e.stopPropagation();
                     
                     const startX = e.clientX;
-                    // 실제 렌더링된 셀의 너비를 기준으로 시작 (정밀도 향상)
                     const cellEl = handleEl.parentElement;
                     const startWidth = cellEl.offsetWidth;
                     
-                    // 드래그 중 테이블 전체 너비를 픽셀로 고정 (1:1 매칭 필수)
                     const tableEl = table;
                     const startTableWidth = tableEl.offsetWidth;
                     tableEl.style.width = startTableWidth + 'px';
@@ -151,7 +138,6 @@ export const DatabaseBlock = Node.create({
                         colEls[colIndex].style.width = px;
                         columns[colIndex].width = px;
                         
-                        // 테이블 전체 너비도 함께 조절하여 경계선이 마우스를 정확히 따라오게 함
                         const totalDelta = newWidth - startWidth;
                         tableEl.style.width = (startTableWidth + totalDelta) + 'px';
                         tableEl.style.minWidth = (startTableWidth + totalDelta) + 'px';
@@ -173,7 +159,7 @@ export const DatabaseBlock = Node.create({
                     e.preventDefault(); e.stopPropagation();
 
                     const startY = e.clientY;
-                    const startHeight = trEl.offsetHeight; // offsetHeight가 더 안정적임
+                    const startHeight = trEl.offsetHeight; 
 
                     handleEl?.setPointerCapture?.(e.pointerId);
                     document.body.classList.add('db-resizing', 'db-resizing-row');
@@ -183,7 +169,6 @@ export const DatabaseBlock = Node.create({
                         const delta = moveEvent.clientY - startY;
                         const px = Math.round(Math.max(36, startHeight + delta)) + 'px';
                         trEl.style.height = px;
-                        // <td>들에도 높이를 직접 설정해야 height:100% 기반의 셀이 늘어남
                         trEl.querySelectorAll('td').forEach(td => { td.style.height = px; });
                         rowObj.height = px;
                     };
@@ -213,7 +198,6 @@ export const DatabaseBlock = Node.create({
                     return resizer;
                 };
                 
-                // THead
                 const thead = document.createElement('thead');
                 const headerRow = document.createElement('tr');
                 
@@ -252,7 +236,6 @@ export const DatabaseBlock = Node.create({
                     
                     th.appendChild(thContent);
 
-                    // [열 크기 조절 핸들]
                     if (editor.isEditable) {
                         th.appendChild(makeColResizer(index));
                     }
@@ -260,7 +243,6 @@ export const DatabaseBlock = Node.create({
                     headerRow.appendChild(th);
                 });
                 
-                // [열 추가 버튼]
                 if (editor.isEditable) {
                     const thAddCol = document.createElement('th');
                     thAddCol.className = 'database-add-col-th';
@@ -282,7 +264,6 @@ export const DatabaseBlock = Node.create({
                 thead.appendChild(headerRow);
                 table.appendChild(thead);
                 
-                // TBody
                 const tbody = document.createElement('tbody');
                 rows.forEach((row, rowIndex) => {
                     const tr = document.createElement('tr');
@@ -336,7 +317,6 @@ export const DatabaseBlock = Node.create({
                         };
                         tdDelRow.appendChild(delRowBtn);
 
-                        // [행 높이 조절 핸들]
                         tdDelRow.appendChild(makeRowResizer(tr, row));
 
                         tr.appendChild(tdDelRow);

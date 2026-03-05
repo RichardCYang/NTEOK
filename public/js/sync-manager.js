@@ -1,7 +1,3 @@
-/**
- * WebSocket 및 Yjs 동기화 관리 모듈
- * 실시간 협업 편집을 위한 클라이언트 측 동기화 로직
- */
 
 import * as Y from 'yjs';
 import { sanitizeEditorHtml } from './sanitize.js';
@@ -13,7 +9,6 @@ import { escapeHtml, showErrorInEditor, syncPageUpdatedAtPadding } from './ui-ut
 import { showCover, hideCover } from './cover-manager.js';
 import { renderPageList } from './pages-manager.js';
 
-// 전역 상태
 let ws = null;
 let reconnectAttempts = 0;
 let reconnectTimer = null;
@@ -24,50 +19,37 @@ let currentPageId = null;
 let currentStorageId = null;
 let lastLocalUpdateTime = 0;
 let updateTimeout = null;
-let yjsPmPlugins = [];				// y-prosemirror(동시편집) 플러그인 추적/해제용
-let yjsPmPluginKeys = new Set();	// y-prosemirror(동시편집) 플러그인 중복 확인용
+let yjsPmPlugins = [];				
+let yjsPmPluginKeys = new Set();	
 
-// 네트워크 끊김/대용량 업데이트 등으로 인해 서버로 전송되지 못한 변경사항이 있으면
-// 재연결 후 full-state(resync)를 수행해 데이터 유실 방지
-// pageId -> boolean
 const resyncNeededByPage = new Map();
 let resyncDebounceTimer = null;
 
-// 데이터 유실 방지: 즉시 저장(force-save) 요청에 대한 서버 ACK 대기 콜백
-// pageId -> { resolve, timer }
 const pendingForceSaves = new Map();
 
-// E2EE (저장소 암호화) 동기화 상태
-let isE2eeSync = false;				// 현재 페이지가 E2EE 모드인지 여부
-let isE2eeWalSyncing = false;       // WAL(증분 로그) 동기화 진행 중
-let e2eeWalUpdateBuffer = [];       // WAL 동기화 중 도착한 실시간 증분 업데이트 버퍼
-let e2eeStatePushTimeout = null;	// 주기적 상태 스냅샷 서버 저장용 타이머
-let e2eeStatePushPageId = null;	// 마지막으로 스냅샷 저장이 예약된 페이지 (E2EE)
+let isE2eeSync = false;				
+let isE2eeWalSyncing = false;       
+let e2eeWalUpdateBuffer = [];       
+let e2eeStatePushTimeout = null;	
+let e2eeStatePushPageId = null;	
 
-// E2EE 스냅샷 저장 디바운스(ms)
-// - 값이 클수록 DB/CPU 부하는 줄지만, 탭 종료/새로고침 직전 변경분 유실 가능성이 커짐
-// - 기본값은 데이터 유실 위험을 낮추기 위해 800ms로 설정
 const E2EE_STATE_PUSH_DEBOUNCE_MS = (() => {
 	const v = Number.parseInt(window?.__NTEOK_E2EE_SNAPSHOT_DEBOUNCE_MS || '800', 10);
 	return Number.isFinite(v) ? Math.max(200, Math.min(5000, v)) : 800;
 })();
 
-// 커서 공유 상태
-// 서버와 동일한 상한(기본값). 운영에서 서버(.env) 값 변경 시 함께 맞추는 것을 권장
-const WS_MAX_YJS_UPDATE_BYTES = 512 * 1024;        // 512KB
-const WS_MAX_AWARENESS_UPDATE_BYTES = 32 * 1024;   // 32KB
+const WS_MAX_YJS_UPDATE_BYTES = 512 * 1024;        
+const WS_MAX_AWARENESS_UPDATE_BYTES = 32 * 1024;   
 
-// 서버 기본값(WS_MAX_YJS_STATE_BYTES)과 맞춰야 함
-const WS_MAX_YJS_STATE_BYTES = 1024 * 1024;        // 1MB
+const WS_MAX_YJS_STATE_BYTES = 1024 * 1024;        
 
 const cursorState = {
-    awareness: null,			// Awareness 인스턴스
-    remoteCursors: new Map(),	// clientId -> DOM element
-    localClientId: null,		// 로컬 클라이언트 ID
-    throttleTimer: null,		// Throttle 타이머
-    lastSentPosition: null,		// 마지막 전송 위치 (중복 방지)
-	localUserId: null,			// 로컬 사용자 ID
-	// 커서 추적(이벤트 리스너) 중복 설치 방지/정리용
+    awareness: null,			
+    remoteCursors: new Map(),	
+    localClientId: null,		
+    throttleTimer: null,		
+    lastSentPosition: null,		
+	localUserId: null,			
     trackingEditor: null,
     selectionUpdateHandler: null,
     blurHandler: null
@@ -77,15 +59,11 @@ const state = {
     editor: null,
     currentPageId: null,
     currentStorageId: null,
-    // REST로 로드한 페이지의 updatedAt (E2EE init에서 stale state 롤백 방지용)
     currentPageUpdatedAt: null,
     fetchPageList: null,
     pages: []
 };
 
-// ------------------------------
-// base64 helpers (large update 안전)
-// ------------------------------
 function uint8ToBase64(update) {
 	const u8 = update instanceof Uint8Array ? update : new Uint8Array(update);
 	let s = '';
@@ -159,7 +137,6 @@ function sendYjsState(pageId) {
 
 
 export function onLocalEditModeChanged(isWriteMode) {
-	// 원격 커서 DOM 정리(내가 쓰기모드면 숨김 정책)
 	if (isWriteMode) {
 		cursorState.remoteCursors.forEach(el => el.remove());
 		cursorState.remoteCursors.clear();
@@ -189,32 +166,24 @@ function getPrimaryWriterClientId() {
 	return primary;
 }
 
-/**
- * 초기화
- */
 export function initSyncManager(appState) {
     state.editor = appState.editor;
     state.fetchPageList = appState.fetchPageList;
     state.pages = appState.pages;
 
-    // appState와 reactive하게 연결 (app.js의 appState를 참조하되, sync-manager 내부 상태도 업데이트)
     Object.defineProperty(state, 'currentPageId', { get: () => appState.currentPageId });
     Object.defineProperty(state, 'currentStorageId', { get: () => appState.currentStorageId });
     Object.defineProperty(state, 'currentPageUpdatedAt', { get: () => appState.currentPageUpdatedAt });
 
-    // 네트워크 상태 감지
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
 
-    // Visibility API로 탭 전환 감지
     document.addEventListener('visibilitychange', handleVisibilityChange);
 
-    // 데이터 유실 방지: 탭 종료/브라우저 닫기 직전 미반영 변경분을 서버에 best-effort로 전달
     window.addEventListener('pagehide', () => {
         if (!state.currentPageId) return;
 
         if (isE2eeSync) {
-            // E2EE는 pagehide/beforeunload에서 async가 보장되지 않으므로 best-effort로 즉시 스냅샷 저장을 시작
             flushE2eeStateBestEffort(state.currentPageId, 'pagehide');
             try { sendForceSaveE2ee(state.currentPageId); } catch (_) {}
             return;
@@ -222,14 +191,11 @@ export function initSyncManager(appState) {
 
         flushPendingUpdates();
 
-        // 데이터 유실 방지: resyncNeeded(네트워크/대용량) 상태에서 탭 종료 시,
-        // Yjs state를 마지막으로 한 번 더 밀어넣어 동기화 시도 (Best-effort)
         if (isResyncNeeded(state.currentPageId)) {
             sendYjsState(state.currentPageId);
         }
 
         sendPageSnapshotNow(state.currentPageId);
-        // waitForAck=false: 비동기 ACK 대기는 언로드 중 불가능
         if (ws && ws.readyState === WebSocket.OPEN) {
             try {
                 ws.send(JSON.stringify({ type: 'force-save', payload: { pageId: state.currentPageId } }));
@@ -255,13 +221,9 @@ export function initSyncManager(appState) {
         sendPageSnapshotNow(state.currentPageId);
     }, { capture: true });
 
-    // WebSocket 연결
     connectWebSocket();
 }
 
-/**
- * WebSocket 연결
- */
 function connectWebSocket() {
     if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
         return;
@@ -278,17 +240,14 @@ function connectWebSocket() {
         console.log('[WS] 연결 성공');
         reconnectAttempts = 0;
 
-        // 페이지 재구독
         if (currentPageId) {
             subscribePage(currentPageId);
         }
 
-        // 저장소 재구독
         if (currentStorageId) {
             subscribeStorage(currentStorageId);
         }
 
-        // 사용자 알림 구독
         subscribeUser();
     };
 
@@ -309,21 +268,17 @@ function connectWebSocket() {
         console.log('[WS] 연결 종료');
         ws = null;
 
-        // 재연결 시도
         attemptReconnect();
     };
 }
 
-/**
- * WebSocket 재연결
- */
 function attemptReconnect() {
     if (reconnectTimer) {
         clearTimeout(reconnectTimer);
     }
 
     reconnectAttempts++;
-    const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000); // 최대 30초
+    const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000); 
 
     console.log(`[WS] ${delay}ms 후 재연결 시도 (${reconnectAttempts}번째)`);
 
@@ -332,9 +287,6 @@ function attemptReconnect() {
     }, delay);
 }
 
-/**
- * WebSocket 메시지 처리
- */
 function handleWebSocketMessage(message) {
     const { event, data } = message;
 
@@ -346,7 +298,6 @@ function handleWebSocketMessage(message) {
             handleInit(data);
             break;
         case 'init-e2ee':
-            // async 핸들러 — Promise rejection은 catch로 처리
             handleInitE2EE(data).catch(e => console.error('[E2EE] init 처리 오류:', e));
             break;
         case 'reconnected':
@@ -405,18 +356,11 @@ function handleWebSocketMessage(message) {
     }
 }
 
-/**
- * 페이지 동기화 시작
- * @param {string} pageId - 페이지 ID
- * @param {boolean} isPageEncrypted - 페이지 is_encrypted 플래그
- * @param {boolean} isStorageEncrypted - 페이지가 속한 저장소의 E2EE 여부
- */
 export async function startPageSync(pageId, isPageEncrypted, isStorageEncrypted = false) {
     stopPageSync();
 
     if (isPageEncrypted) {
         if (isStorageEncrypted) {
-            // 저장소 E2EE: 저장소 키가 메모리에 있는 경우만 허용
             const storageKey = window.cryptoManager.getStorageKey();
             if (!storageKey) {
                 showInfo('저장소 키가 없어 실시간 협업을 시작할 수 없습니다. 저장소를 다시 열어주세요.');
@@ -424,34 +368,27 @@ export async function startPageSync(pageId, isPageEncrypted, isStorageEncrypted 
             }
             isE2eeSync = true;
         } else {
-            // 페이지 개별 암호화: 동기화 비활성화
             showInfo('암호화된 페이지는 실시간 협업이 지원되지 않습니다.');
             return;
         }
     }
 
-    // 기존 연결 정리
     currentPageId = pageId;
     state.currentPageId = pageId;
 
-    // Yjs 문서 생성
     ydoc = new Y.Doc();
     yXmlFragment = ydoc.getXmlFragment('prosemirror');
     yMetadata = ydoc.getMap('metadata');
 
-    // Awareness 초기화
     cursorState.awareness = new Awareness(ydoc);
     cursorState.localClientId = ydoc.clientID;
 	cursorState.awareness.on('change', (changes, origin) => handleAwarenessChange(changes, origin));
 
-    // WebSocket으로 페이지 구독
     if (ws && ws.readyState === WebSocket.OPEN) {
         subscribePage(pageId);
     }
 
-    // Yjs 변경 감지 → 서버 전송
     ydoc.on('update', (update, origin) => {
-        // 로컬 변경사항만 서버로 전송 (remote는 제외)
         if (origin !== 'remote' && origin !== 'seed') {
             if (isE2eeSync) {
                 sendYjsUpdateE2EE(pageId, update);
@@ -462,9 +399,6 @@ export async function startPageSync(pageId, isPageEncrypted, isStorageEncrypted 
     });
 }
 
-/**
- * 페이지 구독 (일반 또는 E2EE 모드)
- */
 function subscribePage(pageId) {
     if (!ws || ws.readyState !== WebSocket.OPEN) {
         console.warn('[WS] WebSocket이 연결되지 않았습니다.');
@@ -481,15 +415,11 @@ function subscribePage(pageId) {
     }));
 }
 
-/**
- * 페이지 동기화 중지
- */
 export function stopPageSync() {
     const pageIdToUnsubscribe = currentPageId;
     currentPageId = null;
     state.currentPageId = null;
 
-    // E2EE 상태 정리
     isE2eeSync = false;
     if (e2eeStatePushTimeout) {
         clearTimeout(e2eeStatePushTimeout);
@@ -497,15 +427,11 @@ export function stopPageSync() {
     }
 
 	detachYjsProsemirrorBinding();
-	// setupEditorBindingWithXmlFragment에서 붙인 스냅샷 핸들러 정리
 	if (state.editor && state.editor._snapshotHandler) {
 		state.editor.off?.('update', state.editor._snapshotHandler);
 		state.editor._snapshotHandler = null;
 	}
 
-	// 페이지를 떠나기 직전에 스냅샷(HTML)을 yMetadata에 강제 반영
-	// - debounce 타이밍(1s) 때문에 최종 변경사항이 서버로 전달되지 않으면
-	//   서버 DB content 스냅샷이 뒤처져 검색/백업/첨부 레지스트리 등에 영향
 	try { flushPendingUpdates(); } catch (_) {}
 
 	if (updateTimeout) {
@@ -513,7 +439,6 @@ export function stopPageSync() {
 		updateTimeout = null;
 	}
 
-	// 연결 끊김 중 편집(또는 대용량 변경)이 있었다면 unsubscribe 전에 full-state(resync) 1회 시도
 	if (pageIdToUnsubscribe && isResyncNeeded(pageIdToUnsubscribe)) {
 		sendYjsState(pageIdToUnsubscribe);
 	}
@@ -525,18 +450,15 @@ export function stopPageSync() {
         }));
     }
 
-    // 모든 원격 커서 제거
     cursorState.remoteCursors.forEach(element => element.remove());
     cursorState.remoteCursors.clear();
 
-    // Awareness 정리
     if (cursorState.awareness) {
 		cursorState.awareness.setLocalState(null);
         cursorState.awareness.destroy();
         cursorState.awareness = null;
     }
 
-    // Throttle 타이머 정리
     if (cursorState.throttleTimer) {
         clearTimeout(cursorState.throttleTimer);
         cursorState.throttleTimer = null;
@@ -554,15 +476,10 @@ export function stopPageSync() {
     lastLocalUpdateTime = 0;
 }
 
-/**
- * 대기 중인 업데이트를 즉시 실행
- * 읽기 모드 전환 시 데이터 손실 방지
- */
 export function flushPendingUpdates() {
     if (updateTimeout) {
         clearTimeout(updateTimeout);
 
-        // 즉시 실행 (yMetadata만 업데이트, 에디터는 toggleEditMode에서 동기화)
         if (state.editor && yMetadata) {
             const newContent = state.editor.getHTML();
             const oldContent = yMetadata.get('content');
@@ -576,9 +493,6 @@ export function flushPendingUpdates() {
     }
 }
 
-/**
- * 데이터 유실 방지: 서버 force-save ACK 수신 처리
- */
 function handlePageSaved(data) {
     const pageId = data?.pageId ? String(data.pageId) : null;
     if (!pageId) return;
@@ -590,10 +504,6 @@ function handlePageSaved(data) {
     }
 }
 
-/**
- * 데이터 유실 방지: 탭 종료/페이지 이탈 직전 HTML 스냅샷을 서버로 전송 (best-effort)
- * - E2EE 모드에서는 평문 HTML을 서버로 보내면 안 되므로 완전 차단
- */
 function sendPageSnapshotNow(pageId) {
     if (isE2eeSync) return false;
     if (!pageId || !ws || ws.readyState !== WebSocket.OPEN) return false;
@@ -601,7 +511,6 @@ function sendPageSnapshotNow(pageId) {
 
     const html = state.editor.getHTML();
     if (!html) return false;
-    // 2MB 초과 시 서버가 어차피 거부하므로 전송하지 않음
     if (new Blob([html]).size > 2 * 1024 * 1024) return false;
 
     const titleInput = document.querySelector('#page-title-input');
@@ -620,12 +529,6 @@ function sendPageSnapshotNow(pageId) {
     }
 }
 
-/**
- * 데이터 유실 방지: 즉시 DB 저장 요청 (WS force-save)
- * - 비암호화 페이지의 Ctrl+S / 모드 전환 저장에 사용
- * - includeSnapshot=true 이면 snapshot을 먼저 전송해 최신 HTML이 반영되도록 함
- * - waitForAck=true 이면 'page-saved' 이벤트를 기다려 updatedAt을 반환 (최대 5초 타임아웃)
- */
 export async function requestImmediateSave(pageId, { includeSnapshot = true, waitForAck = true } = {}) {
     if (!pageId || !ws || ws.readyState !== WebSocket.OPEN) return null;
     try {
@@ -655,10 +558,6 @@ export async function requestImmediateSave(pageId, { includeSnapshot = true, wai
     });
 }
 
-/**
- * yMetadata에서 에디터로 콘텐츠 동기화
- * 읽기 모드 전환 시 호출
- */
 export function syncEditorFromMetadata() {
     if (state.editor && yMetadata) {
         const content = yMetadata.get('content');
@@ -679,9 +578,6 @@ export function syncEditorFromMetadata() {
     }
 }
 
-/**
- * Yjs 업데이트 서버 전송
- */
 function sendYjsUpdate(pageId, update) {
     if (!ws || ws.readyState !== WebSocket.OPEN) {
         markResyncNeeded(pageId);
@@ -689,7 +585,6 @@ function sendYjsUpdate(pageId, update) {
         return;
     }
 
-    // 서버에서 거부될 수준의 큰 update는 클라이언트에서 선제 차단(협업 끊김/재연결 UX 완화)
     if (update && (update.byteLength || update.length) && (update.byteLength || update.length) > WS_MAX_YJS_UPDATE_BYTES) {
         console.warn('[WS] yjs-update too large; fallback to yjs-state');
         scheduleResync(pageId, 50);
@@ -712,9 +607,6 @@ function sendYjsUpdate(pageId, update) {
     }
 }
 
-/**
- * 초기 상태 처리
- */
 function handleInit(data) {
     try {
         const incomingPageId = data?.pageId ? String(data.pageId) : null;
@@ -722,14 +614,10 @@ function handleInit(data) {
             console.warn('[WS] stale init ignored:', incomingPageId, '!=', String(currentPageId));
             return;
         }
-        // Yjs 상태 복원
         const stateUpdate = base64ToUint8(data.state);
-		// init update는 원격으로 취급해서 다시 서버로 브로드캐스트하지 않게 origin 지정
 		Y.applyUpdate(ydoc, stateUpdate, 'remote');
 
-		// 사용자 정보를 awareness에 설정
         if (cursorState.awareness && data.userId && data.username && data.color) {
-       		// cursorState에 localUserId 저장
         	cursorState.localUserId = data.userId;
 
             cursorState.awareness.setLocalStateField('user', {
@@ -740,7 +628,6 @@ function handleInit(data) {
             });
 		}
 
-        // 진짜 동시편집 바인딩 (Y.XmlFragment <-> ProseMirror)
         setupEditorBindingWithXmlFragment();
 
         if (isResyncNeeded(state.currentPageId)) {
@@ -757,15 +644,10 @@ function handleInit(data) {
     }
 }
 
-/**
- * Yjs 업데이트 처리
- */
 function handleYjsUpdate(data) {
 	try {
 		const update = base64ToUint8(data.update);
 
-        // 원격 업데이트는 'remote' origin으로 표시
-        // yMetadata.observe()가 자동으로 에디터를 업데이트함
         Y.applyUpdate(ydoc, update, 'remote');
     } catch (error) {
         console.error('[WS] Yjs 업데이트 처리 오류:', error);
@@ -782,15 +664,10 @@ function handleYjsState(data) {
 	}
 }
 
-/**
- * 사용자 입장 처리
- */
 function handleUserJoined(data) {
     try {
         showUserNotification(`${data.username}님이 입장했습니다.`, data.color);
 
-        // E2EE 모드: 새 참여자가 입장하면 현재 풀 스테이트를 update로 전송
-        // → 새 참여자가 서버 스냅샷보다 최신 상태를 받을 수 있게 함
         if (isE2eeSync && currentPageId && ydoc) {
             sendYjsFullStateAsUpdate(currentPageId).catch(e =>
                 console.error('[E2EE] 풀 스테이트 전송 오류:', e)
@@ -801,14 +678,10 @@ function handleUserJoined(data) {
     }
 }
 
-/**
- * 사용자 퇴장 처리
- */
 function handleUserLeft(data) {
     try {
         if (!cursorState.awareness || !data?.userId) return;
 
-        // 서버에서 user-left 이벤트가 오면, 해당 userId에 매핑된 모든 cid(=awareness clientId) 커서를 제거
         const removeClientIds = [];
         cursorState.awareness.getStates().forEach((st, cid) => {
             if (st?.user?.userId === data.userId)
@@ -817,7 +690,6 @@ function handleUserLeft(data) {
 
         if (removeClientIds.length > 0) {
             removeAwarenessStates(cursorState.awareness, removeClientIds, 'remote');
-            // (옵션) 커스텀 DOM 커서가 켜져 있는 경우 대비
             removeClientIds.forEach(cid => {
                 try { removeCursor(cid); } catch (e) {}
             });
@@ -827,9 +699,6 @@ function handleUserLeft(data) {
     }
 }
 
-/**
- * 저장소 메타데이터 동기화 시작
- */
 export function startStorageSync(storageId) {
     stopStorageSync();
 
@@ -841,9 +710,6 @@ export function startStorageSync(storageId) {
     }
 }
 
-/**
- * 저장소 구독
- */
 function subscribeStorage(storageId) {
     if (!ws || ws.readyState !== WebSocket.OPEN) {
         console.warn('[WS] WebSocket이 연결되지 않았습니다.');
@@ -858,9 +724,6 @@ function subscribeStorage(storageId) {
     console.log('[WS] 저장소 구독:', storageId);
 }
 
-/**
- * 저장소 동기화 중지
- */
 export function stopStorageSync() {
     if (currentStorageId && ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({
@@ -873,9 +736,6 @@ export function stopStorageSync() {
     state.currentStorageId = null;
 }
 
-/**
- * 사용자 알림 구독
- */
 function subscribeUser() {
     if (!ws || ws.readyState !== WebSocket.OPEN) {
         return;
@@ -889,12 +749,8 @@ function subscribeUser() {
     console.log('[WS] 사용자 알림 구독');
 }
 
-/**
- * 메타데이터 변경 처리
- */
 function handleMetadataChange(data) {
     try {
-        // 로컬 상태(pages 배열) 업데이트
         if (state.pages) {
             const page = state.pages.find(p => p.id === data.pageId);
             if (page) {
@@ -902,12 +758,9 @@ function handleMetadataChange(data) {
             }
         }
 
-        // 현재 페이지의 메타데이터 변경인 경우 Yjs 메타데이터도 업데이트
         if (data.pageId === state.currentPageId && yMetadata) {
-            // Yjs 메타데이터에서 지원하는 필드만 업데이트
             const supportedFields = ['title', 'icon', 'sortOrder', 'parentId'];
             if (supportedFields.includes(data.field)) {
-                // 'remote' origin을 지정하여 이 변경사항이 다시 서버로 전송되지 않도록 함 (루프 방지)
                 ydoc.transact(() => {
                     yMetadata.set(data.field, data.value);
                 }, 'remote');
@@ -915,7 +768,6 @@ function handleMetadataChange(data) {
             }
         }
 
-        // 커버 이미지 동기화
         if (data.field === 'coverImage' && data.pageId === state.currentPageId) {
             if (data.value) {
                 const page = state.pages.find(p => p.id === data.pageId);
@@ -926,7 +778,6 @@ function handleMetadataChange(data) {
             }
         }
 
-        // 커버 위치 동기화
         if (data.field === 'coverPosition' && data.pageId === state.currentPageId) {
             const page = state.pages.find(p => p.id === data.pageId);
             if (page) page.coverPosition = data.value;
@@ -937,7 +788,6 @@ function handleMetadataChange(data) {
             }
         }
 
-        // 여백 동기화 (모바일에서는 기본 CSS 사용)
         if (data.field === 'horizontalPadding' && data.pageId === state.currentPageId) {
             const page = state.pages.find(p => p.id === data.pageId);
             if (page) page.horizontalPadding = data.value;
@@ -956,16 +806,13 @@ function handleMetadataChange(data) {
 
             syncPageUpdatedAtPadding();
 
-            // 하위 페이지 섹션 여백도 동기화
             if (window.syncSubpagesPadding) {
                 window.syncSubpagesPadding(data.value);
             }
         }
 
-        // 사이드바 업데이트
         updatePageInSidebar(data.pageId, data.field, data.value);
 
-        // 하위 페이지 메타데이터 변경 시 업데이트
         if (window.handleSubpageMetadataChange) {
             window.handleSubpageMetadataChange(data);
         }
@@ -974,12 +821,8 @@ function handleMetadataChange(data) {
     }
 }
 
-/**
- * 페이지 생성 처리
- */
 function handlePageCreated(data) {
     try {
-        // 페이지 목록 새로고침
         if (state.fetchPageList) {
             state.fetchPageList().then(() => {
                 renderPageList();
@@ -990,14 +833,10 @@ function handlePageCreated(data) {
     }
 }
 
-/**
- * 페이지 삭제 처리
- */
 function handlePageDeleted(data) {
     try {
         const deletedPageId = data.pageId;
 
-        // state.pages 배열에서 삭제된 페이지 제거
         if (state.pages) {
             const pageIndex = state.pages.findIndex(p => p.id === deletedPageId);
             if (pageIndex !== -1) {
@@ -1005,14 +844,11 @@ function handlePageDeleted(data) {
             }
         }
 
-        // 현재 선택된 페이지가 삭제된 경우
         if (state.currentPageId === deletedPageId) {
             console.log('[WS] 현재 페이지가 삭제되었습니다:', deletedPageId);
 
-            // 페이지 동기화 중지
             stopPageSync();
 
-            // 에디터 내용 비우고 메시지 표시
             if (state.editor) {
                 showErrorInEditor(
                     '이 페이지는 삭제되었습니다.',
@@ -1020,17 +856,14 @@ function handlePageDeleted(data) {
                 );
             }
 
-            // 현재 페이지 ID 초기화
             state.currentPageId = null;
 
-            // 페이지 제목 초기화
             const titleInput = document.querySelector("#page-title-input");
             if (titleInput) {
                 titleInput.value = '';
             }
         }
 
-        // 페이지 목록 새로고침
         if (state.fetchPageList) {
             state.fetchPageList().then(() => {
                 renderPageList();
@@ -1041,26 +874,17 @@ function handlePageDeleted(data) {
     }
 }
 
-/**
- * 중복 로그인 처리
- */
 function handleDuplicateLogin(data) {
     alert(data.message || '다른 위치에서 로그인하여 현재 세션이 종료됩니다.');
     window.location.href = '/login';
 }
 
-/**
- * 서버 측 권한 회수 알림
- * - 컬렉션 공유가 삭제되었거나 접근 권한이 회수된 경우
- * - 기존 WS 구독이 강제로 해제되며(서버), 클라이언트는 UI를 갱신
- */
 function handleAccessRevoked(data) {
     try {
         const storageId = data?.storageId;
         const revokedPageIds = Array.isArray(data?.pageIds) ? data.pageIds : [];
         const message = data?.message || '접근 권한이 회수되었습니다.';
 
-        // 현재 보고 있는 페이지가 영향권이면 즉시 동기화 종료 + 에러 표기
         if (state.currentPageId && revokedPageIds.includes(state.currentPageId)) {
             stopPageSync();
             if (state.editor)
@@ -1068,7 +892,6 @@ function handleAccessRevoked(data) {
             state.currentPageId = null;
         }
 
-        // 현재 구독 중인 저장소가 권한 회수 대상이면 구독 종료
         if (storageId && state.currentStorageId === storageId) {
             stopStorageSync();
             state.currentStorageId = null;
@@ -1076,7 +899,6 @@ function handleAccessRevoked(data) {
 
         showInfo(message);
 
-        // 사이드바 목록 새로고침 (권한 변경 즉시 반영)
         if (state.fetchPageList) {
             state.fetchPageList().then(() => {
                 renderPageList();
@@ -1087,16 +909,10 @@ function handleAccessRevoked(data) {
     }
 }
 
-/**
- * 보안: 사이드바 아이콘을 안전하게 생성 (innerHTML 금지)
- * - FontAwesome class: 허용 문자만 남기고 className으로 세팅
- * - Emoji/텍스트: textContent로만 삽입
- */
 function createSafeSidebarIconElement(value) {
 	if (!value) return null;
 	const v = String(value);
 
-	// FontAwesome 클래스처럼 보이면 className으로만 설정
 	if (v.startsWith('fa-')) {
 		const safeClass = v.replace(/[^a-zA-Z0-9 _-]/g, '').trim();
 		if (!safeClass) return null;
@@ -1107,7 +923,6 @@ function createSafeSidebarIconElement(value) {
 		return i;
 	}
 
-	// Emoji/짧은 텍스트: textContent 사용
 	const s = document.createElement('span');
 	s.className = "page-icon";
 	s.style.marginRight = "6px";
@@ -1116,9 +931,6 @@ function createSafeSidebarIconElement(value) {
 	return s;
 }
 
-/**
- * titleSpan에서 아이콘을 제외한 텍스트만 안전하게 추출
- */
 function getSidebarTitleText(titleSpan) {
 	if (!titleSpan) return '';
 	const texts = [];
@@ -1128,9 +940,6 @@ function getSidebarTitleText(titleSpan) {
 	return texts.join('').trim();
 }
 
-/**
- * 사이드바 페이지 정보 업데이트
- */
 function updatePageInSidebar(pageId, field, value) {
     const pageElement = document.querySelector(`[data-page-id="${pageId}"]`);
     if (!pageElement) {
@@ -1140,13 +949,11 @@ function updatePageInSidebar(pageId, field, value) {
     if (field === 'title') {
         const titleSpan = pageElement.querySelector('.page-list-item-title');
         if (titleSpan) {
-        	// 기존 아이콘을 안전한 값(className/textContent)으로 재구성
             const existingIcon = titleSpan.querySelector('i, span.page-icon');
             let iconValue = null;
             if (existingIcon)
                 iconValue = existingIcon.tagName === 'I' ? existingIcon.className : existingIcon.textContent;
 
-            // 전체를 DOM API로 재구성 (innerHTML 금지)
             titleSpan.textContent = '';
             const iconEl = createSafeSidebarIconElement(iconValue);
             if (iconEl) titleSpan.appendChild(iconEl);
@@ -1157,7 +964,6 @@ function updatePageInSidebar(pageId, field, value) {
         if (titleSpan) {
         	const titleText = getSidebarTitleText(titleSpan);
 
-            // 전체를 DOM API로 재구성 (innerHTML 금지)
             titleSpan.textContent = '';
             const iconEl = createSafeSidebarIconElement(value);
             if (iconEl) titleSpan.appendChild(iconEl);
@@ -1166,9 +972,6 @@ function updatePageInSidebar(pageId, field, value) {
     }
 }
 
-/**
- * 사용자 알림 표시
- */
 function showUserNotification(message, color) {
     const notification = document.createElement('div');
     notification.style.cssText = `
@@ -1194,9 +997,6 @@ function showUserNotification(message, color) {
     }, 3000);
 }
 
-/**
- * 정보 메시지 표시
- */
 function showInfo(message) {
     const notification = document.createElement('div');
     notification.style.cssText = `
@@ -1218,31 +1018,20 @@ function showInfo(message) {
     setTimeout(() => notification.remove(), 5000);
 }
 
-/**
- * 온라인 복구 핸들러
- */
 function handleOnline() {
     showInfo('네트워크 연결이 복구되었습니다.');
 
-    // WebSocket 재연결
     if (!ws || ws.readyState !== WebSocket.OPEN) {
         connectWebSocket();
     }
 }
 
-/**
- * 오프라인 핸들러
- */
 function handleOffline() {
     showInfo('네트워크 연결이 끊어졌습니다. 로컬 변경사항은 보존됩니다.');
 }
 
-/**
- * Visibility 변경 핸들러
- */
 function handleVisibilityChange() {
     if (document.hidden) {
-        // 탭이 숨겨질 때 (모바일 앱 전환 등) 즉시 저장 시도
         if (state.currentPageId) {
             if (isE2eeSync) {
                 flushE2eeStateBestEffort(state.currentPageId, 'hidden');
@@ -1253,7 +1042,6 @@ function handleVisibilityChange() {
             }
         }
     } else {
-        // WebSocket 연결 확인 및 재연결
         if (!ws || ws.readyState !== WebSocket.OPEN) {
             connectWebSocket();
         }
@@ -1264,12 +1052,10 @@ function detachYjsProsemirrorBinding() {
 	if (!state.editor || !state.editor.view) return;
 	const view = state.editor.view;
 
-	// yjsPmPluginKeys에 기록된 key를 가진 플러그인들을 전부 제거
 	if (yjsPmPluginKeys.size > 0) {
 		const plugins = view.state.plugins.filter(p => !yjsPmPluginKeys.has(p.key));
 		view.updateState(view.state.reconfigure({ plugins }));
 	} else if (yjsPmPlugins?.length) {
-		// (예비) 예전 방식(인스턴스) 제거
 		const plugins = view.state.plugins.filter(p => !yjsPmPlugins.includes(p));
 		view.updateState(view.state.reconfigure({ plugins }));
 	}
@@ -1295,7 +1081,6 @@ function attachYjsProsemirrorBinding() {
 	if (!state.editor?.view) return;
   	const view = state.editor.view;
 
-   	// 새 협업 플러그인 생성
     const syncPlugin = ySyncPlugin(yXmlFragment);
     const cursorPlugin = yCursorPlugin(cursorState.awareness, { cursorBuilder: buildCursorDOM });
     const undoPlugin = yUndoPlugin();
@@ -1304,18 +1089,16 @@ function attachYjsProsemirrorBinding() {
 	const collabPlugins = [syncPlugin, cursorPlugin, undoPlugin, keymapPlugin];
 	yjsPmPlugins = collabPlugins;
 
-	// 키 기록 (keymapPlugin은 보통 고유키라 중복문제 없지만, 기록해도 무방)
 	collabPlugins.forEach(p => {
 		if (p?.key)
 			yjsPmPluginKeys.add(p.key);
 	});
 
-	// 기존 플러그인 중에서 yjs 키를 가진 것들은 제거하고 다시 붙인다 (중복 방지)
 	const basePlugins = view.state.plugins.filter(p => !yjsPmPluginKeys.has(p.key));
 
 	view.updateState(
 		view.state.reconfigure({
-		    plugins: [...collabPlugins, ...basePlugins], // collab을 앞에
+		    plugins: [...collabPlugins, ...basePlugins], 
 		})
 	);
 }
@@ -1348,24 +1131,18 @@ function setupEditorBindingWithXmlFragment() {
 	const view = editor.view;
 	const schema = view.state.schema;
 
-	// 공유 문서(진짜 협업 데이터)
 	yXmlFragment = ydoc.getXmlFragment('prosemirror');
-	yMetadata = ydoc.getMap('metadata'); // (옵션) 저장용 스냅샷/메타데이터
+	yMetadata = ydoc.getMap('metadata'); 
 
-	// Yjs <-> ProseMirror 동시편집 플러그인 부착
 	attachYjsProsemirrorBinding();
 
-	// 만약 서버/DB에서 HTML만 있고 fragment가 비어있다면, 최초 1회만 HTML을 fragment로 주입
 	const htmlSnapshot = yMetadata.get('content');
 	const fragEmpty = (yXmlFragment.toJSON?.() ?? []).length === 0;
 	if (fragEmpty && typeof htmlSnapshot === 'string' && htmlSnapshot.trim())
 		editor.commands.setContent(sanitizeEditorHtml(htmlSnapshot), { emitUpdate: true });
 
-	// 저장용 스냅샷(HTML)만 yMetadata에 유지 (서버 저장 로직 호환)
 	editor.off?.('update', editor._snapshotHandler);
 	editor._snapshotHandler = ({ editor, transaction }) => {
-		// Yjs 동기화로 인한 업데이트(원격 변경사항 반영)인 경우 스냅샷 업데이트 건너뜀
-		// 이를 통해 무한 루프나 불필요한 네트워크 트래픽, Yjs 내부 오류(Unexpected case) 방지
 		if (editor._syncIsUpdating || (transaction && (transaction.getMeta('y-sync$') || transaction.getMeta('y-prosemirror-sync')))) {
 			return;
 		}
@@ -1384,12 +1161,7 @@ function setupEditorBindingWithXmlFragment() {
 	console.log('[WS] yXmlFragment 기반 동시편집 바인딩 완료');
 }
 
-/**
- * Awareness 변경 감지 핸들러
- */
 function handleAwarenessChange({ added, updated, removed }, origin) {
-	// yCursorPlugin이 커서 렌더링을 ProseMirror decoration으로 처리하므로
-	// 여기서는 네트워크 전송만 담당한다.
 	if (origin !== 'remote') {
 	    const update = encodeAwarenessUpdate(cursorState.awareness, [
 		    ...added, ...updated, ...removed,
@@ -1398,13 +1170,9 @@ function handleAwarenessChange({ added, updated, removed }, origin) {
 	}
 }
 
-/**
- * Awareness 업데이트 서버 전송
- */
 function sendAwarenessUpdate(update) {
     if (!currentPageId || !ws || ws.readyState !== WebSocket.OPEN) return;
 
-    // awareness는 커서/선택 정보이므로 크기가 커지면 무시(협업 자체는 유지)
     if (update && (update.byteLength || update.length) && (update.byteLength || update.length) > WS_MAX_AWARENESS_UPDATE_BYTES)
         return;
 
@@ -1419,9 +1187,6 @@ function sendAwarenessUpdate(update) {
     }));
 }
 
-/**
- * 중복 커서 확인 함수
- */
 function dedupeAwarenessByUserId(userId) {
     if (!cursorState.awareness || !userId) return;
 
@@ -1433,7 +1198,6 @@ function dedupeAwarenessByUserId(userId) {
 
     if (entries.length <= 1) return;
 
-    // lastUpdate가 가장 큰(가장 최근 움직인) cid 1개만 남김
     entries.sort((a, b) => ((b[1]?.cursor?.lastUpdate ?? 0) - (a[1]?.cursor?.lastUpdate ?? 0)));
     const removeClientIds = entries.slice(1).map(([cid]) => cid);
 
@@ -1443,16 +1207,12 @@ function dedupeAwarenessByUserId(userId) {
     });
 }
 
-/**
- * 원격 Awareness 업데이트 처리
- */
 function handleRemoteAwarenessUpdate(data) {
     if (!cursorState.awareness) return;
     try {
 		const update = base64ToUint8(data.awarenessUpdate);
         applyAwarenessUpdate(cursorState.awareness, update, 'remote');
 
-        // 같은 userId가 새로고침 등으로 여러 cid를 남기면, 가장 최신 커서(lastUpdate) 1개만 남긴다.
 		if (data?.fromUserId)
 		    dedupeAwarenessByUserId(data.fromUserId);
     } catch (error) {
@@ -1460,23 +1220,14 @@ function handleRemoteAwarenessUpdate(data) {
     }
 }
 
-/**
-* 원격 커서를 올려둘 스크롤 컨테이너 반환
-* - 이 프로젝트는 #editor 자체가 overflow-y: auto 인 스크롤 컨테이너임
-* - body에 붙이면 #editor 스크롤과 분리되어 커서가 스크롤을 따라다니는 현상이 발생
-*/
 function getEditorScrollContainer() {
     return document.getElementById('editor') || state?.editor?.view?.dom;
 }
 
-/**
- * 커서 렌더링
- */
 function renderCursor(clientId, awarenessState) {
     const { cursor, user } = awarenessState;
     if (!cursor || !user || !state.editor) return;
 
-    // 기존 커서 요소 확인
 	let cursorElement = cursorState.remoteCursors.get(clientId);
 
 	const scrollContainer = getEditorScrollContainer();
@@ -1490,7 +1241,6 @@ function renderCursor(clientId, awarenessState) {
 		scrollContainer.appendChild(cursorElement);
     }
 
-    // ProseMirror position을 DOM coordinates로 변환
     try {
         const editorView = state.editor.view;
         const coords = editorView.coordsAtPos(cursor.head);
@@ -1501,19 +1251,14 @@ function renderCursor(clientId, awarenessState) {
     }
 }
 
-/**
- * 커서 DOM 요소 생성
- */
 function createCursorElement(user) {
     const container = document.createElement('div');
     container.className = 'remote-cursor-container';
 
-    // 커서 라인
     const cursor = document.createElement('div');
     cursor.className = 'remote-cursor';
     cursor.style.backgroundColor = user.color;
 
-    // 사용자 이름 라벨
     const label = document.createElement('div');
     label.className = 'remote-cursor-label';
     label.style.backgroundColor = user.color;
@@ -1525,9 +1270,6 @@ function createCursorElement(user) {
     return container;
 }
 
-/**
- * 커서 위치 업데이트
- */
 function updateCursorPosition(element, coords, user, scrollContainer) {
 	const container = scrollContainer || getEditorScrollContainer();
 	if (!container) return;
@@ -1545,14 +1287,10 @@ function updateCursorPosition(element, coords, user, scrollContainer) {
     element.style.height = `${coords.bottom - coords.top}px`;
     element.style.display = 'block';
 
-    // 에디터 영역 벗어나면 숨김
     if (coords.top < containerRect.top || coords.top > containerRect.bottom)
         element.style.display = 'none';
 }
 
-/**
- * 커서 제거
- */
 function removeCursor(clientId) {
     const element = cursorState.remoteCursors.get(clientId);
     if (element) {
@@ -1561,11 +1299,7 @@ function removeCursor(clientId) {
     }
 }
 
-// ==================== E2EE (저장소 암호화) 실시간 협업 헬퍼 ====================
 
-/**
- * Uint8Array/ArrayBuffer를 AES-GCM으로 암호화 (IV 앞에 붙임)
- */
 async function encryptBytes(data, key) {
     const iv = crypto.getRandomValues(new Uint8Array(12));
     const plainBytes = data instanceof Uint8Array ? data : new Uint8Array(data);
@@ -1580,9 +1314,6 @@ async function encryptBytes(data, key) {
     return combined;
 }
 
-/**
- * IV(앞 12바이트) + 암호문을 AES-GCM으로 복호화
- */
 async function decryptBytes(combinedData, key) {
     const combined = combinedData instanceof Uint8Array ? combinedData : new Uint8Array(combinedData);
     const iv = combined.slice(0, 12);
@@ -1595,9 +1326,6 @@ async function decryptBytes(combinedData, key) {
     return new Uint8Array(decrypted);
 }
 
-/**
- * E2EE 암호화 Yjs 증분 업데이트 전송
- */
 async function sendYjsUpdateE2EE(pageId, update) {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
 
@@ -1619,18 +1347,12 @@ async function sendYjsUpdateE2EE(pageId, update) {
             payload: { pageId, update: uint8ToBase64(encrypted) }
         }));
 
-        // 편집 후 3초 디바운스 → 서버에 전체 상태 스냅샷 저장
         scheduleE2EEStatePush(pageId);
     } catch (e) {
         console.error('[E2EE] 업데이트 암호화 실패:', e);
     }
 }
 
-/**
- * E2EE 전체 상태 서버 저장 예약 (Debounce)
- * - 편집할 때마다 타이머를 리셋하여, 마지막 입력 후 지정된 시간(E2EE_STATE_PUSH_DEBOUNCE_MS) 뒤에만 저장 수행
- * - 서버는 이 스냅샷을 늦게 입장하는 참여자의 초기 상태로 사용
- */
 function scheduleE2EEStatePush(pageId) {
     if (!pageId || !isE2eeSync) return;
     e2eeStatePushPageId = pageId;
@@ -1642,10 +1364,6 @@ function scheduleE2EEStatePush(pageId) {
     }, E2EE_STATE_PUSH_DEBOUNCE_MS);
 }
 
-/**
- * 대기 중인 E2EE 상태 저장을 즉시 실행 (동기 방식)
- * - Prosemirror detach 또는 탭 종료 직전에 호출
- */
 export async function flushE2eeState() {
     if (e2eeStatePushTimeout) {
         clearTimeout(e2eeStatePushTimeout);
@@ -1658,9 +1376,6 @@ export async function flushE2eeState() {
     }
 }
 
-/**
- * E2EE 스냅샷 객체 생성 (암호화)
- */
 async function buildE2eeSnapshot(pageId) {
     if (!ydoc || !pageId) return null;
     const storageKey = window.cryptoManager.getStorageKey();
@@ -1688,9 +1403,6 @@ async function buildE2eeSnapshot(pageId) {
     }
 }
 
-/**
- * E2EE 데이터 유실 방지: 언로드/숨김 시 async 대기 없이 즉시 전송 시도 (best-effort)
- */
 async function flushE2eeStateBestEffort(pageId, context = '') {
     if (!pageId || !isE2eeSync || !ydoc) return;
     if (e2eeStatePushTimeout) {
@@ -1705,9 +1417,6 @@ async function flushE2eeStateBestEffort(pageId, context = '') {
     } catch (_) {}
 }
 
-/**
- * E2EE 데이터 유실 방지: 서버 측 디바운스(DB write) 즉시 플러시 요청
- */
 function sendForceSaveE2ee(pageId) {
     if (!pageId || !ws || ws.readyState !== WebSocket.OPEN) return;
     try {
@@ -1715,9 +1424,6 @@ function sendForceSaveE2ee(pageId) {
     } catch (_) {}
 }
 
-/**
- * E2EE 전체 Yjs 상태를 서버에 저장 (늦은 참여자 초기 상태 제공)
- */
 async function sendYjsStateE2EE(pageId, prebuiltSnapshot = null) {
     if (!ws || ws.readyState !== WebSocket.OPEN || !pageId) return;
 
@@ -1734,10 +1440,6 @@ async function sendYjsStateE2EE(pageId, prebuiltSnapshot = null) {
     }
 }
 
-/**
- * E2EE 전체 상태를 update로 브로드캐스트 (새 참여자 실시간 동기화용)
- * - user-joined 이벤트 수신 시 기존 참여자가 최신 상태를 전달
- */
 async function sendYjsFullStateAsUpdate(pageId) {
     if (!ws || ws.readyState !== WebSocket.OPEN || !ydoc || !pageId) return;
 
@@ -1757,11 +1459,6 @@ async function sendYjsFullStateAsUpdate(pageId) {
     }
 }
 
-/**
- * E2EE init 이벤트 처리
- * - 서버에서 암호화 상태(스냅샷)를 받아 복호화 후 Yjs 문서에 적용
- * - 스냅샷이 없으면 현재 에디터 HTML로 Yjs 문서 초기화
- */
 async function handleInitE2EE(data) {
     try {
         const incomingPageId = data?.pageId ? String(data.pageId) : null;
@@ -1770,7 +1467,6 @@ async function handleInitE2EE(data) {
             return;
         }
 
-        // WAL 동기화 상태 초기화
         isE2eeWalSyncing = true;
         e2eeWalUpdateBuffer = [];
 
@@ -1788,7 +1484,6 @@ async function handleInitE2EE(data) {
         const shouldTrustServerSnapshot = (() => {
             if (!data?.encryptedState) return false;
             if (!localUpdatedMs || !serverE2eeUpdatedMs) return true;
-            // 서버 스냅샷이 로컬(REST)보다 최신이거나 거의 비슷하면 신뢰
             return serverE2eeUpdatedMs + 1000 >= localUpdatedMs;
         })();
 
@@ -1806,10 +1501,8 @@ async function handleInitE2EE(data) {
             console.warn('[E2EE] 서버 스냅샷이 stale로 판단되어 무시함 (data.e2eeStateUpdatedAt < REST updatedAt)');
         }
 
-        // 서버 스냅샷이 없거나 fragment가 비어있으면 현재 에디터 HTML로 시드
         seedYjsFromCurrentEditorHtmlIfNeeded();
 
-        // 사용자 정보 awareness 설정
         if (cursorState.awareness && data.userId && data.username && data.color) {
             cursorState.localUserId = data.userId;
             cursorState.awareness.setLocalStateField('user', {
@@ -1820,24 +1513,18 @@ async function handleInitE2EE(data) {
             });
         }
 
-        // Yjs <-> ProseMirror 바인딩
         setupEditorBindingWithXmlFragment();
 
-        // 서버에 현재 상태 스냅샷 저장 (늦은 참여자를 위한 초기 상태)
         await sendYjsStateE2EE(currentPageId);
 
         console.log('[E2EE] 초기화 완료');
     } catch (error) {
         console.error('[E2EE] init 처리 오류:', error);
-        // 오류 시에도 바인딩은 시도
         try { seedYjsFromCurrentEditorHtmlIfNeeded(); } catch (_) {}
         setupEditorBindingWithXmlFragment();
     }
 }
 
-/**
- * E2EE WAL(증분 로그) 동기화 처리
- */
 async function handleE2eePendingUpdates(data) {
     if (!isE2eeSync) return;
     const pageId = data?.pageId ? String(data.pageId) : null;
@@ -1864,7 +1551,6 @@ async function handleE2eePendingUpdates(data) {
         isE2eeWalSyncing = false;
         console.log('[E2EE] WAL 동기화 완료, 버퍼링된 업데이트 적용 시작');
         
-        // WAL 동기화 중 들어온 실시간 업데이트들을 순차적으로 적용함
         const buffered = e2eeWalUpdateBuffer;
         e2eeWalUpdateBuffer = [];
         for (const update of buffered) {
@@ -1873,14 +1559,10 @@ async function handleE2eePendingUpdates(data) {
     }
 }
 
-/**
- * E2EE 암호화 Yjs 업데이트 수신 처리
- */
 async function handleYjsUpdateE2EEEvent(data) {
     try {
         if (!ydoc) return;
 
-        // WAL 동기화 중이면 실시간 업데이트를 버퍼에 저장하고 나중에 처리함
         if (isE2eeWalSyncing) {
             e2eeWalUpdateBuffer.push(data);
             return;
@@ -1899,20 +1581,14 @@ async function handleYjsUpdateE2EEEvent(data) {
     }
 }
 
-/**
- * 데이터 유실 방지(핵심): 서버로부터 HTML 스냅샷(전체 상태) 업로드 요청 수신
- * - 서버 메모리의 Yjs 문서에 metadata.content 가 유실되었을 때 자가 치유(Self-heal)를 위해 발생
- */
 async function handleRequestPageSnapshot(data) {
     const pageId = data?.pageId ? String(data.pageId) : null;
     if (!pageId || isE2eeSync || String(currentPageId) !== pageId) return;
 
     console.log('[Self-heal] 서버로부터 HTML 스냅샷 업로드 요청 수신');
     try {
-        // 최신 HTML 스냅샷 생성 및 전송
         const sent = sendPageSnapshotNow(pageId);
         if (sent) {
-            // 서버 측 디바운스(DB write) 즉시 플러시 요청
             await requestImmediateSave(pageId, { includeSnapshot: false, waitForAck: false });
         }
     } catch (e) {
@@ -1920,19 +1596,13 @@ async function handleRequestPageSnapshot(data) {
     }
 }
 
-/**
- * 데이터 유실 방지(핵심): 서버가 E2EE 스냅샷(전체 상태) 업로드를 요청함
- * - 서버가 증분 업데이트를 받았으나 일정 시간 내 스냅샷이 도착하지 않을 때 발생
- */
 async function handleRequestYjsStateE2EE(data) {
     const pageId = data?.pageId ? String(data.pageId) : null;
     if (!pageId || !isE2eeSync || String(currentPageId) !== pageId) return;
 
     console.log('[E2EE] 서버로부터 스냅샷 업로드 요청 수신');
     try {
-        // 1. 최신 스냅샷 생성 및 전송
         await sendYjsStateE2EE(pageId);
-        // 2. 서버 측 디바운스(DB write) 즉시 플러시 요청 (백스톱 완성)
         sendForceSaveE2ee(pageId);
     } catch (e) {
         console.error('[E2EE] 스냅샷 요청 응답 실패:', e);

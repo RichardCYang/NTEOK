@@ -1,19 +1,10 @@
 const express = require('express');
 const router = express.Router();
 
-/**
- * Bootstrap Routes
- *
- * - 초기 로딩에 필요한 사용자/컬렉션/페이지 데이터를 한번에 제공
- */
 
 module.exports = (dependencies) => {
 	const { bootstrapRepo, authMiddleware, toIsoString, logError } = dependencies;
 
-    /**
-     * 부트스트랩 데이터
-     * GET /api/bootstrap
-     */
     router.get("/", authMiddleware, async (req, res) => {
         try {
             const userId = req.user.id;

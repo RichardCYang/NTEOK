@@ -1,7 +1,3 @@
-/**
- * Tiptap Math Node Extension
- * LaTeX 수식을 렌더링하는 커스텀 노드
- */
 
 const Node = Tiptap.Core.Node;
 
@@ -51,18 +47,15 @@ export const MathBlock = Node.create({
 
     addNodeView() {
         return ({ node, editor, getPos }) => {
-            // 전체 wrapper
             const wrapper = document.createElement('div');
             wrapper.className = 'math-block-wrapper';
             wrapper.contentEditable = 'false';
 
             let isEditing = false;
             let currentLatex = node.attrs.latex || '';
-            let autoSaveTimeout = null; // 공유 변수로 이동
+            let autoSaveTimeout = null; 
 
-            // 렌더링된 수식을 표시하는 함수
             const showRendered = () => {
-                // 자동 저장 타임아웃 클리어
                 if (autoSaveTimeout) {
                     clearTimeout(autoSaveTimeout);
                     autoSaveTimeout = null;
@@ -98,11 +91,9 @@ export const MathBlock = Node.create({
                 wrapper.appendChild(rendered);
             };
 
-            // 편집기를 표시하는 함수
             const showEditor = () => {
                 isEditing = true;
 
-                // 기존 자동 저장 타임아웃 클리어
                 if (autoSaveTimeout) {
                     clearTimeout(autoSaveTimeout);
                     autoSaveTimeout = null;
@@ -119,11 +110,9 @@ export const MathBlock = Node.create({
                 textarea.value = currentLatex;
                 textarea.rows = 5;
 
-                // 실시간 동기화를 위한 입력 이벤트 리스너
                 textarea.oninput = (e) => {
                     e.stopPropagation();
 
-                    // 입력이 멈춘 후 500ms 후 자동 저장
                     if (autoSaveTimeout) {
                         clearTimeout(autoSaveTimeout);
                     }
@@ -131,12 +120,10 @@ export const MathBlock = Node.create({
                     autoSaveTimeout = setTimeout(() => {
                         currentLatex = textarea.value;
 
-                        // 에디터에 자동 저장 (속성만 업데이트, DOM 유지)
                         if (typeof getPos === 'function') {
                             const pos = getPos();
                             try {
                                 const tr = editor.view.state.tr;
-                                // setNodeMarkup을 사용하여 노드 타입은 유지하고 속성만 변경
                                 tr.setNodeMarkup(pos, null, { latex: currentLatex });
                                 editor.view.dispatch(tr);
                             } catch (error) {
@@ -172,13 +159,11 @@ export const MathBlock = Node.create({
                 editorContainer.appendChild(buttonContainer);
                 wrapper.appendChild(editorContainer);
 
-                // textarea에 포커스 - 더 강력한 포커스 처리
                 const focusTextarea = () => {
                     textarea.focus();
                     textarea.selectionStart = textarea.value.length;
                     textarea.selectionEnd = textarea.value.length;
 
-                    // 포커스 확인
                     setTimeout(() => {
                         if (document.activeElement !== textarea) {
                             console.warn('[MathBlock] 포커스 실패, activeElement:', document.activeElement);
@@ -186,21 +171,18 @@ export const MathBlock = Node.create({
                     }, 100);
                 };
 
-                // 즉시 포커스 시도
                 requestAnimationFrame(() => {
                     focusTextarea();
                 });
 
-                // editorContainer 클릭 시에도 포커스 보장
                 editorContainer.onclick = (e) => {
                     if (e.target === editorContainer) {
                         focusTextarea();
                     }
                 };
 
-                // 모든 키보드 이벤트를 textarea 내부에서만 처리 (슬래시 메뉴 등 차단)
                 textarea.onkeydown = (e) => {
-                    e.stopPropagation(); // 에디터로 이벤트 전파 차단
+                    e.stopPropagation(); 
 
                     if (e.key === 'Enter' && e.ctrlKey) {
                         e.preventDefault();
@@ -215,16 +197,14 @@ export const MathBlock = Node.create({
                 };
 
                 textarea.onkeyup = (e) => {
-                    e.stopPropagation(); // 에디터로 이벤트 전파 차단
+                    e.stopPropagation(); 
                 };
 
                 textarea.onkeypress = (e) => {
-                    e.stopPropagation(); // 에디터로 이벤트 전파 차단
+                    e.stopPropagation(); 
                 };
 
-                // textarea가 포커스를 잃을 때 자동 저장
                 textarea.onblur = () => {
-                    // 약간의 지연을 두어 버튼 클릭이 먼저 처리되도록 함
                     setTimeout(() => {
                         if (isEditing) {
                             currentLatex = textarea.value;
@@ -234,12 +214,9 @@ export const MathBlock = Node.create({
                 };
             };
 
-            // 저장하고 렌더링 모드로 전환
             const saveAndClose = () => {
-                // 편집 모드 종료
                 isEditing = false;
 
-                // 에디터에 저장 - 트랜잭션으로 노드 교체
                 if (typeof getPos === 'function') {
                     const pos = getPos();
 
@@ -252,20 +229,16 @@ export const MathBlock = Node.create({
                         tr.replaceWith(pos, pos + node.nodeSize, newNode);
                         editor.view.dispatch(tr);
 
-                        // 트랜잭션 후 렌더링 모드로 전환
                         showRendered();
                     } catch (error) {
                         console.error('노드 교체 실패:', error);
-                        // 실패하면 직접 렌더링
                         showRendered();
                     }
                 } else {
-                    // getPos가 없으면 직접 렌더링만 수행
                     showRendered();
                 }
             };
 
-            // 초기 렌더링
             showRendered();
 
             return {
@@ -275,9 +248,7 @@ export const MathBlock = Node.create({
                         return false;
                     }
 
-                    // 편집 중이 아닐 때만 업데이트
                     if (!isEditing) {
-                        // updatedNode.attrs.latex가 정의되어 있을 때만 업데이트
                         if (updatedNode.attrs.latex !== undefined) {
                             currentLatex = updatedNode.attrs.latex;
                             showRendered();
@@ -286,13 +257,11 @@ export const MathBlock = Node.create({
                     return true;
                 },
                 destroy: () => {
-                    // 노드가 파괴될 때 (읽기 모드로 전환 시) 편집 중이면 저장
                     if (isEditing && wrapper.querySelector('.math-input')) {
                         const textarea = wrapper.querySelector('.math-input');
                         if (textarea && textarea.value !== currentLatex) {
                             currentLatex = textarea.value;
 
-                            // 노드 속성 업데이트
                             if (typeof getPos === 'function') {
                                 const pos = getPos();
                                 try {
@@ -309,11 +278,9 @@ export const MathBlock = Node.create({
                     }
                 },
                 stopEvent: () => {
-                    // 모든 이벤트를 내부에서 처리
                     return true;
                 },
                 ignoreMutation: () => {
-                    // 모든 DOM 변경 무시
                     return true;
                 }
             };
@@ -383,7 +350,6 @@ export const MathInline = Node.create({
 
     addInputRules() {
         return [
-            // $...$ 패턴을 인라인 수식으로 변환
             new InputRule({
                 find: /\$([^\$\n]+)\$$/,
                 handler: ({ state, range, match, commands }) => {
@@ -402,7 +368,6 @@ export const MathInline = Node.create({
 
     addNodeView() {
         return ({ node }) => {
-            // 단순한 렌더링 전용 뷰
             const dom = document.createElement('span');
             dom.className = 'math-inline-view';
             dom.contentEditable = 'false';
@@ -423,7 +388,6 @@ export const MathInline = Node.create({
                 dom.textContent = latex || '오류';
             }
 
-            // 클릭 시 커서 캡처 방지
             dom.onmousedown = (e) => {
                 e.preventDefault();
             };
@@ -434,7 +398,6 @@ export const MathInline = Node.create({
                     if (updatedNode.type.name !== this.name) {
                         return false;
                     }
-                    // 내용 변경 시 재렌더링
                     const newLatex = updatedNode.attrs.latex || '';
                     try {
                         if (window.katex && newLatex) {

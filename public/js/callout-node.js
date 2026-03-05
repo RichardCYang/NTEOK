@@ -1,11 +1,6 @@
-/**
- * Tiptap Callout Node Extension
- * 정보, 경고, 에러, 성공 메시지를 표시하는 콜아웃 블록
- */
 
 const Node = Tiptap.Core.Node;
 
-// 콜아웃 타입 정의 (파스텔톤 테마)
 const CALLOUT_TYPES = {
     info: {
         icon: 'ℹ️',
@@ -86,7 +81,6 @@ export const CalloutBlock = Node.create({
 
     addNodeView() {
         return ({ node, editor, getPos }) => {
-            // 전체 컨테이너 생성
             const wrapper = document.createElement('div');
             wrapper.className = 'callout-block-wrapper';
             wrapper.setAttribute('data-callout-type', node.attrs.type);
@@ -98,16 +92,13 @@ export const CalloutBlock = Node.create({
             let typePopup = null;
             let lastEditableState = editor.isEditable;
 
-            // 메인 콘텐츠 레이아웃 (아이콘 + 텍스트)
             const mainContainer = document.createElement('div');
             mainContainer.className = 'callout-header';
 
-            // 아이콘 영역
             const icon = document.createElement('span');
             icon.className = 'callout-icon';
             icon.textContent = CALLOUT_TYPES[currentType].icon;
 
-            // 텍스트 내용 영역
             const contentContainer = document.createElement('div');
             contentContainer.className = 'callout-content';
 
@@ -121,7 +112,6 @@ export const CalloutBlock = Node.create({
             mainContainer.appendChild(icon);
             mainContainer.appendChild(contentContainer);
 
-            // 타입 선택 버튼 (우측 상단 위치)
             const typeSelector = document.createElement('button');
             typeSelector.className = 'callout-type-selector';
             typeSelector.textContent = CALLOUT_TYPES[currentType].label;
@@ -130,18 +120,13 @@ export const CalloutBlock = Node.create({
             wrapper.appendChild(mainContainer);
             wrapper.appendChild(typeSelector);
 
-            // 텍스트 영역 높이 자동 조절
             const adjustTextareaHeight = () => {
                 textarea.style.height = 'auto';
                 textarea.style.height = textarea.scrollHeight + 'px';
             };
 
-            // 초기 높이 설정
             setTimeout(adjustTextareaHeight, 0);
 
-            // ------------------------------------------------------------
-            // 내용 편집 관련 로직
-            // ------------------------------------------------------------
             const setupContentInteraction = () => {
                 if (editor.isEditable) {
                     textarea.readOnly = false;
@@ -190,9 +175,6 @@ export const CalloutBlock = Node.create({
                 }
             };
 
-            // ------------------------------------------------------------
-            // 타입 선택 팝업 관련 로직
-            // ------------------------------------------------------------
             const closeTypePopup = () => {
                 if (typePopup && typePopup.parentNode) {
                     typePopup.parentNode.removeChild(typePopup);
@@ -294,9 +276,6 @@ export const CalloutBlock = Node.create({
                 }
             };
 
-            // ------------------------------------------------------------
-            // 에디터 상태 변경 감지
-            // ------------------------------------------------------------
             const modeCheckHandler = () => {
                 if (editor.isEditable !== lastEditableState) {
                     lastEditableState = editor.isEditable;
@@ -315,7 +294,6 @@ export const CalloutBlock = Node.create({
                 }
             };
 
-            // 초기 설정 실행
             setupContentInteraction();
             setupTypeSelectorInteraction();
 
@@ -323,7 +301,6 @@ export const CalloutBlock = Node.create({
                 dom: wrapper,
 
                 update(updatedNode) {
-                    // 노드 존재 여부 및 타입 일치 확인 (에러 방지 강화)
                     if (!updatedNode || !updatedNode.type || !this.node || !this.node.type) {
                         return false;
                     }

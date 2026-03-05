@@ -1,8 +1,4 @@
-/**
- * Database Block Styles (Precision Alignment, Resizing & Row Height)
- */
 
-/* 최외곽 컨테이너 투명화 */
 .database-block,
 .database-container {
     margin: 24px 0 !important;
@@ -75,7 +71,6 @@
     position: relative;
 }
 
-/* 맨 좌측/우측 세로선 제거 */
 .database-table th:first-child,
 .database-table td:first-child {
     border-left: none !important;
@@ -110,7 +105,6 @@
     color: inherit;
 }
 
-/* 드래그 리사이즈 중 텍스트 선택/커서 방지 */
 body.db-resizing,
 body.db-resizing * {
     user-select: none !important;
@@ -119,7 +113,6 @@ body.db-resizing * {
 body.db-resizing-col { cursor: col-resize !important; }
 body.db-resizing-row { cursor: row-resize !important; }
 
-/* [열 크기 조절 핸들] */
 .database-col-resizer {
     position: absolute;
     right: -4px;
@@ -136,7 +129,6 @@ body.db-resizing-row { cursor: row-resize !important; }
     opacity: 0.5;
 }
 
-/* [행 높이 조절 핸들] */
 .database-row-resizer {
     position: absolute;
     left: 0;
@@ -153,7 +145,6 @@ body.db-resizing-row { cursor: row-resize !important; }
     opacity: 0.5;
 }
 
-/* [공통] 열 추가 및 행 삭제 버튼이 위치하는 셀 */
 .database-add-col-th,
 .database-del-row-td {
     width: 40px !important;
@@ -215,7 +206,6 @@ body.db-resizing-row { cursor: row-resize !important; }
     background-color: rgba(0, 0, 0, 0.02) !important;
 }
 
-/* 개별 삭제 버튼 (열 제목 옆) */
 .database-del-col-btn {
     width: 20px;
     height: 20px;

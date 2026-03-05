@@ -1,11 +1,7 @@
-/**
- * 패스키 관리 모듈
- */
 
 import { escapeHtml, escapeHtmlAttr, secureFetch } from './ui-utils.js';
 import { hideParentModalForChild, restoreParentModalFromChild } from './modal-parent-manager.js';
 
-// SimpleWebAuthn 동적 import
 let SimpleWebAuthnBrowser = null;
 
 async function loadSimpleWebAuthn() {
@@ -49,10 +45,8 @@ export async function openPasskeyManageModal() {
     const modal = document.querySelector('#passkey-manage-modal');
     if (!modal) return;
 
-	// 보안 설정 모달(부모)을 잠깐 닫고, 패스키 관리 모달만 단독으로 띄움
 	hideParentModalForChild('#security-settings-modal', modal);
 
-    // 패스키 목록 로드
     await loadPasskeyList();
 
     modal.classList.remove('hidden');
@@ -62,7 +56,6 @@ export function closePasskeyManageModal() {
     const modal = document.querySelector('#passkey-manage-modal');
     if (modal) {
         modal.classList.add('hidden');
-        // 부모 모달(보안 설정) 복구
         restoreParentModalFromChild(modal);
     }
 }
@@ -106,7 +99,6 @@ async function loadPasskeyList() {
             </div>
         `).join('');
 
-        // 삭제 버튼 이벤트 바인딩
         document.querySelectorAll('.delete-passkey-btn').forEach(btn => {
             btn.addEventListener('click', async () => {
                 const passkeyId = btn.getAttribute('data-id');
@@ -135,7 +127,6 @@ async function deletePasskey(passkeyId) {
             return;
         }
 
-        // 목록 새로고침
         await loadPasskeyList();
         await updatePasskeyStatus();
     } catch (error) {
@@ -151,7 +142,6 @@ export function openPasskeyRegisterModal() {
 
     if (!modal) return;
 
-	// 패스키 등록은 '패스키 관리' 모달 위에 띄우지 않고, 관리 모달을 잠깐 닫은 뒤 단독으로 띄움
 	hideParentModalForChild('#passkey-manage-modal', modal);
 
     if (deviceNameInput) deviceNameInput.value = '';
@@ -164,7 +154,6 @@ export function closePasskeyRegisterModal() {
     const modal = document.querySelector('#passkey-register-modal');
     if (modal) {
         modal.classList.add('hidden');
-        // 부모 모달(패스키 관리) 복구
         restoreParentModalFromChild(modal);
     }
 }
@@ -179,7 +168,6 @@ export async function registerPasskey() {
     const deviceName = deviceNameInput ? deviceNameInput.value.trim() : '';
 
     try {
-        // 1. 서버에서 등록 옵션 가져오기
         const optionsRes = await secureFetch('/api/passkey/register/options', {
             method: 'POST',
             headers: {
@@ -194,11 +182,9 @@ export async function registerPasskey() {
 
         const options = await optionsRes.json();
 
-        // 2. SimpleWebAuthn 브라우저 라이브러리로 등록 시작
         const webAuthn = await loadSimpleWebAuthn();
         const credential = await webAuthn.startRegistration(options);
 
-        // 3. 서버에서 등록 검증
         const verifyRes = await secureFetch('/api/passkey/register/verify', {
             method: 'POST',
             headers: {
@@ -215,7 +201,6 @@ export async function registerPasskey() {
             throw new Error(errorData.error || '등록에 실패했습니다.');
         }
 
-        // 성공
         alert('패스키가 성공적으로 등록되었습니다.');
         closePasskeyRegisterModal();
         await loadPasskeyList();
@@ -252,7 +237,6 @@ export function bindPasskeyModals() {
         confirmRegisterBtn.addEventListener('click', registerPasskey);
     }
 
-    // 설정 모달이 열릴 때 패스키 상태 업데이트
     const settingsBtn = document.querySelector('#settings-btn');
     if (settingsBtn) {
         settingsBtn.addEventListener('click', () => {

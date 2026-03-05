@@ -1,5 +1,4 @@
 
-/* File Block Styles (Notion-like) */
 
 .file-block-wrapper {
     display: block !important;
@@ -7,13 +6,10 @@
     margin: 8px 0 !important;
 }
 
-/* 쓰기모드에서만 보이는 요소 제어 */
-/* 에디터가 읽기모드일 때 .edit-only 클래스를 가진 요소를 숨김 */
 .ProseMirror[contenteditable="false"] .edit-only {
     display: none !important;
 }
 
-/* 1. Placeholder State (Embed Form Style) */
 .ProseMirror div.file-placeholder[class*="file-placeholder"] {
     display: flex !important;
     flex-direction: row !important;
@@ -62,7 +58,6 @@
     flex-shrink: 0 !important;
 }
 
-/* 공통 버튼 스타일 (추가/삭제) */
 .file-upload-btn, .file-delete-btn {
     width: 28px !important;
     height: 28px !important;
@@ -95,11 +90,10 @@
 }
 
 .file-delete-btn:hover {
-    color: var(--danger-color) !important; /* 삭제 버튼 호버 시 테마의 위험색 적용 */
+    color: var(--danger-color) !important; 
 }
 
 
-/* 2. Filled State (File Card Style) */
 .ProseMirror div.file-block {
     display: flex !important;
     align-items: center !important;
