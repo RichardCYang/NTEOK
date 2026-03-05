@@ -232,141 +232,21 @@ export const SYSTEM_FONTS = [
 ];
 
 export const SLASH_ITEMS = [
-    {
-        id: "text",
-        label: "텍스트",
-        description: "기본 문단 블록",
-        icon: "T",
-        command(editor) {
-            editor.chain().focus().setParagraph().run();
-        }
-    },
-    {
-        id: "heading1",
-        label: "제목 1",
-        description: "큰 제목(Heading 1)",
-        icon: "H1",
-        command(editor) {
-            editor.chain().focus().setHeading({ level: 1 }).run();
-        }
-    },
-    {
-        id: "heading2",
-        label: "제목 2",
-        description: "중간 제목(Heading 2)",
-        icon: "H2",
-        command(editor) {
-            editor.chain().focus().setHeading({ level: 2 }).run();
-        }
-    },
-    {
-        id: "heading3",
-        label: "제목 3",
-        description: "작은 제목(Heading 3)",
-        icon: "H3",
-        command(editor) {
-            editor.chain().focus().setHeading({ level: 3 }).run();
-        }
-    },
-    {
-        id: "heading4",
-        label: "제목 4",
-        description: "더 작은 제목(Heading 4)",
-        icon: "H4",
-        command(editor) {
-            editor.chain().focus().setHeading({ level: 4 }).run();
-        }
-    },
-    {
-        id: "heading5",
-        label: "제목 5",
-        description: "가장 작은 제목(Heading 5)",
-        icon: "H5",
-        command(editor) {
-            editor.chain().focus().setHeading({ level: 5 }).run();
-        }
-    },
-    {
-        id: "bulletList",
-        label: "글머리 기호 목록",
-        description: "점 목록 블록",
-        icon: "•",
-        command(editor) {
-            editor.chain().focus().toggleBulletList().run();
-        }
-    },
-    {
-        id: "orderedList",
-        label: "번호 목록",
-        description: "순서 있는 목록",
-        icon: "1.",
-        command(editor) {
-            editor.chain().focus().toggleOrderedList().run();
-        }
-    },
-    {
-        id: "taskList",
-        label: "체크리스트",
-        description: "완료 상태를 표시하는 목록",
-        icon: "☑",
-        command(editor) {
-            editor.chain().focus().toggleTaskList().run();
-        }
-    },
-    {
-        id: "toggleList",
-        label: "토글 목록",
-        description: "내용을 접고 펼칠 수 있는 목록",
-        icon: "▶",
-        command(editor) {
-            editor.chain().focus().setToggleBlock().run();
-        }
-    },
-    {
-        id: "blockquote",
-        label: "인용구",
-        description: "강조된 인용 블록",
-        icon: "❝",
-        command(editor) {
-            editor.chain().focus().toggleBlockquote().run();
-        }
-    },
-    {
-        id: "codeBlock",
-        label: "코드 블록",
-        description: "고정폭 코드 블록",
-        icon: "{ }",
-        command(editor) {
-            editor.chain().focus().toggleCodeBlock().run();
-        }
-    },
-    {
-        id: "mathBlock",
-        label: "수식 블록",
-        description: "LaTeX 수식 (블록)",
-        icon: "∑",
-        command(editor) {
-            editor.chain().focus().setMathBlock('').run();
-        }
-    },
-    {
-        id: "mathInline",
-        label: "인라인 수식",
-        description: "$수식$ 형식으로 입력",
-        icon: "$",
-        command(editor) {
-            editor.chain().focus().insertContent('$수식$').run();
-        }
-    },
-    {
-        id: "table",
-        label: "표",
-        description: "3x3 표 삽입",
-        icon: "⊞",
-        command(editor) {
-            editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run();
-        }
-    },
+    { id: "text", label: "텍스트", description: "기본 문단 블록", icon: "T", command(editor) { editor.chain().focus().setParagraph().run(); } },
+    { id: "heading1", label: "제목 1", description: "큰 제목(Heading 1)", icon: "H1", command(editor) { editor.chain().focus().setHeading({ level: 1 }).run(); } },
+    { id: "heading2", label: "제목 2", description: "중간 제목(Heading 2)", icon: "H2", command(editor) { editor.chain().focus().setHeading({ level: 2 }).run(); } },
+    { id: "heading3", label: "제목 3", description: "작은 제목(Heading 3)", icon: "H3", command(editor) { editor.chain().focus().setHeading({ level: 3 }).run(); } },
+    { id: "heading4", label: "제목 4", description: "더 작은 제목(Heading 4)", icon: "H4", command(editor) { editor.chain().focus().setHeading({ level: 4 }).run(); } },
+    { id: "heading5", label: "제목 5", description: "가장 작은 제목(Heading 5)", icon: "H5", command(editor) { editor.chain().focus().setHeading({ level: 5 }).run(); } },
+    { id: "bulletList", label: "글머리 기호 목록", description: "점 목록 블록", icon: "•", command(editor) { editor.chain().focus().toggleBulletList().run(); } },
+    { id: "orderedList", label: "번호 목록", description: "순서 있는 목록", icon: "1.", command(editor) { editor.chain().focus().toggleOrderedList().run(); } },
+    { id: "taskList", label: "체크리스트", description: "완료 상태를 표시하는 목록", icon: "☑", command(editor) { editor.chain().focus().toggleTaskList().run(); } },
+    { id: "toggleList", label: "토글 목록", description: "내용을 접고 펼칠 수 있는 목록", icon: "▶", command(editor) { editor.chain().focus().setToggleBlock().run(); } },
+    { id: "blockquote", label: "인용구", description: "강조된 인용 블록", icon: "❝", command(editor) { editor.chain().focus().toggleBlockquote().run(); } },
+    { id: "codeBlock", label: "코드 블록", description: "고정폭 코드 블록", icon: "{ }", command(editor) { editor.chain().focus().toggleCodeBlock().run(); } },
+    { id: "mathBlock", label: "수식 블록", description: "LaTeX 수식 (블록)", icon: "∑", command(editor) { editor.chain().focus().setMathBlock('').run(); } },
+    { id: "mathInline", label: "인라인 수식", description: "$수식$ 형식으로 입력", icon: "$", command(editor) { editor.chain().focus().insertContent('$수식$').run(); } },
+    { id: "table", label: "표", description: "3x3 표 삽입", icon: "⊞", command(editor) { editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run(); } },
     {
         id: "image",
         label: "이미지",
@@ -375,116 +255,35 @@ export const SLASH_ITEMS = [
         command(editor) {
             const input = document.createElement('input');
             input.type = 'file';
-            input.accept = 'image/jpeg,image/jpg,image/png,image/gif,image/webp';
-
+            input.accept = 'image/*';
             input.onchange = async (e) => {
                 const file = e.target.files[0];
                 if (!file) return;
-
-                if (file.size > 5 * 1024 * 1024) {
-                    alert('이미지 파일 크기는 5MB 이하여야 합니다.');
-                    return;
-                }
-
-                if (!file.type.match(/^image\/(jpeg|jpg|png|gif|webp)$/)) {
-                    alert('jpg, png, gif, webp 형식의 이미지만 업로드 가능합니다.');
-                    return;
-                }
-
-                try {
-                    await handleImageUpload(editor, file);
-                } catch (error) {
-                    console.error('이미지 업로드 오류:', error);
-                    alert('이미지 업로드에 실패했습니다.');
-                }
+                if (file.size > 5 * 1024 * 1024) return alert('이미지 파일 크기는 5MB 이하여야 합니다.');
+                try { await handleImageUpload(editor, file); } catch (error) { alert('이미지 업로드 실패'); }
             };
-
             input.click();
         }
     },
-    {
-        id: "file",
-        label: "파일",
-        description: "파일 첨부 (50MB 제한)",
-        icon: "📎",
-        command(editor) {
-            editor.chain().focus().setFileBlock().run();
-        }
-    },
-    {
-        id: "callout",
-        label: "콜아웃",
-        description: "정보, 경고, 에러, 성공 메시지 블록",
-        icon: "ℹ️",
-        command(editor) {
-            editor.chain().focus().setCallout('info', '').run();
-        }
-    },
-    {
-        id: "board",
-        label: "보드 뷰",
-        description: "칸반 보드 (할 일 관리)",
-        icon: "📋",
-        command(editor) {
-            editor.chain().focus().setBoardBlock().run();
-        }
-    },
+    { id: "file", label: "파일", description: "파일 첨부 (50MB 제한)", icon: "📎", command(editor) { editor.chain().focus().setFileBlock().run(); } },
+    { id: "callout", label: "콜아웃", description: "메시지 블록", icon: "ℹ️", command(editor) { editor.chain().focus().setCallout('info', '').run(); } },
+    { id: "board", label: "보드 뷰", description: "칸반 보드", icon: "📋", command(editor) { editor.chain().focus().setBoardBlock().run(); } },
     {
         id: "youtube",
         label: "YouTube",
-        description: "YouTube 동영상 임베드",
+        description: "YouTube 임베드",
         icon: "▶",
         command(editor) {
-            const url = window.prompt("YouTube 동영상 URL을 입력하세요:");
-            if (!url) return;
-
-            const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/;
-            const match = url.match(regExp);
-
-            if (match && match[2].length === 11) {
-                const embedUrl = `https://www.youtube.com/embed/${match[2]}`;
-                editor.chain().focus().setYoutubeBlock({ src: embedUrl }).run();
-            } else {
-                alert("올바른 YouTube URL이 아닙니다.");
-            }
+            const url = window.prompt("YouTube URL:");
+            const match = url?.match(/^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/);
+            if (match?.[2].length === 11) editor.chain().focus().setYoutubeBlock({ src: `https://www.youtube.com/embed/${match[2]}` }).run();
+            else alert("올바른 URL이 아닙니다.");
         }
     },
-    {
-        id: "bookmark",
-        label: "링크 블록",
-        description: "웹 페이지 북마크 (제목, 파비콘 자동 추출)",
-        icon: "🔗",
-        command(editor) {
-            editor.chain().focus().setBookmarkBlock().run();
-        }
-    },
-    {
-        id: "calendar",
-        label: "캘린더",
-        description: "날짜 선택 및 표시를 위한 캘린더",
-        icon: "📅",
-        command(editor) {
-            editor.chain().focus().setCalendarBlock().run();
-        }
-    },
-    {
-        id: "database",
-        label: "데이터베이스",
-        description: "행과 열로 구성된 데이터 테이블",
-        icon: "📊",
-        command(editor) {
-            editor.chain().focus().setDatabaseBlock().run();
-        }
-    },
-    {
-        id: "tabView",
-        label: "탭뷰",
-        description: "탭 형식으로 내용을 정리하는 블록",
-        icon: "⊟",
-        command(editor) {
-            editor.chain().focus().setTabBlock().run();
-        }
-    }
+    { id: "bookmark", label: "링크 블록", description: "북마크 추출", icon: "🔗", command(editor) { editor.chain().focus().setBookmarkBlock().run(); } },
+    { id: "calendar", label: "캘린더", description: "날짜 선택 캘린더", icon: "📅", command(editor) { editor.chain().focus().setCalendarBlock().run(); } },
+    { id: "database", label: "데이터베이스", description: "데이터 테이블", icon: "📊", command(editor) { editor.chain().focus().setDatabaseBlock().run(); } },
+    { id: "tabView", label: "탭뷰", description: "탭 형식 블록", icon: "⊟", command(editor) { editor.chain().focus().setTabBlock().run(); } }
 ];
 
 const TABLE_MENU_ITEMS = [
@@ -980,73 +779,31 @@ function getSlashCommandText(editor, opts = {}) {
 	return editor.state.doc.textBetween(from, to);
 }
 
+/** 슬래시 메뉴 관련 키보드 및 IME 이벤트 바인딩 */
 export function bindSlashKeyHandlers(editor) {
     document.addEventListener("keydown", (event) => {
         if (!editor) return;
-
-		const imeComp = (typeof slashImeComposing !== 'undefined') && slashImeComposing;
-		const composing = !!(imeComp || event.isComposing || editor?.view?.composing || event.key === 'Process' || event.keyCode === 229);
-
-        const target = event.target;
-        const inEditor = target && target.closest && target.closest(".ProseMirror");
+		const composing = !!(slashImeComposing || event.isComposing || editor?.view?.composing);
+        const inEditor = event.target?.closest?.(".ProseMirror");
 
         if (!slashState.active && event.key === "/" && inEditor) {
             try {
-                const selection = editor.state.selection;
-                const pos = selection.from;
-                const coords = editor.view.coordsAtPos(pos);
-                openSlashMenu(coords, pos, editor);
-            } catch (e) {
-                console.error("슬래시 메뉴 좌표 계산 실패:", e);
-            }
+                const pos = editor.state.selection.from;
+                openSlashMenu(editor.view.coordsAtPos(pos), pos, editor);
+            } catch (e) { console.error("슬래시 메뉴 위치 계산 실패:", e); }
             return;
         }
 
-        if (slashState.active) {
-			if (composing)
-			    return;
-
-            if (event.key === "ArrowDown") {
-                event.preventDefault();
-                moveSlashActive(1);
-                return;
-            }
-            if (event.key === "ArrowUp") {
-                event.preventDefault();
-                moveSlashActive(-1);
-                return;
-            }
-            if (event.key === "Enter") {
-                event.preventDefault();
-                runSlashCommandActive();
-                return;
-            }
-            if (event.key === "Escape") {
-                event.preventDefault();
-                closeSlashMenu();
-                return;
-            }
-
+        if (slashState.active && !composing) {
+            if (event.key === "ArrowDown") { event.preventDefault(); moveSlashActive(1); return; }
+            if (event.key === "ArrowUp") { event.preventDefault(); moveSlashActive(-1); return; }
+            if (event.key === "Enter") { event.preventDefault(); runSlashCommandActive(); return; }
+            if (event.key === "Escape") { event.preventDefault(); closeSlashMenu(); return; }
             if ((event.key === "Backspace" || event.key === "Delete") && slashState.fromPos !== null) {
                 const sel = editor.state.selection;
-                if (!sel.empty) {
-                    if (sel.from <= slashState.fromPos && sel.to >= slashState.fromPos + 1) {
-                        closeSlashMenu();
-                    }
-                    return;
-                }
-                if (event.key === "Backspace" && sel.from === slashState.fromPos + 1) {
-                    closeSlashMenu();
-                    return;
-                }
-                if (event.key === "Delete" && sel.from === slashState.fromPos) {
-                    closeSlashMenu();
-                    return;
-                }
-            }
-
-            if (event.key === "Backspace" || (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey)) {
-                return;
+                if (!sel.empty && sel.from <= slashState.fromPos && sel.to >= slashState.fromPos + 1) closeSlashMenu();
+                else if (event.key === "Backspace" && sel.from === slashState.fromPos + 1) closeSlashMenu();
+                else if (event.key === "Delete" && sel.from === slashState.fromPos) closeSlashMenu();
             }
         }
     });
@@ -1054,37 +811,16 @@ export function bindSlashKeyHandlers(editor) {
     if (!bindSlashKeyHandlers.__imeBound && editor?.view?.dom) {
         bindSlashKeyHandlers.__imeBound = true;
         const dom = editor.view.dom;
-        const syncDom = () => {
-            if (slashState.active) syncSlashMenu(editor, { forceDom: true });
-        };
-        const onCompStart = () => {
-            slashImeComposing = true;
-            syncDom();
-        };
-        const onCompEnd = () => {
-            slashImeComposing = false;
-            if (slashState.active) syncSlashMenu(editor);
-        };
-
-        dom.addEventListener('compositionstart', onCompStart);
-        dom.addEventListener('compositionupdate', syncDom);
-        dom.addEventListener('compositionend', onCompEnd);
-        dom.addEventListener('input', () => {
-            if (!slashState.active) return;
-            requestAnimationFrame(() => {
-                if (!slashState.active) return;
-                if (slashImeComposing) syncSlashMenu(editor, { forceDom: true });
-                else syncSlashMenu(editor);
-            });
-        });
+        const sync = (forceDom) => { if (slashState.active) syncSlashMenu(editor, { forceDom }); };
+        
+        dom.addEventListener('compositionstart', () => { slashImeComposing = true; sync(true); });
+        dom.addEventListener('compositionupdate', () => sync(true));
+        dom.addEventListener('compositionend', () => { slashImeComposing = false; sync(false); });
+        dom.addEventListener('input', () => requestAnimationFrame(() => sync(slashImeComposing)));
     }
 
-    document.addEventListener("click", (event) => {
-        if (slashState.active && slashMenuEl) {
-            if (!slashMenuEl.contains(event.target)) {
-                closeSlashMenu();
-            }
-        }
+    document.addEventListener("click", (e) => {
+        if (slashState.active && slashMenuEl && !slashMenuEl.contains(e.target)) closeSlashMenu();
     });
 }
 

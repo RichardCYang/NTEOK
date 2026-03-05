@@ -298,18 +298,15 @@ const TOTP_SECRET_ENC_KEY = _decodedTotpSecretKey || (!IS_PRODUCTION ? crypto.ra
 
 if (!_decodedTotpSecretKey) {
     if (IS_PRODUCTION) {
-        console.error("❌ [SECURITY] TOTP_SECRET_ENC_KEY가 설정되지 않았습니다. (프로덕션에서는 필수)");
+        console.error("❌ [SECURITY] TOTP_SECRET_ENC_KEY 필수 설정 누락");
         process.exit(1);
     } else {
-        console.warn("⚠️  [SECURITY] TOTP_SECRET_ENC_KEY가 없어 임시 키로 동작합니다. 재시작 시 기존 2FA 복호화가 불가능할 수 있습니다.");
+        console.warn("⚠️  [SECURITY] TOTP_SECRET_ENC_KEY 미설정 - 임시 키 사용 (재시작 시 복호화 불가)");
     }
 }
 
 function encryptTotpSecret(plainBase32) {
-    if (!plainBase32) return null;
-    if (!TOTP_SECRET_ENC_KEY)
-        throw new Error("TOTP_SECRET_ENC_KEY 누락 -> TOTP 비밀키를 암호화 할 수 없습니다");
-
+    if (!plainBase32 || !TOTP_SECRET_ENC_KEY) return null;
     const iv = crypto.randomBytes(12);
     const cipher = crypto.createCipheriv("aes-256-gcm", TOTP_SECRET_ENC_KEY, iv);
     const ciphertext = Buffer.concat([cipher.update(String(plainBase32), "utf8"), cipher.final()]);
@@ -320,14 +317,10 @@ function encryptTotpSecret(plainBase32) {
 function decryptTotpSecret(storedValue) {
     if (!storedValue) return null;
     const s = String(storedValue);
-
-    if (!s.startsWith("v1:")) return s;
-    if (!TOTP_SECRET_ENC_KEY)
-        throw new Error("TOTP_SECRET_ENC_KEY 누락 -> TOTP 비밀키를 복호화 할 수 없습니다");
+    if (!s.startsWith("v1:") || !TOTP_SECRET_ENC_KEY) return s;
 
     const parts = s.split(":");
-    if (parts.length !== 4)
-    	throw new Error("유효하지 않은 암호화 TOTP 비밀키 형식");
+    if (parts.length !== 4) throw new Error("유효하지 않은 암호화 TOTP 비밀키 형식");
 
     const iv = Buffer.from(parts[1], "base64");
     const tag = Buffer.from(parts[2], "base64");
@@ -338,57 +331,29 @@ function decryptTotpSecret(storedValue) {
 }
 
 const DEFAULT_ADMIN_USERNAME = process.env.ADMIN_USERNAME || "admin";
-
 let DEFAULT_ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
+
 if (!DEFAULT_ADMIN_PASSWORD) {
-    const SHOW_BOOTSTRAP_PASSWORD_IN_LOGS = String(process.env.SHOW_BOOTSTRAP_PASSWORD_IN_LOGS || "").toLowerCase() === "true";
     if (IS_PRODUCTION) {
-        console.error("\n" + "=".repeat(80));
-        console.error("❌ 프로덕션 환경에서 ADMIN_PASSWORD가 설정되지 않았습니다.");
-        console.error("   - 보안을 위해 랜덤 비밀번호를 생성/로그로 출력하지 않습니다.");
-        console.error("   - .env 또는 배포 환경변수에 ADMIN_PASSWORD를 설정한 뒤 다시 실행하세요.");
-        console.error("=".repeat(80) + "\n");
+        console.error("❌ ADMIN_PASSWORD 미설정 (프로덕션 필수)");
         process.exit(1);
     }
-
     DEFAULT_ADMIN_PASSWORD = generateStrongPassword();
-    console.warn("\n" + "=".repeat(80));
-    console.warn("⚠️  보안 경고: 기본 관리자 비밀번호가 환경변수로 설정되지 않았습니다! (개발/로컬)");
-    console.warn(`   관리자 계정: ${DEFAULT_ADMIN_USERNAME}`);
-    if (SHOW_BOOTSTRAP_PASSWORD_IN_LOGS) {
-        console.warn(`   임시 비밀번호: ${DEFAULT_ADMIN_PASSWORD}`);
-    } else {
-        console.warn("   임시 비밀번호: (보안을 위해 로그에 출력하지 않습니다)");
-        console.warn("   필요 시 SHOW_BOOTSTRAP_PASSWORD_IN_LOGS=true 로 출력 가능(비권장)");
+    if (String(process.env.SHOW_BOOTSTRAP_PASSWORD_IN_LOGS).toLowerCase() === "true") {
+        console.warn(`⚠️  임시 관리자 비밀번호: ${DEFAULT_ADMIN_PASSWORD}`);
     }
-    console.warn("   첫 로그인 후 반드시 비밀번호를 변경하세요!");
-    console.warn("=".repeat(80) + "\n");
 }
 
+// 비밀번호 강도 검증 및 서버 시작 중단 정책
 {
-    const common = new Set(["admin", "password", "administrator"]);
     const pwLower = String(DEFAULT_ADMIN_PASSWORD || "").trim().toLowerCase();
     const strength = validatePasswordStrength(DEFAULT_ADMIN_PASSWORD);
-
-    if (common.has(pwLower) || !strength.valid) {
-        const reason = common.has(pwLower)
-            ? "너무 흔한 기본 비밀번호입니다."
-            : (strength.error || "비밀번호 강도 정책을 만족하지 않습니다.");
-
+    if (new Set(["admin", "password", "administrator"]).has(pwLower) || !strength.valid) {
         if (IS_PRODUCTION) {
-            console.error("\n" + "=".repeat(80));
-            console.error("🛑 [보안] ADMIN_PASSWORD가 약하여 서버 시작을 중단합니다.");
-            console.error(`   사유: ${reason}`);
-            console.error("   사전 조치: 길고(>=10), 예측 불가한 강력 비밀번호로 변경 후 재시작하세요.");
-            console.error("=".repeat(80) + "\n");
+            console.error(`🛑 [보안] ADMIN_PASSWORD 취약: ${strength.error || "강도 정책 위반"}`);
             process.exit(1);
         } else {
-            console.warn("\n" + "=".repeat(80));
-            console.warn("⚠️  [DEV 경고] ADMIN_PASSWORD가 약합니다. 임시로 강력 비밀번호로 대체합니다.");
-            console.warn(`   사유: ${reason}`);
             DEFAULT_ADMIN_PASSWORD = generateStrongPassword();
-            console.warn("   (비밀번호 로그 출력은 기본 비활성화)");
-            console.warn("=".repeat(80) + "\n");
         }
     }
 }
@@ -396,37 +361,19 @@ if (!DEFAULT_ADMIN_PASSWORD) {
 const BCRYPT_SALT_ROUNDS = Number(process.env.BCRYPT_SALT_ROUNDS || 12);
 
 if (IS_PRODUCTION) {
-    const requiredEnvVars = ['DB_HOST', 'DB_USER', 'DB_PASSWORD', 'DB_NAME', 'BASE_URL', 'ADMIN_PASSWORD', 'TOTP_SECRET_ENC_KEY'];
-    const missingVars = requiredEnvVars.filter(key => !process.env[key]);
-
-    if (missingVars.length > 0) {
-        console.error("\n" + "=".repeat(80));
-        console.error("❌ 프로덕션 환경에서 필수 환경변수가 설정되지 않았습니다:");
-        missingVars.forEach(varName => {
-            console.error(`   - ${varName}`);
-        });
-        console.error("=".repeat(80) + "\n");
+    const required = ['DB_HOST', 'DB_USER', 'DB_PASSWORD', 'DB_NAME', 'BASE_URL', 'ADMIN_PASSWORD', 'TOTP_SECRET_ENC_KEY'];
+    const missing = required.filter(key => !process.env[key]);
+    if (missing.length > 0) {
+        console.error(`❌ 필수 환경변수 누락: ${missing.join(', ')}`);
         process.exit(1);
     }
 }
 
-const ALLOW_INSECURE_DB_DEFAULTS = String(process.env.ALLOW_INSECURE_DB_DEFAULTS || '').toLowerCase() === 'true';
-
-if (ALLOW_INSECURE_DB_DEFAULTS && IS_PRODUCTION) {
-    console.error("🛑 [보안] 프로덕션에서는 ALLOW_INSECURE_DB_DEFAULTS=true 를 사용할 수 없습니다.");
-    process.exit(1);
-}
-
 function envOrDie(name, { defaultValue, allowInsecureDev = false } = {}) {
-    const raw = process.env[name];
-    const v = (raw === undefined || raw === null) ? "" : String(raw).trim();
+    const v = String(process.env[name] || "").trim();
     if (v) return v;
-
-    if (allowInsecureDev && ALLOW_INSECURE_DB_DEFAULTS) return defaultValue;
-
-    console.error("🛑 [보안] 필수 환경변수가 누락되었습니다:", name);
-    console.error("   - 해결: .env 또는 배포 환경변수에 값을 설정하세요.");
-    console.error("   - (로컬 개발만) ALLOW_INSECURE_DB_DEFAULTS=true 로 기존 기본값을 명시적으로 허용할 수 있습니다. (비권장)");
+    if (allowInsecureDev && String(process.env.ALLOW_INSECURE_DB_DEFAULTS).toLowerCase() === 'true') return defaultValue;
+    console.error(`🛑 필수 환경변수 누락: ${name}`);
     process.exit(1);
 }
 
@@ -434,17 +381,6 @@ const DB_HOST = envOrDie("DB_HOST", { defaultValue: "localhost", allowInsecureDe
 const DB_USER = envOrDie("DB_USER", { defaultValue: "root", allowInsecureDev: true });
 const DB_PASSWORD = envOrDie("DB_PASSWORD", { defaultValue: "admin", allowInsecureDev: true });
 const DB_NAME = envOrDie("DB_NAME", { defaultValue: "nteok", allowInsecureDev: true });
-
-if (ALLOW_INSECURE_DB_DEFAULTS) {
-    const h = String(DB_HOST || "").toLowerCase();
-    const isLocalDb = (h === "localhost" || h === "127.0.0.1" || h === "::1");
-    if (!isLocalDb) {
-        console.error("🛑 [보안] ALLOW_INSECURE_DB_DEFAULTS=true 는 로컬 DB(localhost)에서만 허용됩니다.");
-        console.error(`   현재 DB_HOST="${DB_HOST}"`);
-        process.exit(1);
-    }
-    console.warn("⚠️  [SECURITY] ALLOW_INSECURE_DB_DEFAULTS=true (로컬 개발용) — 기본 DB 자격증명(root/admin)을 사용합니다. 운영에서는 절대 사용하지 마세요.");
-}
 
 const DB_CONFIG = {
     host: DB_HOST,
@@ -464,95 +400,51 @@ const userSessions = new Map();
 
 function cleanupExpiredSessions() {
     const now = Date.now();
-    let cleanedCount = 0;
-
+    let cleaned = 0;
     sessions.forEach((session, sessionId) => {
-        let shouldDelete = false;
-
-        if (session.pendingUserId && session.createdAt + 10 * 60 * 1000 < now) {
-            shouldDelete = true;
-        }
-
-        if (session.absoluteExpiry && session.absoluteExpiry <= now) {
-            shouldDelete = true;
-        }
-
-        if (session.expiresAt && session.expiresAt <= now) {
-            shouldDelete = true;
-        }
-
-		if (shouldDelete) {
-			try {
-			    wsCloseConnectionsForSession(sessionId, 1008, 'Session expired');
-			} catch (e) {}
-
+        if ((session.pendingUserId && session.createdAt + 600000 < now) || (session.absoluteExpiry <= now) || (session.expiresAt <= now)) {
+            try { wsCloseConnectionsForSession(sessionId, 1008, 'Session expired'); } catch (_) {}
             sessions.delete(sessionId);
-            cleanedCount++;
-
+            cleaned++;
             if (session.userId) {
-                const userSessionSet = userSessions.get(session.userId);
-                if (userSessionSet) {
-                    userSessionSet.delete(sessionId);
-                    if (userSessionSet.size === 0) {
-                        userSessions.delete(session.userId);
-                    }
+                const set = userSessions.get(session.userId);
+                if (set) {
+                    set.delete(sessionId);
+                    if (set.size === 0) userSessions.delete(session.userId);
                 }
             }
         }
     });
-
-    if (cleanedCount > 0) {
-        console.log(`[세션 정리] ${cleanedCount}개의 만료된 세션을 정리했습니다. (남은 세션: ${sessions.size})`);
-    }
+    if (cleaned > 0) console.log(`[세션 정리] ${cleaned}개 만료 세션 제거`);
 }
 
-setInterval(cleanupExpiredSessions, 5 * 60 * 1000);
+setInterval(cleanupExpiredSessions, 300000);
 
 function cleanupExpiredWebAuthnChallenges() {
-    const now = formatDateForDb(new Date());
-    pool.execute("DELETE FROM webauthn_challenges WHERE expires_at < ?", [now])
-        .then(([result]) => {
-            if (result.affectedRows > 0) {
-                console.log(`[WebAuthn 챌린지 정리] ${result.affectedRows}개의 만료된 챌린지를 정리했습니다.`);
-            }
-        })
-        .catch(err => console.error("WebAuthn 챌린지 정리 중 오류:", err));
+    pool.execute("DELETE FROM webauthn_challenges WHERE expires_at < NOW()")
+        .then(([res]) => res.affectedRows > 0 && console.log(`[WebAuthn 정리] ${res.affectedRows}개 만료 챌린지 제거`))
+        .catch(err => console.error("WebAuthn 정리 실패:", err));
 }
-
-setInterval(cleanupExpiredWebAuthnChallenges, 5 * 60 * 1000);
-
-const PAPERCLIP_TRASH_RETENTION_DAYS = (() => {
-    const raw = String(process.env.PAPERCLIP_TRASH_RETENTION_DAYS || '').trim();
-    const n = raw ? Number.parseInt(raw, 10) : 14;
-    return Number.isFinite(n) ? Math.max(1, Math.min(365, n)) : 14;
-})();
+setInterval(cleanupExpiredWebAuthnChallenges, 300000);
 
 function purgePaperclipTrash() {
     try {
-        const trashRoot = path.resolve(__dirname, 'paperclip-trash');
-        if (!fs.existsSync(trashRoot)) return;
-
-        const cutoff = Date.now() - PAPERCLIP_TRASH_RETENTION_DAYS * 24 * 60 * 60 * 1000;
-        const userDirs = fs.readdirSync(trashRoot, { withFileTypes: true })
-            .filter(d => d.isDirectory() && /^\d{1,12}$/.test(d.name))
-            .map(d => d.name);
-
+        const root = path.resolve(__dirname, 'paperclip-trash');
+        if (!fs.existsSync(root)) return;
+        const cutoff = Date.now() - (Number(process.env.PAPERCLIP_TRASH_RETENTION_DAYS || 14)) * 86400000;
         let deleted = 0;
-        for (const uid of userDirs) {
-            const dir = path.resolve(trashRoot, uid);
-            const base = dir + path.sep;
-            for (const f of fs.readdirSync(dir, { withFileTypes: true }).filter(x => x.isFile())) {
-                const fp = path.resolve(dir, f.name);
-                if (!fp.startsWith(base)) continue;
+        fs.readdirSync(root, { withFileTypes: true }).filter(d => d.isDirectory()).forEach(d => {
+            const dir = path.resolve(root, d.name);
+            fs.readdirSync(dir).forEach(f => {
+                const fp = path.resolve(dir, f);
                 try { if (fs.statSync(fp).mtimeMs < cutoff) { fs.unlinkSync(fp); deleted++; } } catch (_) {}
-            }
+            });
             try { if (fs.readdirSync(dir).length === 0) fs.rmdirSync(dir); } catch (_) {}
-        }
-        if (deleted > 0) console.log(`[paperclip-trash 정리] ${deleted}개 파일(>${PAPERCLIP_TRASH_RETENTION_DAYS}일)을 삭제했습니다.`);
+        });
+        if (deleted > 0) console.log(`[휴지통 정리] ${deleted}개 파일 삭제`);
     } catch (_) {}
 }
-
-setInterval(purgePaperclipTrash, 24 * 60 * 60 * 1000);
+setInterval(purgePaperclipTrash, 86400000);
 setTimeout(purgePaperclipTrash, 10 * 60 * 1000);
 
 function cleanupOldLoginLogs() {

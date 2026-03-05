@@ -120,7 +120,7 @@ const appState = {
     currentStorageId: null,
     pages: [],
     currentPageId: null,
-    currentPageUpdatedAt: null,
+    currentPageUpdatedAt: null, // E2EE 초기화 시 stale snapshot 방지용
     expandedPages: new Set(),
     isWriteMode: false,
     currentPageIsEncrypted: false,
@@ -140,18 +140,13 @@ let colorMenuElement = null;
 let fontDropdownElement = null;
 let fontMenuElement = null;
 
-
 async function handlePageListClick(event, state) {
     const pageToggle = event.target.closest(".page-toggle");
     if (pageToggle) {
         event.stopPropagation();
         const pageId = pageToggle.dataset.pageId;
         if (pageId) {
-            if (state.expandedPages.has(pageId)) {
-                state.expandedPages.delete(pageId);
-            } else {
-                state.expandedPages.add(pageId);
-            }
+            state.expandedPages.has(pageId) ? state.expandedPages.delete(pageId) : state.expandedPages.add(pageId);
             renderPageList();
         }
         return;
@@ -185,39 +180,16 @@ async function handlePageListClick(event, state) {
     if (pageMenuBtn) {
         event.stopPropagation();
         const pageId = pageMenuBtn.dataset.pageId;
-
         const page = state.pages.find(p => p.id === pageId);
         const isOwner = page && state.currentUser && Number(page.userId) === Number(state.currentUser.id);
         const isAdmin = state.currentStoragePermission === 'ADMIN';
         const canDelete = isAdmin || (state.currentStoragePermission === 'EDIT' && isOwner);
 
-        const menuItems = [
-            {
-                action: "set-icon",
-                label: "아이콘 설정",
-                icon: "fa-solid fa-icons",
-                dataset: { pageId: pageId }
-            }
-        ];
-
+        const menuItems = [{ action: "set-icon", label: "아이콘 설정", icon: "fa-solid fa-icons", dataset: { pageId } }];
         const canEdit = state.currentStoragePermission === 'EDIT' || state.currentStoragePermission === 'ADMIN';
-        if (canEdit) {
-            menuItems.push({
-                action: "rename-page",
-                label: "이름 변경",
-                icon: "fa-solid fa-pen",
-                dataset: { pageId: pageId }
-            });
-        }
-
-        if (canDelete) {
-            menuItems.push({
-                action: "delete-page",
-                label: "페이지 삭제",
-                icon: "fa-regular fa-trash-can",
-                dataset: { pageId: pageId }
-            });
-        }
+        if (canEdit) menuItems.push({ action: "rename-page", label: "이름 변경", icon: "fa-solid fa-pen", dataset: { pageId } });
+        if (canDelete) menuItems.push({ action: "delete-page", label: "페이지 삭제", icon: "fa-regular fa-trash-can", dataset: { pageId } });
+        
         showContextMenu(pageMenuBtn, menuItems);
         return;
     }
@@ -229,20 +201,14 @@ async function handlePageListClick(event, state) {
             if (!confirm("이 페이지를 휴지통으로 이동하시겠습니까?")) return;
             try {
                 if (state.currentPageId === pageId) {
-                    try {
-                        await requestImmediateSave(pageId, { includeSnapshot: true, waitForAck: true });
-                    } catch (_) {
-                    }
+                    // 삭제 전 현재 페이지 강제 저장 시도
+                    try { await requestImmediateSave(pageId, { includeSnapshot: true, waitForAck: true }); } catch (_) {}
                 }
                 await api.del("/api/pages/" + encodeURIComponent(pageId));
                 state.pages = state.pages.filter(p => p.id !== pageId);
-                if (state.currentPageId === pageId) {
-                    clearCurrentPage();
-                }
+                if (state.currentPageId === pageId) clearCurrentPage();
                 renderPageList();
-            } catch (e) {
-                alert("삭제 실패: " + e.message);
-            }
+            } catch (e) { alert("삭제 실패: " + e.message); }
         } else if (action === "rename-page") {
             const page = state.pages.find(p => p.id === pageId);
             const newTitle = prompt("새 페이지 제목을 입력하세요:", page ? page.title : "");
@@ -255,9 +221,7 @@ async function handlePageListClick(event, state) {
                         if (titleInput) titleInput.value = newTitle.trim();
                     }
                     renderPageList();
-                } catch (e) {
-                    alert("이름 변경 실패: " + e.message);
-                }
+                } catch (e) { alert("이름 변경 실패: " + e.message); }
             }
         } else if (action === "set-icon") {
             showIconPickerModal(pageId);
@@ -269,9 +233,7 @@ async function handlePageListClick(event, state) {
     const li = event.target.closest("li.page-list-item");
     if (li) {
         const pageId = li.dataset.pageId;
-        if (pageId && pageId !== state.currentPageId) {
-            await loadPage(pageId);
-        }
+        if (pageId && pageId !== state.currentPageId) await loadPage(pageId);
     }
 }
 
@@ -290,10 +252,8 @@ function bindMobileSidebar() {
 }
 
 function initEvent() {
-    document.addEventListener("click", (event) => {
-        if (!event.target.closest(".page-menu-btn, #context-menu")) {
-            closeContextMenu();
-        }
+    document.addEventListener("click", (e) => {
+        if (!e.target.closest(".page-menu-btn, #context-menu")) closeContextMenu();
     });
 }
 
@@ -311,12 +271,13 @@ async function init() {
     try {
         window.appState = appState;
         appState.userSettings = loadSettings();
-
         appState.editor = await initEditor(null);
+        
         initToolbarElements();
         bindToolbar(appState.editor);
         bindSlashKeyHandlers(appState.editor);
 
+        // 모듈 초기화
         initPagesManager(appState);
         appState.fetchPageList = fetchPageList;
         initEncryptionManager(appState);
@@ -330,22 +291,16 @@ async function init() {
         appState.renderPageList = renderPageList;
 
         const storagesManager = initStoragesManager(appState, (data) => {
-            if (data.permission)
-                appState.currentStoragePermission = data.permission;
-
-            if (data.isEncryptedStorage !== undefined)
-                appState.currentStorageIsEncrypted = data.isEncryptedStorage;
-
-            if (Array.isArray(data.pages))
-                applyPagesData(data.pages, data.isEncryptedStorage);
+            if (data.permission) appState.currentStoragePermission = data.permission;
+            if (data.isEncryptedStorage !== undefined) appState.currentStorageIsEncrypted = data.isEncryptedStorage;
+            if (Array.isArray(data.pages)) applyPagesData(data.pages, data.isEncryptedStorage);
 
             clearCurrentPage();
             renderPageList();
             startStorageSync(appState.currentStorageId);
 
             const first = appState.pages.find(p => !p.parentId) || appState.pages[0];
-            if (first)
-                loadPage(first.id);
+            if (first) loadPage(first.id);
         });
 
         initSearch();
@@ -390,21 +345,14 @@ async function init() {
             history.replaceState({ view: 'storages' }, '', window.location.pathname);
         }
 
-        if (appState.currentStorageId) {
-            startStorageSync(appState.currentStorageId);
-        }
+        if (appState.currentStorageId) startStorageSync(appState.currentStorageId);
 
         window.addEventListener('popstate', (e) => {
             if (!e.state) return;
-            
             if (e.state.view === 'storages') {
                 storagesManager.show(true);
             } else if (e.state.view === 'app' && e.state.storageId) {
-                if (appState.currentStorageId !== e.state.storageId) {
-                    storagesManager.selectStorage(e.state.storageId, true);
-                } else {
-                    storagesManager.hide(); 
-                }
+                appState.currentStorageId !== e.state.storageId ? storagesManager.selectStorage(e.state.storageId, true) : storagesManager.hide();
             }
         });
     } catch (error) {
@@ -414,36 +362,25 @@ async function init() {
     }
 }
 
-
 function initSearch() {
     const searchInput = document.getElementById('search-input');
     const searchModal = document.getElementById('quick-search-modal');
     if (!searchInput || !searchModal) return;
 
     let searchTimeout = null;
-
     searchInput.addEventListener('input', (e) => {
         const query = e.target.value.trim();
-
         clearTimeout(searchTimeout);
         searchTimeout = setTimeout(async () => {
-            if (query.length === 0) {
-                hideSearchResults();
-            } else {
-                await performSearch(query);
-            }
+            query.length === 0 ? hideSearchResults() : await performSearch(query);
         }, 300);
     });
 
     window.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape' && !searchModal.classList.contains('hidden')) {
-            toggleModal(searchModal, false);
-        }
+        if (e.key === 'Escape' && !searchModal.classList.contains('hidden')) toggleModal(searchModal, false);
     });
 
-    searchModal.querySelector('.modal-overlay')?.addEventListener('click', () => {
-        toggleModal(searchModal, false);
-    });
+    searchModal.querySelector('.modal-overlay')?.addEventListener('click', () => toggleModal(searchModal, false));
 }
 
 async function performSearch(query) {
@@ -451,20 +388,15 @@ async function performSearch(query) {
     const queryLower = query.toLowerCase();
 
     for (const page of appState.pages) {
-        let titleToSearch = '';
+        let titleToSearch = page.title || '';
         let shouldInclude = false;
 
         if (page.isEncrypted) {
-            titleToSearch = page.title || '';
             shouldInclude = titleToSearch.toLowerCase().includes(queryLower);
         } else {
-            titleToSearch = page.title || '';
             const content = page.content || '';
-
             const textContent = htmlToPlainText(content, { maxLength: 20000 });
-
-            const fullText = titleToSearch + ' ' + textContent;
-            shouldInclude = fullText.toLowerCase().includes(queryLower);
+            shouldInclude = (titleToSearch + ' ' + textContent).toLowerCase().includes(queryLower);
         }
 
         if (shouldInclude) {
@@ -476,7 +408,6 @@ async function performSearch(query) {
             });
         }
     }
-
     displaySearchResults(results, query);
 }
 
@@ -501,21 +432,17 @@ function displaySearchResults(results, query) {
             const li = document.createElement('li');
             li.className = 'search-result-item';
             li.dataset.pageId = result.id;
-
             const iconClass = result.isEncrypted ? 'fa-solid fa-lock' : (result.icon || 'fa-regular fa-file-lines');
-
             li.innerHTML = `
                 <i class="${escapeHtmlAttr(iconClass)}"></i>
                 <span class="search-result-title">${escapeHtml(result.title)}</span>
                 <span style="font-size: 11px; color: #9ca3af;">열기</span>
             `;
-
             li.addEventListener('click', async () => {
                 await loadPage(result.id);
                 toggleModal(searchModal, false);
                 clearSearchInput();
             });
-
             searchResultsList.appendChild(li);
         });
     }
@@ -525,7 +452,6 @@ function hideSearchResults() {
     const searchResultsList = document.getElementById('search-results-list');
     const searchPlaceholder = document.getElementById('search-placeholder');
     const searchResultsHeader = document.getElementById('search-results-header');
-
     if (searchResultsList) searchResultsList.innerHTML = '';
     if (searchPlaceholder) searchPlaceholder.style.display = 'block';
     if (searchResultsHeader) searchResultsHeader.style.display = 'none';
@@ -533,9 +459,7 @@ function hideSearchResults() {
 
 function clearSearchInput() {
     const searchInput = document.getElementById('search-input');
-    if (searchInput) {
-        searchInput.value = '';
-    }
+    if (searchInput) searchInput.value = '';
 }
 
 window.closeSidebar = closeSidebar;

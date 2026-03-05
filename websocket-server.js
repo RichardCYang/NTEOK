@@ -39,76 +39,50 @@ let _wsSanitizeHtmlContent = null;
 
 const emergencyPersistState = new Map(); 
 
-const EMERGENCY_PERSIST_MAX_ATTEMPTS = (() => {
-    const v = Number.parseInt(process.env.YJS_EMERGENCY_PERSIST_MAX_ATTEMPTS || '8', 10);
-    return Number.isFinite(v) ? Math.max(0, Math.min(30, v)) : 8;
-})();
-const EMERGENCY_PERSIST_BASE_MS = (() => {
-    const v = Number.parseInt(process.env.YJS_EMERGENCY_PERSIST_BASE_MS || '1500', 10);
-    return Number.isFinite(v) ? Math.max(200, Math.min(60_000, v)) : 1500;
-})();
-const EMERGENCY_PERSIST_MAX_MS = (() => {
-    const v = Number.parseInt(process.env.YJS_EMERGENCY_PERSIST_MAX_MS || '60000', 10);
-    return Number.isFinite(v) ? Math.max(500, Math.min(300_000, v)) : 60000;
-})();
+const EMERGENCY_PERSIST_MAX_ATTEMPTS = Math.max(0, Math.min(30, Number.parseInt(process.env.YJS_EMERGENCY_PERSIST_MAX_ATTEMPTS || '8', 10)));
+const EMERGENCY_PERSIST_BASE_MS = Math.max(200, Math.min(60000, Number.parseInt(process.env.YJS_EMERGENCY_PERSIST_BASE_MS || '1500', 10)));
+const EMERGENCY_PERSIST_MAX_MS = Math.max(500, Math.min(300000, Number.parseInt(process.env.YJS_EMERGENCY_PERSIST_MAX_MS || '60000', 10)));
+
 function computeEmergencyPersistDelayMs(attempt) {
     const a = Math.max(1, Math.min(30, attempt));
-    const base = EMERGENCY_PERSIST_BASE_MS * Math.pow(2, a - 1);
-    return Math.min(EMERGENCY_PERSIST_MAX_MS, Math.floor(base));
+    return Math.min(EMERGENCY_PERSIST_MAX_MS, Math.floor(EMERGENCY_PERSIST_BASE_MS * Math.pow(2, a - 1)));
 }
 
 function inferForceClearYjsStateFromReason(reason) {
     const r = String(reason || '').toLowerCase();
-    if (!r) return true;
-    return r.includes('too large') || r.includes('oversize') || r.includes('resync') || r.includes('reset');
+    return !r || r.includes('too large') || r.includes('oversize') || r.includes('resync') || r.includes('reset');
 }
 
+/** 장애 상황에서 Yjs 문서를 DB에 강제 저장 후 제거 */
 function scheduleEmergencyPersistThenDrop(pageId, reason, opts = {}) {
     const pid = String(pageId || '').trim();
     if (!pid) return;
 
     const docInfo = yjsDocuments.get(pid);
-    if (!docInfo || !docInfo.ydoc) {
+    if (!docInfo || !docInfo.ydoc || docInfo.isEncrypted) {
         if (yjsDocuments.has(pid)) dropYjsDocument(pid);
-        return;
-    }
-
-    if (docInfo.isEncrypted === true) {
-        dropYjsDocument(pid);
         return;
     }
 
     if (!_wsPool || typeof _wsPool.execute !== 'function' || typeof _wsSanitizeHtmlContent !== 'function') {
         try { if (docInfo.saveTimeout) clearTimeout(docInfo.saveTimeout); } catch (_) {}
-        docInfo.saveTimeout = null;
         dropYjsDocument(pid);
         return;
     }
 
-    const existing = emergencyPersistState.get(pid);
-    if (existing && existing.timer) return;
+    if (emergencyPersistState.get(pid)?.timer) return;
 
     try { if (docInfo.saveTimeout) clearTimeout(docInfo.saveTimeout); } catch (_) {}
     docInfo.saveTimeout = null;
 
-    const forceClearYjsState = (opts.forceClearYjsState === true || opts.forceClearYjsState === false)
-        ? opts.forceClearYjsState
-        : inferForceClearYjsStateFromReason(reason);
-
+    const forceClearYjsState = (opts.forceClearYjsState !== undefined) ? opts.forceClearYjsState : inferForceClearYjsStateFromReason(reason);
     const epoch = bumpYjsSaveEpoch(pid);
-
-    const state = {
-        epoch,
-        attempts: 0,
-        timer: null,
-        forceClearYjsState
-    };
+    const state = { epoch, attempts: 0, timer: null, forceClearYjsState };
     emergencyPersistState.set(pid, state);
 
     const attempt = async () => {
         const cur = emergencyPersistState.get(pid);
         if (!cur) return;
-
         try {
             const result = await enqueueYjsDbSave(pid, () =>
                 saveYjsDocToDatabase(_wsPool, _wsSanitizeHtmlContent, pid, docInfo.ydoc, {
@@ -116,32 +90,20 @@ function scheduleEmergencyPersistThenDrop(pageId, reason, opts = {}) {
                     forceClearYjsState: cur.forceClearYjsState
                 })
             );
-
-            if (result && result.status === 'skipped-epoch') {
-                emergencyPersistState.delete(pid);
-                return;
-            }
-
+            if (result?.status === 'skipped-epoch') { emergencyPersistState.delete(pid); return; }
             emergencyPersistState.delete(pid);
             dropYjsDocument(pid, { bumpEpoch: false });
         } catch (e) {
-            cur.attempts = (cur.attempts || 0) + 1;
+            cur.attempts++;
             cur.timer = null;
-
-            const msg = e?.message || e;
-            try { console.error(`[YJS] emergency persist failed(page=${pid}, attempt=${cur.attempts}):`, msg); } catch (_) {}
-
             if (EMERGENCY_PERSIST_MAX_ATTEMPTS > 0 && cur.attempts <= EMERGENCY_PERSIST_MAX_ATTEMPTS) {
-                const delay = computeEmergencyPersistDelayMs(cur.attempts);
-                cur.timer = setTimeout(attempt, delay);
+                cur.timer = setTimeout(attempt, computeEmergencyPersistDelayMs(cur.attempts));
                 emergencyPersistState.set(pid, cur);
-                return;
+            } else {
+                emergencyPersistState.delete(pid);
             }
-
-            emergencyPersistState.delete(pid);
         }
     };
-
     state.timer = setTimeout(attempt, 0);
     emergencyPersistState.set(pid, state);
 }
