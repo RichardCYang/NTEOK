@@ -255,27 +255,8 @@ export const SLASH_ITEMS = [
         command(editor) {
             const input = document.createElement('input');
             input.type = 'file';
-            input.accept = 'image/*';
-            input.onchange = async (e) => {
-                const file = e.target.files[0];
-                if (!file) return;
-                if (file.size > 5 * 1024 * 1024) return alert('이미지 파일 크기는 5MB 이하여야 합니다.');
-                try { await handleImageUpload(editor, file); } catch (error) { alert('이미지 업로드 실패'); }
-            };
-            input.click();
-        }
-    },
-    { id: "file", label: "파일", description: "파일 첨부 (50MB 제한)", icon: "📎", command(editor) { editor.chain().focus().setFileBlock().run(); } },
-    { id: "callout", label: "콜아웃", description: "메시지 블록", icon: "ℹ️", command(editor) { editor.chain().focus().setCallout('info', '').run(); } },
-    { id: "board", label: "보드 뷰", description: "칸반 보드", icon: "📋", command(editor) { editor.chain().focus().setBoardBlock().run(); } },
-    {
-        id: "youtube",
-        label: "YouTube",
-        description: "YouTube 임베드",
-        icon: "▶",
-        command(editor) {
-            const url = window.prompt("YouTube URL:");
-            const match = url?.match(/^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/);
+            input.accept = 'image
+);
             if (match?.[2].length === 11) editor.chain().focus().setYoutubeBlock({ src: `https://www.youtube.com/embed/${match[2]}` }).run();
             else alert("올바른 URL이 아닙니다.");
         }
@@ -779,7 +760,7 @@ function getSlashCommandText(editor, opts = {}) {
 	return editor.state.doc.textBetween(from, to);
 }
 
-/** 슬래시 메뉴 관련 키보드 및 IME 이벤트 바인딩 */
+
 export function bindSlashKeyHandlers(editor) {
     document.addEventListener("keydown", (event) => {
         if (!editor) return;

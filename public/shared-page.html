@@ -212,7 +212,7 @@
                 text-decoration: none;
             }
 
-            /* ============ 테이블 스타일 (모던 디자인) ============ */
+
             .shared-page-editor table {
                 border-collapse: separate;
                 border-spacing: 0;
@@ -240,7 +240,7 @@
                 transition: background-color 0.2s ease;
             }
 
-            /* 마지막 열/행 테두리 제거 */
+
             .shared-page-editor td:last-child,
             .shared-page-editor th:last-child {
                 border-right: none;
@@ -262,7 +262,7 @@
                 background-color: var(--secondary-color);
             }
 
-            /* ============ 수식 블록 스타일 ============ */
+
             .shared-page-editor [data-type="math-block"] {
                 margin: 1em 0;
                 padding: 0;
@@ -292,12 +292,12 @@
                 justify-content: center;
             }
 
-            /* KaTeX display mode 여백 조정 */
+
             .shared-page-editor [data-type="math-block"] .katex-display {
                 margin: 0;
             }
 
-            /* KaTeX 렌더링 개선 */
+
             .shared-page-editor .katex-display {
                 margin: 0;
             }
@@ -306,7 +306,7 @@
                 font-size: 1.1em;
             }
 
-            /* 인라인 수식 - 읽기 전용 */
+
             .shared-page-editor [data-type="math-inline"] {
                 display: inline;
                 padding: 2px 4px;
@@ -318,7 +318,7 @@
                 vertical-align: baseline;
             }
 
-            /* ============ 체크리스트 스타일 ============ */
+
             .shared-page-editor ul[data-type="taskList"] {
                 list-style: none;
                 padding: 0;
@@ -327,7 +327,7 @@
 
             .shared-page-editor ul[data-type="taskList"] li {
                 display: flex;
-                align-items: flex-start; /* 상단 정렬로 변경하여 텍스트가 여러 줄일 때도 체크박스가 첫 줄에 고정되도록 함 */
+                align-items: flex-start;
                 margin: 4px 0;
             }
 
@@ -335,7 +335,7 @@
                 display: flex;
                 align-items: center;
                 justify-content: center;
-                height: 36px; /* p 태그의 line-height와 일치시켜 수직 중앙 정렬 유지 */
+                height: 36px;
                 margin-right: 8px;
                 user-select: none;
                 cursor: pointer;
@@ -364,7 +364,7 @@
             }
 
             .shared-page-editor ul[data-type="taskList"] li > div p {
-                min-height: 36px; /* 고정 높이 대신 최소 높이 사용 (텍스트 줄바꿈 대응) */
+                min-height: 36px;
                 margin: 0;
                 line-height: 36px;
                 padding: 0;

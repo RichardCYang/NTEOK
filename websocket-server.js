@@ -53,7 +53,7 @@ function inferForceClearYjsStateFromReason(reason) {
     return !r || r.includes('too large') || r.includes('oversize') || r.includes('resync') || r.includes('reset');
 }
 
-/** 장애 상황에서 Yjs 문서를 DB에 강제 저장 후 제거 */
+
 function scheduleEmergencyPersistThenDrop(pageId, reason, opts = {}) {
     const pid = String(pageId || '').trim();
     if (!pid) return;

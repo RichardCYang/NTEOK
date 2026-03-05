@@ -120,7 +120,7 @@ const appState = {
     currentStorageId: null,
     pages: [],
     currentPageId: null,
-    currentPageUpdatedAt: null, // E2EE 초기화 시 stale snapshot 방지용
+    currentPageUpdatedAt: null,
     expandedPages: new Set(),
     isWriteMode: false,
     currentPageIsEncrypted: false,
@@ -201,7 +201,6 @@ async function handlePageListClick(event, state) {
             if (!confirm("이 페이지를 휴지통으로 이동하시겠습니까?")) return;
             try {
                 if (state.currentPageId === pageId) {
-                    // 삭제 전 현재 페이지 강제 저장 시도
                     try { await requestImmediateSave(pageId, { includeSnapshot: true, waitForAck: true }); } catch (_) {}
                 }
                 await api.del("/api/pages/" + encodeURIComponent(pageId));
@@ -277,7 +276,6 @@ async function init() {
         bindToolbar(appState.editor);
         bindSlashKeyHandlers(appState.editor);
 
-        // 모듈 초기화
         initPagesManager(appState);
         appState.fetchPageList = fetchPageList;
         initEncryptionManager(appState);

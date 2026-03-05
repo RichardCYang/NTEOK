@@ -344,7 +344,6 @@ if (!DEFAULT_ADMIN_PASSWORD) {
     }
 }
 
-// 비밀번호 강도 검증 및 서버 시작 중단 정책
 {
     const pwLower = String(DEFAULT_ADMIN_PASSWORD || "").trim().toLowerCase();
     const strength = validatePasswordStrength(DEFAULT_ADMIN_PASSWORD);
