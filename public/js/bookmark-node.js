@@ -1,5 +1,21 @@
-
 const Node = Tiptap.Core.Node;
+
+function sanitizeBookmarkImageUrl(value) {
+    if (typeof value !== 'string') return null;
+    const v = value.trim();
+    if (!v) return null;
+    if (/[\u0000-\u001F\u007F]/.test(v)) return null;
+    if (v.startsWith('//') || v.startsWith('#')) return null;
+    if (v.startsWith('/')) return v;
+    try {
+        const u = new URL(v);
+        if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
+        if (u.username || u.password) return null;
+        return u.toString();
+    } catch {
+        return null;
+    }
+}
 
 export const BookmarkBlock = Node.create({
     name: 'bookmarkBlock',
@@ -29,7 +45,7 @@ export const BookmarkBlock = Node.create({
                 getAttrs: (element) => ({
                     url: element.getAttribute('data-url'),
                     title: element.getAttribute('data-title'),
-                    favicon: element.getAttribute('data-favicon')
+                    favicon: sanitizeBookmarkImageUrl(element.getAttribute('data-favicon'))
                 })
             }
         ];
@@ -42,7 +58,7 @@ export const BookmarkBlock = Node.create({
                 'data-type': 'bookmark',
                 'data-url': node.attrs.url || '',
                 'data-title': node.attrs.title || '',
-                'data-favicon': node.attrs.favicon || '',
+                'data-favicon': sanitizeBookmarkImageUrl(node.attrs.favicon) || '',
                 'class': 'bookmark-block'
             }
         ];
@@ -75,7 +91,8 @@ export const BookmarkBlock = Node.create({
                         if (!url) return;
 
                         if (!url.startsWith('http://') && !url.startsWith('https://')) {
-                             alert('http:// 또는 https:// 로 시작하는 올바른 URL을 입력함');                             return;
+                             alert('http:// 또는 https:// 로 시작하는 올바른 URL을 입력함');
+                             return;
                         }
 
                         input.disabled = true;
@@ -103,7 +120,7 @@ export const BookmarkBlock = Node.create({
                                 editor.view.dispatch(editor.view.state.tr.setNodeMarkup(getPos(), null, {
                                     url: data.url,
                                     title: data.title,
-                                    favicon: data.favicon
+                                    favicon: sanitizeBookmarkImageUrl(data.favicon)
                                 }));
                             }
                         } catch (error) {
@@ -141,9 +158,10 @@ export const BookmarkBlock = Node.create({
                     card.rel = 'noopener noreferrer';
                     card.className = 'bookmark-compact-link';
 
-                    if (node.attrs.favicon) {
+                    const safeFavicon = sanitizeBookmarkImageUrl(node.attrs.favicon);
+                    if (safeFavicon) {
                         const icon = document.createElement('img');
-                        icon.src = node.attrs.favicon;
+                        icon.src = safeFavicon;
                         icon.className = 'bookmark-compact-favicon';
                         icon.alt = '';
                         icon.onerror = () => {

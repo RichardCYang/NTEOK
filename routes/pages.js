@@ -555,6 +555,32 @@ module.exports = (dependencies) => {
         }
     });
 
+    async function sanitizeBookmarkFaviconUrl(raw, baseUrl) {
+        if (typeof raw !== 'string') return null;
+        const v = raw.trim();
+        if (!v) return null;
+        if (/[\x00-\x1F\x7F]/.test(v)) return null;
+        if (v.startsWith('#')) return null;
+
+        let u;
+        try {
+            u = new URL(v, baseUrl);
+        } catch {
+            return null;
+        }
+
+        if (!['http:', 'https:'].includes(u.protocol)) return null;
+        if (u.username || u.password) return null;
+
+        try {
+            await resolvePublicOutboundAddresses(u.hostname, isPrivateOrLocalIP);
+        } catch {
+            return null;
+        }
+
+        return u.toString();
+    }
+
     router.get("/fetch-metadata", authMiddleware, outboundFetchLimiter, async (req, res) => {
         const { url } = req.query;
         if (!url) return res.status(400).json({ error: "URL이 필요합니다." });
@@ -598,25 +624,13 @@ module.exports = (dependencies) => {
                 }
             }
 
-            if (!favicon) {
-                favicon = '/favicon.ico';
-            }
-
-            if (favicon && !favicon.startsWith('http') && !favicon.startsWith('data:')) {
-                if (favicon.startsWith('//')) {
-                    favicon = targetUrl.protocol + favicon;
-                } else if (favicon.startsWith('/')) {
-                    favicon = targetUrl.origin + favicon;
-                } else {
-                    const basePath = targetUrl.origin + targetUrl.pathname.substring(0, targetUrl.pathname.lastIndexOf('/') + 1);
-                    favicon = basePath + favicon;
-                }
-            }
+            const faviconCandidate = favicon || '/favicon.ico';
+            const safeFavicon = await sanitizeBookmarkFaviconUrl(faviconCandidate, targetUrl);
 
             res.json({
                 title: title.trim().substring(0, 500),
-                favicon: favicon,
-                url: url
+                favicon: safeFavicon,
+                url: targetUrl.toString()
             });
 
         } catch (error) {

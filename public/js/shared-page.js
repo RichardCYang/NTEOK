@@ -19,6 +19,23 @@ function _isSafeHttpUrlOrRelative(value) {
     }
 }
 
+function _sanitizeBookmarkImageUrl(value) {
+    if (typeof value !== 'string') return null;
+    const v = value.trim();
+    if (!v) return null;
+    if (_CONTROL_CHARS_RE.test(v)) return null;
+    if (v.startsWith('//') || v.startsWith('#')) return null;
+    if (v.startsWith('/')) return v;
+    try {
+        const u = new URL(v);
+        if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
+        if (u.username || u.password) return null;
+        return u.toString();
+    } catch {
+        return null;
+    }
+}
+
 const _purifier = (typeof DOMPurify === 'function' && !DOMPurify.sanitize)
     ? DOMPurify(window)
     : DOMPurify;
@@ -30,6 +47,15 @@ if (typeof _purifier?.addHook === 'function') {
             if (!_isSafeHttpUrlOrRelative(String(hookEvent.attrValue || ''))) {
                 hookEvent.keepAttr = false;
                 hookEvent.forceKeepAttr = false;
+            }
+        }
+        if (name === 'data-favicon') {
+            const safe = _sanitizeBookmarkImageUrl(String(hookEvent.attrValue || ''));
+            if (!safe) {
+                hookEvent.keepAttr = false;
+                hookEvent.forceKeepAttr = false;
+            } else {
+                hookEvent.attrValue = safe;
             }
         }
     });
