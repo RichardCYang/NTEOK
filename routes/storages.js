@@ -61,13 +61,21 @@ module.exports = (dependencies) => {
         if (typeof name !== 'string') return null;
         const trimmed = name.trim();
         if (!trimmed) return null;
-        if (trimmed.length > 128) {
-            return { ok: false, error: '저장소 이름은 128자 이내로 입력해주세요.' };
-        }
-        if (CONTROL_CHARS_RE.test(trimmed) || HTML_META_CHARS_RE.test(trimmed)) {
-            return { ok: false, error: '저장소 이름에 <, >, &, 제어문자는 사용할 수 없습니다.' };
-        }
+        if (trimmed.length > 128) return { ok: false, error: '저장소 이름은 128자 이내로 입력해주세요.' };
+        if (CONTROL_CHARS_RE.test(trimmed) || HTML_META_CHARS_RE.test(trimmed)) return { ok: false, error: '저장소 이름에 <, >, &, 제어문자는 사용할 수 없습니다.' };
         return { ok: true, value: trimmed };
+    }
+
+    function requireStorageOwner(storage, res, actionText = '참여자를 관리할') {
+        if (!storage) {
+            res.status(404).json({ error: '저장소를 찾을 수 없습니다.' });
+            return false;
+        }
+        if (!storage.is_owner) {
+            res.status(403).json({ error: `저장소 소유자만 ${actionText} 권한이 있습니다.` });
+            return false;
+        }
+        return true;
     }
 
     router.get('/', authMiddleware, async (req, res) => {
@@ -90,9 +98,7 @@ module.exports = (dependencies) => {
             const storageId = req.params.id;
 
             const storage = await storagesRepo.getStorageByIdForUser(userId, storageId);
-            if (!storage) {
-                return res.status(404).json({ error: '저장소를 찾을 수 없거나 권한이 없습니다.' });
-            }
+            if (!storage) return res.status(404).json({ error: '저장소를 찾을 수 없거나 권한이 없습니다.' });
 
             const { pageRows } = await bootstrapRepo.getStorageData(userId, storageId);
 
@@ -123,21 +129,13 @@ module.exports = (dependencies) => {
         try {
             const { name, isEncrypted, encryptionSalt, encryptionCheck } = req.body;
             const check = validateStorageName(name);
-            if (!check) {
-                return res.status(400).json({ error: '저장소 이름을 입력해주세요.' });
-            }
-            if (!check.ok) {
-                return res.status(400).json({ error: check.error });
-            }
+            if (!check) return res.status(400).json({ error: '저장소 이름을 입력해주세요.' });
+            if (!check.ok) return res.status(400).json({ error: check.error });
             const storageName = check.value;
 
             if (isEncrypted) {
-                if (!encryptionSalt || !encryptionCheck) {
-                    return res.status(400).json({ error: '암호화 저장소 생성에 필요한 정보가 부족합니다.' });
-                }
-                if (typeof encryptionSalt !== 'string' || typeof encryptionCheck !== 'string') {
-                     return res.status(400).json({ error: '암호화 정보 형식이 올바르지 않습니다.' });
-                }
+                if (!encryptionSalt || !encryptionCheck) return res.status(400).json({ error: '암호화 저장소 생성에 필요한 정보가 부족합니다.' });
+                if (typeof encryptionSalt !== 'string' || typeof encryptionCheck !== 'string') return res.status(400).json({ error: '암호화 정보 형식이 올바르지 않습니다.' });
             }
 
             const userId = req.user.id;
@@ -179,12 +177,8 @@ module.exports = (dependencies) => {
         try {
             const { name } = req.body;
             const check = validateStorageName(name);
-            if (!check) {
-                return res.status(400).json({ error: '저장소 이름을 입력해주세요.' });
-            }
-            if (!check.ok) {
-                return res.status(400).json({ error: check.error });
-            }
+            if (!check) return res.status(400).json({ error: '저장소 이름을 입력해주세요.' });
+            if (!check.ok) return res.status(400).json({ error: check.error });
             const storageName = check.value;
 
             const userId = req.user.id;
@@ -213,18 +207,14 @@ module.exports = (dependencies) => {
             const ownedStorages = storages.filter(s => s.is_owner);
 
             const storageToDelete = storages.find(s => s.id === storageId);
-            if (storageToDelete && storageToDelete.is_owner && ownedStorages.length <= 1) {
-                return res.status(400).json({ error: '최소 하나의 소유한 저장소는 유지해야 합니다.' });
-            }
+            if (storageToDelete && storageToDelete.is_owner && ownedStorages.length <= 1) return res.status(400).json({ error: '최소 하나의 소유한 저장소는 유지해야 합니다.' });
 
             if (storageToDelete && !storageToDelete.is_owner) {
                 await storagesRepo.removeCollaborator(storageId, userId);
                 res.json({ success: true });
             } else {
                 const result = await storagesRepo.safeDeleteStoragePreservingCollaborators(userId, storageId);
-                if (!result?.ok) {
-                    return res.status(404).json({ error: '저장소를 찾을 수 없거나 권한이 없습니다.' });
-                }
+                if (!result?.ok) return res.status(404).json({ error: '저장소를 찾을 수 없거나 권한이 없습니다.' });
                 res.json({ success: true, transferred: result.transferred });
             }
         } catch (error) {
@@ -236,9 +226,7 @@ module.exports = (dependencies) => {
     router.get('/users/search', authMiddleware, collaboratorUserSearchLimiter, async (req, res) => {
         try {
             const normalizedQuery = normalizeUserSearchQuery(req.query.q);
-            if (!normalizedQuery) {
-                return res.json([]);
-            }
+            if (!normalizedQuery) return res.json([]);
 
             const users = await dependencies.usersRepo.searchUsers(
                 normalizedQuery,
@@ -257,13 +245,7 @@ module.exports = (dependencies) => {
             const storageId = req.params.id;
 
             const storage = await storagesRepo.getStorageByIdForUser(userId, storageId);
-            if (!storage) {
-                return res.status(404).json({ error: '저장소를 찾을 수 없습니다.' });
-            }
-
-            if (!storage.is_owner && storage.permission !== 'ADMIN') {
-                return res.status(403).json({ error: '참여자 목록을 조회할 권한이 없습니다.' });
-            }
+            if (!requireStorageOwner(storage, res, '참여자 목록을 조회할')) return;
 
             const collaborators = await storagesRepo.listCollaborators(storageId);
             res.json(collaborators);
@@ -279,16 +261,16 @@ module.exports = (dependencies) => {
             const storageId = req.params.id;
             const { targetUserId, permission } = req.body;
 
-            if (!targetUserId)
-                return res.status(400).json({ error: '참여할 사용자를 지정해주세요.' });
+            if (!targetUserId) return res.status(400).json({ error: '참여할 사용자를 지정해주세요.' });
 
             const normalizedPermission = String(permission || 'READ').toUpperCase();
-            if (!['READ', 'EDIT', 'ADMIN'].includes(normalizedPermission))
-                return res.status(400).json({ error: '유효하지 않은 권한입니다. (READ, EDIT 또는 ADMIN)' });
+            if (!['READ', 'EDIT', 'ADMIN'].includes(normalizedPermission)) return res.status(400).json({ error: '유효하지 않은 권한입니다. (READ, EDIT 또는 ADMIN)' });
 
             const storage = await storagesRepo.getStorageByIdForUser(userId, storageId);
-            if (!storage || (!storage.is_owner && storage.permission !== 'ADMIN'))
-                return res.status(403).json({ error: '참여자를 관리할 권한이 없습니다.' });
+            if (!requireStorageOwner(storage, res)) return;
+
+            if (String(targetUserId) === String(storage.owner_id)) return res.status(400).json({ error: '저장소 소유자는 별도 참여자로 추가할 수 없습니다.' });
+            if (String(targetUserId) === String(userId)) return res.status(400).json({ error: '자기 자신에게 협업 권한을 다시 부여할 수 없습니다.' });
 
             const now = new Date();
             const nowStr = formatDateForDb(now);
@@ -303,8 +285,7 @@ module.exports = (dependencies) => {
             });
 
             try {
-                if (typeof wsKickUserFromStorage === 'function')
-                    wsKickUserFromStorage(storageId, targetUserId, 1008, 'Storage permission changed');
+                if (typeof wsKickUserFromStorage === 'function') wsKickUserFromStorage(storageId, targetUserId, 1008, 'Storage permission changed');
             } catch (e) {}
 
             res.json({ success: true });
@@ -321,16 +302,15 @@ module.exports = (dependencies) => {
             const targetUserId = req.params.targetUserId;
 
             const storage = await storagesRepo.getStorageByIdForUser(userId, storageId);
-            if (!storage || (!storage.is_owner && storage.permission !== 'ADMIN')) {
-                return res.status(403).json({ error: '참여자를 관리할 권한이 없습니다.' });
-            }
+            if (!requireStorageOwner(storage, res)) return;
+
+            if (String(targetUserId) === String(storage.owner_id)) return res.status(400).json({ error: '저장소 소유자는 제거할 수 없습니다.' });
+            if (String(targetUserId) === String(userId)) return res.status(400).json({ error: '저장소 소유자는 자기 자신을 제거할 수 없습니다.' });
 
             await storagesRepo.removeCollaborator(storageId, targetUserId);
 
             try {
-                if (typeof wsKickUserFromStorage === 'function') {
-                    wsKickUserFromStorage(storageId, targetUserId, 1008, 'Storage access revoked');
-                }
+                if (typeof wsKickUserFromStorage === 'function') wsKickUserFromStorage(storageId, targetUserId, 1008, 'Storage access revoked');
             } catch (e) {}
 
             res.json({ success: true });

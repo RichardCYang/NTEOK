@@ -27,7 +27,7 @@ export function initStoragesManager(appState, onStorageSelected) {
             
             const date = new Date(storage.createdAt || storage.created_at).toLocaleDateString();
             const isOwner = storage.is_owner === 1 || storage.is_owner === true;
-            const isAdmin = isOwner || storage.permission === 'ADMIN';
+            const canManageCollaborators = isOwner;
             const isEncrypted = !!(Number(storage.is_encrypted) === 1 || storage.isEncrypted);
             
             const safeStorageId = escapeHtmlAttr(storage.id);
@@ -41,7 +41,7 @@ export function initStoragesManager(appState, onStorageSelected) {
                             <i class="fa-solid fa-pen"></i>
                         </button>
                     ` : ''}
-                    ${isAdmin ? `
+                    ${canManageCollaborators ? `
                         <button class="storage-action-btn collab-btn" title="참여자 관리" data-id="${safeStorageId}">
                             <i class="fa-solid fa-user-group"></i>
                         </button>
@@ -116,9 +116,7 @@ export function initStoragesManager(appState, onStorageSelected) {
                 const confirmMsg = isOwner 
                     ? `'${storage.name}' 저장소를 삭제하시겠습니까?\n포함된 모든 컬렉션과 페이지가 영구적으로 삭제됩니다.\n(참고: 다른 협업자가 작성한 페이지는 해당 사용자의 복구 저장소로 안전하게 이관됩니다.)`
                     : `'${storage.name}' 저장소의 공유를 해제하시겠습니까?`;
-                if (!confirm(confirmMsg)) {
-                    return;
-                }
+                if (!confirm(confirmMsg)) return;
 
                 showLoadingOverlay();
                 try {
@@ -171,15 +169,13 @@ export function initStoragesManager(appState, onStorageSelected) {
             renderCollaborators(collaborators);
         } catch (error) {
             console.error('참여자 로드 실패:', error);
-            if (error.status === 403) {
-                collabList.innerHTML = '<div style="text-align: center; padding: 20px; color: #ef4444;">참여자 목록을 조회할 권한이 없습니다.</div>';
-            } else {
-                collabList.innerHTML = '<div style="text-align: center; padding: 20px; color: #ef4444;">로드 실패</div>';
-            }
+            if (error.status === 403) collabList.innerHTML = '<div style="text-align: center; padding: 20px; color: #ef4444;">참여자 목록을 조회할 권한이 없습니다.</div>';
+            else collabList.innerHTML = '<div style="text-align: center; padding: 20px; color: #ef4444;">로드 실패</div>';
         }
     }
 
     function renderCollaborators(collaborators) {
+        const canManageCollaborators = currentManagingStorage && (currentManagingStorage.is_owner === 1 || currentManagingStorage.is_owner === true);
         collabList.innerHTML = '';
         if (collaborators.length === 0) {
             collabList.innerHTML = '<div style="text-align: center; padding: 20px; color: var(--sub-font-color); font-size: 13px;">추가된 참여자가 없습니다.</div>';
@@ -198,14 +194,16 @@ export function initStoragesManager(appState, onStorageSelected) {
                     <span class="collaborator-name">${safeCollabName}</span>
                 </div>
                 <div class="collaborator-actions">
-                    <select class="collaborator-permission-select" data-user-id="${safeCollabId}">
+                    <select class="collaborator-permission-select" data-user-id="${safeCollabId}" ${canManageCollaborators ? '' : 'disabled'}>
                         <option value="READ" ${collab.permission === 'READ' ? 'selected' : ''}>읽기</option>
                         <option value="EDIT" ${collab.permission === 'EDIT' ? 'selected' : ''}>편집</option>
                         <option value="ADMIN" ${collab.permission === 'ADMIN' ? 'selected' : ''}>관리</option>
                     </select>
-                    <button class="collaborator-remove-btn" title="삭제">
-                        <i class="fa-solid fa-user-minus"></i>
-                    </button>
+                    ${canManageCollaborators ? `
+                        <button class="collaborator-remove-btn" title="삭제">
+                            <i class="fa-solid fa-user-minus"></i>
+                        </button>
+                    ` : ''}
                 </div>
             `;
 
@@ -223,16 +221,18 @@ export function initStoragesManager(appState, onStorageSelected) {
                 }
             });
 
-            item.querySelector('.collaborator-remove-btn').addEventListener('click', async () => {
-                if (!confirm(`'${collab.username}' 님을 저장소에서 제외하시겠습니까?`)) return;
-                
-                try {
-                    await api.del(`/api/storages/${currentManagingStorage.id}/collaborators/${collab.id}`);
-                    loadCollaborators();
-                } catch (error) {
-                    alert('참여자 삭제 실패: ' + error.message);
-                }
-            });
+            const removeBtn = item.querySelector('.collaborator-remove-btn');
+            if (removeBtn) {
+                removeBtn.addEventListener('click', async () => {
+                    if (!confirm(`'${collab.username}' 님을 저장소에서 제외하시겠습니까?`)) return;
+                    try {
+                        await api.del(`/api/storages/${currentManagingStorage.id}/collaborators/${collab.id}`);
+                        loadCollaborators();
+                    } catch (error) {
+                        alert('참여자 삭제 실패: ' + error.message);
+                    }
+                });
+            }
 
             collabList.appendChild(item);
         });
@@ -258,9 +258,8 @@ export function initStoragesManager(appState, onStorageSelected) {
 
     function renderSearchResults(users) {
         searchResults.innerHTML = '';
-        if (users.length === 0) {
-            searchResults.innerHTML = '<div class="search-result-item" style="color: #6b7280; cursor: default;">검색 결과 없음</div>';
-        } else {
+        if (users.length === 0) searchResults.innerHTML = '<div class="search-result-item" style="color: #6b7280; cursor: default;">검색 결과 없음</div>';
+        else {
             users.forEach(user => {
                 const item = document.createElement('div');
                 item.className = 'search-result-item';
@@ -277,6 +276,11 @@ export function initStoragesManager(appState, onStorageSelected) {
     }
 
     addCollabBtn.addEventListener('click', async () => {
+        const canManageCollaborators = currentManagingStorage && (currentManagingStorage.is_owner === 1 || currentManagingStorage.is_owner === true);
+        if (!canManageCollaborators) {
+            alert('저장소 소유자만 참여자를 추가할 수 있습니다.');
+            return;
+        }
         if (!selectedUser) {
             alert('먼저 사용자를 검색하여 선택해주세요.');
             return;
@@ -300,9 +304,7 @@ export function initStoragesManager(appState, onStorageSelected) {
     });
 
     document.addEventListener('click', (e) => {
-        if (!searchInput.contains(e.target) && !searchResults.contains(e.target)) {
-            searchResults.classList.add('hidden');
-        }
+        if (!searchInput.contains(e.target) && !searchResults.contains(e.target)) searchResults.classList.add('hidden');
     });
 
     async function selectStorage(storageId, skipHistory = false) {
@@ -331,13 +333,9 @@ export function initStoragesManager(appState, onStorageSelected) {
             storageScreen.classList.add('hidden');
             appEl.classList.remove('hidden');
             
-            if (!skipHistory) {
-                history.pushState({ view: 'app', storageId }, '', window.location.pathname);
-            }
+            if (!skipHistory) history.pushState({ view: 'app', storageId }, '', window.location.pathname);
 
-            if (onStorageSelected) {
-                onStorageSelected({ ...data, permission, isEncryptedStorage });
-            }
+            if (onStorageSelected) onStorageSelected({ ...data, permission, isEncryptedStorage });
         } catch (error) {
             console.error('저장소 데이터 로드 실패:', error);
             alert('저장소 데이터를 불러오지 못했습니다.');
@@ -519,9 +517,7 @@ export function initStoragesManager(appState, onStorageSelected) {
             appEl.classList.add('hidden');
             renderStorages(appState.storages);
             
-            if (!skipHistory) {
-                history.pushState({ view: 'storages' }, '', window.location.pathname);
-            }
+            if (!skipHistory) history.pushState({ view: 'storages' }, '', window.location.pathname);
         },
         hide() {
             storageScreen.classList.add('hidden');
