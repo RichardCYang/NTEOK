@@ -6,10 +6,153 @@ const http = require("node:http");
 const https = require("node:https");
 const net = require("node:net");
 const ipaddr = require("ipaddr.js");
-const axios = require("axios");
 const cheerio = require("cheerio");
 const { assertImageFileSignature } = require("../security-utils.js");
 const { validateAndNormalizeIcon } = require("../utils/icon-utils.js");
+
+const METADATA_FETCH_TIMEOUT_MS = 5000;
+const METADATA_FETCH_MAX_BYTES = 2 * 1024 * 1024;
+const LINK_PREVIEW_ALLOWED_PORTS = (() => {
+    const raw = String(process.env.LINK_PREVIEW_ALLOWED_PORTS || '80,443').trim();
+    const out = new Set();
+    for (const part of raw.split(',')) {
+        const n = Number.parseInt(part.trim(), 10);
+        if (Number.isFinite(n) && n >= 1 && n <= 65535) out.add(n);
+    }
+    return out.size > 0 ? out : new Set([80, 443]);
+})();
+
+function makeFetchError(code, message) {
+    const err = new Error(message || code);
+    err.code = code;
+    return err;
+}
+
+function normalizeResolvedAddress(entry) {
+    if (!entry) return null;
+    if (typeof entry === 'string') return entry;
+    if (typeof entry.address === 'string') return entry.address;
+    return null;
+}
+
+async function resolvePublicOutboundAddresses(hostname, isPrivateOrLocalIP) {
+    const host = String(hostname || '').trim().replace(/^\[/, '').replace(/\]$/, '');
+    if (!host) throw makeFetchError('HOST_REQUIRED');
+
+    if (net.isIP(host)) {
+        if (isPrivateOrLocalIP(host)) throw makeFetchError('BLOCKED_PRIVATE_IP');
+        return [host];
+    }
+
+    const v4 = await dns.resolve4(host).catch(() => []);
+    const v6 = await dns.resolve6(host).catch(() => []);
+    const addresses = [...v4, ...v6]
+        .map(normalizeResolvedAddress)
+        .filter(Boolean);
+
+    if (addresses.length === 0) throw makeFetchError('HOST_NOT_FOUND');
+
+    const uniqueAddresses = [...new Set(addresses)];
+    for (const ip of uniqueAddresses) {
+        if (isPrivateOrLocalIP(ip)) throw makeFetchError('BLOCKED_PRIVATE_IP');
+    }
+
+    return uniqueAddresses;
+}
+
+function fetchHtmlFromPinnedAddress(targetUrl, pinnedIp, isPrivateOrLocalIP) {
+    return new Promise((resolve, reject) => {
+        const protocolModule = targetUrl.protocol === 'https:' ? https : http;
+        const port = Number(targetUrl.port || (targetUrl.protocol === 'https:' ? 443 : 80));
+
+        if (!LINK_PREVIEW_ALLOWED_PORTS.has(port)) {
+            return reject(makeFetchError('DISALLOWED_PORT'));
+        }
+
+        const req = protocolModule.request({
+            protocol: targetUrl.protocol,
+            hostname: targetUrl.hostname,
+            port,
+            method: 'GET',
+            path: `${targetUrl.pathname || '/'}${targetUrl.search || ''}`,
+            lookup: (_hostname, _opts, cb) => cb(null, pinnedIp, net.isIP(pinnedIp)),
+            servername: net.isIP(targetUrl.hostname) ? undefined : targetUrl.hostname,
+            agent: false,
+            timeout: METADATA_FETCH_TIMEOUT_MS,
+            headers: {
+                'User-Agent': 'NTEOK-Link-Preview/1.0',
+                'Accept': 'text/html,application/xhtml+xml;q=0.9',
+                'Accept-Encoding': 'identity',
+                'Host': targetUrl.host
+            }
+        }, (upstreamRes) => {
+            const remoteIp = upstreamRes.socket?.remoteAddress;
+            if (remoteIp && isPrivateOrLocalIP(remoteIp)) {
+                upstreamRes.resume();
+                return reject(makeFetchError('BLOCKED_PRIVATE_IP'));
+            }
+
+            const status = Number(upstreamRes.statusCode || 0);
+            if (status >= 300 && status < 400) {
+                upstreamRes.resume();
+                return reject(makeFetchError('REDIRECT_BLOCKED'));
+            }
+            if (status < 200 || status >= 400) {
+                upstreamRes.resume();
+                return reject(makeFetchError('UPSTREAM_BAD_STATUS'));
+            }
+
+            const contentType = String(upstreamRes.headers['content-type'] || '').toLowerCase();
+            if (contentType && !contentType.includes('text/html') && !contentType.includes('application/xhtml+xml')) {
+                upstreamRes.resume();
+                return reject(makeFetchError('NOT_HTML'));
+            }
+
+            const chunks = [];
+            let total = 0;
+
+            upstreamRes.on('data', (chunk) => {
+                total += chunk.length;
+                if (total > METADATA_FETCH_MAX_BYTES) {
+                    req.destroy(makeFetchError('TOO_LARGE'));
+                    return;
+                }
+                chunks.push(chunk);
+            });
+
+            upstreamRes.on('end', () => {
+                resolve(Buffer.concat(chunks).toString('utf8'));
+            });
+        });
+
+        req.on('timeout', () => req.destroy(makeFetchError('ETIMEDOUT')));
+        req.on('error', reject);
+        req.end();
+    });
+}
+
+async function fetchHtmlWithoutRedirects(targetUrl, resolvedIps, isPrivateOrLocalIP) {
+    let lastError = null;
+
+    for (const ip of resolvedIps) {
+        try {
+            return await fetchHtmlFromPinnedAddress(targetUrl, ip, isPrivateOrLocalIP);
+        } catch (err) {
+            lastError = err;
+            if ([
+                'BLOCKED_PRIVATE_IP',
+                'DISALLOWED_PORT',
+                'REDIRECT_BLOCKED',
+                'NOT_HTML',
+                'TOO_LARGE'
+            ].includes(String(err?.code || ''))) {
+                throw err;
+            }
+        }
+    }
+
+    throw lastError || makeFetchError('FETCH_FAILED');
+}
 
 const erl = require("express-rate-limit");
 const rateLimit = erl.rateLimit || erl;
@@ -428,38 +571,14 @@ module.exports = (dependencies) => {
                 return res.status(400).json({ error: "HTTP/HTTPS 프로토콜만 허용됩니다." });
             }
 
-            const hostname = targetUrl.hostname;
-            const addresses = await dns.resolve4(hostname).catch(() => []);
-            if (addresses.length === 0) {
-                const v6 = await dns.resolve6(hostname).catch(() => []);
-                addresses.push(...v6);
+            if (targetUrl.username || targetUrl.password) {
+                return res.status(400).json({ error: "인증 정보가 포함된 URL은 허용되지 않습니다." });
             }
 
-            if (addresses.length === 0) {
-                return res.status(400).json({ error: "호스트를 찾을 수 없습니다." });
-            }
+            const resolvedIps = await resolvePublicOutboundAddresses(targetUrl.hostname, isPrivateOrLocalIP);
+            const html = await fetchHtmlWithoutRedirects(targetUrl, resolvedIps, isPrivateOrLocalIP);
 
-            for (const ip of addresses) {
-                if (isPrivateOrLocalIP(ip)) {
-                    return res.status(403).json({ error: "허용되지 않은 호스트입니다." });
-                }
-            }
-
-            const response = await axios.get(url, {
-                timeout: 5000,
-                maxContentLength: 2 * 1024 * 1024, 
-                headers: {
-                    'User-Agent': 'NTEOK-Link-Preview/1.0',
-                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
-                },
-                validateStatus: (status) => status < 400 
-            });
-
-            if (typeof response.data !== 'string') {
-                 return res.status(400).json({ error: "HTML 콘텐츠가 아닙니다." });
-            }
-
-            const $ = cheerio.load(response.data);
+            const $ = cheerio.load(html);
             const title = $('title').first().text() || $('meta[property="og:title"]').attr('content') || $('meta[name="twitter:title"]').attr('content') || targetUrl.hostname;
 
             let favicon = null;
@@ -501,14 +620,28 @@ module.exports = (dependencies) => {
             });
 
         } catch (error) {
-            if (error.code === 'ECONNABORTED') {
-                 return res.status(504).json({ error: "요청 시간이 초과되었습니다." });
+            switch (String(error?.code || '')) {
+                case 'HOST_NOT_FOUND':
+                    return res.status(400).json({ error: "호스트를 찾을 수 없습니다." });
+                case 'BLOCKED_PRIVATE_IP':
+                    return res.status(403).json({ error: "허용되지 않은 호스트입니다." });
+                case 'DISALLOWED_PORT':
+                    return res.status(400).json({ error: "허용되지 않은 포트입니다." });
+                case 'REDIRECT_BLOCKED':
+                    return res.status(400).json({ error: "리다이렉트 URL은 허용되지 않습니다." });
+                case 'NOT_HTML':
+                    return res.status(400).json({ error: "HTML 콘텐츠가 아닙니다." });
+                case 'TOO_LARGE':
+                    return res.status(413).json({ error: "메타데이터 응답이 너무 큽니다." });
+                case 'ETIMEDOUT':
+                case 'ECONNABORTED':
+                    return res.status(504).json({ error: "요청 시간이 초과되었습니다." });
+                case 'UPSTREAM_BAD_STATUS':
+                    return res.status(502).json({ error: "상대 서버 응답이 유효하지 않습니다." });
+                default:
+                    logError("GET /api/pages/fetch-metadata", error);
+                    return res.status(500).json({ error: "메타데이터를 가져오는데 실패했습니다." });
             }
-            if (error.response) {
-                return res.status(error.response.status).json({ error: `상대 서버 오류: ${error.response.status}` });
-            }
-            logError("GET /api/pages/fetch-metadata", error);
-            res.status(500).json({ error: "메타데이터를 가져오는데 실패했습니다." });
         }
     });
 
