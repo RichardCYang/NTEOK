@@ -15,6 +15,15 @@ const { promisify } = require('util');
 const pipelineAsync = promisify(pipeline);
 const { validateAndNormalizeIcon } = require('../utils/icon-utils.js');
 
+const MULTIPART_COMMON_LIMITS = Object.freeze({
+    files: 1,
+    fields: 16,
+    parts: 20,
+    fieldNameSize: 100,
+    fieldSize: 64 * 1024,
+    headerPairs: 2000
+});
+
 const DANGEROUS_OBJECT_KEYS = new Set(["__proto__", "prototype", "constructor"]);
 
 function stripDangerousKeys(value, seen = new WeakSet()) {
@@ -146,7 +155,10 @@ const backupUpload = multer({
         }
     }),
     limits: {
-        fileSize: MAX_BACKUP_ZIP_BYTES
+        ...MULTIPART_COMMON_LIMITS,
+        fileSize: MAX_BACKUP_ZIP_BYTES,
+        fields: 4,
+        parts: 4
     },
     fileFilter: (req, file, cb) => {
         if (file.mimetype === 'application/zip' || file.originalname.endsWith('.zip')) {

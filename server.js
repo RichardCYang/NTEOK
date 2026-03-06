@@ -21,6 +21,43 @@ const http = require("http");
 const certManager = require("./cert-manager");
 const multer = require("multer");
 const fs = require("fs");
+
+const MULTIPART_COMMON_LIMITS = Object.freeze({
+    files: 1,
+    fields: 16,
+    parts: 20,
+    fieldNameSize: 100,
+    fieldSize: 64 * 1024,
+    headerPairs: 2000
+});
+
+function collectUploadedFilePaths(req) {
+    const out = [];
+    const pushOne = (f) => {
+        if (f && typeof f.path === "string") out.push(f.path);
+    };
+
+    pushOne(req?.file);
+
+    if (Array.isArray(req?.files)) {
+        req.files.forEach(pushOne);
+    } else if (req?.files && typeof req.files === "object") {
+        for (const value of Object.values(req.files)) {
+            if (Array.isArray(value)) value.forEach(pushOne);
+            else pushOne(value);
+        }
+    }
+
+    return [...new Set(out)];
+}
+
+function cleanupUploadedFiles(req) {
+    for (const fp of collectUploadedFilePaths(req)) {
+        try {
+            if (fs.existsSync(fp)) fs.unlinkSync(fp);
+        } catch (_) {}
+    }
+}
 const compression = require("compression");
 const { installDomPurifySecurityHooks, assertImageFileSignature } = require("./security-utils");
 const ipKeyGenerator = expressRateLimit.ipKeyGenerator || (expressRateLimit.default && expressRateLimit.default.ipKeyGenerator);
@@ -1845,7 +1882,10 @@ const coverStorage = multer.diskStorage({
 
 const coverUpload = multer({
     storage: coverStorage,
-    limits: { fileSize: 2 * 1024 * 1024 }, 
+    limits: {
+        ...MULTIPART_COMMON_LIMITS,
+        fileSize: 2 * 1024 * 1024
+    },
     fileFilter: (req, file, cb) => {
         const allowedTypes = /jpeg|jpg|png|gif|webp/;
         const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
@@ -1873,7 +1913,10 @@ const editorImageStorage = multer.diskStorage({
 
 const editorImageUpload = multer({
     storage: editorImageStorage,
-    limits: { fileSize: 5 * 1024 * 1024 }, 
+    limits: {
+        ...MULTIPART_COMMON_LIMITS,
+        fileSize: 5 * 1024 * 1024
+    },
     fileFilter: (req, file, cb) => {
         const allowedTypes = /jpeg|jpg|png|gif|webp/;
         const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
@@ -1906,7 +1949,12 @@ const paperclipStorage = multer.diskStorage({
 
 const fileUpload = multer({
     storage: paperclipStorage,
-    limits: { fileSize: 50 * 1024 * 1024 }, 
+    limits: {
+        ...MULTIPART_COMMON_LIMITS,
+        fileSize: 50 * 1024 * 1024,
+        fields: 8,
+        parts: 12
+    },
 });
 
 function getSessionFromId(sessionId) {
@@ -2069,6 +2117,31 @@ function installGracefulShutdownHandlers(httpServer, pool, sanitizeHtmlContent) 
         app.use('/api/backup', backupRoutes);
         app.use('/api/themes', themesRoutes);
         app.use('/api/comments', commentsRoutes);
+
+        app.use((err, req, res, next) => {
+            if (res.headersSent) return next(err);
+
+            const isMultipart =
+                typeof req?.is === "function" &&
+                req.is("multipart/form-data");
+
+            if (isMultipart) cleanupUploadedFiles(req);
+
+            if (err instanceof multer.MulterError) {
+                if (err.code === "LIMIT_FILE_SIZE") {
+                    return res.status(413).json({ error: "업로드 파일 크기가 제한을 초과했습니다." });
+                }
+                return res.status(400).json({
+                    error: `유효하지 않은 업로드 요청입니다. (${err.code})`
+                });
+            }
+
+            const msg = String(err?.message || "");
+            if (isMultipart && /(multipart|unexpected end of form|unexpected field|aborted)/i.test(msg)) {
+                return res.status(400).json({ error: "손상되었거나 중단된 업로드 요청입니다." });
+            }
+            return next(err);
+        });
 
         const DUCKDNS_DOMAIN = process.env.DUCKDNS_DOMAIN;
         const DUCKDNS_TOKEN = process.env.DUCKDNS_TOKEN;
