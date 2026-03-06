@@ -1,38 +1,16 @@
-
 const geoip = require("geoip-lite");
 const ipaddr = require("ipaddr.js");
 const net = require("net");
 
 function getLocationFromIP(ip) {
     try {
-        if (!ip) {
-            return {
-                country: null,
-                region: null,
-                city: null,
-                timezone: null
-            };
-        }
+        if (!ip) return { country: null, region: null, city: null, timezone: null };
 
         const cleanIP = normalizeIp(ip);
-        if (!cleanIP || isPrivateOrLocalIP(cleanIP)) {
-            return {
-                country: null,
-                region: null,
-                city: null,
-                timezone: null
-            };
-        }
+        if (!cleanIP || isPrivateOrLocalIP(cleanIP)) return { country: null, region: null, city: null, timezone: null };
 
         const geo = geoip.lookup(cleanIP);
-        if (!geo) {
-            return {
-                country: null,
-                region: null,
-                city: null,
-                timezone: null
-            };
-        }
+        if (!geo) return { country: null, region: null, city: null, timezone: null };
 
         return {
             country: geo.country || null,
@@ -42,17 +20,12 @@ function getLocationFromIP(ip) {
         };
     } catch (error) {
         console.error('GeoIP 조회 오류:', error);
-        return {
-            country: null,
-            region: null,
-            city: null,
-            timezone: null
-        };
+        return { country: null, region: null, city: null, timezone: null };
     }
 }
 
 function isPrivateOrLocalIP(ip) {
-	if (!ip) return true;
+    if (!ip) return true;
 
     const cleanIP = normalizeIp(ip);
     if (!cleanIP) return true;
@@ -99,7 +72,7 @@ function parseTrustedProxyCidrsFromEnv() {
     for (const part of parts) {
         try {
             const parsed = ipaddr.parseCIDR(part);
-            cidrs.push(parsed); 
+            cidrs.push(parsed);
         } catch (e) {
             console.warn(`[보안 설정] TRUST_PROXY_CIDRS 항목 파싱 실패: "${part}" (${e.message})`);
         }
@@ -131,18 +104,39 @@ function isIpInCidrs(ip, cidrs) {
     });
 }
 
-function extractForwardedClientIp(req) {
+function shouldTrustForwardedHeaders(remote, trustedProxyCidrs) {
+    if (!remote) return false;
+    if (!Array.isArray(trustedProxyCidrs) || trustedProxyCidrs.length === 0) return false;
+    return isIpInCidrs(remote, trustedProxyCidrs);
+}
+
+function parseForwardedChain(req) {
     const xff = req?.headers?.['x-forwarded-for'];
     if (typeof xff === 'string' && xff.trim()) {
-        const first = xff.split(',')[0].trim();
-        if (isValidIp(first)) return normalizeIp(first);
+        const hops = xff
+            .split(',')
+            .map(part => normalizeIp(part))
+            .filter(ip => isValidIp(ip));
+
+        if (hops.length > 0) return hops;
     }
 
-    const xRealIp = req?.headers?.['x-real-ip'];
-    if (typeof xRealIp === 'string' && xRealIp.trim())
-        if (isValidIp(xRealIp)) return normalizeIp(xRealIp.trim());
+    const xRealIp = normalizeIp(req?.headers?.['x-real-ip']);
+    if (isValidIp(xRealIp)) return [xRealIp];
 
-    return null;
+    return [];
+}
+
+function extractClientIpFromTrustedChain(remote, forwardedChain, trustedProxyCidrs) {
+    const chain = [...forwardedChain, remote].filter(Boolean);
+    if (chain.length === 0) return null;
+
+    for (let i = chain.length - 1; i >= 0; i--) {
+        const hop = chain[i];
+        if (!isIpInCidrs(hop, trustedProxyCidrs)) return hop;
+    }
+
+    return chain[0] || null;
 }
 
 function getClientIpFromRequest(req) {
@@ -151,26 +145,22 @@ function getClientIpFromRequest(req) {
     const trustedProxyCidrs = parseTrustedProxyCidrsFromEnv();
     const isProduction = String(process.env.NODE_ENV || '').toLowerCase() === 'production';
 
-    if (mode === 'off' || mode === 'false' || mode === '0')
-        return remote || 'unknown';
+    if (mode === 'off' || mode === 'false' || mode === '0') return remote || 'unknown';
 
-    let effectiveMode = mode;
-    if (mode === 'on' || mode === 'true' || mode === '1') {
-        effectiveMode = 'auto';
-        if (isProduction) {
-            console.warn(
-                '[보안] TRUST_PROXY=on(true/1)은 X-Forwarded-* 헤더 스푸핑으로 이어질 수 있어 비활성화되었습니다. ' +
-                'TRUST_PROXY=auto + TRUST_PROXY_CIDRS 사용을 권장합니다.'
-            );
-        }
+    if ((mode === 'on' || mode === 'true' || mode === '1') && isProduction) {
+        console.warn(
+            '[보안] TRUST_PROXY=on(true/1)은 지원하지 않습니다. ' +
+            '반드시 TRUST_PROXY=auto 와 TRUST_PROXY_CIDRS 를 함께 지정하세요.'
+        );
     }
 
-    const isTrustedProxy =
-        (remote && isLoopbackIp(remote)) ||
-        (remote && isIpInCidrs(remote, trustedProxyCidrs));
-
-    if (effectiveMode === 'auto' && isTrustedProxy)
-        return extractForwardedClientIp(req) || remote || 'unknown';
+    if (mode === 'auto' || mode === 'on' || mode === 'true' || mode === '1') {
+        if (shouldTrustForwardedHeaders(remote, trustedProxyCidrs)) {
+            const forwardedChain = parseForwardedChain(req);
+            const derived = extractClientIpFromTrustedChain(remote, forwardedChain, trustedProxyCidrs);
+            if (derived) return derived;
+        }
+    }
 
     return remote || 'unknown';
 }
@@ -181,9 +171,7 @@ function checkCountryWhitelist(userSettings, ipAddress) {
         String(process.env.COUNTRY_WHITELIST_ALLOW_PRIVATE_IP || '').toLowerCase() === 'true';
 
     if (isPrivateOrLocalIP(ipAddress)) {
-        if (allowPrivateBypass) {
-            return { allowed: true };
-        }
+        if (allowPrivateBypass) return { allowed: true };
         return {
             allowed: false,
             reason: '사설/로컬 IP는 국가 화이트리스트 검증을 우회할 수 있어 프로덕션 기본값에서 차단됩니다. ' +
@@ -191,18 +179,11 @@ function checkCountryWhitelist(userSettings, ipAddress) {
         };
     }
 
-    if (!userSettings.country_whitelist_enabled) {
-        return { allowed: true };
-    }
+    if (!userSettings.country_whitelist_enabled) return { allowed: true };
 
     const location = getLocationFromIP(ipAddress);
 
-    if (!location.country) {
-        return {
-            allowed: false,
-            reason: 'GeoIP 조회 실패 - 국가를 확인할 수 없음'
-        };
-    }
+    if (!location.country) return { allowed: false, reason: 'GeoIP 조회 실패 - 국가를 확인할 수 없음' };
 
     let allowedCountries = [];
     if (userSettings.allowed_login_countries) {
@@ -210,26 +191,19 @@ function checkCountryWhitelist(userSettings, ipAddress) {
             allowedCountries = JSON.parse(userSettings.allowed_login_countries);
         } catch (e) {
             console.error('화이트리스트 파싱 오류:', e);
-            return {
-                allowed: false,
-                reason: '화이트리스트 설정 오류'
-            };
+            return { allowed: false, reason: '화이트리스트 설정 오류' };
         }
     }
 
-    if (!Array.isArray(allowedCountries) || allowedCountries.length === 0) {
-        return {
-            allowed: false,
-            reason: `허용되지 않은 국가에서의 로그인 시도 (감지된 국가: ${location.country})`
-        };
-    }
+    if (!Array.isArray(allowedCountries) || allowedCountries.length === 0) return {
+        allowed: false,
+        reason: `허용되지 않은 국가에서의 로그인 시도 (감지된 국가: ${location.country})`
+    };
 
-    if (!allowedCountries.includes(location.country)) {
-        return {
-            allowed: false,
-            reason: `허용되지 않은 국가에서의 로그인 시도 (감지된 국가: ${location.country})`
-        };
-    }
+    if (!allowedCountries.includes(location.country)) return {
+        allowed: false,
+        reason: `허용되지 않은 국가에서의 로그인 시도 (감지된 국가: ${location.country})`
+    };
 
     return { allowed: true };
 }
@@ -257,9 +231,7 @@ function maskIPAddress(ip) {
     if (ip.includes(':')) {
         const parts = ip.split(':');
         if (parts.length >= 4) {
-            for (let i = parts.length - 4; i < parts.length; i++) {
-                parts[i] = '****';
-            }
+            for (let i = parts.length - 4; i < parts.length; i++) parts[i] = '****';
             return parts.join(':');
         }
     }
@@ -293,7 +265,6 @@ async function recordLoginAttempt(pool, params) {
         } = params;
 
         const location = getLocationFromIP(ipAddress);
-
         const now = formatDateForDb(new Date());
 
         await pool.execute(
