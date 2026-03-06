@@ -1810,8 +1810,15 @@ module.exports = (dependencies) => {
         }
     });
 
-    function canManagePublish(permission, ownerUserId, currentUserId) {
-        return String(ownerUserId) === String(currentUserId) || permission === 'ADMIN';
+    function isPageOwner(ownerUserId, currentUserId) {
+        return String(ownerUserId) === String(currentUserId);
+    }
+
+    function requirePageOwnerForPublish(existing, currentUserId, res) {
+        if (isPageOwner(existing.user_id, currentUserId)) return true;
+        console.warn(`[보안] 사용자 ${currentUserId}가 소유하지 않은 페이지(${existing.id || 'unknown'})의 공개 발행을 시도함`);
+        res.status(403).json({ error: "페이지 소유자만 공개 발행 링크를 조회/관리할 수 있습니다." });
+        return false;
     }
 
     router.get("/:id/publish", authMiddleware, async (req, res) => {
@@ -1822,30 +1829,18 @@ module.exports = (dependencies) => {
             if (!existing) return;
 
             const permission = await storagesRepo.getPermission(userId, existing.storage_id);
-            if (!permission) {
-                return res.status(403).json({ error: "권한이 없습니다." });
-            }
-
-            if (existing.is_encrypted === 1) {
-                return res.json({ published: false });
-            }
+            if (!permission) return res.status(403).json({ error: "권한이 없습니다." });
+            if (existing.is_encrypted === 1) return res.json({ published: false });
+            if (!requirePageOwnerForPublish(existing, userId, res)) return;
 
             const [pub] = await pool.execute(
-                `SELECT token, created_at, allow_comments FROM page_publish_links WHERE page_id=? AND is_active=1`,
-                [id]
+                `SELECT token, created_at, allow_comments FROM page_publish_links WHERE page_id = ? AND owner_user_id = ? AND is_active = 1 LIMIT 1`,
+                [id, existing.user_id]
             );
             if (!pub.length) return res.json({ published: false });
 
             const base = (process.env.BASE_URL || '').replace(/\/$/, '');
             const allowComments = pub[0].allow_comments === 1;
-
-            if (!canManagePublish(permission, existing.user_id, userId)) {
-                return res.json({
-                    published: true,
-                    createdAt: toIsoString(pub[0].created_at),
-                    allowComments
-                });
-            }
 
             res.json({
                 published: true,
@@ -1863,31 +1858,22 @@ module.exports = (dependencies) => {
     router.post("/:id/publish", authMiddleware, async (req, res) => {
         const id = req.params.id;
         const userId = req.user.id;
-
         try {
             const existing = await loadPageForMutationOr404(userId, id, res);
             if (!existing) return;
 
             const permission = await storagesRepo.getPermission(userId, existing.storage_id);
-            if (!permission) {
-                return res.status(403).json({ error: "권한이 없습니다." });
-            }
-
-            if (!canManagePublish(permission, existing.user_id, userId)) {
-                return res.status(403).json({ error: "발행 링크를 관리할 권한이 없습니다." });
-            }
-
-            if (existing.is_encrypted === 1) {
-                return res.status(400).json({ error: "암호화된 페이지는 발행할 수 없습니다." });
-            }
+            if (!permission) return res.status(403).json({ error: "권한이 없습니다." });
+            if (!requirePageOwnerForPublish(existing, userId, res)) return;
+            if (existing.is_encrypted === 1) return res.status(400).json({ error: "암호화된 페이지는 발행할 수 없습니다." });
 
             const allowComments = req.body && req.body.allowComments === true;
             const now = new Date();
             const nowStr = now.toISOString().slice(0, 19).replace('T', ' ');
 
             const [active] = await pool.execute(
-                `SELECT id, token FROM page_publish_links WHERE page_id=? AND is_active=1 LIMIT 1`,
-                [id]
+                `SELECT id, token FROM page_publish_links WHERE page_id = ? AND owner_user_id = ? AND is_active = 1 LIMIT 1`,
+                [id, existing.user_id]
             );
 
             let token;
@@ -1903,8 +1889,7 @@ module.exports = (dependencies) => {
                     try {
                         token = generatePublishToken();
                         await pool.execute(
-                            `INSERT INTO page_publish_links (token, page_id, owner_user_id, is_active, allow_comments, created_at, updated_at)
-                             VALUES (?, ?, ?, 1, ?, ?, ?)`,
+                            `INSERT INTO page_publish_links (token, page_id, owner_user_id, is_active, allow_comments, created_at, updated_at) VALUES (?, ?, ?, 1, ?, ?, ?)`,
                             [token, id, existing.user_id, allowComments ? 1 : 0, nowStr, nowStr]
                         );
                         inserted = true;
@@ -1914,9 +1899,7 @@ module.exports = (dependencies) => {
                         throw err;
                     }
                 }
-                if (!inserted) {
-                    return res.status(500).json({ error: "토큰 생성에 실패했습니다." });
-                }
+                if (!inserted) return res.status(500).json({ error: "토큰 생성에 실패했습니다." });
             }
 
             const base = (process.env.BASE_URL || '').replace(/\/$/, '');
@@ -1931,24 +1914,18 @@ module.exports = (dependencies) => {
     router.delete("/:id/publish", authMiddleware, async (req, res) => {
         const id = req.params.id;
         const userId = req.user.id;
-
         try {
             const existing = await loadPageForMutationOr404(userId, id, res);
             if (!existing) return;
 
             const permission = await storagesRepo.getPermission(userId, existing.storage_id);
-            if (!permission) {
-                return res.status(403).json({ error: "권한이 없습니다." });
-            }
-
-            if (!canManagePublish(permission, existing.user_id, userId)) {
-                return res.status(403).json({ error: "발행 링크를 관리할 권한이 없습니다." });
-            }
+            if (!permission) return res.status(403).json({ error: "권한이 없습니다." });
+            if (!requirePageOwnerForPublish(existing, userId, res)) return;
 
             const nowStr = new Date().toISOString().slice(0, 19).replace('T', ' ');
             await pool.execute(
-                `UPDATE page_publish_links SET is_active=0, updated_at=? WHERE page_id=? AND is_active=1`,
-                [nowStr, id]
+                `UPDATE page_publish_links SET is_active = 0, updated_at = ? WHERE page_id = ? AND owner_user_id = ? AND is_active = 1`,
+                [nowStr, id, existing.user_id]
             );
             res.json({ ok: true });
         } catch (e) {
