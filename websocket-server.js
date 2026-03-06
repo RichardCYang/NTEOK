@@ -616,6 +616,27 @@ function cloneYDocForValidation(srcYDoc) {
     return cloned;
 }
 
+const FORBIDDEN_PROTOCOL_RE = /\b(?:javascript|vbscript|data|file):/i;
+const FORBIDDEN_EVENT_ATTR_RE = /\bon[a-z]+\s*=/i;
+const FORBIDDEN_TAG_RE = /<(?:script|iframe|object|embed|meta|link|style)\b/i;
+
+function getRealtimeXmlString(candidateYDoc) {
+    try {
+        const frag = candidateYDoc.getXmlFragment("prosemirror");
+        if (!frag) return "";
+        return typeof frag.toString === "function" ? frag.toString() : "";
+    } catch { return ""; }
+}
+
+function validateRealtimeFragment(candidateYDoc) {
+    const xml = getRealtimeXmlString(candidateYDoc);
+    if (!xml) return { ok: false, reason: "Missing collaborative fragment" };
+    if (FORBIDDEN_PROTOCOL_RE.test(xml)) return { ok: false, reason: "Forbidden protocol in collaborative fragment" };
+    if (FORBIDDEN_EVENT_ATTR_RE.test(xml)) return { ok: false, reason: "Event handler attribute in collaborative fragment" };
+    if (FORBIDDEN_TAG_RE.test(xml)) return { ok: false, reason: "Forbidden tag in collaborative fragment" };
+    return { ok: true };
+}
+
 function validateRealtimeYjsCandidate(candidateYDoc, sanitizeHtmlContent) {
     try {
         const yMeta = candidateYDoc.getMap('metadata');
@@ -657,6 +678,9 @@ function validateRealtimeYjsCandidate(candidateYDoc, sanitizeHtmlContent) {
             if (sanitized !== rawContent)
                 return { ok: false, code: 1008, reason: 'Unsafe content' };
         }
+
+        const fragmentValidation = validateRealtimeFragment(candidateYDoc);
+        if (!fragmentValidation.ok) return { ok: false, code: 1008, reason: fragmentValidation.reason };
 
         return { ok: true };
     } catch (_) {
@@ -2128,8 +2152,11 @@ async function handleYjsUpdate(ws, payload, pool, sanitizeHtmlContent, pageSqlPo
         Y.applyUpdate(ydoc, updateBuf);
         if (doc) doc.approxBytes = (Number.isFinite(doc.approxBytes) ? doc.approxBytes : 0) + updateBuf.length;
 
+        const yMeta = ydoc.getMap('metadata');
+        const currentContent = typeof yMeta.get('content') === 'string' ? yMeta.get('content') : '<p></p>';
+        yMeta.set('content', sanitizeHtmlContent(currentContent));
+
         try {
-            const yMeta = ydoc.getMap('metadata');
             const requestedParentId = yMeta.get('parentId') ?? null;
             const parentCheck = await validateYjsParentAssignment(pool, pageSqlPolicy, {
                 viewerUserId: ws.userId,
@@ -2228,6 +2255,10 @@ async function handleYjsState(ws, payload, pool, sanitizeHtmlContent, pageSqlPol
 
 		Y.applyUpdate(ydoc, stateBuf);
 
+		const yMeta = ydoc.getMap('metadata');
+		const currentContent = typeof yMeta.get('content') === 'string' ? yMeta.get('content') : '<p></p>';
+		yMeta.set('content', sanitizeHtmlContent(currentContent));
+
 		const doc = yjsDocuments.get(pageId);
 		if (doc) {
 			const cur = Number.isFinite(doc.approxBytes) ? doc.approxBytes : 0;
@@ -2235,7 +2266,6 @@ async function handleYjsState(ws, payload, pool, sanitizeHtmlContent, pageSqlPol
 		}
 
         try {
-            const yMeta = ydoc.getMap('metadata');
             const requestedParentId = yMeta.get('parentId') ?? null;
             const parentCheck = await validateYjsParentAssignment(pool, pageSqlPolicy, {
                 viewerUserId: ws.userId,

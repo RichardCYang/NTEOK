@@ -1,3 +1,5 @@
+import { sanitizeHttpHref } from "./url-utils.js";
+
 const Node = Tiptap.Core.Node;
 
 function sanitizeBookmarkImageUrl(value) {
@@ -153,7 +155,18 @@ export const BookmarkBlock = Node.create({
                     }
                 } else {
                     const card = document.createElement('a');
-                    card.href = node.attrs.url;
+                    const safeHref = sanitizeHttpHref(node.attrs.url, {
+                        allowRelative: false,
+                        addHttpsIfMissing: false,
+                        maxLen: 2048
+                    });
+
+                    card.href = safeHref || "about:blank";
+                    if (!safeHref) {
+                        card.setAttribute("aria-disabled", "true");
+                        card.classList.add("bookmark-card--invalid");
+                        card.addEventListener("click", (e) => e.preventDefault());
+                    }
                     card.target = '_blank';
                     card.rel = 'noopener noreferrer';
                     card.className = 'bookmark-compact-link';
@@ -180,7 +193,7 @@ export const BookmarkBlock = Node.create({
 
                     const title = document.createElement('span');
                     title.className = 'bookmark-compact-title';
-                    title.textContent = node.attrs.title || node.attrs.url;
+                    title.textContent = node.attrs.title || safeHref || "북마크";
                     card.appendChild(title);
 
                     container.appendChild(card);

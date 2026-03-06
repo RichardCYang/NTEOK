@@ -647,7 +647,11 @@ function handleInit(data) {
 function handleYjsUpdate(data) {
 	try {
 		const update = base64ToUint8(data.update);
-
+        if (looksUnsafeRealtimePayload(update)) {
+            console.warn("Blocked unsafe realtime update");
+            ws?.close();
+            return;
+        }
         Y.applyUpdate(ydoc, update, 'remote');
     } catch (error) {
         console.error('[WS] Yjs 업데이트 처리 오류:', error);
@@ -658,6 +662,11 @@ function handleYjsState(data) {
 	try {
 		if (!data || typeof data.state !== 'string') return;
 		const stateUpdate = base64ToUint8(data.state);
+        if (looksUnsafeRealtimePayload(stateUpdate)) {
+            console.warn("Blocked unsafe realtime state");
+            ws?.close();
+            return;
+        }
 		Y.applyUpdate(ydoc, stateUpdate, 'remote');
 	} catch (error) {
 		console.error('[WS] Yjs state 처리 오류:', error);
@@ -1024,6 +1033,15 @@ function handleOnline() {
     if (!ws || ws.readyState !== WebSocket.OPEN) {
         connectWebSocket();
     }
+}
+
+function looksUnsafeRealtimePayload(update) {
+    try {
+        const text = new TextDecoder().decode(update);
+        return /\b(?:javascript|vbscript|data|file):/i.test(text)
+            || /\bon[a-z]+\s*=/i.test(text)
+            || /<(?:script|iframe|object|embed|meta|link|style)\b/i.test(text);
+    } catch { return true; }
 }
 
 function handleOffline() {
