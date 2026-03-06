@@ -639,30 +639,69 @@ function sendSafeDownload(res, filePath, downloadName) {
 }
 
 function sendSafeImage(res, filePath) {
-    const detected = assertImageFileSignature(filePath, new Set(['jpg', 'jpeg', 'png', 'gif', 'webp']));
+	const detected = assertImageFileSignature(filePath, new Set(['jpg', 'jpeg', 'png', 'gif', 'webp']));
 
-    res.setHeader('Content-Type', detected.mime);
-    res.setHeader('X-Content-Type-Options', 'nosniff');
+	res.setHeader('Content-Type', detected.mime);
+	res.setHeader('X-Content-Type-Options', 'nosniff');
 
-    res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
-    res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
+	res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+	res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
 
-    setNoStore(res);
+	setNoStore(res);
 
-    try {
-        const st = fs.statSync(filePath);
-        if (!st.isFile()) return res.status(404).end();
-        res.setHeader('Content-Length', String(st.size));
-    } catch (_) {
-        return res.status(404).end();
-    }
+	try {
+		const st = fs.statSync(filePath);
+		if (!st.isFile()) return res.status(404).end();
+		res.setHeader('Content-Length', String(st.size));
+	} catch (_) {
+		return res.status(404).end();
+	}
 
-    const stream = fs.createReadStream(filePath);
-    stream.on('error', () => {
-        if (!res.headersSent) return res.status(404).end();
-        try { res.end(); } catch (_) {}
-    });
-    return stream.pipe(res);
+	const stream = fs.createReadStream(filePath);
+	stream.on('error', () => {
+		if (!res.headersSent) return res.status(404).end();
+		try { res.end(); } catch (_) {}
+	});
+	return stream.pipe(res);
+}
+
+async function resolveReadableLivePageForAsset({ pageId, viewerUserId, ownerUserId }) {
+	const [rows] = await pool.execute(
+		`SELECT p.id, p.storage_id, p.is_encrypted, p.share_allowed, p.user_id
+		   FROM pages p
+		   JOIN storages s ON p.storage_id = s.id
+		   LEFT JOIN storage_shares ss_cur
+			 ON s.id = ss_cur.storage_id
+			AND ss_cur.shared_with_user_id = ?
+		  WHERE p.id = ?
+			AND p.user_id = ?
+			AND p.deleted_at IS NULL
+			AND (s.user_id = ? OR ss_cur.shared_with_user_id IS NOT NULL)
+			AND NOT (p.is_encrypted = 1 AND p.share_allowed = 0 AND p.user_id != ?)
+		  LIMIT 1`,
+		[viewerUserId, pageId, ownerUserId, viewerUserId, viewerUserId]
+	);
+	return rows[0] || null;
+}
+
+async function canUseLiveAssetFallback({ pageId, viewerUserId, ownerUserId, myConn, docInfo }) {
+	if (!myConn || !docInfo) return false
+	if (!docInfo.storageId || !myConn.storageId) return false
+	if (String(docInfo.storageId) !== String(myConn.storageId)) return false
+	if (!Number.isFinite(docInfo.ownerUserId) || Number(docInfo.ownerUserId) !== Number(ownerUserId)) return false
+
+	const livePage = await resolveReadableLivePageForAsset({
+		pageId,
+		viewerUserId,
+		ownerUserId
+	});
+	if (!livePage) return false
+
+	const dbStorageId = String(livePage.storage_id)
+	if (String(docInfo.storageId) !== dbStorageId) return false
+	if (String(myConn.storageId) !== dbStorageId) return false
+
+	return true
 }
 
 const MAX_HTML_SANITIZE_BYTES = 512 * 1024;
@@ -1764,49 +1803,42 @@ app.get('/imgs/:userId/:filename', authMiddleware, async (req, res) => {
             return sendSafeImage(res, filePath);
         }
 
-        for (const [pageId, connections] of wsConnections.pages) {
-            const myConn = Array.from(connections).find(c => c.userId === currentUserId);
-            if (!myConn) continue;
+		for (const [pageId, connections] of wsConnections.pages) {
+			const myConn = Array.from(connections).find(c => c.userId === currentUserId);
+			if (!myConn) continue
 
-            const docInfo = yjsDocuments.get(pageId);
-            if (!docInfo) continue;
+			const docInfo = yjsDocuments.get(pageId);
+			if (!docInfo) continue
 
-            if (!Number.isFinite(docInfo.ownerUserId) || Number(docInfo.ownerUserId) !== requestedUserId)
-                continue;
-
-            if (docInfo.storageId && myConn.storageId && String(docInfo.storageId) !== String(myConn.storageId))
-                continue;
-
-            if (docInfo.isEncrypted === true && docInfo.shareAllowed === false && currentUserId !== requestedUserId)
-                continue;
+			if (!(await canUseLiveAssetFallback({
+				pageId,
+				viewerUserId: currentUserId,
+				ownerUserId: requestedUserId,
+				myConn,
+				docInfo
+			}))) continue
 
 			const ydoc = docInfo.ydoc;
 
-            let hasVerifiedImgRef = null; 
-            const ensureVerifiedImgRef = async () => {
-                if (hasVerifiedImgRef !== null) return hasVerifiedImgRef;
-                const [refRows] = await pool.execute(
-                    `SELECT id FROM page_file_refs
-                      WHERE page_id = ? AND owner_user_id = ? AND stored_filename = ? AND file_type = 'imgs'
-                      LIMIT 1`,
-                    [pageId, requestedUserId, sanitizedFilename]
-                );
-                hasVerifiedImgRef = refRows.length > 0;
-                return hasVerifiedImgRef;
-            };
+			let hasVerifiedImgRef = null; 
+			const ensureVerifiedImgRef = async () => {
+				if (hasVerifiedImgRef !== null) return hasVerifiedImgRef;
+				const [refRows] = await pool.execute(
+					`SELECT id FROM page_file_refs
+					  WHERE page_id = ? AND owner_user_id = ? AND stored_filename = ? AND file_type = 'imgs'
+					  LIMIT 1`,
+					[pageId, requestedUserId, sanitizedFilename]
+				);
+				hasVerifiedImgRef = refRows.length > 0;
+				return hasVerifiedImgRef;
+			};
 
-            const content = ydoc.getMap('metadata').get('content') || '';
-            if (content.includes(imageUrl)) {
-                if (await ensureVerifiedImgRef())
-                    return sendSafeImage(res, filePath);
-            }
+			const content = ydoc.getMap('metadata').get('content') || '';
+			if (content.includes(imageUrl) && await ensureVerifiedImgRef()) return sendSafeImage(res, filePath);
 
-            const xmlContent = ydoc.getXmlFragment('prosemirror').toString();
-            if (xmlContent.includes(imageUrl)) {
-                if (await ensureVerifiedImgRef())
-                    return sendSafeImage(res, filePath);
-            }
-        }
+			const xmlContent = ydoc.getXmlFragment('prosemirror').toString();
+			if (xmlContent.includes(imageUrl) && await ensureVerifiedImgRef()) return sendSafeImage(res, filePath);
+		}
 
 		console.warn(`[보안] 사용자 ${currentUserId}이(가) 권한 없이 이미지 접근 시도: ${imagePath}`);
 		return res.status(403).json({ error: '접근 권한이 없습니다.' });
@@ -1894,30 +1926,47 @@ app.get('/paperclip/:userId/:filename', authMiddleware, async (req, res) => {
 			return sendSafeDownload(res, filePath, downloadName);
         }
 
-        for (const [pageId, connections] of wsConnections.pages) {
-            const myConn = Array.from(connections).find(c => c.userId === currentUserId);
-            if (!myConn) continue;
+		for (const [pageId, connections] of wsConnections.pages) {
+			const myConn = Array.from(connections).find(c => c.userId === currentUserId);
+			if (!myConn) continue
 
-            const docInfo = yjsDocuments.get(pageId);
-            if (!docInfo) continue;
+			const docInfo = yjsDocuments.get(pageId);
+			if (!docInfo) continue
 
-            if (!Number.isFinite(docInfo.ownerUserId) || Number(docInfo.ownerUserId) !== requestedUserId)
-                continue;
+			if (!(await canUseLiveAssetFallback({
+				pageId,
+				viewerUserId: currentUserId,
+				ownerUserId: requestedUserId,
+				myConn,
+				docInfo
+			}))) continue
 
-            const ydoc = docInfo.ydoc;
-            const content = ydoc.getMap('metadata').get('content') || '';
-            if (content.includes(fileUrlPart)) {
-                const [refRows] = await pool.execute(
-                    `SELECT id FROM page_file_refs
-                      WHERE page_id = ? AND owner_user_id = ? AND stored_filename = ? AND file_type = 'paperclip'`,
-                    [pageId, requestedUserId, sanitizedFilename]
-                );
-                if (refRows.length > 0) {
-                    const downloadName = getDownloadName();
-                    return sendSafeDownload(res, filePath, downloadName);
-                }
-            }
-        }
+			const ydoc = docInfo.ydoc;
+			let hasVerifiedFileRef = null;
+			const ensureVerifiedFileRef = async () => {
+				if (hasVerifiedFileRef !== null) return hasVerifiedFileRef;
+				const [refRows] = await pool.execute(
+					`SELECT id FROM page_file_refs
+					  WHERE page_id = ? AND owner_user_id = ? AND stored_filename = ? AND file_type = 'paperclip'
+					  LIMIT 1`,
+					[pageId, requestedUserId, sanitizedFilename]
+				);
+				hasVerifiedFileRef = refRows.length > 0;
+				return hasVerifiedFileRef;
+			};
+
+			const content = ydoc.getMap('metadata').get('content') || '';
+			if (content.includes(fileUrlPart) && await ensureVerifiedFileRef()) {
+				const downloadName = getDownloadName();
+				return sendSafeDownload(res, filePath, downloadName);
+			}
+
+			const xmlContent = ydoc.getXmlFragment('prosemirror').toString();
+			if (xmlContent.includes(fileUrlPart) && await ensureVerifiedFileRef()) {
+				const downloadName = getDownloadName();
+				return sendSafeDownload(res, filePath, downloadName);
+			}
+		}
 
         console.warn(`[보안] 사용자 ${currentUserId}이(가) 권한 없이 파일 접근 시도: ${fileUrlPart}`);
         return res.status(403).json({ error: '접근 권한이 없습니다.' });
