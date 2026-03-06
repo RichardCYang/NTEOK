@@ -404,6 +404,31 @@ module.exports = (dependencies) => {
         return page;
     }
 
+    async function loadVisiblePageWithStorageStateOr404(userId, pageId, res) {
+        const page = await loadPageForMutationOr404(userId, pageId, res);
+        if (!page) return null;
+        const [storageRows] = await pool.execute(
+            `SELECT s.is_encrypted AS storage_is_encrypted,
+                    s.encryption_salt AS storage_encryption_salt
+               FROM storages s
+               LEFT JOIN storage_shares ss
+                 ON s.id = ss.storage_id
+                AND ss.shared_with_user_id = ?
+              WHERE s.id = ?
+                AND (s.user_id = ? OR ss.storage_id IS NOT NULL)
+              LIMIT 1`,
+            [userId, page.storage_id, userId]
+        );
+        if (storageRows.length === 0) {
+            res.status(404).json({ error: "Not found" });
+            return null;
+        }
+        return {
+            ...page,
+            ...storageRows[0]
+        };
+    }
+
     function syncYjsMetadataFromRest(pageId, patch = {}) {
         try {
             const pid = String(pageId || '');
@@ -502,8 +527,10 @@ module.exports = (dependencies) => {
             const userId = req.user.id;
             const storageId = typeof req.query.storageId === "string" ? req.query.storageId.trim() : null;
             const rows = await pagesRepo.listPagesForUser({ userId, storageId });
+            const visibleIds = new Set(rows.map(r => r.id));
             const list = rows.map((row) => ({
-                id: row.id, title: row.title || "제목 없음", updatedAt: toIsoString(row.updated_at), parentId: row.parent_id,
+                id: row.id, title: row.title || "제목 없음", updatedAt: toIsoString(row.updated_at),
+                parentId: visibleIds.has(row.parent_id) ? row.parent_id : null,
                 sortOrder: row.sort_order, storageId: row.storage_id, isEncrypted: row.is_encrypted ? true : false,
                 shareAllowed: row.share_allowed ? true : false, userId: row.user_id, icon: row.icon || null,
                 coverImage: row.cover_image || null, coverPosition: row.cover_position || 50, horizontalPadding: row.horizontal_padding || null
@@ -784,43 +811,27 @@ module.exports = (dependencies) => {
         const id = req.params.id;
         const userId = req.user.id;
         try {
-            const [pageRows] = await pool.execute(
-                `SELECT p.user_id,
-                        p.storage_id,
-                        p.title,
-                        p.content,
-                        p.icon,
-                        p.horizontal_padding,
-                        p.is_encrypted,
-                        p.encryption_salt,
-                        p.encrypted_content,
-                        p.share_allowed,
-                        s.is_encrypted AS storage_is_encrypted,
-                        s.encryption_salt AS storage_encryption_salt
-                   FROM pages p
-                   JOIN storages s ON p.storage_id = s.id
-                  WHERE p.id = ?`,
-                [id]
-            );
+            const existing = await loadVisiblePageWithStorageStateOr404(userId, id, res);
+            if (!existing) return;
 
-            if (pageRows.length === 0) {
-                return res.status(404).json({ error: "Page not found" });
-            }
+            const title = sanitizeInput(
+                String(
+                    req.body.title !== undefined
+                        ? req.body.title
+                        : (existing.title || "제목 없음")
+                ).trim()
+            ).slice(0, 200) || "제목 없음";
 
-            const existing = pageRows[0];
             const hasEncryptedContentField = Object.prototype.hasOwnProperty.call(req.body, "encryptedContent");
 
             const isE2eePage =
                 Number(existing.storage_is_encrypted) === 1 &&
                 Number(existing.is_encrypted) === 1 &&
                 (existing.encryption_salt === null || existing.encryption_salt === undefined);
-            if (isE2eePage && hasEncryptedContentField) {
-                return res.status(403).json({ error: "E2EE content must be saved via WebSocket to prevent data loss" });
-            }
+            if (isE2eePage && hasEncryptedContentField) return res.status(403).json({ error: "E2EE content must be saved via WebSocket to prevent data loss" });
 
             const permission = await storagesRepo.getPermission(userId, existing.storage_id);
-            if (!permission || !['EDIT', 'ADMIN'].includes(permission))
-                return res.status(403).json({ error: "이 페이지를 수정할 권한이 없습니다." });
+            if (!permission || !['EDIT', 'ADMIN'].includes(permission)) return res.status(403).json({ error: "이 페이지를 수정할 권한이 없습니다." });
 
             const reqIsEncrypted = (req.body.isEncrypted === true || req.body.isEncrypted === false) ? req.body.isEncrypted : undefined;
             const isEncrypted = (reqIsEncrypted !== undefined) ? (reqIsEncrypted ? 1 : 0) : existing.is_encrypted;
@@ -837,14 +848,11 @@ module.exports = (dependencies) => {
                 }
             }
 
-
             const turningOffEncryption =
                 encryptionStateChanged &&
                 Number(existing.is_encrypted) === 1 &&
                 Number(isEncrypted) === 0;
-            if (turningOffEncryption && req.body.content === undefined) {
-                return res.status(400).json({ error: "암호화 해제 전환 시에는 복호화된 평문 content가 필요합니다." });
-            }
+            if (turningOffEncryption && req.body.content === undefined) return res.status(400).json({ error: "암호화 해제 전환 시에는 복호화된 평문 content가 필요합니다." });
 
             const hasEncryptionSalt = Object.prototype.hasOwnProperty.call(req.body, "encryptionSalt");
             const hasEncryptedContent = hasEncryptedContentField;
@@ -856,28 +864,22 @@ module.exports = (dependencies) => {
                 salt = hasEncryptionSalt ? req.body.encryptionSalt : existing.encryption_salt;
                 encContent = hasEncryptedContent ? req.body.encryptedContent : existing.encrypted_content;
 
-                if (encryptionStateChanged && !hasEncryptedContent)
-                    return res.status(400).json({ error: "암호화 전환 시 encryptedContent가 필요합니다." });
+                if (encryptionStateChanged && !hasEncryptedContent) return res.status(400).json({ error: "암호화 전환 시 encryptedContent가 필요합니다." });
 
                 if (salt != null) {
-                    if (typeof salt !== "string" || salt.length > 512 || !/^[A-Za-z0-9+/=]*$/.test(salt))
-                        return res.status(400).json({ error: "유효하지 않은 encryptionSalt 형식" });
+                    if (typeof salt !== "string" || salt.length > 512 || !/^[A-Za-z0-9+/=]*$/.test(salt)) return res.status(400).json({ error: "유효하지 않은 encryptionSalt 형식" });
                 }
 
                 if (encContent != null) {
-                    if (typeof encContent !== "string")
-                        return res.status(400).json({ error: "유효하지 않은 encryptedContent 형식" });
-
-                    if (encContent.length > 5 * 1024 * 1024)
-                        return res.status(400).json({ error: "encryptedContent가 너무 큽니다." });
+                    if (typeof encContent !== "string") return res.status(400).json({ error: "유효하지 않은 encryptedContent 형식" });
+                    if (encContent.length > 5 * 1024 * 1024) return res.status(400).json({ error: "encryptedContent가 너무 큽니다." });
 
                     const isWellFormed =
                         /^SALT:[A-Za-z0-9+/=]+:ENC2:[A-Za-z0-9+/=]+$/.test(encContent) ||
                         /^ENC1:[A-Za-z0-9+/=]+$/.test(encContent) ||
                         /^[A-Za-z0-9+/=]+$/.test(encContent);
 
-                    if (!isWellFormed || /[\x00-\x1F\x7F]/.test(encContent))
-                        return res.status(400).json({ error: "encryptedContent 형식이 올바르지 않거나 허용되지 않는 문자가 포함되어 있습니다." });
+                    if (!isWellFormed || /[\x00-\x1F\x7F]/.test(encContent)) return res.status(400).json({ error: "encryptedContent 형식이 올바르지 않거나 허용되지 않는 문자가 포함되어 있습니다." });
                 }
             } else {
                 salt = null;
@@ -885,9 +887,7 @@ module.exports = (dependencies) => {
             }
 
             const hasContentField = Object.prototype.hasOwnProperty.call(req.body, 'content');
-            if (!isEncrypted && hasContentField && typeof req.body.content !== 'string') {
-                return res.status(400).json({ error: 'content must be a string' });
-            }
+            if (!isEncrypted && hasContentField && typeof req.body.content !== 'string') return res.status(400).json({ error: 'content must be a string' });
 
             const content = isEncrypted
                 ? ''
@@ -909,7 +909,7 @@ module.exports = (dependencies) => {
             const params = [title, content, isEncrypted, salt, encContent, icon, hPadding, nowStr, shareAllowed];
             const shouldResetYjsState = (req.body.content !== undefined) || encryptionStateChanged || (Number(isEncrypted) === 1);
             if (shouldResetYjsState) {
-                invalidateYjsPersistenceForPage(id); 
+                invalidateYjsPersistenceForPage(id);
                 sql += `, yjs_state=NULL`;
                 try {
                     const docInfo = yjsDocuments && yjsDocuments.get(id);
@@ -920,18 +920,15 @@ module.exports = (dependencies) => {
                 } catch (_) {}
                 if (yjsDocuments && yjsDocuments.has(id)) yjsDocuments.delete(id);
 
-                if (req.body.content !== undefined && typeof wsCloseConnectionsForPage === 'function')
-                    wsCloseConnectionsForPage(id, 1012, 'Page updated via REST');
+                if (req.body.content !== undefined && typeof wsCloseConnectionsForPage === 'function') wsCloseConnectionsForPage(id, 1012, 'Page updated via REST');
             }
 
             sql += ` WHERE id=?`; params.push(id);
             await pool.execute(sql, params);
 
-            if (!isEncrypted && content)
-                await syncPageFileRefs(id, userId, content);
+            if (!isEncrypted && content) await syncPageFileRefs(id, Number(existing.user_id), content);
 
-            if (encryptionStateChanged && typeof wsCloseConnectionsForPage === 'function')
-                wsCloseConnectionsForPage(id, 1008, 'Page access policy changed');
+            if (encryptionStateChanged && typeof wsCloseConnectionsForPage === 'function') wsCloseConnectionsForPage(id, 1008, 'Page access policy changed');
 
             await pagesRepo.recordUpdateHistory({
                 userId,
