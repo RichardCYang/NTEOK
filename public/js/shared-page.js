@@ -3,28 +3,20 @@ import { escapeHtml, addIcon, secureFetch } from './ui-utils.js';
 import { loadAndRenderComments, initCommentsManager } from './comments-manager.js';
 import DOMPurify from 'dompurify';
 
-
 const _CONTROL_CHARS_RE = /[\u0000-\u001F\u007F]/;
-function _isSafeHttpUrlOrRelative(value) {
-    if (typeof value !== 'string') return false;
-    const v = value.trim();
-    if (!v) return false;
-    if (_CONTROL_CHARS_RE.test(v)) return false;
-    if (v.startsWith('/') || v.startsWith('#')) return true;
-    try {
-        const u = new URL(v);
-        return u.protocol === 'http:' || u.protocol === 'https:';
-    } catch {
-        return false;
-    }
+
+function _sanitizeNavHref(value, { allowRelative = true } = {}) {
+    return sanitizeHttpHref(value, {
+        allowRelative,
+        addHttpsIfMissing: false,
+        maxLen: 2048
+    });
 }
 
 function _sanitizeBookmarkImageUrl(value) {
     if (typeof value !== 'string') return null;
     const v = value.trim();
-    if (!v) return null;
-    if (_CONTROL_CHARS_RE.test(v)) return null;
-    if (v.startsWith('//') || v.startsWith('#')) return null;
+    if (!v || _CONTROL_CHARS_RE.test(v) || v.startsWith('//') || v.startsWith('#')) return null;
     if (v.startsWith('/')) return v;
     try {
         const u = new URL(v);
@@ -36,21 +28,35 @@ function _sanitizeBookmarkImageUrl(value) {
     }
 }
 
-const _purifier = (typeof DOMPurify === 'function' && !DOMPurify.sanitize)
-    ? DOMPurify(window)
-    : DOMPurify;
+const _purifier = (typeof DOMPurify === 'function' && !DOMPurify.sanitize) ? DOMPurify(window) : DOMPurify;
 
 if (typeof _purifier?.addHook === 'function') {
-    _purifier.addHook('uponSanitizeAttribute', (_node, hookEvent) => {
+    _purifier.addHook('uponSanitizeAttribute', (node, hookEvent) => {
         const name = String(hookEvent?.attrName || '').toLowerCase();
-        if (name === 'data-url' || name === 'data-thumbnail') {
-            if (!_isSafeHttpUrlOrRelative(String(hookEvent.attrValue || ''))) {
+        const raw = String(hookEvent?.attrValue || '');
+
+        if (name === 'href') {
+            const safe = _sanitizeNavHref(raw, { allowRelative: true });
+            if (!safe) {
                 hookEvent.keepAttr = false;
                 hookEvent.forceKeepAttr = false;
+            } else {
+                hookEvent.attrValue = safe;
             }
         }
+
+        if (name === 'data-url' || name === 'data-thumbnail') {
+            const safe = _sanitizeNavHref(raw, { allowRelative: false });
+            if (!safe) {
+                hookEvent.keepAttr = false;
+                hookEvent.forceKeepAttr = false;
+            } else {
+                hookEvent.attrValue = safe;
+            }
+        }
+
         if (name === 'data-favicon') {
-            const safe = _sanitizeBookmarkImageUrl(String(hookEvent.attrValue || ''));
+            const safe = _sanitizeBookmarkImageUrl(raw);
             if (!safe) {
                 hookEvent.keepAttr = false;
                 hookEvent.forceKeepAttr = false;
@@ -97,7 +103,7 @@ function sanitizeSharedHtml(html) {
             'data-columns', 'data-is-open'
         ],
         ALLOW_DATA_ATTR: true,
-        ALLOWED_URI_REGEXP: /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|cid|xmpp):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i
+        ALLOWED_URI_REGEXP: /^(?:(?:(?:ht)tps?|mailto|tel):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i
     });
 }
 
@@ -118,26 +124,20 @@ function renderCheckboxes(container) {
     container.querySelectorAll('ul[data-type="taskList"]').forEach((ul) => {
         ul.querySelectorAll('li').forEach((li) => {
             const isChecked = li.getAttribute('data-checked') === 'true';
-
             if (li.querySelector('input[type="checkbox"]')) {
                 const checkbox = li.querySelector('input[type="checkbox"]');
                 checkbox.checked = isChecked;
                 return;
             }
-
             const content = li.innerHTML;
-
             li.innerHTML = '';
-
             const label = document.createElement('label');
             const checkbox = document.createElement('input');
             checkbox.type = 'checkbox';
             checkbox.checked = isChecked;
             checkbox.disabled = true; 
-
             label.appendChild(checkbox);
             li.appendChild(label);
-
             const contentDiv = document.createElement('div');
             contentDiv.innerHTML = sanitizeSharedHtml(content);
             li.appendChild(contentDiv);
@@ -160,22 +160,21 @@ function renderBookmarks(container) {
         containerInner.className = 'bookmark-block-container';
 
         const card = document.createElement('a');
-        card.href = url;
+        const safeUrl = _sanitizeNavHref(url, { allowRelative: false });
+        card.href = safeUrl || '#';
         card.target = '_blank';
         card.rel = 'noopener noreferrer';
         card.className = 'bookmark-compact-link';
 
         if (favicon) {
             const icon = document.createElement('img');
-            icon.src = favicon;
+            icon.src = _sanitizeBookmarkImageUrl(favicon) || '';
             icon.className = 'bookmark-compact-favicon';
             icon.alt = '';
             icon.onerror = () => {
                 const fallbackIcon = document.createElement('i');
                 fallbackIcon.className = 'fa-solid fa-link bookmark-compact-icon';
-                if (card.contains(icon)) {
-                    card.replaceChild(fallbackIcon, icon);
-                }
+                if (card.contains(icon)) card.replaceChild(fallbackIcon, icon);
             };
             card.appendChild(icon);
         } else {
@@ -197,14 +196,10 @@ function renderBookmarks(container) {
 (async () => {
     try {
         const token = window.location.pathname.split('/').pop();
-        if (!token) {
-            throw new Error('토큰이 없습니다.');
-        }
+        if (!token) throw new Error('토큰이 없습니다.');
 
         const response = await secureFetch(`/api/shared/page/${encodeURIComponent(token)}`);
-        if (!response.ok) {
-            throw new Error('페이지를 찾을 수 없습니다.');
-        }
+        if (!response.ok) throw new Error('페이지를 찾을 수 없습니다.');
 
         const data = await response.json();
 
@@ -213,11 +208,8 @@ function renderBookmarks(container) {
 
         if (data.icon) {
             const iconEl = document.getElementById('page-icon');
-            if (data.icon.includes('fa-')) {
-                addIcon(iconEl, data.icon);
-            } else {
-                iconEl.textContent = data.icon;
-            }
+            if (data.icon.includes('fa-')) addIcon(iconEl, data.icon);
+            else iconEl.textContent = data.icon;
             iconEl.style.display = 'inline';
         }
 
@@ -226,9 +218,7 @@ function renderBookmarks(container) {
             const coverUrl = buildSafeCoverUrl(data.coverImage);
             if (coverUrl) {
                 coverEl.style.backgroundImage = `url("${coverUrl}")`;
-                if (data.coverPosition) {
-                    coverEl.style.backgroundPositionY = `${data.coverPosition}%`;
-                }
+                if (data.coverPosition) coverEl.style.backgroundPositionY = `${data.coverPosition}%`;
                 coverEl.style.display = 'block';
             }
         }
@@ -238,7 +228,6 @@ function renderBookmarks(container) {
         editorEl.classList.remove('shared-page-loading');
 
         renderCheckboxes(editorEl);
-
         renderBookmarks(editorEl);
 
         if (window.katex) {
@@ -247,10 +236,7 @@ function renderBookmarks(container) {
                     const latex = el.getAttribute('data-latex') || el.textContent;
                     if (latex) {
                         el.innerHTML = '';
-                        window.katex.render(latex, el, {
-                            displayMode: true,
-                            throwOnError: false
-                        });
+                        window.katex.render(latex, el, { displayMode: true, throwOnError: false });
                     }
                 } catch (err) {
                     console.error('[MathBlock] KaTeX 렌더링 오류:', err);
@@ -262,24 +248,10 @@ function renderBookmarks(container) {
                     const latex = el.getAttribute('data-latex') || el.textContent;
                     if (latex) {
                         el.innerHTML = '';
-                        window.katex.render(latex, el, {
-                            displayMode: false,
-                            throwOnError: false
-                        });
+                        window.katex.render(latex, el, { displayMode: false, throwOnError: false });
                     }
                 } catch (err) {
                     console.error('[MathInline] KaTeX 렌더링 오류:', err);
-                }
-            });
-
-            document.querySelectorAll('.katex-block, .katex-inline').forEach((el) => {
-                try {
-                    const isDisplay = el.classList.contains('katex-block');
-                    const latex = el.dataset.latex || el.textContent;
-                    el.innerHTML = '';
-                    window.katex.render(latex, el, { displayMode: isDisplay, throwOnError: false });
-                } catch (err) {
-                    console.error('KaTeX 렌더링 오류:', err);
                 }
             });
         }
@@ -289,44 +261,33 @@ function renderBookmarks(container) {
     } catch (error) {
         console.error('페이지 로드 오류:', error);
         const editorEl = document.getElementById('page-editor');
-
-        const msg = (error && typeof error.message === 'string' && error.message)
-            ? error.message
-            : '페이지를 불러올 수 없습니다.';
-
+        const msg = (error && typeof error.message === 'string' && error.message) ? error.message : '페이지를 불러올 수 없습니다.';
         editorEl.textContent = '';
-
         const wrap = document.createElement('div');
         wrap.className = 'shared-page-error';
         const box = document.createElement('div');
         box.className = 'shared-page-error-message';
-
         const iconP = document.createElement('p');
         const iconI = document.createElement('i');
         iconI.className = 'fa-solid fa-exclamation-circle';
         iconP.appendChild(iconI);
-
         const msgP = document.createElement('p');
         msgP.textContent = msg;
-
         const linkP = document.createElement('p');
         linkP.style.fontSize = '13px';
         linkP.style.marginTop = '16px';
         linkP.style.color = '#6b7280';
-
         const a = document.createElement('a');
         a.href = '/';
         a.textContent = '홈으로 돌아가기';
         a.style.color = '#2d5f5d';
         a.style.textDecoration = 'underline';
         linkP.appendChild(a);
-
         box.appendChild(iconP);
         box.appendChild(msgP);
         box.appendChild(linkP);
         wrap.appendChild(box);
         editorEl.appendChild(wrap);
-
         editorEl.classList.remove('shared-page-loading');
     }
 })();

@@ -78,6 +78,22 @@ function isSafeHttpUrlOrRelative(value) {
     }
 }
 
+function sanitizeHttpHrefStrict(value, { allowRelative = false } = {}) {
+    if (typeof value !== "string") return null;
+    const v = value.trim();
+    if (!v || CONTROL_CHARS_RE.test(v) || v.startsWith("//")) return null;
+    if (allowRelative && (v.startsWith("/") || v.startsWith("#"))) return v;
+    try {
+        const u = new URL(v);
+        if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+        u.username = "";
+        u.password = "";
+        return u.toString();
+    } catch {
+        return null;
+    }
+}
+
 const YOUTUBE_ALLOWED_HOSTS = new Set([
     'youtube.com',
     'www.youtube.com',
@@ -161,10 +177,24 @@ function applyDomPurifyPolicy() {
     if (typeof DOMPurify?.addHook === "function") {
         DOMPurify.addHook("uponSanitizeAttribute", (_node, hookEvent) => {
             const name = String(hookEvent?.attrName || "").toLowerCase();
-            if (name === "data-url" || name === "data-thumbnail") {
-                if (!isSafeHttpUrlOrRelative(String(hookEvent.attrValue || ""))) {
+
+            if (name === "href") {
+                const safe = sanitizeHttpHrefStrict(String(hookEvent.attrValue || ""), { allowRelative: true });
+                if (!safe) {
                     hookEvent.keepAttr = false;
                     hookEvent.forceKeepAttr = false;
+                } else {
+                    hookEvent.attrValue = safe;
+                }
+            }
+
+            if (name === "data-url" || name === "data-thumbnail") {
+                const safe = sanitizeHttpHrefStrict(String(hookEvent.attrValue || ""), { allowRelative: false });
+                if (!safe) {
+                    hookEvent.keepAttr = false;
+                    hookEvent.forceKeepAttr = false;
+                } else {
+                    hookEvent.attrValue = safe;
                 }
             }
 
@@ -193,11 +223,13 @@ function applyDomPurifyPolicy() {
                     return;
                 }
 
-                if (!isSafeHttpUrlOrRelative(raw)) {
+                const safe = sanitizeHttpHrefStrict(raw, { allowRelative: true });
+                if (!safe) {
                     hookEvent.keepAttr = false;
                     hookEvent.forceKeepAttr = false;
                     return;
                 }
+                hookEvent.attrValue = safe;
 
                 if (nodeType === "file-block") {
                     const m = raw.match(/^\/paperclip\/(\d{1,12})\/([A-Za-z0-9][A-Za-z0-9._-]{0,199})$/);
@@ -683,7 +715,7 @@ function sanitizeHtmlContent(html) {
 	        ],
 	        ALLOWED_ATTR: ['style', 'class', 'href', 'target', 'rel', 'data-type', 'data-latex', 'colspan', 'rowspan', 'colwidth', 'src', 'alt', 'data-src', 'data-alt', 'data-caption', 'data-width', 'data-align', 'data-url', 'data-title', 'data-favicon', 'data-description', 'data-thumbnail', 'data-id', 'data-icon', 'data-checked', 'type', 'checked', 'data-callout-type', 'data-content', 'data-columns', 'data-is-open', 'data-selected-date', 'data-memos'],
 	        ALLOW_DATA_ATTR: true,
-	        ALLOWED_URI_REGEXP: /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|cid|xmpp):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i
+	        ALLOWED_URI_REGEXP: /^(?:(?:(?:ht)tps?|mailto|tel):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i
 	    });
 	} catch (err) {
 		console.warn('[보안] sanitizeHtmlContent 실패:', err);

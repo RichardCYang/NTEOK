@@ -244,6 +244,7 @@ module.exports = (dependencies) => {
     }
 
     const KEEP_IMPORT_PUBLISH_TOKENS = String(process.env.KEEP_IMPORT_PUBLISH_TOKENS || '').toLowerCase() === 'true';
+    if (KEEP_IMPORT_PUBLISH_TOKENS) console.warn('[security] KEEP_IMPORT_PUBLISH_TOKENS is deprecated and ignored. Imported pages now start unpublished.');
 
     function normalizeStorageName(rawName) {
         if (typeof rawName !== 'string') rawName = '';
@@ -606,7 +607,7 @@ function ensureUniqueDestPath(targetDir, filename) {
             createdAt: toIsoString(pageRow.created_at) || pageRow.created_at,
             updatedAt: toIsoString(pageRow.updated_at) || pageRow.updated_at,
 
-            publishToken: publishInfo?.token || null,
+            wasPublished: Boolean(publishInfo?.token),
             publishedAt: publishInfo?.createdAt || null,
             allowComments: publishInfo?.allowComments || 0
         };
@@ -623,7 +624,7 @@ function ensureUniqueDestPath(targetDir, filename) {
             shareAllowed: pageData.shareAllowed || false,
             coverImage: pageData.coverImage || null,
             coverPosition: pageData.coverPosition || 50,
-            publishToken: pageData.publishToken || null,
+            wasPublished: pageData.wasPublished === true,
             publishedAt: pageData.publishedAt || null,
             allowComments: pageData.allowComments || 0,
             isCoverImage: pageData.coverImage && !DEFAULT_COVERS.includes(pageData.coverImage) ? true : false
@@ -764,6 +765,10 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
                 coverPosition: metadata?.coverPosition || 50,
                 sortOrder: metadata?.sortOrder || 0,
                 publishToken: metadata?.publishToken || null,
+                wasPublished: normalizeBackupBoolean(
+                    metadata?.wasPublished,
+                    Boolean(metadata?.publishToken)
+                ),
                 publishedAt: metadata?.publishedAt || null,
                 allowComments: metadata?.allowComments || 0,
                 isCoverImage: metadata?.isCoverImage || false
@@ -1085,6 +1090,7 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
             const storageEncryptionMetaById = new Map(); 
             const oldToNewPageMap = new Map(); 
             const importedPages = []; 
+            let skippedPublishedLinks = 0;
             const imgFilenameMap = new Map();       
             const coverFilenameMap = new Map();     
             const paperclipFilenameMap = new Map(); 
@@ -1244,22 +1250,7 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
                      pageData.sortOrder || 0, nowStr, nowStr, pageData.isEncrypted ? 1 : 0, pageData.shareAllowed ? 1 : 0, safeIcon, coverImage, pageData.coverPosition || 50]
                 );
 
-                if (pageData.publishToken) {
-                    const backupToken = String(pageData.publishToken || '');
-                    const useBackupToken = KEEP_IMPORT_PUBLISH_TOKENS && isValidPublishToken(backupToken);
-                    const finalToken = useBackupToken ? backupToken : generatePublishToken();
-                    const isActive = useBackupToken ? 1 : 0;
-
-                    await insertPublishLinkWithRetry(connection, {
-                        token: finalToken,
-                        pageId,
-                        ownerUserId: userId,
-                        createdAt: nowStr,
-                        updatedAt: nowStr,
-                        allowComments: pageData.allowComments ? 1 : 0,
-                        isActive
-                    });
-                }
+                if (pageData.publishToken || pageData.wasPublished) skippedPublishedLinks++;
 
                 totalPages++;
             }
@@ -1405,7 +1396,8 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
                 storagesCount: workspaceMap.size,
                 pagesCount: totalPages,
                 imagesCount: totalImages,
-                paperclipsCount: totalPaperclips
+                paperclipsCount: totalPaperclips,
+                skippedPublishedLinks
             });
         } catch (error) {
             if (connection) await connection.rollback();
