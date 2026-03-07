@@ -1098,7 +1098,7 @@ async function cleanupOrphanedFiles(pool, filePaths, excludePageId, pageOwnerUse
 
 async function saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc, opts = {}) {
     try {
-        const { epoch, allowDeleted = false, forceClearYjsState = false, preserveDbMetadata = false } = opts;
+        const { epoch, allowDeleted = false, forceClearYjsState = false, preserveDbMetadata = false, actorUserId = null } = opts;
         if (epoch !== undefined && getYjsSaveEpoch(pageId) > epoch) return { status: 'skipped-epoch' };
 
         const [existingRows] = await pool.execute(
@@ -1106,13 +1106,9 @@ async function saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc, opt
             [pageId]
         );
 
-        if (existingRows.length === 0) {
-            return { status: 'aborted-deleted' };
-        }
+        if (existingRows.length === 0) return { status: 'aborted-deleted' };
         const existing = existingRows[0];
-        if (existing.deleted_at !== null && !allowDeleted) {
-            return { status: 'aborted-deleted' };
-        }
+        if (existing.deleted_at !== null && !allowDeleted) return { status: 'aborted-deleted' };
 
         const yMetadata = ydoc.getMap('metadata');
         const metaHasString = (k) => (yMetadata && yMetadata.has(k) && typeof yMetadata.get(k) === 'string');
@@ -1128,9 +1124,7 @@ async function saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc, opt
         const shouldUpdateContent = (typeof metaContent === 'string');
         const content = shouldUpdateContent ? sanitizeHtmlContent(metaContent || '<p></p>') : null;
 
-        if (!shouldUpdateContent && !isEncrypted) {
-            wsRequestPageSnapshot(pageId);
-        }
+        if (!shouldUpdateContent && !isEncrypted) wsRequestPageSnapshot(pageId);
 
         const pageOwnerUserId = (existing.user_id);
         let finalContent = '';
@@ -1162,9 +1156,8 @@ async function saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc, opt
             [title, finalContent, icon, sortOrder, parentId, yjsStateToSave, pageId]
         );
 
-        if (!isEncrypted && shouldUpdateContent) {
+        if (!isEncrypted && shouldUpdateContent && actorUserId !== null && Number(actorUserId) === Number(pageOwnerUserId)) {
             const newFiles = extractFilesFromContent(content, pageOwnerUserId);
-
             try {
                 for (const file of newFiles) {
                     const parts = file.ref.split('/');
@@ -1919,7 +1912,7 @@ async function handlePageSnapshot(ws, payload, pool, sanitizeHtmlContent, pageSq
             const epoch = bumpYjsSaveEpoch(pageId);
             try {
                 await enqueueYjsDbSave(pageId, () =>
-                    saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, docMeta.ydoc, { epoch, forceClearYjsState: true })
+                    saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, docMeta.ydoc, { epoch, forceClearYjsState: true, actorUserId: ws.userId })
                 );
             } catch (e) {
                 console.error('[YJS] snapshot resync-save failed:', String(pageId), e?.message || e);
@@ -1961,7 +1954,7 @@ async function handleForceSave(ws, payload, pool, sanitizeHtmlContent, pageSqlPo
     try {
         const ydoc = await loadOrCreateYjsDoc(pool, sanitizeHtmlContent, pageId);
         const epoch = bumpYjsSaveEpoch(pageId);
-        await enqueueYjsDbSave(pageId, () => saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc, { epoch }));
+        await enqueueYjsDbSave(pageId, () => saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc, { epoch, actorUserId: ws.userId }));
         ws.send(JSON.stringify({
             event: 'page-saved',
             data: { pageId: String(pageId), updatedAt: new Date().toISOString() }
@@ -2193,7 +2186,7 @@ async function handleYjsUpdate(ws, payload, pool, sanitizeHtmlContent, pageSqlPo
 
             const epoch = getYjsSaveEpoch(pageId); 
             doc.saveTimeout = setTimeout(() => {
-                enqueueYjsDbSave(pageId, () => saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc, { epoch }))
+                enqueueYjsDbSave(pageId, () => saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc, { epoch, actorUserId: ws.userId }))
                     .catch(e => { console.error('[YJS] debounce save failed:', String(pageId), e?.message || e); });
             }, 1000);
         }
@@ -2303,7 +2296,7 @@ async function handleYjsState(ws, payload, pool, sanitizeHtmlContent, pageSqlPol
 
 			const epoch = getYjsSaveEpoch(pageId); 
 			doc.saveTimeout = setTimeout(() => {
-				enqueueYjsDbSave(pageId, () => saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc, { epoch }))
+				enqueueYjsDbSave(pageId, () => saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc, { epoch, actorUserId: ws.userId }))
                     .catch(e => { console.error('[YJS] state save failed:', String(pageId), e?.message || e); });
 			}, 1000);
 		}
