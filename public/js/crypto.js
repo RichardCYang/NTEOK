@@ -3,14 +3,18 @@ class CryptoManager {
     constructor() {
         this.encryptionKey = null;
         this.salt = null;
-        this.password = null; 
+        this.password = null;
 
         this.storageKey = null;
         this.storageSalt = null;
         this.storagePassword = null;
 
-        this.inactivityTimer = null; 
-        this.INACTIVITY_TIMEOUT = 15 * 60 * 1000; 
+        this.inactivityTimer = null;
+        this.INACTIVITY_TIMEOUT = 15 * 60 * 1000;
+
+        // DEK and ECDH state
+        this._extractableDek = null;
+        this._myEcdhPrivateKey = null;
     }
 
     async verifyAndSetStorageKey(password, saltBase64, checkBase64) {
@@ -50,6 +54,8 @@ class CryptoManager {
         this.storageKey = null;
         this.storageSalt = null;
         this.storagePassword = null;
+        this._extractableDek = null;
+        this.clearEcdhPrivateKey();
     }
 
     getStorageKey() {
@@ -329,6 +335,236 @@ class CryptoManager {
         return decoder.decode(decrypted);
     }
 
+
+    // ===== DEK (Data Encryption Key) Methods =====
+
+    async generateDek() {
+        return await crypto.subtle.generateKey(
+            { name: 'AES-GCM', length: 256 },
+            true, // extractable
+            ['encrypt', 'decrypt']
+        );
+    }
+
+    async deriveKek(password, saltBase64 = null) {
+        let salt = saltBase64 ? new Uint8Array(this.base64ToArrayBuffer(saltBase64)) : null;
+        const { key: kekKey, salt: derivedSalt } = await this.deriveKeyFromPassword(password, salt);
+
+        return {
+            key: kekKey,
+            salt: derivedSalt,
+            saltBase64: this.arrayBufferToBase64(derivedSalt.buffer)
+        };
+    }
+
+    async wrapDekWithKek(dek, kek) {
+        const wrappedDek = await crypto.subtle.wrapKey(
+            'raw',
+            dek,
+            kek,
+            { name: 'AES-KW' }
+        );
+        return this.arrayBufferToBase64(wrappedDek);
+    }
+
+    async unwrapDekWithKek(wrappedDekB64, kek) {
+        const wrappedDek = new Uint8Array(this.base64ToArrayBuffer(wrappedDekB64));
+        return await crypto.subtle.unwrapKey(
+            'raw',
+            wrappedDek,
+            kek,
+            { name: 'AES-KW' },
+            { name: 'AES-GCM', length: 256 },
+            false, // not extractable for direct use
+            ['encrypt', 'decrypt']
+        );
+    }
+
+    async unlockStorageWithDek(wrappedDekB64, password, kekSaltB64) {
+        const { key: kek } = await this.deriveKek(password, kekSaltB64);
+        const dek = await this.unwrapDekWithKek(wrappedDekB64, kek);
+
+        this.storageKey = dek;
+        this.storagePassword = password;
+
+        // Keep an extractable copy for wrapping collaborator keys
+        const extractableDek = await crypto.subtle.generateKey(
+            { name: 'AES-GCM', length: 256 },
+            true,
+            ['encrypt', 'decrypt']
+        );
+        // Export and re-import the DEK as extractable
+        const rawDek = await crypto.subtle.exportKey('raw', dek);
+        this._extractableDek = await crypto.subtle.importKey(
+            'raw',
+            rawDek,
+            { name: 'AES-GCM', length: 256 },
+            true,
+            ['encrypt', 'decrypt']
+        );
+
+        return true;
+    }
+
+    // ===== ECDH Key Pair Methods =====
+
+    async generateEcdhKeyPair() {
+        return await crypto.subtle.generateKey(
+            { name: 'ECDH', namedCurve: 'P-256' },
+            true, // extractable
+            ['deriveBits']
+        );
+    }
+
+    async exportPublicKeyToBase64(pubKey) {
+        const spki = await crypto.subtle.exportKey('spki', pubKey);
+        return this.arrayBufferToBase64(spki);
+    }
+
+    async importPublicKeyFromBase64(b64) {
+        const spki = new Uint8Array(this.base64ToArrayBuffer(b64));
+        return await crypto.subtle.importKey(
+            'spki',
+            spki,
+            { name: 'ECDH', namedCurve: 'P-256' },
+            false,
+            []
+        );
+    }
+
+    async encryptPrivateKey(privKey, password) {
+        const salt = crypto.getRandomValues(new Uint8Array(16));
+        const { key: kek } = await this.deriveKek(password, this.arrayBufferToBase64(salt.buffer));
+
+        // Export private key as PKCS8
+        const pkcs8 = await crypto.subtle.exportKey('pkcs8', privKey);
+        const privateKeyPem = this.arrayBufferToBase64(pkcs8);
+
+        // Encrypt with AES-GCM
+        const encryptedPrivateKey = await this.encryptWithKey(privateKeyPem, kek);
+
+        return {
+            encryptedPrivateKey,
+            keyWrapSalt: this.arrayBufferToBase64(salt.buffer)
+        };
+    }
+
+    async decryptPrivateKey(encryptedPrivateKeyB64, keyWrapSaltB64, password) {
+        const { key: kek } = await this.deriveKek(password, keyWrapSaltB64);
+        const privateKeyPem = await this.decryptWithKey(encryptedPrivateKeyB64, kek);
+
+        // Import from PKCS8
+        const pkcs8 = new Uint8Array(this.base64ToArrayBuffer(privateKeyPem));
+        return await crypto.subtle.importKey(
+            'pkcs8',
+            pkcs8,
+            { name: 'ECDH', namedCurve: 'P-256' },
+            true, // extractable
+            ['deriveBits']
+        );
+    }
+
+    // ===== ECDH-based DEK Wrapping =====
+
+    async wrapDekForCollaborator(dek, recipientPubKeyB64) {
+        const recipientPubKey = await this.importPublicKeyFromBase64(recipientPubKeyB64);
+
+        // Generate ephemeral key pair
+        const ephemeralKeyPair = await this.generateEcdhKeyPair();
+
+        // Perform ECDH
+        const sharedBits = await crypto.subtle.deriveBits(
+            { name: 'ECDH', public: recipientPubKey },
+            ephemeralKeyPair.privateKey,
+            256
+        );
+
+        // HKDF to derive wrapping key
+        const info = new TextEncoder().encode('nteok-dek-wrap-v1');
+        const wrappingKey = await crypto.subtle.deriveKey(
+            {
+                name: 'HKDF',
+                salt: new Uint8Array(0),
+                info: info,
+                hash: 'SHA-256'
+            },
+            await crypto.subtle.importKey('raw', sharedBits, 'HKDF', false, ['deriveKey']),
+            { name: 'AES-KW', length: 256 },
+            false,
+            ['wrapKey']
+        );
+
+        // Wrap DEK
+        const wrappedDek = await crypto.subtle.wrapKey('raw', dek, wrappingKey, { name: 'AES-KW' });
+
+        // Export ephemeral public key
+        const ephemeralPublicKey = await this.exportPublicKeyToBase64(ephemeralKeyPair.publicKey);
+
+        return {
+            wrappedDek: this.arrayBufferToBase64(wrappedDek),
+            ephemeralPublicKey
+        };
+    }
+
+    async unwrapDekAsCollaborator(wrappedDekB64, ephemeralPubKeyB64, myPrivKey) {
+        const ephemeralPubKey = await this.importPublicKeyFromBase64(ephemeralPubKeyB64);
+
+        // Perform ECDH
+        const sharedBits = await crypto.subtle.deriveBits(
+            { name: 'ECDH', public: ephemeralPubKey },
+            myPrivKey,
+            256
+        );
+
+        // HKDF to derive wrapping key
+        const info = new TextEncoder().encode('nteok-dek-wrap-v1');
+        const wrappingKey = await crypto.subtle.deriveKey(
+            {
+                name: 'HKDF',
+                salt: new Uint8Array(0),
+                info: info,
+                hash: 'SHA-256'
+            },
+            await crypto.subtle.importKey('raw', sharedBits, 'HKDF', false, ['deriveKey']),
+            { name: 'AES-KW', length: 256 },
+            false,
+            ['unwrapKey']
+        );
+
+        // Unwrap DEK
+        const wrappedDek = new Uint8Array(this.base64ToArrayBuffer(wrappedDekB64));
+        return await crypto.subtle.unwrapKey(
+            'raw',
+            wrappedDek,
+            wrappingKey,
+            { name: 'AES-KW' },
+            { name: 'AES-GCM', length: 256 },
+            false, // not extractable
+            ['encrypt', 'decrypt']
+        );
+    }
+
+    async unlockStorageWithEcdh(wrappedDekB64, ephemeralPubKeyB64, myPrivKey) {
+        const dek = await this.unwrapDekAsCollaborator(wrappedDekB64, ephemeralPubKeyB64, myPrivKey);
+        this.storageKey = dek;
+        return true;
+    }
+
+    // ===== ECDH Private Key Management =====
+
+    setMyEcdhPrivateKey(key) {
+        this._myEcdhPrivateKey = key;
+    }
+
+    getMyEcdhPrivateKey() {
+        return this._myEcdhPrivateKey;
+    }
+
+    clearEcdhPrivateKey() {
+        this._myEcdhPrivateKey = null;
+    }
+
+    // ===== Master Key Methods (existing) =====
 
     clearMasterKey() {
         this.masterKey = null;

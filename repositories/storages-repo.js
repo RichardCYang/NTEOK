@@ -44,6 +44,7 @@ module.exports = ({ pool }) => {
                         s.is_encrypted,
                         CASE WHEN s.user_id = ? THEN s.encryption_salt ELSE NULL END AS encryption_salt,
                         CASE WHEN s.user_id = ? THEN s.encryption_check ELSE NULL END AS encryption_check,
+                        s.dek_version,
                         u.username as owner_name,
                         CASE WHEN s.user_id = ? THEN 1 ELSE 0 END as is_owner,
                         ss.permission
@@ -63,6 +64,7 @@ module.exports = ({ pool }) => {
                         s.is_encrypted,
                         CASE WHEN s.user_id = ? THEN s.encryption_salt ELSE NULL END AS encryption_salt,
                         CASE WHEN s.user_id = ? THEN s.encryption_check ELSE NULL END AS encryption_check,
+                        s.dek_version,
                         CASE WHEN s.user_id = ? THEN 1 ELSE 0 END as is_owner,
                         ss.permission
                  FROM storages s
@@ -108,13 +110,13 @@ module.exports = ({ pool }) => {
             return storage.permission || null;
         },
 
-        async createStorage({ userId, id, name, sortOrder, createdAt, updatedAt, isEncrypted, encryptionSalt, encryptionCheck }) {
+        async createStorage({ userId, id, name, sortOrder, createdAt, updatedAt, isEncrypted, encryptionSalt, encryptionCheck, dekVersion }) {
             await pool.execute(
-                `INSERT INTO storages (id, user_id, name, sort_order, created_at, updated_at, is_encrypted, encryption_salt, encryption_check)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                [id, userId, name, sortOrder, createdAt, updatedAt, isEncrypted || 0, encryptionSalt || null, encryptionCheck || null]
+                `INSERT INTO storages (id, user_id, name, sort_order, created_at, updated_at, is_encrypted, encryption_salt, encryption_check, dek_version)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [id, userId, name, sortOrder, createdAt, updatedAt, isEncrypted || 0, encryptionSalt || null, encryptionCheck || null, dekVersion || 0]
             );
-            return { id, userId, name, sortOrder, createdAt, updatedAt, isEncrypted, encryptionSalt, encryptionCheck };
+            return { id, userId, name, sortOrder, createdAt, updatedAt, isEncrypted, encryptionSalt, encryptionCheck, dekVersion };
         },
 
         async updateStorage(userId, storageId, { name, updatedAt }) {
@@ -141,7 +143,7 @@ module.exports = ({ pool }) => {
                 await conn.beginTransaction();
 
                 const [stRows] = await conn.execute(
-                    `SELECT id, user_id, name, is_encrypted, encryption_salt, encryption_check
+                    `SELECT id, user_id, name, is_encrypted, encryption_salt, encryption_check, dek_version
                        FROM storages
                       WHERE id = ? AND user_id = ?
                       FOR UPDATE`,
@@ -184,16 +186,13 @@ module.exports = ({ pool }) => {
                     const newName = `[Recovered] ${String(storage.name || 'Storage').slice(0, 110)} (from ${ownerId})`;
 
                     await conn.execute(
-                        `INSERT INTO storages (id, user_id, name, sort_order, created_at, updated_at, is_encrypted, encryption_salt, encryption_check)
-                         VALUES (?, ?, ?, ?, NOW(), NOW(), ?, ?, ?)`,
+                        `INSERT INTO storages (id, user_id, name, sort_order, created_at, updated_at, is_encrypted, encryption_salt, encryption_check, dek_version)
+                         VALUES (?, ?, ?, ?, NOW(), NOW(), 0, NULL, NULL, 0)`,
                         [
                             newStorageId,
                             uid,
                             newName,
-                            sortOrder,
-                            Number(storage.is_encrypted) === 1 ? 1 : 0,
-                            Number(storage.is_encrypted) === 1 ? (storage.encryption_salt || null) : null,
-                            Number(storage.is_encrypted) === 1 ? (storage.encryption_check || null) : null
+                            sortOrder
                         ]
                     );
 

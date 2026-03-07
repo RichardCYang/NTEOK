@@ -1,6 +1,55 @@
 import * as api from './api-utils.js';
 import { showLoadingOverlay, hideLoadingOverlay, escapeHtml, escapeHtmlAttr } from './ui-utils.js';
 
+// Ensure user has ECDH key pair for DEK v1 sharing
+async function ensureUserKeyPair(loginPassword) {
+    try {
+        // Check if user has existing keys
+        const existingKeys = await api.get('/api/user-keys/me');
+        if (existingKeys && existingKeys.length > 0) {
+            // Decrypt and set the most recent private key
+            const latestKey = existingKeys[0];
+            const privKey = await window.cryptoManager.decryptPrivateKey(
+                latestKey.encrypted_private_key,
+                latestKey.key_wrap_salt,
+                loginPassword
+            );
+            window.cryptoManager.setMyEcdhPrivateKey(privKey);
+            window._myKid = latestKey.kid;
+            return;
+        }
+
+        // Generate new ECDH key pair
+        const keyPair = await window.cryptoManager.generateEcdhKeyPair();
+        const kid = `kid-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+        // Export public key to Base64
+        const publicKeySpki = await window.cryptoManager.exportPublicKeyToBase64(keyPair.publicKey);
+
+        // Encrypt private key
+        const { encryptedPrivateKey, keyWrapSalt } = await window.cryptoManager.encryptPrivateKey(
+            keyPair.privateKey,
+            loginPassword
+        );
+
+        // Register key pair with server
+        await api.post('/api/user-keys', {
+            kid,
+            publicKeySpki,
+            encryptedPrivateKey,
+            keyWrapSalt,
+            deviceLabel: `Device ${new Date().toLocaleDateString()}`
+        });
+
+        // Set in memory
+        window.cryptoManager.setMyEcdhPrivateKey(keyPair.privateKey);
+        window._myKid = kid;
+    } catch (error) {
+        console.error('ensureUserKeyPair failed:', error);
+        throw error;
+    }
+}
+
 export function initStoragesManager(appState, onStorageSelected) {
     const storageScreen = document.getElementById('storage-selection-screen');
     const storageList = document.getElementById('storage-list');
@@ -287,10 +336,41 @@ export function initStoragesManager(appState, onStorageSelected) {
         }
 
         try {
-            await api.post(`/api/storages/${currentManagingStorage.id}/collaborators`, {
+            const body = {
                 targetUserId: selectedUser.id,
                 permission: permissionSelect.value
-            });
+            };
+
+            // For DEK v1 encrypted storage, wrap DEK for collaborator
+            if (Number(currentManagingStorage.is_encrypted) === 1 && Number(currentManagingStorage.dek_version) === 1) {
+                // Check if we have the extractable DEK in memory
+                if (!window.cryptoManager._extractableDek) {
+                    alert('저장소 잠금을 해제해야 협업자를 추가할 수 있습니다.');
+                    return;
+                }
+
+                // Get target user's public keys
+                const publicKeys = await api.get(`/api/user-keys/public/${selectedUser.id}`);
+                if (!publicKeys || publicKeys.length === 0) {
+                    alert('대상 사용자가 아직 암호화 키를 등록하지 않았습니다. 사용자에게 먼저 로그인하도록 안내해주세요.');
+                    return;
+                }
+
+                // Use the most recent public key
+                const latestPubKey = publicKeys[0];
+
+                // Wrap DEK for collaborator
+                const { wrappedDek, ephemeralPublicKey } = await window.cryptoManager.wrapDekForCollaborator(
+                    window.cryptoManager._extractableDek,
+                    latestPubKey.public_key_spki
+                );
+
+                body.wrappedDek = wrappedDek;
+                body.wrappingKid = latestPubKey.kid;
+                body.ephemeralPublicKey = ephemeralPublicKey;
+            }
+
+            await api.post(`/api/storages/${currentManagingStorage.id}/collaborators`, body);
             selectedUser = null;
             searchInput.value = '';
             loadCollaborators();
@@ -361,34 +441,89 @@ export function initStoragesManager(appState, onStorageSelected) {
             unlockError.textContent = '';
             unlockModal.classList.remove('hidden');
             unlockInput.focus();
-            
+
             const closeHandler = () => {
                 unlockModal.classList.add('hidden');
                 cleanup();
                 resolve(false);
             };
-            
+
             closeUnlockBtn.onclick = closeHandler;
-            
+
             const submitHandler = async (e) => {
                 e.preventDefault();
                 const password = unlockInput.value;
                 if (!password) return;
 
                 unlockError.textContent = '확인 중...';
-                
-                const success = await window.cryptoManager.verifyAndSetStorageKey(
-                    password,
-                    storage.encryption_salt,
-                    storage.encryption_check
-                );
 
-                if (success) {
-                    unlockModal.classList.add('hidden');
-                    cleanup();
-                    resolve(true);
-                } else {
-                    unlockError.textContent = '비밀번호가 올바르지 않습니다.';
+                try {
+                    let success = false;
+
+                    // Check if DEK v1 encrypted
+                    if (Number(storage.dek_version) === 1) {
+                        const isOwner = Number(storage.is_owner) === 1;
+
+                        if (isOwner) {
+                            // Owner: unlock with password + wrapped DEK
+                            success = await window.cryptoManager.unlockStorageWithDek(
+                                storage.wrapped_dek || storage.wrappedDek,
+                                password,
+                                storage.encryption_salt || storage.encryptionSalt
+                            );
+                        } else {
+                            // Collaborator: get wrapped DEK and unlock with ECDH
+                            try {
+                                // Ensure ECDH private key is available
+                                const keyPairs = await api.get('/api/user-keys/me');
+                                if (!keyPairs || keyPairs.length === 0) {
+                                    unlockError.textContent = '사용자 키가 없습니다. 다시 로그인해주세요.';
+                                    return;
+                                }
+
+                                const latestKey = keyPairs[0];
+                                const privKey = await window.cryptoManager.decryptPrivateKey(
+                                    latestKey.encrypted_private_key,
+                                    latestKey.key_wrap_salt,
+                                    password
+                                );
+
+                                // Get wrapped DEK from server
+                                const wrappedDekRecord = await api.get(`/api/storages/${storage.id}/my-wrapped-dek`);
+
+                                // Unlock with ECDH
+                                success = await window.cryptoManager.unlockStorageWithEcdh(
+                                    wrappedDekRecord.wrappedDek,
+                                    wrappedDekRecord.ephemeralPublicKey,
+                                    privKey
+                                );
+                            } catch (err) {
+                                console.error('ECDH unlock failed:', err);
+                                unlockError.textContent = '저장소 복호화에 실패했습니다.';
+                                unlockInput.select();
+                                return;
+                            }
+                        }
+                    } else {
+                        // Legacy PBKDF2 mode
+                        success = await window.cryptoManager.verifyAndSetStorageKey(
+                            password,
+                            storage.encryption_salt,
+                            storage.encryption_check
+                        );
+                    }
+
+                    if (success) {
+                        unlockModal.classList.add('hidden');
+                        cleanup();
+                        resolve(true);
+                    } else {
+                        unlockError.textContent = '비밀번호가 올바르지 않습니다.';
+                        unlockInput.select();
+                    }
+                } catch (error) {
+                    console.error('Unlock error:', error);
+                    unlockError.textContent = error.message || '복호화 중 오류가 발생했습니다.';
                     unlockInput.select();
                 }
             };
@@ -447,11 +582,14 @@ export function initStoragesManager(appState, onStorageSelected) {
         e.preventDefault();
         const name = createName.value.trim();
         const isEncrypted = createEncrypt.checked;
-        
+
         if (!name) return;
 
         let encryptionSalt = null;
         let encryptionCheck = null;
+        let dekVersion = 0;
+        let wrappedDek = null;
+        let wrappingKid = null;
 
         if (isEncrypted) {
             const pw = createPw.value;
@@ -466,15 +604,25 @@ export function initStoragesManager(appState, onStorageSelected) {
                 return;
             }
 
-            createError.style.color = '#3b82f6'; 
-            createError.textContent = '강력한 암호화 키 생성 중...';
+            createError.style.color = '#3b82f6';
+            createError.textContent = '암호화 설정 준비 중...';
             try {
-                const cryptoData = await window.cryptoManager.createStorageEncryptionData(pw);
-                encryptionSalt = cryptoData.salt;
-                encryptionCheck = cryptoData.check;
+                // Ensure user has ECDH key pair (DEK v1)
+                await ensureUserKeyPair(pw);
+
+                // Generate DEK
+                const dek = await window.cryptoManager.generateDek();
+
+                // Derive KEK and wrap DEK
+                const { key: kek, saltBase64: kekSalt } = await window.cryptoManager.deriveKek(pw);
+                wrappedDek = await window.cryptoManager.wrapDekWithKek(dek, kek);
+
+                encryptionSalt = kekSalt;
+                dekVersion = 1;
+                wrappingKid = window._myKid;
             } catch (err) {
                 console.error("Crypto generation failed", err);
-                createError.style.color = '#ef4444'; 
+                createError.style.color = '#ef4444';
                 createError.textContent = '암호화 설정 생성 실패';
                 return;
             }
@@ -482,20 +630,23 @@ export function initStoragesManager(appState, onStorageSelected) {
 
         showLoadingOverlay();
         try {
-            const body = { 
+            const body = {
                 name,
                 isEncrypted,
                 encryptionSalt,
-                encryptionCheck
+                encryptionCheck,
+                dekVersion,
+                wrappedDek,
+                wrappingKid
             };
-            
+
             const newStorage = await api.post('/api/storages', body);
             appState.storages.push(newStorage);
             renderStorages(appState.storages);
             closeCreateModal();
         } catch (error) {
             console.error('저장소 생성 실패:', error);
-            createError.style.color = '#ef4444'; 
+            createError.style.color = '#ef4444';
             createError.textContent = error.message || '저장소 생성에 실패했습니다.';
         } finally {
             hideLoadingOverlay();

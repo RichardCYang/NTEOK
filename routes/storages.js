@@ -128,15 +128,28 @@ module.exports = (dependencies) => {
 
     router.post('/', authMiddleware, csrfMiddleware, async (req, res) => {
         try {
-            const { name, isEncrypted, encryptionSalt, encryptionCheck } = req.body;
+            const { name, isEncrypted, encryptionSalt, encryptionCheck, dekVersion, wrappedDek, wrappingKid } = req.body;
             const check = validateStorageName(name);
             if (!check) return res.status(400).json({ error: '저장소 이름을 입력해주세요.' });
             if (!check.ok) return res.status(400).json({ error: check.error });
             const storageName = check.value;
 
-            if (isEncrypted) {
+            const useDekV1 = isEncrypted && Number(dekVersion) === 1;
+
+            if (isEncrypted && !useDekV1) {
+                // Legacy PBKDF2 mode
                 if (!encryptionSalt || !encryptionCheck) return res.status(400).json({ error: '암호화 저장소 생성에 필요한 정보가 부족합니다.' });
                 if (typeof encryptionSalt !== 'string' || typeof encryptionCheck !== 'string') return res.status(400).json({ error: '암호화 정보 형식이 올바르지 않습니다.' });
+            } else if (useDekV1) {
+                // DEK v1 mode
+                if (!wrappedDek || !wrappingKid) return res.status(400).json({ error: '암호화 저장소 생성에 필요한 정보가 부족합니다.' });
+                if (typeof wrappedDek !== 'string' || typeof wrappingKid !== 'string') return res.status(400).json({ error: '암호화 정보 형식이 올바르지 않습니다.' });
+
+                // Validate wrappingKid belongs to the user
+                const keyPair = await userKeysRepo.getKeyPairByKid(wrappingKid);
+                if (!keyPair || Number(keyPair.user_id) !== Number(req.user.id)) {
+                    return res.status(400).json({ error: 'wrappingKid가 유효하지 않습니다.' });
+                }
             }
 
             const userId = req.user.id;
@@ -153,16 +166,30 @@ module.exports = (dependencies) => {
                 createdAt: nowStr,
                 updatedAt: nowStr,
                 isEncrypted: isEncrypted ? 1 : 0,
-                encryptionSalt: isEncrypted ? encryptionSalt : null,
-                encryptionCheck: isEncrypted ? encryptionCheck : null
+                encryptionSalt: useDekV1 ? encryptionSalt : (isEncrypted ? encryptionSalt : null),
+                encryptionCheck: useDekV1 ? null : (isEncrypted ? encryptionCheck : null),
+                dekVersion: useDekV1 ? 1 : 0
             });
+
+            // For DEK v1, store the owner's wrapped DEK
+            if (useDekV1) {
+                await storageShareKeysRepo.upsertWrappedDek({
+                    storageId: id,
+                    sharedWithUserId: userId,
+                    wrappedDek,
+                    wrappingKid,
+                    ephemeralPublicKey: null,
+                    createdAt: nowStr
+                });
+            }
 
             res.json({
                 ...storage,
                 is_encrypted: isEncrypted ? 1 : 0,
-                isEncrypted: isEncrypted ? 1 : 0, 
-                encryption_salt: isEncrypted ? encryptionSalt : null,
-                encryption_check: isEncrypted ? encryptionCheck : null,
+                isEncrypted: isEncrypted ? 1 : 0,
+                encryption_salt: useDekV1 ? encryptionSalt : (isEncrypted ? encryptionSalt : null),
+                encryption_check: useDekV1 ? null : (isEncrypted ? encryptionCheck : null),
+                dek_version: useDekV1 ? 1 : 0,
                 is_owner: 1,
                 owner_name: req.user.username,
                 createdAt: now.toISOString(),
@@ -256,11 +283,40 @@ module.exports = (dependencies) => {
         }
     });
 
+    router.get('/:id/my-wrapped-dek', authMiddleware, async (req, res) => {
+        try {
+            const userId = req.user.id;
+            const storageId = req.params.id;
+
+            const storage = await storagesRepo.getStorageByIdForUser(userId, storageId);
+            if (!storage) return res.status(404).json({ error: '저장소를 찾을 수 없습니다.' });
+
+            // Check if it's DEK v1 encrypted
+            if (Number(storage.is_encrypted) !== 1 || Number(storage.dek_version) !== 1) {
+                return res.status(400).json({ error: '이 저장소는 DEK v1 암호화를 사용하지 않습니다.' });
+            }
+
+            const wrappedDekRecord = await storageShareKeysRepo.getWrappedDek(storageId, userId);
+            if (!wrappedDekRecord) {
+                return res.status(404).json({ error: '이 저장소에 대한 wrapped DEK를 찾을 수 없습니다.' });
+            }
+
+            res.json({
+                wrappedDek: wrappedDekRecord.wrapped_dek,
+                wrappingKid: wrappedDekRecord.wrapping_kid,
+                ephemeralPublicKey: wrappedDekRecord.ephemeral_public_key
+            });
+        } catch (error) {
+            logError('GET /api/storages/:id/my-wrapped-dek', error);
+            res.status(500).json({ error: 'wrapped DEK를 불러오지 못했습니다.' });
+        }
+    });
+
     router.post('/:id/collaborators', authMiddleware, csrfMiddleware, async (req, res) => {
         try {
             const userId = req.user.id;
             const storageId = req.params.id;
-            const { targetUserId, permission } = req.body;
+            const { targetUserId, permission, wrappedDek, wrappingKid, ephemeralPublicKey } = req.body;
 
             if (!targetUserId) return res.status(400).json({ error: '참여할 사용자를 지정해주세요.' });
 
@@ -270,10 +326,29 @@ module.exports = (dependencies) => {
             const storage = await storagesRepo.getStorageByIdForUser(userId, storageId);
             if (!requireStorageOwner(storage, res)) return;
 
-            if (Number(storage.is_encrypted) === 1) return res.status(400).json({ error: '암호화 저장소 협업은 현재 보안상 비활성화되었습니다.' });
+            // Check encryption type
+            if (Number(storage.is_encrypted) === 1 && Number(storage.dek_version) !== 1) {
+                return res.status(400).json({ error: '이 암호화 저장소는 공유를 지원하지 않습니다.' });
+            }
 
             if (String(targetUserId) === String(storage.owner_id)) return res.status(400).json({ error: '저장소 소유자는 별도 참여자로 추가할 수 없습니다.' });
             if (String(targetUserId) === String(userId)) return res.status(400).json({ error: '자기 자신에게 협업 권한을 다시 부여할 수 없습니다.' });
+
+            // For DEK v1 encrypted storage, validate and store wrapped DEK
+            if (Number(storage.is_encrypted) === 1 && Number(storage.dek_version) === 1) {
+                if (!wrappedDek || !wrappingKid) {
+                    return res.status(400).json({ error: '암호화 저장소 협업에 필요한 키 정보가 부족합니다.' });
+                }
+                if (typeof wrappedDek !== 'string' || typeof wrappingKid !== 'string') {
+                    return res.status(400).json({ error: '키 정보 형식이 올바르지 않습니다.' });
+                }
+
+                // Validate that wrappingKid belongs to targetUserId
+                const keyPair = await userKeysRepo.getKeyPairByKid(wrappingKid);
+                if (!keyPair || Number(keyPair.user_id) !== Number(targetUserId)) {
+                    return res.status(400).json({ error: 'wrappingKid가 대상 사용자 키가 아닙니다.' });
+                }
+            }
 
             const now = new Date();
             const nowStr = formatDateForDb(now);
@@ -286,6 +361,18 @@ module.exports = (dependencies) => {
                 createdAt: nowStr,
                 updatedAt: nowStr
             });
+
+            // For DEK v1, store the wrapped DEK
+            if (Number(storage.is_encrypted) === 1 && Number(storage.dek_version) === 1) {
+                await storageShareKeysRepo.upsertWrappedDek({
+                    storageId,
+                    sharedWithUserId: targetUserId,
+                    wrappedDek,
+                    wrappingKid,
+                    ephemeralPublicKey: ephemeralPublicKey || null,
+                    createdAt: nowStr
+                });
+            }
 
             try {
                 if (typeof wsKickUserFromStorage === 'function') wsKickUserFromStorage(storageId, targetUserId, 1008, 'Storage permission changed');
@@ -311,6 +398,15 @@ module.exports = (dependencies) => {
             if (String(targetUserId) === String(userId)) return res.status(400).json({ error: '저장소 소유자는 자기 자신을 제거할 수 없습니다.' });
 
             await storagesRepo.removeCollaborator(storageId, targetUserId);
+
+            // For DEK v1, delete the wrapped DEK
+            if (Number(storage.is_encrypted) === 1 && Number(storage.dek_version) === 1) {
+                try {
+                    await storageShareKeysRepo.deleteWrappedDek(storageId, targetUserId);
+                } catch (e) {
+                    logError('DELETE wrapped DEK', e);
+                }
+            }
 
             try {
                 if (typeof wsKickUserFromStorage === 'function') wsKickUserFromStorage(storageId, targetUserId, 1008, 'Storage access revoked');

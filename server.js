@@ -1063,6 +1063,7 @@ async function initDb() {
             is_encrypted TINYINT(1) NOT NULL DEFAULT 0,
             encryption_salt VARCHAR(255) NULL,
             encryption_check VARCHAR(512) NULL,
+            dek_version TINYINT(1) NOT NULL DEFAULT 0,
             CONSTRAINT fk_storages_user
                 FOREIGN KEY (user_id)
                 REFERENCES users(id)
@@ -1348,6 +1349,35 @@ async function initDb() {
         ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
     `);
 
+    await pool.execute(`
+        CREATE TABLE IF NOT EXISTS user_key_pairs (
+            kid                    VARCHAR(64)  NOT NULL PRIMARY KEY,
+            user_id                INT          NOT NULL,
+            public_key_spki        TEXT         NOT NULL,
+            encrypted_private_key  TEXT         NOT NULL,
+            key_wrap_salt          VARCHAR(255) NOT NULL,
+            device_label           VARCHAR(100) NULL,
+            created_at             DATETIME     NOT NULL,
+            CONSTRAINT fk_ukp_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            INDEX idx_ukp_user (user_id)
+        ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
+    `);
+
+    await pool.execute(`
+        CREATE TABLE IF NOT EXISTS storage_share_keys (
+            id                    BIGINT       NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            storage_id            VARCHAR(64)  NOT NULL,
+            shared_with_user_id   INT          NOT NULL,
+            wrapped_dek           TEXT         NOT NULL,
+            wrapping_kid          VARCHAR(64)  NOT NULL,
+            ephemeral_public_key  TEXT         NULL,
+            created_at            DATETIME     NOT NULL,
+            UNIQUE KEY uk_ssk (storage_id, shared_with_user_id),
+            CONSTRAINT fk_ssk_storage FOREIGN KEY (storage_id) REFERENCES storages(id) ON DELETE CASCADE,
+            CONSTRAINT fk_ssk_user    FOREIGN KEY (shared_with_user_id) REFERENCES users(id) ON DELETE CASCADE,
+            CONSTRAINT fk_ssk_kid     FOREIGN KEY (wrapping_kid) REFERENCES user_key_pairs(kid)
+        ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
+    `);
 
     try {
         await pool.execute(`
@@ -2270,6 +2300,7 @@ function installGracefulShutdownHandlers(httpServer, pool, sanitizeHtmlContent) 
         const backupRoutes = require('./routes/backup')(routeDependencies);
         const themesRoutes = require('./routes/themes')(routeDependencies);
         const commentsRoutes = require('./routes/comments')(routeDependencies);
+        const userKeysRoutes = require('./routes/user-keys')(routeDependencies);
 
         app.use('/', indexRoutes);
         app.use('/api/auth', authRoutes);
@@ -2281,6 +2312,7 @@ function installGracefulShutdownHandlers(httpServer, pool, sanitizeHtmlContent) 
         app.use('/api/backup', backupRoutes);
         app.use('/api/themes', themesRoutes);
         app.use('/api/comments', commentsRoutes);
+        app.use('/api/user-keys', userKeysRoutes);
 
         app.use((err, req, res, next) => {
             if (res.headersSent) return next(err);
