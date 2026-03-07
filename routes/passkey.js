@@ -22,6 +22,9 @@ module.exports = (dependencies) => {
 		passkeyLimiter,
 		createSession,
 		generateCsrfToken,
+		generateCsrfTokenForSession,
+		verifyPreAuthCsrfToken,
+		PREAUTH_CSRF_COOKIE_NAME,
 		formatDateForDb,
 		SESSION_COOKIE_NAME,
 		CSRF_COOKIE_NAME,
@@ -214,6 +217,7 @@ module.exports = (dependencies) => {
 	});
 
 	router.post("/login/userless/verify", passkeyLimiter, requireSameOriginForAuth, async (req, res) => {
+		if (!verifyPreAuthCsrfToken(req)) return res.status(403).json({ error: "유효하지 않은 요청입니다." });
 		try {
 			const { credential } = req.body;
 			const tempSessionId = get2faCookie(req);
@@ -246,19 +250,16 @@ module.exports = (dependencies) => {
 			const countryCheck = checkCountryWhitelist({ country_whitelist_enabled: country_whitelist_enabled, allowed_login_countries: allowed_login_countries }, getClientIp(req));
 			if (!countryCheck.allowed) {
 				await recordLoginAttempt(pool, { userId: userId, username: username, ipAddress: getClientIp(req), port: req.connection.remotePort || 0, success: false, failureReason: countryCheck.reason, userAgent: req.headers['user-agent'] || null });
-				return res.status(403).json({ error: "현재 위치에서는 로그인할 수 없습니다. 계정 보안 설정을 확인하세요." });
+				return res.status(403).json({ error: "현재 위치에서는 로그인할 수 없습니다." });
 			}
-			const sessionResult = await createSession(
-				{ id: userId, username: username, blockDuplicateLogin: block_duplicate_login },
-				{ userAgent: req.headers["user-agent"] || "" }
-			);
+			const sessionResult = await createSession({ id: userId, username: username, blockDuplicateLogin: block_duplicate_login }, { userAgent: req.headers["user-agent"] || "" });
 			if (!sessionResult.success) return res.status(409).json({ error: sessionResult.error, code: 'DUPLICATE_LOGIN_BLOCKED' });
 			const sessionId = sessionResult.sessionId;
 			await pool.execute("DELETE FROM webauthn_challenges WHERE session_id = ? AND operation = 'userless_login'", [tempSessionId]);
 			res.clearCookie(TWO_FA_COOKIE_NAME, TWO_FA_COOKIE_OPTS);
+			res.clearCookie(PREAUTH_CSRF_COOKIE_NAME, { path: "/", secure: COOKIE_SECURE });
 			res.cookie(SESSION_COOKIE_NAME, sessionId, { httpOnly: true, secure: COOKIE_SECURE, sameSite: "strict", path: "/", maxAge: SESSION_TTL_MS });
-			const csrfToken = generateCsrfToken();
-			res.cookie(CSRF_COOKIE_NAME, csrfToken, { httpOnly: false, secure: COOKIE_SECURE, sameSite: "strict", path: "/", maxAge: SESSION_TTL_MS });
+			res.cookie(CSRF_COOKIE_NAME, generateCsrfTokenForSession(sessionId, "api"), { httpOnly: false, secure: COOKIE_SECURE, sameSite: "strict", path: "/", maxAge: SESSION_TTL_MS });
 			res.json({ success: true });
 			recordLoginAttempt(pool, { userId: userId, username: username, ipAddress: getClientIp(req), port: req.connection.remotePort || 0, success: true, failureReason: null, userAgent: req.headers['user-agent'] || null });
 		} catch (error) {
@@ -287,6 +288,7 @@ module.exports = (dependencies) => {
 	});
 
 	router.post("/login/verify", passkeyLimiter, requireSameOriginForAuth, async (req, res) => {
+		if (!verifyPreAuthCsrfToken(req)) return res.status(403).json({ error: "유효하지 않은 요청입니다." });
 		try {
 			const { credential } = req.body;
 			const tempSessionId = get2faCookie(req);
@@ -321,19 +323,16 @@ module.exports = (dependencies) => {
 			const countryCheck = checkCountryWhitelist({ country_whitelist_enabled: country_whitelist_enabled, allowed_login_countries: allowed_login_countries }, getClientIp(req));
 			if (!countryCheck.allowed) {
 				await recordLoginAttempt(pool, { userId: userId, username: username, ipAddress: getClientIp(req), port: req.connection.remotePort || 0, success: false, failureReason: countryCheck.reason, userAgent: req.headers['user-agent'] || null });
-				return res.status(403).json({ error: "현재 위치에서는 로그인할 수 없습니다. 계정 보안 설정을 확인하세요." });
+				return res.status(403).json({ error: "현재 위치에서는 로그인할 수 없습니다." });
 			}
-			const sessionResult = await createSession(
-				{ id: userId, username: username, blockDuplicateLogin: block_duplicate_login },
-				{ userAgent: req.headers["user-agent"] || "" }
-			);
+			const sessionResult = await createSession({ id: userId, username: username, blockDuplicateLogin: block_duplicate_login }, { userAgent: req.headers["user-agent"] || "" });
 			if (!sessionResult.success) return res.status(409).json({ error: sessionResult.error, code: 'DUPLICATE_LOGIN_BLOCKED' });
 			const sessionId = sessionResult.sessionId;
 			await pool.execute("DELETE FROM webauthn_challenges WHERE user_id = ? AND session_id = ? AND operation = 'passkey_login'", [userId, tempSessionId]);
 			res.clearCookie(TWO_FA_COOKIE_NAME, TWO_FA_COOKIE_OPTS);
+			res.clearCookie(PREAUTH_CSRF_COOKIE_NAME, { path: "/", secure: COOKIE_SECURE });
 			res.cookie(SESSION_COOKIE_NAME, sessionId, { httpOnly: true, secure: COOKIE_SECURE, sameSite: "strict", path: "/", maxAge: SESSION_TTL_MS });
-			const csrfToken = generateCsrfToken();
-			res.cookie(CSRF_COOKIE_NAME, csrfToken, { httpOnly: false, secure: COOKIE_SECURE, sameSite: "strict", path: "/", maxAge: SESSION_TTL_MS });
+			res.cookie(CSRF_COOKIE_NAME, generateCsrfTokenForSession(sessionId, "api"), { httpOnly: false, secure: COOKIE_SECURE, sameSite: "strict", path: "/", maxAge: SESSION_TTL_MS });
 			res.json({ success: true });
 			recordLoginAttempt(pool, { userId: userId, username: username, ipAddress: getClientIp(req), port: req.connection.remotePort || 0, success: true, failureReason: null, userAgent: req.headers['user-agent'] || null });
 		} catch (error) {
@@ -368,6 +367,7 @@ module.exports = (dependencies) => {
 	});
 
 	router.post("/authenticate/verify", passkeyLimiter, requireSameOriginForAuth, async (req, res) => {
+		if (!verifyPreAuthCsrfToken(req)) return res.status(403).json({ error: "유효하지 않은 요청입니다." });
 		try {
 			const { credential } = req.body;
 			const tempSessionId = get2faCookie(req);
@@ -397,10 +397,7 @@ module.exports = (dependencies) => {
 			const [userRows] = await pool.execute("SELECT username, block_duplicate_login FROM users WHERE id = ?", [userId]);
 			if (userRows.length === 0) return res.status(404).json({ error: "사용자를 찾을 수 없습니다." });
 			const { username, block_duplicate_login } = userRows[0];
-			const sessionResult = await createSession(
-				{ id: userId, username: username, blockDuplicateLogin: block_duplicate_login },
-				{ userAgent: req.headers["user-agent"] || "" }
-			);
+			const sessionResult = await createSession({ id: userId, username: username, blockDuplicateLogin: block_duplicate_login }, { userAgent: req.headers["user-agent"] || "" });
 			if (!sessionResult.success) {
 				await revokeSession(tempSessionId, "duplicate-login-blocked");
 				return res.status(409).json({ error: sessionResult.error, code: 'DUPLICATE_LOGIN_BLOCKED' });
@@ -408,10 +405,10 @@ module.exports = (dependencies) => {
 			const sessionId = sessionResult.sessionId;
 			await revokeSession(tempSessionId, "login-complete");
 			res.clearCookie(TWO_FA_COOKIE_NAME, TWO_FA_COOKIE_OPTS);
+			res.clearCookie(PREAUTH_CSRF_COOKIE_NAME, { path: "/", secure: COOKIE_SECURE });
 			await pool.execute("DELETE FROM webauthn_challenges WHERE user_id = ? AND session_id = ? AND operation = 'authentication'", [userId, tempSessionId]);
 			res.cookie(SESSION_COOKIE_NAME, sessionId, { httpOnly: true, secure: COOKIE_SECURE, sameSite: "strict", path: "/", maxAge: SESSION_TTL_MS });
-			const csrfToken = generateCsrfToken();
-			res.cookie(CSRF_COOKIE_NAME, csrfToken, { httpOnly: false, secure: COOKIE_SECURE, sameSite: "strict", path: "/", maxAge: SESSION_TTL_MS });
+			res.cookie(CSRF_COOKIE_NAME, generateCsrfTokenForSession(sessionId, "api"), { httpOnly: false, secure: COOKIE_SECURE, sameSite: "strict", path: "/", maxAge: SESSION_TTL_MS });
 			res.json({ success: true });
 			recordLoginAttempt(pool, { userId: userId, username: username, ipAddress: getClientIp(req), port: req.connection.remotePort || 0, success: true, failureReason: null, userAgent: req.headers['user-agent'] || null });
 		} catch (error) {

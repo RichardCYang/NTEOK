@@ -10,6 +10,10 @@ module.exports = (dependencies) => {
 		crypto,
 		createSession,
 		generateCsrfToken,
+		generateCsrfTokenForSession,
+		generatePreAuthCsrfToken,
+		verifyPreAuthCsrfToken,
+		PREAUTH_CSRF_COOKIE_NAME,
 		formatDateForDb,
 		validatePasswordStrength,
 		logError,
@@ -106,7 +110,20 @@ module.exports = (dependencies) => {
 		}
 	}
 
+	router.get("/csrf", (req, res) => {
+		const token = generatePreAuthCsrfToken();
+		res.cookie(PREAUTH_CSRF_COOKIE_NAME, token, {
+			httpOnly: false,
+			sameSite: "strict",
+			secure: COOKIE_SECURE,
+			path: "/",
+			maxAge: 30 * 60 * 1000
+		});
+		res.json({ ok: true, token });
+	});
+
 	router.post("/login", authLimiter, requireSameOriginForAuth, async (req, res) => {
+		if (!verifyPreAuthCsrfToken(req)) return res.status(403).json({ error: "유효하지 않은 요청입니다." });
 		const { username, password } = req.body || {};
 		if (typeof username !== "string" || typeof password !== "string") return res.status(400).json({ error: "아이디와 비밀번호를 모두 입력해 주세요." });
 		if (PASSWORD_CONTROL_CHARS_RE.test(password)) return res.status(401).json({ error: "아이디 또는 비밀번호가 올바르지 않습니다." });
@@ -138,7 +155,7 @@ module.exports = (dependencies) => {
 			const countryCheck = checkCountryWhitelist({ country_whitelist_enabled: user.country_whitelist_enabled, allowed_login_countries: user.allowed_login_countries }, getClientIp(req));
 			if (!countryCheck.allowed) {
 				await recordLoginAttempt(pool, { userId: user.id, username: user.username, ipAddress: getClientIp(req), port: req.connection.remotePort || 0, success: false, failureReason: countryCheck.reason, userAgent: req.headers['user-agent'] || null });
-				return res.status(403).json({ error: "현재 위치에서는 로그인할 수 없습니다. 계정 보안 설정을 확인하세요." });
+				return res.status(403).json({ error: "현재 위치에서는 로그인할 수 없습니다." });
 			}
 
 			await clearLoginFailures(redis, trimmedUsername);
@@ -151,14 +168,12 @@ module.exports = (dependencies) => {
 				return res.json({ ok: false, requires2FA: true, availableMethods: [user.totp_enabled && 'totp', user.passkey_enabled && 'passkey'].filter(Boolean) });
 			}
 
-			const sessionResult = await createSession(
-				{ id: user.id, username: user.username, blockDuplicateLogin: user.block_duplicate_login },
-				{ userAgent: req.headers["user-agent"] || "" }
-			);
+			const sessionResult = await createSession({ id: user.id, username: user.username, blockDuplicateLogin: user.block_duplicate_login }, { userAgent: req.headers["user-agent"] || "" });
 			if (!sessionResult.success) return res.status(409).json({ error: sessionResult.error, code: 'DUPLICATE_LOGIN_BLOCKED' });
 
+			res.clearCookie(PREAUTH_CSRF_COOKIE_NAME, { path: "/", secure: COOKIE_SECURE });
 			res.cookie(SESSION_COOKIE_NAME, sessionResult.sessionId, { httpOnly: true, sameSite: "strict", secure: COOKIE_SECURE, path: "/", maxAge: SESSION_TTL_MS });
-			res.cookie(CSRF_COOKIE_NAME, generateCsrfToken(), { httpOnly: false, sameSite: "strict", secure: COOKIE_SECURE, path: "/", maxAge: SESSION_TTL_MS });
+			res.cookie(CSRF_COOKIE_NAME, generateCsrfTokenForSession(sessionResult.sessionId, "api"), { httpOnly: false, sameSite: "strict", secure: COOKIE_SECURE, path: "/", maxAge: SESSION_TTL_MS });
 			res.json({ ok: true, user: { id: user.id, username: user.username } });
 			recordLoginAttempt(pool, { userId: user.id, username: user.username, ipAddress: getClientIp(req), port: req.connection.remotePort || 0, success: true, failureReason: null, userAgent: req.headers['user-agent'] || null });
 		} catch (error) {
@@ -174,38 +189,17 @@ module.exports = (dependencies) => {
 			const [rows] = await pool.execute(`SELECT password_hash FROM users WHERE id = ?`, [req.user.id]);
 			if (!rows.length) return res.status(404).json({ error: "사용자를 찾을 수 없습니다." });
 			if (!(await bcrypt.compare(password, rows[0].password_hash))) return res.status(401).json({ error: "비밀번호가 올바르지 않습니다." });
-			
 			const oldSessionId = req.cookies[SESSION_COOKIE_NAME];
 			const session = await getSession(oldSessionId);
 			if (session) {
 				const now = Date.now();
 				const newSessionId = crypto.randomBytes(24).toString("hex");
-				const rotatedSession = {
-					...session,
-					lastStrongAuthAt: now,
-					reauthenticatedAt: now
-				};
-				const remainingTtl = session.absoluteExpiry
-					? Math.max(1000, session.absoluteExpiry - now)
-					: SESSION_TTL_MS;
-
+				const rotatedSession = { ...session, lastStrongAuthAt: now, reauthenticatedAt: now };
+				const remainingTtl = session.absoluteExpiry ? Math.max(1000, session.absoluteExpiry - now) : SESSION_TTL_MS;
 				await saveSession(newSessionId, rotatedSession, remainingTtl);
 				await revokeSession(oldSessionId, "reauth-rotate");
-
-				res.cookie(SESSION_COOKIE_NAME, newSessionId, {
-					httpOnly: true,
-					sameSite: "strict",
-					secure: COOKIE_SECURE,
-					path: "/",
-					maxAge: Math.min(SESSION_TTL_MS, remainingTtl)
-				});
-				res.cookie(CSRF_COOKIE_NAME, generateCsrfToken(), {
-					httpOnly: false,
-					sameSite: "strict",
-					secure: COOKIE_SECURE,
-					path: "/",
-					maxAge: Math.min(SESSION_TTL_MS, remainingTtl)
-				});
+				res.cookie(SESSION_COOKIE_NAME, newSessionId, { httpOnly: true, sameSite: "strict", secure: COOKIE_SECURE, path: "/", maxAge: Math.min(SESSION_TTL_MS, remainingTtl) });
+				res.cookie(CSRF_COOKIE_NAME, generateCsrfTokenForSession(newSessionId, "api"), { httpOnly: false, sameSite: "strict", secure: COOKIE_SECURE, path: "/", maxAge: Math.min(SESSION_TTL_MS, remainingTtl) });
 			}
 			res.json({ ok: true });
 		} catch (error) {
@@ -297,95 +291,32 @@ module.exports = (dependencies) => {
 	});
 
 	router.post("/register", authLimiter, requireSameOriginForAuth, async (req, res) => {
+		if (!verifyPreAuthCsrfToken(req)) return res.status(403).json({ error: "유효하지 않은 요청입니다." });
 		const { username, password } = req.body || {};
-
 		if (typeof username !== "string" || typeof password !== "string") return res.status(400).json({ error: "아이디와 비밀번호를 모두 입력해 주세요." });
-
 		const trimmedUsername = username.trim();
-
 		if (trimmedUsername.length < 3 || trimmedUsername.length > 64) return res.status(400).json({ error: "아이디는 3~64자 사이로 입력해 주세요." });
-
-		if (USERNAME_CONTROL_CHARS_RE.test(trimmedUsername) || !USERNAME_SAFE_RE.test(trimmedUsername)) return res.status(400).json({ error: "아이디는 한글/영문/숫자 및 . _ - 만 사용할 수 있습니다. (공백/특수문자/HTML 엔티티 불가)" });
-
+		if (USERNAME_CONTROL_CHARS_RE.test(trimmedUsername) || !USERNAME_SAFE_RE.test(trimmedUsername)) return res.status(400).json({ error: "아이디 형식이 올바르지 않습니다." });
 		const passwordValidation = validatePasswordStrength(password);
 		if (!passwordValidation.valid) return res.status(400).json({ error: passwordValidation.error });
 
 		try {
-			const [rows] = await pool.execute(
-				`
-				SELECT id
-				FROM users
-				WHERE username = ?
-				`,
-				[trimmedUsername]
-			);
-
+			const [rows] = await pool.execute(`SELECT id FROM users WHERE username = ?`, [trimmedUsername]);
 			if (rows.length > 0) return res.status(409).json({ error: "이미 사용 중인 아이디입니다." });
-
 			const now = new Date();
 			const nowStr = formatDateForDb(now);
-
 			const passwordHash = await bcrypt.hash(password, BCRYPT_SALT_ROUNDS);
-
-			const [result] = await pool.execute(
-				`
-				INSERT INTO users (username, password_hash, created_at, updated_at)
-				VALUES (?, ?, ?, ?)
-				`,
-				[trimmedUsername, passwordHash, nowStr, nowStr]
-			);
-
-			const user = {
-				id: result.insertId,
-				username: trimmedUsername,
-				blockDuplicateLogin: false 
-			};
-
+			const [result] = await pool.execute(`INSERT INTO users (username, password_hash, created_at, updated_at) VALUES (?, ?, ?, ?)`, [trimmedUsername, passwordHash, nowStr, nowStr]);
+			const user = { id: result.insertId, username: trimmedUsername, blockDuplicateLogin: false };
 			const storageId = 'stg-' + now.getTime() + '-' + crypto.randomBytes(4).toString('hex');
-			await storagesRepo.createStorage({
-				userId: user.id,
-				id: storageId,
-				name: "기본 저장소",
-				sortOrder: 0,
-				createdAt: nowStr,
-				updatedAt: nowStr
-			});
-
+			await storagesRepo.createStorage({ userId: user.id, id: storageId, name: "기본 저장소", sortOrder: 0, createdAt: nowStr, updatedAt: nowStr });
 			const sessionResult = await createSession(user, { userAgent: req.headers["user-agent"] || "" });
+			if (!sessionResult.success) return res.status(409).json({ error: sessionResult.error, code: 'DUPLICATE_LOGIN_BLOCKED' });
 
-			if (!sessionResult.success) {
-				return res.status(409).json({
-					error: sessionResult.error,
-					code: 'DUPLICATE_LOGIN_BLOCKED'
-				});
-			}
-
-			const sessionId = sessionResult.sessionId;
-
-			res.cookie(SESSION_COOKIE_NAME, sessionId, {
-				httpOnly: true,
-				sameSite: "strict",
-				secure: COOKIE_SECURE,
-				path: "/",
-				maxAge: SESSION_TTL_MS
-			});
-
-			const newCsrfToken = generateCsrfToken();
-			res.cookie(CSRF_COOKIE_NAME, newCsrfToken, {
-				httpOnly: false,
-				sameSite: "strict",
-				secure: COOKIE_SECURE,
-				path: "/",
-				maxAge: SESSION_TTL_MS
-			});
-
-			return res.status(201).json({
-				ok: true,
-				user: {
-					id: user.id,
-					username: user.username
-				}
-			});
+			res.clearCookie(PREAUTH_CSRF_COOKIE_NAME, { path: "/", secure: COOKIE_SECURE });
+			res.cookie(SESSION_COOKIE_NAME, sessionResult.sessionId, { httpOnly: true, sameSite: "strict", secure: COOKIE_SECURE, path: "/", maxAge: SESSION_TTL_MS });
+			res.cookie(CSRF_COOKIE_NAME, generateCsrfTokenForSession(sessionResult.sessionId, "api"), { httpOnly: false, sameSite: "strict", secure: COOKIE_SECURE, path: "/", maxAge: SESSION_TTL_MS });
+			return res.status(201).json({ ok: true, user: { id: user.id, username: user.username } });
 		} catch (error) {
 			logError("POST /api/auth/register", error);
 			return res.status(500).json({ error: "회원가입 처리 중 오류가 발생했습니다." });

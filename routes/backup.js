@@ -69,12 +69,14 @@ if (!fs.existsSync(tempDir)) {
     fs.mkdirSync(tempDir, { recursive: true });
 }
 
-const MAX_BACKUP_ZIP_BYTES = 20 * 1024 * 1024;        	
-const MAX_ZIP_ENTRIES = 2000;                         	
-const MAX_ENTRY_UNCOMPRESSED_BYTES = 10 * 1024 * 1024;	
-const MAX_TOTAL_UNCOMPRESSED_BYTES = 200 * 1024 * 1024; 
-const MAX_SUSPICIOUS_RATIO = 2000;                    	
-const MIN_RATIO_ENTRY_BYTES = 1 * 1024 * 1024;        	
+const MAX_BACKUP_ZIP_BYTES = 50 * 1024 * 1024;
+const MAX_ZIP_ENTRIES = 1000;
+const MAX_ENTRY_UNCOMPRESSED_BYTES = 5 * 1024 * 1024;
+const MAX_TOTAL_UNCOMPRESSED_BYTES = 100 * 1024 * 1024;
+const MAX_SUSPICIOUS_RATIO = 2000;
+const MIN_RATIO_ENTRY_BYTES = 1 * 1024 * 1024;
+const MAX_HTML_PAGES = 500;
+const MAX_PAGE_HTML_BYTES = 1024 * 1024;
 
 const MAX_ENTRY_BUFFER_BYTES = 256 * 1024; 
 
@@ -353,10 +355,9 @@ module.exports = (dependencies) => {
 		const zipfile = await openZipFile(zipPath);
 		const zipEntries = [];
 		const extractDir = createImportTempDir();
-
 		const allowedTopLevel = ['backup-info.json', 'file-refs.json', 'workspaces/', 'collections/', 'pages/', 'images/', 'paperclip/', 'e2ee/'];
-
 		let entryCount = 0;
+		let htmlEntryCount = 0;
 		let totalHeaderUncompressed = 0;
 		let totalBytesRead = 0;
 		const getTotalBytes = () => totalBytesRead;
@@ -368,94 +369,51 @@ module.exports = (dependencies) => {
 				try { fs.rmSync(extractDir, { recursive: true, force: true }); } catch (_) {}
 				reject(err);
 			}
-
 			zipfile.on('error', fail);
 			zipfile.on('end', () => resolve({ zipEntries, extractDir }));
-
 			zipfile.on('entry', (entry) => {
 				(async () => {
 					try {
 						entryCount++;
-						if (entryCount > Math.min(BACKUP_IMPORT_MAX_ENTRIES, MAX_ZIP_ENTRIES)) {
-							throw new Error(`[보안] 백업 ZIP 엔트리 수가 너무 많습니다. (최대 ${Math.min(BACKUP_IMPORT_MAX_ENTRIES, MAX_ZIP_ENTRIES)}개)`);
-						}
-
+						if (entryCount > MAX_ZIP_ENTRIES) throw new Error(`[보안] 백업 ZIP 엔트리 수가 너무 많습니다. (최대 ${MAX_ZIP_ENTRIES}개)`);
 						const entryName = String(entry.fileName || '');
 						if (!entryName) throw new Error('[보안] ZIP 엔트리 이름이 비어 있습니다.');
-
-						if (entryName.includes('\\') || entryName.includes('\0')) {
-							throw new Error('[보안] ZIP 엔트리 경로 형식이 유효하지 않습니다.');
-						}
-
-						if (path.isAbsolute(entryName) || entryName.split('/').some(seg => seg === '..' || seg === '.')) {
-							throw new Error('[보안] ZIP 엔트리 경로 조작이 감지되었습니다.');
-						}
-
-						if (entryName.endsWith('/')) {
-							zipfile.readEntry();
-							return;
-						}
-
+						if (entryName.includes('\\') || entryName.includes('\0')) throw new Error('[보안] ZIP 엔트리 경로 형식이 유효하지 않습니다.');
+						if (path.isAbsolute(entryName) || entryName.split('/').some(seg => seg === '..' || seg === '.')) throw new Error('[보안] ZIP 엔트리 경로 조작이 감지되었습니다.');
+						if (entryName.endsWith('/')) { zipfile.readEntry(); return; }
 						const allowed = allowedTopLevel.some(prefix => entryName === prefix || entryName.startsWith(prefix));
-						if (!allowed) {
-							zipfile.readEntry();
-							return;
-						}
-
+						if (!allowed) { zipfile.readEntry(); return; }
 						const uncompressed = Number(entry.uncompressedSize || 0);
 						const compressed = Number(entry.compressedSize || 0);
-						if (!Number.isFinite(uncompressed) || uncompressed < 0) {
-							throw new Error('[보안] ZIP 엔트리 크기 정보를 확인할 수 없습니다.');
+						if (!Number.isFinite(uncompressed) || uncompressed < 0) throw new Error('[보안] ZIP 엔트리 크기 정보를 확인할 수 없습니다.');
+						if (uncompressed > MAX_ENTRY_UNCOMPRESSED_BYTES) throw new Error('[보안] 백업 파일 내 일부 항목이 너무 큽니다.');
+						if (entryName.startsWith('pages/') && entryName.endsWith('.html')) {
+							htmlEntryCount++;
+							if (htmlEntryCount > MAX_HTML_PAGES) throw new Error(`[보안] 백업 내 HTML 페이지 수가 너무 많습니다. (최대 ${MAX_HTML_PAGES}개)`);
+							if (uncompressed > MAX_PAGE_HTML_BYTES) throw new Error(`[보안] 백업 내 개별 HTML 페이지 크기가 제한을 초과했습니다. (최대 ${MAX_PAGE_HTML_BYTES / 1024}KB)`);
 						}
-
-						if (uncompressed > BACKUP_IMPORT_MAX_ENTRY_UNCOMPRESSED) {
-							throw new Error('[보안] 백업 파일 내 일부 항목이 너무 큽니다.');
-						}
-
 						totalHeaderUncompressed += uncompressed;
-						if (totalHeaderUncompressed > BACKUP_IMPORT_MAX_TOTAL_UNCOMPRESSED) {
-							throw new Error('[보안] 백업 파일의 전체 해제 용량이 너무 큽니다.');
-						}
-
+						if (totalHeaderUncompressed > MAX_TOTAL_UNCOMPRESSED_BYTES) throw new Error('[보안] 백업 파일의 전체 해제 용량이 너무 큽니다.');
 						if (compressed > 0 && uncompressed >= MIN_RATIO_ENTRY_BYTES) {
 							const ratio = uncompressed / compressed;
-							if (ratio > MAX_SUSPICIOUS_RATIO) {
-								throw new Error('[보안] 압축 비율이 비정상적으로 높아 Zip Bomb 의심으로 차단했습니다.');
-							}
+							if (ratio > MAX_SUSPICIOUS_RATIO) throw new Error('[보안] 압축 비율이 비정상적으로 높아 Zip Bomb 의심으로 차단했습니다.');
 						}
-
-						const perEntryLimitBytes = Math.min(BACKUP_IMPORT_MAX_ENTRY_UNCOMPRESSED, MAX_ENTRY_UNCOMPRESSED_BYTES);
+						const perEntryLimitBytes = MAX_ENTRY_UNCOMPRESSED_BYTES;
 						const forceToDisk = entryName.startsWith('pages/') || entryName.startsWith('images/') || entryName.startsWith('e2ee/');
-						const canBuffer = !forceToDisk && Number(entry.uncompressedSize || 0) <= MAX_ENTRY_BUFFER_BYTES;
-
+						const canBuffer = !forceToDisk && uncompressed <= MAX_ENTRY_BUFFER_BYTES;
 						const stream = await openZipReadStream(zipfile, entry);
-
 						if (canBuffer) {
-							const buf = await readStreamToBufferWithLimits(stream, {
-								perEntryLimitBytes,
-								getTotalBytes,
-								addTotalBytes,
-								context: entryName
-							});
+							const buf = await readStreamToBufferWithLimits(stream, { perEntryLimitBytes, getTotalBytes, addTotalBytes, context: entryName });
 							zipEntries.push({ entryName, isDirectory: false, data: buf });
 						} else {
 							const outPath = entryTempPath(extractDir, entryName);
-							await readStreamToTempFileWithLimits(stream, {
-								outPath,
-								perEntryLimitBytes,
-								getTotalBytes,
-								addTotalBytes,
-								context: entryName
-							});
+							await readStreamToTempFileWithLimits(stream, { outPath, perEntryLimitBytes, getTotalBytes, addTotalBytes, context: entryName });
 							zipEntries.push({ entryName, isDirectory: false, tempFilePath: outPath });
 						}
 						zipfile.readEntry();
-					} catch (e) {
-						fail(e);
-					}
+					} catch (e) { fail(e); }
 				})();
 			});
-
 			zipfile.readEntry();
 		});
 	}

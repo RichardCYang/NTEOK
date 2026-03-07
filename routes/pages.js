@@ -624,77 +624,37 @@ module.exports = (dependencies) => {
     router.get("/fetch-metadata", authMiddleware, outboundFetchLimiter, async (req, res) => {
         const { url } = req.query;
         if (!url) return res.status(400).json({ error: "URL이 필요합니다." });
-
         try {
             let targetUrl;
-            try {
-                targetUrl = new URL(url);
-            } catch (e) {
-                return res.status(400).json({ error: "유효하지 않은 URL 형식입니다." });
-            }
-
-            if (!['http:', 'https:'].includes(targetUrl.protocol)) {
-                return res.status(400).json({ error: "HTTP/HTTPS 프로토콜만 허용됩니다." });
-            }
-
-            if (targetUrl.username || targetUrl.password) {
-                return res.status(400).json({ error: "인증 정보가 포함된 URL은 허용되지 않습니다." });
-            }
-
+            try { targetUrl = new URL(url); } catch (e) { return res.status(400).json({ error: "유효하지 않은 URL 형식입니다." }); }
+            if (!['http:', 'https:'].includes(targetUrl.protocol)) return res.status(400).json({ error: "HTTP/HTTPS 프로토콜만 허용됩니다." });
+            if (targetUrl.username || targetUrl.password) return res.status(400).json({ error: "인증 정보가 포함된 URL은 허용되지 않습니다." });
+            if (typeof isHostnameAllowedForPreview === "function" && !isHostnameAllowedForPreview(targetUrl.hostname)) return res.status(403).json({ error: "허용되지 않은 호스트입니다." });
             const resolvedIps = await resolvePublicOutboundAddresses(targetUrl.hostname, isPrivateOrLocalIP);
             const html = await fetchHtmlWithoutRedirects(targetUrl, resolvedIps, isPrivateOrLocalIP);
-
             const $ = cheerio.load(html);
             const title = $('title').first().text() || $('meta[property="og:title"]').attr('content') || $('meta[name="twitter:title"]').attr('content') || targetUrl.hostname;
-
             let favicon = null;
-            const faviconSelectors = [
-                'link[rel="apple-touch-icon"]',
-                'link[rel="apple-touch-icon-precomposed"]',
-                'link[rel="icon"]',
-                'link[rel="shortcut icon"]',
-                'link[rel="alternate icon"]'
-            ];
-
+            const faviconSelectors = ['link[rel="apple-touch-icon"]', 'link[rel="apple-touch-icon-precomposed"]', 'link[rel="icon"]', 'link[rel="shortcut icon"]', 'link[rel="alternate icon"]'];
             for (const selector of faviconSelectors) {
                 const href = $(selector).attr('href');
-                if (href) {
-                    favicon = href;
-                    break;
-                }
+                if (href) { favicon = href; break; }
             }
-
             const faviconCandidate = favicon || '/favicon.ico';
             const safeFavicon = await sanitizeBookmarkFaviconUrl(faviconCandidate, targetUrl);
-
-            res.json({
-                title: title.trim().substring(0, 500),
-                favicon: safeFavicon,
-                url: targetUrl.toString()
-            });
-
+            res.json({ title: title.trim().substring(0, 500), favicon: safeFavicon, url: targetUrl.toString() });
         } catch (error) {
             switch (String(error?.code || '')) {
-                case 'HOST_NOT_FOUND':
-                    return res.status(400).json({ error: "호스트를 찾을 수 없습니다." });
-                case 'BLOCKED_PRIVATE_IP':
-                    return res.status(403).json({ error: "허용되지 않은 호스트입니다." });
-                case 'DISALLOWED_PORT':
-                    return res.status(400).json({ error: "허용되지 않은 포트입니다." });
-                case 'REDIRECT_BLOCKED':
-                    return res.status(400).json({ error: "리다이렉트 URL은 허용되지 않습니다." });
-                case 'NOT_HTML':
-                    return res.status(400).json({ error: "HTML 콘텐츠가 아닙니다." });
-                case 'TOO_LARGE':
-                    return res.status(413).json({ error: "메타데이터 응답이 너무 큽니다." });
+                case 'HOST_NOT_FOUND': return res.status(400).json({ error: "호스트를 찾을 수 없습니다." });
+                case 'BLOCKED_PRIVATE_IP': return res.status(403).json({ error: "허용되지 않은 호스트입니다." });
+                case 'DISALLOWED_PORT': return res.status(400).json({ error: "허용되지 않은 포트입니다." });
+                case 'REDIRECT_BLOCKED': return res.status(400).json({ error: "리다이렉트 URL은 허용되지 않습니다." });
+                case 'NOT_HTML': return res.status(400).json({ error: "HTML 콘텐츠가 아닙니다." });
+                case 'TOO_LARGE': return res.status(413).json({ error: "메타데이터 응답이 너무 큽니다." });
                 case 'ETIMEDOUT':
-                case 'ECONNABORTED':
-                    return res.status(504).json({ error: "요청 시간이 초과되었습니다." });
-                case 'UPSTREAM_BAD_STATUS':
-                    return res.status(502).json({ error: "상대 서버 응답이 유효하지 않습니다." });
-                default:
-                    logError("GET /api/pages/fetch-metadata", error);
-                    return res.status(500).json({ error: "메타데이터를 가져오는데 실패했습니다." });
+                case 'ECONNABORTED': return res.status(504).json({ error: "요청 시간이 초과되었습니다." });
+                case 'UPSTREAM_BAD_STATUS': return res.status(502).json({ error: "상대 서버 응답이 유효하지 않습니다." });
+                default: logError("GET /api/pages/fetch-metadata", error); return res.status(500).json({ error: "메타데이터를 가져오는데 실패했습니다." });
             }
         }
     });

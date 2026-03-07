@@ -91,7 +91,14 @@ function cleanupUploadedFiles(req) {
     }
 }
 const compression = require("compression");
-const { installDomPurifySecurityHooks, assertImageFileSignature } = require("./security-utils");
+const {
+	detectImageTypeFromMagic,
+	assertImageFileSignature,
+	assertSafeAttachmentFile,
+	assertSafeCsvContent,
+	installDomPurifySecurityHooks,
+	isHostnameAllowedForPreview
+} = require("./security-utils");
 const ipKeyGenerator = expressRateLimit.ipKeyGenerator || (expressRateLimit.default && expressRateLimit.default.ipKeyGenerator);
 
 const CONTROL_CHARS_RE = /[\u0000-\u001F\u007F]/;
@@ -396,6 +403,69 @@ const COOKIE_SECURE = (!ALLOW_INSECURE_COOKIES) && (FORCE_SECURE_COOKIES || IS_H
 
 const SESSION_COOKIE_NAME = COOKIE_SECURE ? `__Host-${SESSION_COOKIE_NAME_RAW}` : SESSION_COOKIE_NAME_RAW;
 const CSRF_COOKIE_NAME = COOKIE_SECURE ? `__Host-${CSRF_COOKIE_NAME_RAW}` : CSRF_COOKIE_NAME_RAW;
+const PREAUTH_CSRF_COOKIE_NAME_RAW = "nteok_preauth_csrf";
+const PREAUTH_CSRF_COOKIE_NAME = COOKIE_SECURE ? `__Host-${PREAUTH_CSRF_COOKIE_NAME_RAW}` : PREAUTH_CSRF_COOKIE_NAME_RAW;
+
+const CSRF_HMAC_KEY = Buffer.from(
+	process.env.CSRF_HMAC_KEY || crypto.randomBytes(32).toString("hex"),
+	"utf8"
+);
+
+function generateCsrfTokenForSession(sessionId, purpose = "api") {
+	const sid = String(sessionId || "");
+	const ts = String(Date.now());
+	const nonce = crypto.randomBytes(16).toString("hex");
+	const payload = `${sid}.${purpose}.${ts}.${nonce}`;
+	const sig = crypto.createHmac("sha256", CSRF_HMAC_KEY).update(payload).digest("hex");
+	return `${payload}.${sig}`;
+}
+
+function verifyCsrfTokenForSession(sessionId, token, purpose = "api", maxAgeMs = 2 * 60 * 60 * 1000) {
+	if (typeof token !== "string") return false;
+	const parts = token.split(".");
+	if (parts.length !== 5) return false;
+	const [sid, tokPurpose, ts, nonce, sig] = parts;
+	if (sid !== String(sessionId || "")) return false;
+	if (tokPurpose !== purpose) return false;
+	if (!/^\d+$/.test(ts)) return false;
+	const age = Date.now() - Number(ts);
+	if (age < 0 || age > maxAgeMs) return false;
+	if (!/^[a-f0-9]{32}$/i.test(nonce) || !/^[a-f0-9]{64}$/i.test(sig)) return false;
+	const payload = `${sid}.${tokPurpose}.${ts}.${nonce}`;
+	const expected = crypto.createHmac("sha256", CSRF_HMAC_KEY).update(payload).digest("hex");
+	try {
+		return crypto.timingSafeEqual(Buffer.from(sig, "hex"), Buffer.from(expected, "hex"));
+	} catch {
+		return false;
+	}
+}
+
+function generatePreAuthCsrfToken() {
+	const nonce = crypto.randomBytes(16).toString("hex");
+	const ts = String(Date.now());
+	const payload = `preauth.${ts}.${nonce}`;
+	const sig = crypto.createHmac("sha256", CSRF_HMAC_KEY).update(payload).digest("hex");
+	return `${payload}.${sig}`;
+}
+
+function verifyPreAuthCsrfToken(req, maxAgeMs = 30 * 60 * 1000) {
+	const tokenFromHeader = req.headers["x-csrf-token"];
+	const tokenFromCookie = req.cookies[PREAUTH_CSRF_COOKIE_NAME];
+	if (typeof tokenFromHeader !== "string" || tokenFromHeader !== tokenFromCookie) return false;
+	const parts = tokenFromHeader.split(".");
+	if (parts.length !== 4) return false;
+	const [kind, ts, nonce, sig] = parts;
+	if (kind !== "preauth" || !/^\d+$/.test(ts)) return false;
+	const age = Date.now() - Number(ts);
+	if (age < 0 || age > maxAgeMs) return false;
+	const payload = `${kind}.${ts}.${nonce}`;
+	const expected = crypto.createHmac("sha256", CSRF_HMAC_KEY).update(payload).digest("hex");
+	try {
+		return crypto.timingSafeEqual(Buffer.from(sig, "hex"), Buffer.from(expected, "hex"));
+	} catch {
+		return false;
+	}
+}
 
 const ENABLE_HSTS = String(process.env.ENABLE_HSTS ?? "true").toLowerCase() !== "false";
 function isLocalhostHost(host) {
@@ -877,24 +947,23 @@ function logError(context, error) {
     }
 }
 
-function verifyCsrfToken(req) {
-    const tokenFromHeader = req.headers["x-csrf-token"];
-    const tokenFromCookie = req.cookies[CSRF_COOKIE_NAME];
+async function verifyCsrfToken(req) {
+	const tokenFromHeader = req.headers["x-csrf-token"];
+	const tokenFromCookie = req.cookies[CSRF_COOKIE_NAME];
+	if (typeof tokenFromHeader !== "string" || typeof tokenFromCookie !== "string") return false;
+	if (tokenFromHeader !== tokenFromCookie) return false;
+	const sessionId = req.cookies?.[SESSION_COOKIE_NAME];
+	if (!sessionId) return false;
+	return verifyCsrfTokenForSession(sessionId, tokenFromHeader, "api");
+}
 
-    if (typeof tokenFromHeader !== "string" || typeof tokenFromCookie !== "string") return false;
-    if (tokenFromHeader.length !== tokenFromCookie.length) return false;
-
-    try
-    {
-	    return crypto.timingSafeEqual(
-	        Buffer.from(tokenFromHeader, "utf8"),
-	        Buffer.from(tokenFromCookie, "utf8")
-	    );
-    }
-    catch
-    {
-		return false;
-    }
+async function csrfMiddleware(req, res, next) {
+	if (["GET", "HEAD", "OPTIONS"].includes(req.method)) return next();
+	if (!(await verifyCsrfToken(req))) {
+		console.warn("CSRF 토큰 검증 실패:", req.path, req.method);
+		return res.status(403).json({ error: "CSRF 토큰이 유효하지 않습니다." });
+	}
+	next();
 }
 
 function hashUserAgent(ua) {
@@ -906,46 +975,14 @@ async function createSession(user, ctx = {}) {
 	const now = Date.now();
 	const expiresAt = now + SESSION_TTL_MS;
 	const absoluteExpiry = now + SESSION_ABSOLUTE_TTL_MS;
-
 	const existingSessions = await listUserSessions(user.id);
 	if (existingSessions && existingSessions.length > 0) {
-		const maskedUsername = user.username.substring(0, 2) + '***';
-		console.log(`[중복 로그인 감지] 사용자 ID ${user.id} (${maskedUsername})의 기존 세션 ${existingSessions.length}개 발견`);
-
-		if (user.blockDuplicateLogin) {
-			console.log(`[중복 로그인 차단] 사용자 ID ${user.id} (${maskedUsername})의 새 로그인 시도 거부`);
-			return {
-				success: false,
-				error: '이미 다른 위치에서 로그인 중입니다. 기존 세션을 먼저 종료하거나, 설정에서 "중복 로그인 차단" 옵션을 해제해주세요.'
-			};
-		}
-
-		wsBroadcastToUser(user.id, 'duplicate-login', {
-			message: '다른 위치에서 로그인하여 현재 세션이 종료됩니다.',
-			timestamp: new Date().toISOString()
-		});
-
-		for (const oldSessionId of existingSessions) {
-			await revokeSession(oldSessionId, "duplicate-login");
-		}
+		if (user.blockDuplicateLogin) return { success: false, error: '이미 다른 위치에서 로그인 중입니다.' };
+		wsBroadcastToUser(user.id, 'duplicate-login', { message: '다른 위치에서 로그인하여 현재 세션이 종료됩니다.', timestamp: new Date().toISOString() });
+		for (const oldSessionId of existingSessions) await revokeSession(oldSessionId, "duplicate-login");
 	}
-
-	const session = {
-		type: "auth",
-		userId: user.id,
-		username: user.username,
-		uaHash: hashUserAgent(ctx.userAgent || ""),
-		expiresAt,
-		absoluteExpiry,
-		createdAt: now,
-		lastStrongAuthAt: now
-	};
-
+	const session = { type: "auth", userId: user.id, username: user.username, uaHash: hashUserAgent(ctx.userAgent || ""), expiresAt, absoluteExpiry, createdAt: now, lastStrongAuthAt: now };
 	await saveSession(sessionId, session, SESSION_ABSOLUTE_TTL_MS);
-
-	const maskedUsername = user.username.substring(0, 2) + '***';
-	console.log(`[세션 생성] 사용자: ${maskedUsername} (ID: ${user.id}), 세션 ID: ${sessionId.substring(0, 8)}...`);
-
 	return { success: true, sessionId };
 }
 
@@ -954,62 +991,27 @@ async function getSessionFromRequest(req) {
 	const sessionId = req.cookies[SESSION_COOKIE_NAME];
 	if (!sessionId) return null;
 	const session = await getSession(sessionId);
-	if (!session) return null;
-	if (session.type !== 'auth' || !session.userId) return null;
-
+	if (!session || session.type !== 'auth' || !session.userId) return null;
 	const currentUaHash = hashUserAgent(req.headers["user-agent"] || "");
 	if (session.uaHash && session.uaHash !== currentUaHash) {
-		console.warn(`[세션 차단] UA 불일치 - 세션 ID ${sessionId.substring(0, 8)}...`);
 		await revokeSession(sessionId, "ua-mismatch");
 		return null;
 	}
-
-	if (!session.expiresAt || !session.absoluteExpiry) {
-		await revokeSession(sessionId, "invalid-session");
-		return null;
-	}
-
 	const now = Date.now();
-	if (session.absoluteExpiry <= now) {
-		console.warn(`[세션 만료] 세션 ID ${sessionId.substring(0, 8)}... - 절대 만료 시간 초과`);
-		await revokeSession(sessionId, "absolute-expiry");
+	if (session.absoluteExpiry <= now || session.expiresAt <= now) {
+		await revokeSession(sessionId, "session-expired");
 		return null;
 	}
-
-	if (session.expiresAt <= now) {
-		console.warn(`[세션 만료] 세션 ID ${sessionId.substring(0, 8)}... - 비활성 시간 초과`);
-		await revokeSession(sessionId, "inactivity-expiry");
-		return null;
-	}
-
 	session.expiresAt = now + SESSION_TTL_MS;
 	await saveSession(sessionId, session, SESSION_ABSOLUTE_TTL_MS);
-
 	return { id: sessionId, ...session };
 }
 
 async function authMiddleware(req, res, next) {
 	const session = await getSessionFromRequest(req);
-	if (!session) {
-		const sessionId = req.cookies[SESSION_COOKIE_NAME];
-		const maskedSessionId = sessionId ? `${sessionId.substring(0, 8)}...` : '없음';
-		console.warn(`[인증 실패] ${req.method} ${req.path} - 세션 ID: ${maskedSessionId}, IP: ${req.clientIp}`);
-		return res.status(401).json({ error: "로그인이 필요합니다." });
-	}
+	if (!session) return res.status(401).json({ error: "로그인이 필요합니다." });
 	req.user = { id: session.userId, username: session.username };
 	next();
-}
-
-function csrfMiddleware(req, res, next) {
-    if (["GET", "HEAD", "OPTIONS"].includes(req.method))
-        return next();
-
-    if (!verifyCsrfToken(req)) {
-        console.warn("CSRF 토큰 검증 실패:", req.path, req.method);
-        return res.status(403).json({ error: "CSRF 토큰이 유효하지 않습니다." });
-    }
-
-    next();
 }
 
 async function initDb() {
@@ -1634,17 +1636,18 @@ app.use((req, res, next) => {
 });
 
 app.use((req, res, next) => {
-    if (!req.cookies[CSRF_COOKIE_NAME]) {
-        const token = generateCsrfToken();
-        res.cookie(CSRF_COOKIE_NAME, token, {
-            httpOnly: false, 
-            sameSite: "strict",
-            secure: COOKIE_SECURE,  
-            path: "/",
-            maxAge: SESSION_TTL_MS
-        });
-    }
-    next();
+	const sessionId = req.cookies?.[SESSION_COOKIE_NAME];
+	if (sessionId && !req.cookies[CSRF_COOKIE_NAME]) {
+		const token = generateCsrfTokenForSession(sessionId, "api");
+		res.cookie(CSRF_COOKIE_NAME, token, {
+			httpOnly: false,
+			sameSite: "strict",
+			secure: COOKIE_SECURE,
+			path: "/",
+			maxAge: SESSION_TTL_MS
+		});
+	}
+	next();
 });
 
 app.use("/api", csrfMiddleware);
@@ -2167,6 +2170,10 @@ function installGracefulShutdownHandlers(httpServer, pool, sanitizeHtmlContent) 
 			createSession,
 			getSessionFromRequest,
 			generateCsrfToken,
+			generateCsrfTokenForSession,
+			generatePreAuthCsrfToken,
+			verifyPreAuthCsrfToken,
+			PREAUTH_CSRF_COOKIE_NAME,
 			encryptTotpSecret,
 			decryptTotpSecret,
 			formatDateForDb,
@@ -2223,7 +2230,8 @@ function installGracefulShutdownHandlers(httpServer, pool, sanitizeHtmlContent) 
 			maskIPAddress,
 			isPrivateOrLocalIP,
 			checkCountryWhitelist,
-			getClientIpFromRequest
+			getClientIpFromRequest,
+			isHostnameAllowedForPreview
 		};
 
         const indexRoutes = require('./routes/index')(routeDependencies);
