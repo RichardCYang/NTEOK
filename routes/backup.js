@@ -1269,14 +1269,14 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
 
                 const stagingPath = path.join(stagingDir, `${crypto.randomBytes(12).toString('hex')}-${unique.filename}`);
                 
-                const processFile = (srcPath, destPath, buf) => {
+                const processFile = async (srcPath, destPath, buf) => {
                     if (buf) {
                         if (isImage && !isSupportedImageBuffer(buf, unique.filename)) return false;
                         if (!isImage) {
                             try {
                                 const tp = path.join(tempDir, `v-${crypto.randomBytes(8).toString('hex')}`);
                                 fs.writeFileSync(tp, buf);
-                                assertSafeAttachmentFile(tp, unique.filename);
+                                await assertSafeAttachmentFile(tp, unique.filename);
                                 fs.unlinkSync(tp);
                             } catch (e) { return false; }
                         }
@@ -1289,14 +1289,14 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
                             fs.closeSync(fd);
                             if (!isSupportedImageBuffer(h.slice(0, n), unique.filename)) return false;
                         } else {
-                            try { assertSafeAttachmentFile(srcPath, unique.filename); } catch (e) { return false; }
+                            try { await assertSafeAttachmentFile(srcPath, unique.filename); } catch (e) { return false; }
                         }
                         fs.copyFileSync(srcPath, destPath);
                     }
                     return true;
                 };
 
-                if (processFile(entry.tempFilePath, stagingPath, entry.data)) {
+                if (await processFile(entry.tempFilePath, stagingPath, entry.data)) {
                     stagingFiles.push({ stagingPath, targetPath: unique.fullPath });
                     if (isImage) totalImages++;
                     else totalPaperclips++;

@@ -299,7 +299,7 @@ module.exports = (dependencies) => {
 			await revokeSession(tempSessionId, "login-complete");
 			res.clearCookie(TWO_FA_COOKIE_NAME, TWO_FA_COOKIE_OPTS);
 			res.cookie(SESSION_COOKIE_NAME, sessionId, { httpOnly: true, secure: COOKIE_SECURE, sameSite: "strict", path: "/", maxAge: SESSION_TTL_MS });
-			const csrfToken = generateCsrfToken();
+			const csrfToken = generateCsrfTokenForSession(sessionId);
 			res.cookie(CSRF_COOKIE_NAME, csrfToken, { httpOnly: false, secure: COOKIE_SECURE, sameSite: "strict", path: "/", maxAge: SESSION_TTL_MS });
 			res.json({ success: true });
 			recordLoginAttempt(pool, { userId: userId, username: username, ipAddress: getClientIp(req), port: req.connection.remotePort || 0, success: true, failureReason: null, userAgent: req.headers['user-agent'] || null });
@@ -369,7 +369,7 @@ module.exports = (dependencies) => {
 			await revokeSession(tempSessionId, "login-complete");
 			res.clearCookie(TWO_FA_COOKIE_NAME, TWO_FA_COOKIE_OPTS);
 			res.cookie(SESSION_COOKIE_NAME, sessionId, { httpOnly: true, secure: COOKIE_SECURE, sameSite: "strict", path: "/", maxAge: SESSION_TTL_MS });
-			const csrfToken = generateCsrfToken();
+			const csrfToken = generateCsrfTokenForSession(sessionId);
 			res.cookie(CSRF_COOKIE_NAME, csrfToken, { httpOnly: false, secure: COOKIE_SECURE, sameSite: "strict", path: "/", maxAge: SESSION_TTL_MS });
 			res.json({ success: true });
 			recordLoginAttempt(pool, { userId, username, ipAddress: getClientIp(req), port: req.connection.remotePort || 0, success: true, failureReason: null, userAgent: req.headers['user-agent'] || null });

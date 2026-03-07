@@ -1,6 +1,8 @@
 const fs = require('fs');
 const path = require('path');
 const net = require('net');
+const yauzl = require('yauzl');
+const { promisify } = require('util');
 const { isPrivateOrLocalIP } = require('./network-utils');
 
 const ALLOWED_ATTACHMENT_EXTS = new Set([
@@ -48,27 +50,94 @@ function bufferLooksLikeActiveContent(buf) {
 	return head.includes('<html') || head.includes('<script') || head.includes('<svg') || head.includes('<?xml') || head.includes('javascript:') || head.includes('<iframe') || head.includes('<object') || head.includes('<embed');
 }
 
-function assertSafeCsvContent(buf) {
-	const text = buf.toString('utf8');
+function assertSafeCsvContent(text) {
+	if (Buffer.isBuffer(text)) text = text.toString('utf8');
 	const dangerous = /^[\s]*[=+\-@]/m;
 	if (dangerous.test(text)) throw new Error('DANGEROUS_CSV_FORMULA');
 }
 
-function assertSafeAttachmentFile(filePath, originalName = '') {
-	const ext = path.extname(String(originalName || filePath)).toLowerCase();
-	if (!ALLOWED_ATTACHMENT_EXTS.has(ext)) throw new Error('DISALLOWED_ATTACHMENT_TYPE');
+function neutralizeCsvCell(value) {
+	const s = String(value ?? '');
+	return /^[\s]*[=+\-@]/.test(s) ? `'${s}` : s;
+}
+
+function readFileHead(filePath, size = 4096) {
 	const fd = fs.openSync(filePath, 'r');
 	try {
-		const head = Buffer.alloc(4096);
+		const head = Buffer.alloc(size);
 		const n = fs.readSync(fd, head, 0, head.length, 0);
-		const sliced = head.slice(0, n);
-		if (bufferLooksLikeActiveContent(sliced)) throw new Error('ACTIVE_CONTENT_ATTACHMENT');
-		if (ext === '.pdf' && !sliced.slice(0, 5).equals(Buffer.from([0x25, 0x50, 0x44, 0x46, 0x2D]))) throw new Error('BAD_PDF_SIGNATURE');
-		if (['.docx', '.xlsx', '.pptx'].includes(ext) && !sliced.slice(0, 4).equals(Buffer.from([0x50, 0x4B, 0x03, 0x04]))) throw new Error('BAD_OOXML_SIGNATURE');
-		if (ext === '.csv') assertSafeCsvContent(sliced);
+		return head.slice(0, n);
 	} finally {
 		fs.closeSync(fd);
 	}
+}
+
+function readTextFileFully(filePath, maxBytes = 8 * 1024 * 1024) {
+	const st = fs.statSync(filePath);
+	if (st.size > maxBytes) throw new Error('TEXT_ATTACHMENT_TOO_LARGE');
+	return fs.readFileSync(filePath, 'utf8');
+}
+
+async function assertSafeOoxmlArchive(filePath) {
+	const openZip = promisify(yauzl.open);
+	const zip = await openZip(filePath, { lazyEntries: true });
+	return await new Promise((resolve, reject) => {
+		let hasContentTypes = false;
+		let rejected = false;
+		const fail = (err) => {
+			if (rejected) return;
+			rejected = true;
+			try { zip.close(); } catch (_) {}
+			reject(err);
+		};
+		zip.on('entry', (entry) => {
+			const name = String(entry.fileName || '').toLowerCase();
+			if (name === '[content_types].xml') hasContentTypes = true;
+			if (
+				name.includes('vbaproject.bin') ||
+				name.endsWith('.bin') ||
+				name.includes('/embeddings/') ||
+				name.includes('/activex/') ||
+				name.includes('embeddings/') ||
+				name.includes('oleobject') ||
+				name.endsWith('.rels')
+			) return fail(new Error('UNSAFE_OOXML_ACTIVE_CONTENT'));
+			zip.readEntry();
+		});
+		zip.on('end', () => {
+			if (!hasContentTypes) return fail(new Error('BAD_OOXML_STRUCTURE'));
+			resolve();
+		});
+		zip.on('error', fail);
+		zip.readEntry();
+	});
+}
+
+async function assertSafeAttachmentFile(filePath, originalName = '') {
+	const ext = path.extname(String(originalName || filePath)).toLowerCase();
+	if (!ALLOWED_ATTACHMENT_EXTS.has(ext)) throw new Error('DISALLOWED_ATTACHMENT_TYPE');
+	const head = readFileHead(filePath, 4096);
+	if (ext === '.pdf') {
+		if (!head.slice(0, 5).equals(Buffer.from([0x25, 0x50, 0x44, 0x46, 0x2D]))) throw new Error('BAD_PDF_SIGNATURE');
+		return;
+	}
+	if (['.docx', '.xlsx', '.pptx'].includes(ext)) {
+		if (!head.slice(0, 4).equals(Buffer.from([0x50, 0x4B, 0x03, 0x04]))) throw new Error('BAD_OOXML_SIGNATURE');
+		await assertSafeOoxmlArchive(filePath);
+		return;
+	}
+	if (ext === '.csv') {
+		const text = readTextFileFully(filePath);
+		if (bufferLooksLikeActiveContent(Buffer.from(text, 'utf8'))) throw new Error('ACTIVE_CONTENT_ATTACHMENT');
+		assertSafeCsvContent(text);
+		return;
+	}
+	if (ext === '.txt' || ext === '.md') {
+		const text = readTextFileFully(filePath);
+		if (bufferLooksLikeActiveContent(Buffer.from(text, 'utf8'))) throw new Error('ACTIVE_CONTENT_ATTACHMENT');
+		return;
+	}
+	if (bufferLooksLikeActiveContent(head)) throw new Error('ACTIVE_CONTENT_ATTACHMENT');
 }
 
 function installDomPurifySecurityHooks(DOMPurify) {
@@ -91,6 +160,7 @@ module.exports = {
 	assertImageFileSignature,
 	assertSafeAttachmentFile,
 	assertSafeCsvContent,
+	neutralizeCsvCell,
 	installDomPurifySecurityHooks,
 	isHostnameAllowedForPreview
 };

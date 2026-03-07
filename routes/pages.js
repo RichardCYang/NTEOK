@@ -214,6 +214,7 @@ module.exports = (dependencies) => {
         extractFilesFromContent,
         invalidateYjsPersistenceForPage,
         isPrivateOrLocalIP,
+        isHostnameAllowedForPreview,
         getClientIpFromRequest,
         outboundFetchLimiter
 	} = dependencies;
@@ -609,6 +610,7 @@ module.exports = (dependencies) => {
             return null;
         }
 
+        if (typeof isHostnameAllowedForPreview === "function" && !isHostnameAllowedForPreview(u.hostname)) return null;
         if (!['http:', 'https:'].includes(u.protocol)) return null;
         if (u.username || u.password) return null;
 
@@ -629,7 +631,8 @@ module.exports = (dependencies) => {
             try { targetUrl = new URL(url); } catch (e) { return res.status(400).json({ error: "유효하지 않은 URL 형식입니다." }); }
             if (!['http:', 'https:'].includes(targetUrl.protocol)) return res.status(400).json({ error: "HTTP/HTTPS 프로토콜만 허용됩니다." });
             if (targetUrl.username || targetUrl.password) return res.status(400).json({ error: "인증 정보가 포함된 URL은 허용되지 않습니다." });
-            if (typeof isHostnameAllowedForPreview === "function" && !isHostnameAllowedForPreview(targetUrl.hostname)) return res.status(403).json({ error: "허용되지 않은 호스트입니다." });
+            if (typeof isHostnameAllowedForPreview !== "function") return res.status(500).json({ error: "링크 미리보기 보안 구성이 올바르지 않습니다." });
+            if (!isHostnameAllowedForPreview(targetUrl.hostname)) return res.status(403).json({ error: "허용되지 않은 호스트입니다." });
             const resolvedIps = await resolvePublicOutboundAddresses(targetUrl.hostname, isPrivateOrLocalIP);
             const html = await fetchHtmlWithoutRedirects(targetUrl, resolvedIps, isPrivateOrLocalIP);
             const $ = cheerio.load(html);
@@ -1371,7 +1374,7 @@ module.exports = (dependencies) => {
                 if (sig) normalizeUploadedImageFile(req.file, sig.ext);
             } else {
                 try {
-                    assertSafeAttachmentFile(req.file.path, req.file.originalname);
+                    await assertSafeAttachmentFile(req.file.path, req.file.originalname);
                 } catch (e) {
                     if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
                     return res.status(400).json({ error: "허용되지 않는 첨부파일 형식입니다." });

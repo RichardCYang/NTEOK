@@ -2242,7 +2242,9 @@ function installGracefulShutdownHandlers(httpServer, pool, sanitizeHtmlContent) 
 			isPrivateOrLocalIP,
 			checkCountryWhitelist,
 			getClientIpFromRequest,
-			isHostnameAllowedForPreview
+			isHostnameAllowedForPreview,
+			assertSafeAttachmentFile,
+			assertImageFileSignature
 		};
 
         const indexRoutes = require('./routes/index')(routeDependencies);
