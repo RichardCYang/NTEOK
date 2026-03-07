@@ -8,7 +8,7 @@
 	},
 	"scripts": {
 		"test": "echo \"Error: no test specified\" && exit 1",
-		"sync:dompurify": "cp node_modules/dompurify/dist/purify.js public/lib/dompurify/dompurify.js",
+		"sync:dompurify": "node -e \"require('fs').copyFileSync('node_modules/dompurify/dist/purify.js', 'public/lib/dompurify/dompurify.js')\"",
 		"postinstall": "npm run sync:dompurify",
 		"prestart": "node scripts/assert-security-versions.mjs && node scripts/check-public-leaks.mjs",
 		"start": "node server.js",
@@ -32,7 +32,7 @@
 		"express-rate-limit": "^8.2.1",
 		"geoip-lite": "^1.4.10",
 		"ipaddr.js": "^2.3.0",
-		"isomorphic-dompurify": "3.3.2",
+		"isomorphic-dompurify": "3.0.0",
 		"jsdom": "^28.1.0",
 		"multer": "^2.1.0",
 		"mysql2": "^3.15.3",
