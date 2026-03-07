@@ -10,9 +10,29 @@ const expressRateLimit = require("express-rate-limit");
 const rateLimit = expressRateLimit.rateLimit || expressRateLimit;
 const _isoDomPurify = require("isomorphic-dompurify");
 const DOMPurify = _isoDomPurify?.default || _isoDomPurify;
+const domPurifyPkg = require("dompurify/package.json");
+
+function isVulnerableDomPurify(version) {
+	const [maj, min, patch] = String(version).split(".").map(n => Number(n));
+	if (!Number.isFinite(maj) || !Number.isFinite(min) || !Number.isFinite(patch)) return true;
+	if (maj === 2 && min === 5 && patch >= 3 && patch <= 8) return true;
+	if (maj === 3) {
+		if (min === 1 && patch >= 3) return true;
+		if (min === 2) return true;
+		if (min === 3 && patch <= 1) return true;
+	}
+	return false;
+}
+
+if (isVulnerableDomPurify(domPurifyPkg.version)) throw new Error(`[boot] Refusing to start with vulnerable DOMPurify version: ${domPurifyPkg.version}`);
+
+const { redis, ensureRedis } = require("./lib/redis");
+const { getSession, saveSession, listUserSessions, revokeSession } = require("./lib/session-store");
+const { RedisStore } = require("rate-limit-redis");
+
 const clearDomPurifyWindow = typeof _isoDomPurify?.clearWindow === "function"
-    ? _isoDomPurify.clearWindow.bind(_isoDomPurify)
-    : null;
+	? _isoDomPurify.clearWindow.bind(_isoDomPurify)
+	: null;
 const speakeasy = require("speakeasy");
 const QRCode = require("qrcode");
 const Y = require("yjs");
@@ -492,31 +512,6 @@ const DB_CONFIG = {
 };
 
 let pool;
-const sessions = new Map();
-const userSessions = new Map();
-
-function cleanupExpiredSessions() {
-    const now = Date.now();
-    let cleaned = 0;
-    sessions.forEach((session, sessionId) => {
-        if ((session.pendingUserId && session.createdAt + 600000 < now) || (session.absoluteExpiry <= now) || (session.expiresAt <= now)) {
-            try { wsCloseConnectionsForSession(sessionId, 1008, 'Session expired'); } catch (_) {}
-            sessions.delete(sessionId);
-            cleaned++;
-            if (session.userId) {
-                const set = userSessions.get(session.userId);
-                if (set) {
-                    set.delete(sessionId);
-                    if (set.size === 0) userSessions.delete(session.userId);
-                }
-            }
-        }
-    });
-    if (cleaned > 0) console.log(`[세션 정리] ${cleaned}개 만료 세션 제거`);
-}
-
-setInterval(cleanupExpiredSessions, 300000);
-
 function cleanupExpiredWebAuthnChallenges() {
     pool.execute("DELETE FROM webauthn_challenges WHERE expires_at < NOW()")
         .then(([res]) => res.affectedRows > 0 && console.log(`[WebAuthn 정리] ${res.affectedRows}개 만료 챌린지 제거`))
@@ -863,135 +858,93 @@ function verifyCsrfToken(req) {
     }
 }
 
-function createSession(user) {
-    const sessionId = crypto.randomBytes(24).toString("hex");
-    const now = Date.now();
-    const expiresAt = now + SESSION_TTL_MS; 
-    const absoluteExpiry = now + SESSION_ABSOLUTE_TTL_MS; 
+async function createSession(user) {
+	const sessionId = crypto.randomBytes(24).toString("hex");
+	const now = Date.now();
+	const expiresAt = now + SESSION_TTL_MS;
+	const absoluteExpiry = now + SESSION_ABSOLUTE_TTL_MS;
 
-    const existingSessions = userSessions.get(user.id);
-    if (existingSessions && existingSessions.size > 0) {
-        const maskedUsername = user.username.substring(0, 2) + '***';
-        console.log(`[중복 로그인 감지] 사용자 ID ${user.id} (${maskedUsername})의 기존 세션 ${existingSessions.size}개 발견`);
+	const existingSessions = await listUserSessions(user.id);
+	if (existingSessions && existingSessions.length > 0) {
+		const maskedUsername = user.username.substring(0, 2) + '***';
+		console.log(`[중복 로그인 감지] 사용자 ID ${user.id} (${maskedUsername})의 기존 세션 ${existingSessions.length}개 발견`);
 
-        if (user.blockDuplicateLogin) {
-            console.log(`[중복 로그인 차단] 사용자 ID ${user.id} (${maskedUsername})의 새 로그인 시도 거부`);
-            return {
-                success: false,
-                error: '이미 다른 위치에서 로그인 중입니다. 기존 세션을 먼저 종료하거나, 설정에서 "중복 로그인 차단" 옵션을 해제해주세요.'
-            };
-        }
+		if (user.blockDuplicateLogin) {
+			console.log(`[중복 로그인 차단] 사용자 ID ${user.id} (${maskedUsername})의 새 로그인 시도 거부`);
+			return {
+				success: false,
+				error: '이미 다른 위치에서 로그인 중입니다. 기존 세션을 먼저 종료하거나, 설정에서 "중복 로그인 차단" 옵션을 해제해주세요.'
+			};
+		}
 
-        wsBroadcastToUser(user.id, 'duplicate-login', {
-            message: '다른 위치에서 로그인하여 현재 세션이 종료됩니다.',
-            timestamp: new Date().toISOString()
-        });
+		wsBroadcastToUser(user.id, 'duplicate-login', {
+			message: '다른 위치에서 로그인하여 현재 세션이 종료됩니다.',
+			timestamp: new Date().toISOString()
+		});
 
-		existingSessions.forEach(oldSessionId => {
-			try {
-			    wsCloseConnectionsForSession(oldSessionId, 1008, 'Duplicate login');
-			} catch (e) {}
+		for (const oldSessionId of existingSessions) {
+			await revokeSession(oldSessionId, "duplicate-login");
+		}
+	}
 
-            sessions.delete(oldSessionId);
-            console.log(`[세션 파기] 세션 ID: ${oldSessionId.substring(0, 8)}...`);
-        });
+	const session = {
+		type: "auth",
+		userId: user.id,
+		username: user.username,
+		expiresAt,
+		absoluteExpiry,
+		createdAt: now
+	};
 
-        existingSessions.clear();
-    }
+	await saveSession(sessionId, session, SESSION_ABSOLUTE_TTL_MS);
 
-    sessions.set(sessionId, {
-    	type: "auth",
-        userId: user.id,
-        username: user.username,
-        expiresAt,
-        absoluteExpiry,
-        createdAt: now
-    });
+	const maskedUsername = user.username.substring(0, 2) + '***';
+	console.log(`[세션 생성] 사용자: ${maskedUsername} (ID: ${user.id}), 세션 ID: ${sessionId.substring(0, 8)}...`);
 
-    if (!userSessions.has(user.id)) {
-        userSessions.set(user.id, new Set());
-    }
-    userSessions.get(user.id).add(sessionId);
-
-    const maskedUsername = user.username.substring(0, 2) + '***';
-    console.log(`[세션 생성] 사용자: ${maskedUsername} (ID: ${user.id}), 세션 ID: ${sessionId.substring(0, 8)}...`);
-
-    return { success: true, sessionId };
+	return { success: true, sessionId };
 }
 
-function getSessionFromRequest(req) {
-    if (!req.cookies)
-        return null;
-
-    const sessionId = req.cookies[SESSION_COOKIE_NAME];
-    if (!sessionId)
-    	return null;
-
-    const session = sessions.get(sessionId);
-    if (!session)
-    	return null;
-
-	if (session.type !== 'auth' || !session.userId)
-		return null;
-
+async function getSessionFromRequest(req) {
+	if (!req.cookies) return null;
+	const sessionId = req.cookies[SESSION_COOKIE_NAME];
+	if (!sessionId) return null;
+	const session = await getSession(sessionId);
+	if (!session) return null;
+	if (session.type !== 'auth' || !session.userId) return null;
 	if (!session.expiresAt || !session.absoluteExpiry) {
-		sessions.delete(sessionId);
+		await revokeSession(sessionId, "invalid-session");
 		return null;
 	}
 
-    const now = Date.now();
+	const now = Date.now();
+	if (session.absoluteExpiry <= now) {
+		console.warn(`[세션 만료] 세션 ID ${sessionId.substring(0, 8)}... - 절대 만료 시간 초과`);
+		await revokeSession(sessionId, "absolute-expiry");
+		return null;
+	}
 
-    if (session.absoluteExpiry <= now) {
-        console.warn(`[세션 만료] 세션 ID ${sessionId.substring(0, 8)}... - 절대 만료 시간 초과 (사용자: ${session.userId})`);
-        sessions.delete(sessionId);
-        if (session.userId) {
-            const userSessionSet = userSessions.get(session.userId);
-            if (userSessionSet) {
-                userSessionSet.delete(sessionId);
-                if (userSessionSet.size === 0) {
-                    userSessions.delete(session.userId);
-                }
-            }
-        }
-        return null;
-    }
+	if (session.expiresAt <= now) {
+		console.warn(`[세션 만료] 세션 ID ${sessionId.substring(0, 8)}... - 비활성 시간 초과`);
+		await revokeSession(sessionId, "inactivity-expiry");
+		return null;
+	}
 
-    if (session.expiresAt <= now) {
-        console.warn(`[세션 만료] 세션 ID ${sessionId.substring(0, 8)}... - 비활성 시간 초과 (사용자: ${session.userId})`);
-        sessions.delete(sessionId);
-        if (session.userId) {
-            const userSessionSet = userSessions.get(session.userId);
-            if (userSessionSet) {
-                userSessionSet.delete(sessionId);
-                if (userSessionSet.size === 0) {
-                    userSessions.delete(session.userId);
-                }
-            }
-        }
-        return null;
-    }
+	session.expiresAt = now + SESSION_TTL_MS;
+	await saveSession(sessionId, session, SESSION_ABSOLUTE_TTL_MS);
 
-    session.expiresAt = now + SESSION_TTL_MS;
-
-    return { id: sessionId, ...session };
+	return { id: sessionId, ...session };
 }
 
-function authMiddleware(req, res, next) {
-    const session = getSessionFromRequest(req);
-
-    if (!session) {
-        const sessionId = req.cookies[SESSION_COOKIE_NAME];
-        const maskedSessionId = sessionId ? `${sessionId.substring(0, 8)}...` : '없음';
-        console.warn(`[인증 실패] ${req.method} ${req.path} - 세션 ID: ${maskedSessionId}, 유효한 세션: 없음, IP: ${req.clientIp}`);
-        return res.status(401).json({ error: "로그인이 필요합니다." });
-    }
-
-    req.user = {
-        id: session.userId,
-        username: session.username
-    };
-
-    next();
+async function authMiddleware(req, res, next) {
+	const session = await getSessionFromRequest(req);
+	if (!session) {
+		const sessionId = req.cookies[SESSION_COOKIE_NAME];
+		const maskedSessionId = sessionId ? `${sessionId.substring(0, 8)}...` : '없음';
+		console.warn(`[인증 실패] ${req.method} ${req.path} - 세션 ID: ${maskedSessionId}, IP: ${req.clientIp}`);
+		return res.status(401).json({ error: "로그인이 필요합니다." });
+	}
+	req.user = { id: session.userId, username: session.username };
+	next();
 }
 
 function csrfMiddleware(req, res, next) {
@@ -1477,59 +1430,69 @@ function generatePublishToken() {
     return crypto.randomBytes(32).toString('hex');
 }
 
+const distributedRateStore = new RedisStore({
+	sendCommand: (...args) => redis.sendCommand(args)
+});
+
 const generalLimiter = rateLimit({
-    windowMs: 1 * 60 * 1000, 
-    max: 100, 
-    message: { error: "너무 많은 요청이 발생했습니다. 잠시 후 다시 시도해 주세요." },
-    standardHeaders: true,
-    legacyHeaders: false,
-    keyGenerator: (req) => ipKeyGenerator(req.clientIp, RATE_LIMIT_IPV6_SUBNET)
+	windowMs: 1 * 60 * 1000, 
+	max: 100, 
+	message: { error: "너무 많은 요청이 발생했습니다. 잠시 후 다시 시도해 주세요." },
+	standardHeaders: true,
+	legacyHeaders: false,
+	store: distributedRateStore,
+	keyGenerator: (req) => ipKeyGenerator(req.clientIp, RATE_LIMIT_IPV6_SUBNET)
 });
 
 const authLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000, 
-    max: 5, 
-    message: { error: "너무 많은 로그인 시도가 발생했습니다. 15분 후 다시 시도해 주세요." },
-    standardHeaders: true,
-    legacyHeaders: false,
-    keyGenerator: (req) => ipKeyGenerator(req.clientIp, RATE_LIMIT_IPV6_SUBNET),
-    skipSuccessfulRequests: true, 
+	windowMs: 15 * 60 * 1000, 
+	max: 5, 
+	message: { error: "너무 많은 로그인 시도가 발생했습니다. 15분 후 다시 시도해 주세요." },
+	standardHeaders: true,
+	legacyHeaders: false,
+	store: distributedRateStore,
+	keyGenerator: (req) => ipKeyGenerator(req.clientIp, RATE_LIMIT_IPV6_SUBNET),
+	skipSuccessfulRequests: true, 
 });
 
 const totpLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000, 
-    max: 10, 
-    message: { error: "너무 많은 인증 시도가 발생했습니다. 15분 후 다시 시도해 주세요." },
-    standardHeaders: true,
-    legacyHeaders: false,
-    keyGenerator: (req) => ipKeyGenerator(req.clientIp, RATE_LIMIT_IPV6_SUBNET)
+	windowMs: 15 * 60 * 1000, 
+	max: 10, 
+	message: { error: "너무 많은 인증 시도가 발생했습니다. 15분 후 다시 시도해 주세요." },
+	standardHeaders: true,
+	legacyHeaders: false,
+	store: distributedRateStore,
+	keyGenerator: (req) => ipKeyGenerator(req.clientIp, RATE_LIMIT_IPV6_SUBNET)
 });
 
 const passkeyLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000, 
-    max: 10, 
-    message: { error: "너무 많은 패스키 인증 요청이 발생했습니다. 잠시 후 다시 시도해 주세요." },
-    standardHeaders: true,
-    legacyHeaders: false,
-    keyGenerator: (req) => ipKeyGenerator(req.clientIp, RATE_LIMIT_IPV6_SUBNET)
+	windowMs: 15 * 60 * 1000, 
+	max: 10, 
+	message: { error: "너무 많은 패스키 인증 요청이 발생했습니다. 잠시 후 다시 시도해 주세요." },
+	standardHeaders: true,
+	legacyHeaders: false,
+	store: distributedRateStore,
+	keyGenerator: (req) => ipKeyGenerator(req.clientIp, RATE_LIMIT_IPV6_SUBNET)
 });
 
 const sseConnectionLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000, 
-    max: 50, 
-    message: { error: "SSE 연결 제한 초과" },
-    standardHeaders: true,
-    legacyHeaders: false,
-    keyGenerator: (req) => (req.user?.id ? `user:${req.user.id}` : ipKeyGenerator(req.clientIp, RATE_LIMIT_IPV6_SUBNET))
+	windowMs: 15 * 60 * 1000, 
+	max: 50, 
+	message: { error: "SSE 연결 제한 초과" },
+	standardHeaders: true,
+	legacyHeaders: false,
+	store: distributedRateStore,
+	keyGenerator: (req) => (req.user?.id ? `user:${req.user.id}` : ipKeyGenerator(req.clientIp, RATE_LIMIT_IPV6_SUBNET))
 });
 
 const outboundFetchLimiter = rateLimit({
-    windowMs: 1 * 60 * 1000,
-    max: 20,
-    message: { error: "외부 리소스 요청이 너무 많습니다. 잠시 후 다시 시도해 주세요." },
-    standardHeaders: true,
-    legacyHeaders: false,
-    keyGenerator: (req) => (req.user?.id ? `user:${req.user.id}` : ipKeyGenerator(req.clientIp, RATE_LIMIT_IPV6_SUBNET))
+	windowMs: 1 * 60 * 1000,
+	max: 20,
+	message: { error: "외부 리소스 요청이 너무 많습니다. 잠시 후 다시 시도해 주세요." },
+	standardHeaders: true,
+	legacyHeaders: false,
+	store: distributedRateStore,
+	keyGenerator: (req) => (req.user?.id ? `user:${req.user.id}` : ipKeyGenerator(req.clientIp, RATE_LIMIT_IPV6_SUBNET))
 });
 
 
@@ -2067,9 +2030,9 @@ const fileUpload = multer({
     },
 });
 
-function getSessionFromId(sessionId) {
-    if (!sessionId) return null;
-    return getSessionFromRequest({ cookies: { [SESSION_COOKIE_NAME]: sessionId } });
+async function getSessionFromId(sessionId) {
+	if (!sessionId) return null;
+	return await getSessionFromRequest({ cookies: { [SESSION_COOKIE_NAME]: sessionId } });
 }
 
 
@@ -2136,75 +2099,73 @@ function installGracefulShutdownHandlers(httpServer, pool, sanitizeHtmlContent) 
         const pageSqlPolicy = require('./authz/page-sql-policy');
         const repositories = require('./repositories')({ pool, pageSqlPolicy });
 
-        const routeDependencies = {
+		const routeDependencies = {
 			pool,
 			pageSqlPolicy,
-            ...repositories,
-            bcrypt,
-            crypto,
-            express,
-            Y,
-            speakeasy,
-            QRCode,
-            sessions,
-            userSessions,
-            createSession,
-            getSessionFromRequest,
-            generateCsrfToken,
-            encryptTotpSecret,
-            decryptTotpSecret,
-            formatDateForDb,
-            validatePasswordStrength,
-            logError,
-            authMiddleware,
-            csrfMiddleware,
-            toIsoString,
+			...repositories,
+			bcrypt,
+			crypto,
+			express,
+			Y,
+			speakeasy,
+			QRCode,
+			createSession,
+			getSessionFromRequest,
+			generateCsrfToken,
+			encryptTotpSecret,
+			decryptTotpSecret,
+			formatDateForDb,
+			validatePasswordStrength,
+			logError,
+			authMiddleware,
+			csrfMiddleware,
+			toIsoString,
 			sanitizeInput,
 			sanitizeFilenameComponent,
-            sanitizeExtension,
-            sanitizeHtmlContent,
-            generatePageId,
-            generateShareToken,
-            generatePublishToken,
-            wsConnections,
-            wsBroadcastToPage,
-            wsBroadcastToStorage,
+			sanitizeExtension,
+			sanitizeHtmlContent,
+			generatePageId,
+			generateShareToken,
+			generatePublishToken,
+			wsConnections,
+			wsBroadcastToPage,
+			wsBroadcastToStorage,
 			wsBroadcastToUser,
 			wsCloseConnectionsForSession,
-            wsCloseConnectionsForPage,
-            wsHasActiveConnectionsForPage,
-            wsKickUserFromStorage,
-            extractFilesFromContent,
-            invalidateYjsPersistenceForPage,
-            saveYjsDocToDatabase,
-            enqueueYjsDbSave,
-            flushAllPendingYjsDbSaves,
-            flushAllPendingE2eeSaves,
-            yjsDocuments,
-            authLimiter,
-            totpLimiter,
-            passkeyLimiter,
-            outboundFetchLimiter,
-            sseConnectionLimiter,
-            SESSION_COOKIE_NAME,
-            CSRF_COOKIE_NAME,
-            SESSION_TTL_MS,
-            IS_PRODUCTION,
-            COOKIE_SECURE,
-            BCRYPT_SALT_ROUNDS,
-            BASE_URL,
-            coverUpload,
-            editorImageUpload,
-            fileUpload,
-            path,
-            fs,
-            recordLoginAttempt,
-            getLocationFromIP,
-            maskIPAddress,
-            isPrivateOrLocalIP,
-            checkCountryWhitelist,
-            getClientIpFromRequest
-        };
+			wsCloseConnectionsForPage,
+			wsHasActiveConnectionsForPage,
+			wsKickUserFromStorage,
+			extractFilesFromContent,
+			invalidateYjsPersistenceForPage,
+			saveYjsDocToDatabase,
+			enqueueYjsDbSave,
+			flushAllPendingYjsDbSaves,
+			flushAllPendingE2eeSaves,
+			yjsDocuments,
+			authLimiter,
+			totpLimiter,
+			passkeyLimiter,
+			outboundFetchLimiter,
+			sseConnectionLimiter,
+			SESSION_COOKIE_NAME,
+			CSRF_COOKIE_NAME,
+			SESSION_TTL_MS,
+			IS_PRODUCTION,
+			COOKIE_SECURE,
+			BCRYPT_SALT_ROUNDS,
+			BASE_URL,
+			coverUpload,
+			editorImageUpload,
+			fileUpload,
+			path,
+			fs,
+			recordLoginAttempt,
+			getLocationFromIP,
+			maskIPAddress,
+			isPrivateOrLocalIP,
+			checkCountryWhitelist,
+			getClientIpFromRequest
+		};
 
         const indexRoutes = require('./routes/index')(routeDependencies);
         const authRoutes = require('./routes/auth')(routeDependencies);
@@ -2284,7 +2245,7 @@ function installGracefulShutdownHandlers(httpServer, pool, sanitizeHtmlContent) 
                     console.log('='.repeat(80) + '\n');
                 });
 
-                initWebSocketServer(httpsServer, sessions, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, SESSION_COOKIE_NAME, getSessionFromId, getClientIpFromRequest, pageSqlPolicy);
+                initWebSocketServer(httpsServer, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, SESSION_COOKIE_NAME, getSessionFromId, getClientIpFromRequest, pageSqlPolicy);
 
                 startRateLimitCleanup();
 
@@ -2334,7 +2295,7 @@ function installGracefulShutdownHandlers(httpServer, pool, sanitizeHtmlContent) 
                     console.log(`⚠️  NTEOK 앱이 HTTP로 실행 중: http://localhost:${PORT}`);
                 });
 
-                initWebSocketServer(httpServer, sessions, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, SESSION_COOKIE_NAME, getSessionFromId, getClientIpFromRequest, pageSqlPolicy);
+                initWebSocketServer(httpServer, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, SESSION_COOKIE_NAME, getSessionFromId, getClientIpFromRequest, pageSqlPolicy);
 
                 startRateLimitCleanup();
 
@@ -2354,7 +2315,7 @@ function installGracefulShutdownHandlers(httpServer, pool, sanitizeHtmlContent) 
                 console.log(`NTEOK 앱이 HTTP로 실행 중: http://localhost:${PORT}`);
             });
 
-            initWebSocketServer(httpServer, sessions, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, SESSION_COOKIE_NAME, getSessionFromId, getClientIpFromRequest, pageSqlPolicy);
+            initWebSocketServer(httpServer, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, SESSION_COOKIE_NAME, getSessionFromId, getClientIpFromRequest, pageSqlPolicy);
 
             startRateLimitCleanup();
 

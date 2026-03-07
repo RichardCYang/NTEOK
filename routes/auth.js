@@ -3,478 +3,440 @@ const router = express.Router();
 
 
 module.exports = (dependencies) => {
-    const {
-        pool,
-        storagesRepo,
-        bcrypt,
-        crypto,
-        sessions,
-        userSessions,
-        createSession,
-        generateCsrfToken,
-        formatDateForDb,
-        validatePasswordStrength,
-        logError,
-        SESSION_COOKIE_NAME,
-        CSRF_COOKIE_NAME,
-        SESSION_TTL_MS,
+	const {
+		pool,
+		storagesRepo,
+		bcrypt,
+		crypto,
+		createSession,
+		generateCsrfToken,
+		formatDateForDb,
+		validatePasswordStrength,
+		logError,
+		SESSION_COOKIE_NAME,
+		CSRF_COOKIE_NAME,
+		SESSION_TTL_MS,
 		IS_PRODUCTION,
-        COOKIE_SECURE,
-        BASE_URL,
-        BCRYPT_SALT_ROUNDS,
-        authMiddleware,
-        authLimiter,
-        recordLoginAttempt,
-        maskIPAddress,
-        checkCountryWhitelist,
-        getClientIpFromRequest
+		COOKIE_SECURE,
+		BASE_URL,
+		BCRYPT_SALT_ROUNDS,
+		authMiddleware,
+		authLimiter,
+		recordLoginAttempt,
+		maskIPAddress,
+		checkCountryWhitelist,
+		getClientIpFromRequest,
+		saveSession,
+		getSession,
+		revokeSession,
+		listUserSessions
 	} = dependencies;
 
-    const PASSWORD_CONTROL_CHARS_RE = /[\u0000-\u001F\u007F]/;
+	const PASSWORD_CONTROL_CHARS_RE = /[\u0000-\u001F\u007F]/;
 
-    let USERNAME_SAFE_RE;
-    try {
-        USERNAME_SAFE_RE = new RegExp('^[\\p{L}\\p{N}._-]{3,64}$', 'u');
-    } catch (_) {
-        USERNAME_SAFE_RE = /^[A-Za-z0-9._-]{3,64}$/;
-    }
-    const USERNAME_CONTROL_CHARS_RE = /[\u0000-\u001F\u007F]/;
+	let USERNAME_SAFE_RE;
+	try {
+		USERNAME_SAFE_RE = new RegExp('^[\\p{L}\\p{N}._-]{3,64}$', 'u');
+	} catch (_) {
+		USERNAME_SAFE_RE = /^[A-Za-z0-9._-]{3,64}$/;
+	}
+	const USERNAME_CONTROL_CHARS_RE = /[\u0000-\u001F\u007F]/;
 
-    const DUMMY_LOGIN_BCRYPT_HASH =
-        process.env.DUMMY_LOGIN_BCRYPT_HASH ||
-        '$2b$12$IfuyBUTMgc9Y2heW2QrSjuqKjPP3nkXvKvTnSxfpVNIVqdzuXvbsS'; 
+	const DUMMY_LOGIN_BCRYPT_HASH =
+		process.env.DUMMY_LOGIN_BCRYPT_HASH ||
+		'$2b$12$IfuyBUTMgc9Y2heW2QrSjuqKjPP3nkXvKvTnSxfpVNIVqdzuXvbsS';
+	async function consumeBcryptCostForTiming(password) {
+		try {
+			await bcrypt.compare(password, DUMMY_LOGIN_BCRYPT_HASH);
+		} catch (_) {
+		}
+	}
 
-    async function consumeBcryptCostForTiming(password) {
-        try {
-            await bcrypt.compare(password, DUMMY_LOGIN_BCRYPT_HASH);
-        } catch (_) {
-        }
-    }
+	function getClientIp(req) {
+		return (
+			req.clientIp ||
+			(typeof getClientIpFromRequest === 'function' ? getClientIpFromRequest(req) : null) ||
+			req.ip ||
+			req.connection?.remoteAddress ||
+			req.socket?.remoteAddress ||
+			'unknown'
+		);
+	}
 
-    function getClientIp(req) {
-        return (
-            req.clientIp ||
-            (typeof getClientIpFromRequest === 'function' ? getClientIpFromRequest(req) : null) ||
-            req.ip ||
-            req.connection?.remoteAddress ||
-            req.socket?.remoteAddress ||
-            'unknown'
-        );
-    }
+	function requireSameOriginForAuth(req, res, next) {
+		try {
+			const allowedOrigins = new Set(
+				String(process.env.ALLOWED_ORIGINS || BASE_URL || "")
+					.split(",")
+					.map(s => s.trim())
+					.filter(Boolean)
+					.map(u => new URL(u).origin)
+			);
 
-    function requireSameOriginForAuth(req, res, next) {
-        try {
-            const allowedOrigins = new Set(
-                String(process.env.ALLOWED_ORIGINS || BASE_URL || "")
-                    .split(",")
-                    .map(s => s.trim())
-                    .filter(Boolean)
-                    .map(u => new URL(u).origin)
-            );
+			const sfs = req.headers["sec-fetch-site"];
+			if (typeof sfs === "string" && sfs && sfs !== "same-origin" && sfs !== "same-site") return res.status(403).json({ error: "요청 출처가 유효하지 않습니다." });
 
-            const sfs = req.headers["sec-fetch-site"];
-            if (typeof sfs === "string" && sfs && sfs !== "same-origin" && sfs !== "same-site") {
-                return res.status(403).json({ error: "요청 출처가 유효하지 않습니다." });
-            }
+			const origin = req.headers.origin;
+			const referer = req.headers.referer;
 
-            const origin = req.headers.origin;
-            const referer = req.headers.referer;
+			let reqOrigin = null;
+			if (typeof origin === "string" && origin) reqOrigin = origin;
+			else if (typeof referer === "string" && referer) reqOrigin = new URL(referer).origin;
 
-            let reqOrigin = null;
-            if (typeof origin === "string" && origin) {
-                reqOrigin = origin;
-            } else if (typeof referer === "string" && referer) {
-                reqOrigin = new URL(referer).origin;
-            }
+			if (!reqOrigin || !allowedOrigins.has(reqOrigin)) return res.status(403).json({ error: "요청 출처가 유효하지 않습니다." });
 
-            if (!reqOrigin)
-                return res.status(403).json({ error: "요청 출처가 유효하지 않습니다." });
+			return next();
+		} catch (e) {
+			return res.status(403).json({ error: "요청 출처가 유효하지 않습니다." });
+		}
+	}
 
-            if (!allowedOrigins.has(reqOrigin))
-                return res.status(403).json({ error: "요청 출처가 유효하지 않습니다." });
+	router.post("/login", authLimiter, requireSameOriginForAuth, async (req, res) => {
+		const { username, password } = req.body || {};
 
-            return next();
-        } catch (e) {
-            return res.status(403).json({ error: "요청 출처가 유효하지 않습니다." });
-        }
-    }
+		if (typeof username !== "string" || typeof password !== "string") return res.status(400).json({ error: "아이디와 비밀번호를 모두 입력해 주세요." });
 
-    router.post("/login", authLimiter, requireSameOriginForAuth, async (req, res) => {
-        const { username, password } = req.body || {};
+		if (PASSWORD_CONTROL_CHARS_RE.test(password)) {
+			console.warn(`[로그인 실패] IP: ${getClientIp(req)}, 사유: 비정상 비밀번호 입력`);
+			return res.status(401).json({ error: "아이디 또는 비밀번호가 올바르지 않습니다." });
+		}
 
-        if (typeof username !== "string" || typeof password !== "string")
-            return res.status(400).json({ error: "아이디와 비밀번호를 모두 입력해 주세요." });
+		const trimmedUsername = username.trim();
 
-        if (PASSWORD_CONTROL_CHARS_RE.test(password)) {
-            console.warn(`[로그인 실패] IP: ${getClientIp(req)}, 사유: 비정상 비밀번호 입력`);
-            return res.status(401).json({ error: "아이디 또는 비밀번호가 올바르지 않습니다." });
-        }
+		try {
+			const [rows] = await pool.execute(
+				`
+				SELECT id, username, password_hash, totp_enabled, passkey_enabled, block_duplicate_login,
+					   country_whitelist_enabled, allowed_login_countries
+				FROM users
+				WHERE username = ?
+				`,
+				[trimmedUsername]
+			);
 
-        const trimmedUsername = username.trim();
+			if (!rows.length) {
+				await consumeBcryptCostForTiming(password);
 
-        try {
-            const [rows] = await pool.execute(
-                `
-                SELECT id, username, password_hash, totp_enabled, passkey_enabled, block_duplicate_login,
-                       country_whitelist_enabled, allowed_login_countries
-                FROM users
-                WHERE username = ?
-                `,
-                [trimmedUsername]
-            );
+				await recordLoginAttempt(pool, {
+					userId: null,
+					username: trimmedUsername,
+					ipAddress: getClientIp(req),
+					port: req.connection.remotePort || 0,
+					success: false,
+					failureReason: '존재하지 않는 사용자',
+					userAgent: req.headers['user-agent'] || null
+				});
 
-            if (!rows.length) {
-                await consumeBcryptCostForTiming(password);
+				console.warn(`[로그인 실패] IP: ${getClientIp(req)}, 사유: 인증 실패`);
+				return res.status(401).json({ error: "아이디 또는 비밀번호가 올바르지 않습니다." });
+			}
 
-                await recordLoginAttempt(pool, {
-                    userId: null,
-                    username: trimmedUsername,
-                    ipAddress: getClientIp(req),
-                    port: req.connection.remotePort || 0,
-                    success: false,
-                    failureReason: '존재하지 않는 사용자',
-                    userAgent: req.headers['user-agent'] || null
-                });
+			const user = rows[0];
 
-                console.warn(`[로그인 실패] IP: ${getClientIp(req)}, 사유: 인증 실패`);
-                return res.status(401).json({ error: "아이디 또는 비밀번호가 올바르지 않습니다." });
-            }
+			const ok = await bcrypt.compare(password, user.password_hash);
+			if (!ok) {
+				await recordLoginAttempt(pool, {
+					userId: user.id,
+					username: user.username,
+					ipAddress: getClientIp(req),
+					port: req.connection.remotePort || 0,
+					success: false,
+					failureReason: '비밀번호 불일치',
+					userAgent: req.headers['user-agent'] || null
+				});
 
-            const user = rows[0];
+				console.warn(`[로그인 실패] IP: ${getClientIp(req)}, 사유: 인증 실패`);
+				return res.status(401).json({ error: "아이디 또는 비밀번호가 올바르지 않습니다." });
+			}
 
-            const ok = await bcrypt.compare(password, user.password_hash);
-            if (!ok) {
-                await recordLoginAttempt(pool, {
-                    userId: user.id,
-                    username: user.username,
-                    ipAddress: getClientIp(req),
-                    port: req.connection.remotePort || 0,
-                    success: false,
-                    failureReason: '비밀번호 불일치',
-                    userAgent: req.headers['user-agent'] || null
-                });
+			const countryCheck = checkCountryWhitelist(
+				{
+					country_whitelist_enabled: user.country_whitelist_enabled,
+					allowed_login_countries: user.allowed_login_countries
+				},
+				getClientIp(req)
+			);
 
-                console.warn(`[로그인 실패] IP: ${getClientIp(req)}, 사유: 인증 실패`);
-                return res.status(401).json({ error: "아이디 또는 비밀번호가 올바르지 않습니다." });
-            }
+			if (!countryCheck.allowed) {
+				await recordLoginAttempt(pool, {
+					userId: user.id,
+					username: user.username,
+					ipAddress: getClientIp(req),
+					port: req.connection.remotePort || 0,
+					success: false,
+					failureReason: countryCheck.reason,
+					userAgent: req.headers['user-agent'] || null
+				});
 
-            const countryCheck = checkCountryWhitelist(
-                {
-                    country_whitelist_enabled: user.country_whitelist_enabled,
-                    allowed_login_countries: user.allowed_login_countries
-                },
-                getClientIp(req)
-            );
+				console.warn(`[로그인 실패] IP: ${getClientIp(req)}, 사유: ${countryCheck.reason}`);
+				return res.status(403).json({
+					error: "현재 위치에서는 로그인할 수 없습니다. 계정 보안 설정을 확인하세요."
+				});
+			}
 
-            if (!countryCheck.allowed) {
-                await recordLoginAttempt(pool, {
-                    userId: user.id,
-                    username: user.username,
-                    ipAddress: getClientIp(req),
-                    port: req.connection.remotePort || 0,
-                    success: false,
-                    failureReason: countryCheck.reason,
-                    userAgent: req.headers['user-agent'] || null
-                });
+			if (user.totp_enabled || user.passkey_enabled) {
+				const tempSessionId = crypto.randomBytes(32).toString("hex");
+				const now = Date.now();
+				const clientIp = getClientIp(req);
+				const ua = req.headers["user-agent"] || "";
+				const uaHash = crypto.createHash("sha256").update(ua).digest("hex");
 
-                console.warn(`[로그인 실패] IP: ${getClientIp(req)}, 사유: ${countryCheck.reason}`);
-                return res.status(403).json({
-                    error: "현재 위치에서는 로그인할 수 없습니다. 계정 보안 설정을 확인하세요."
-                });
-            }
+				const tempSession = {
+					type: "2fa",
+					pendingUserId: user.id,
+					createdAt: now,
+					expiresAt: now + 10 * 60 * 1000, 
+					lastAccessedAt: now,
+					ipKey: clientIp,
+					uaHash
+				};
 
-            if (user.totp_enabled || user.passkey_enabled) {
-                const tempSessionId = crypto.randomBytes(32).toString("hex");
-                const now = new Date();
-                const clientIp = getClientIp(req);
-                const ua = req.headers["user-agent"] || "";
-                const uaHash = crypto.createHash("sha256").update(ua).digest("hex");
+				await saveSession(tempSessionId, tempSession, 10 * 60 * 1000);
 
-                sessions.set(tempSessionId, {
-                	type: "2fa",
-                    pendingUserId: user.id,
-                    createdAt: now.getTime(),
-                    expiresAt: now.getTime() + 10 * 60 * 1000, 
-                    lastAccessedAt: now.getTime(),
-                    ipKey: clientIp,
-                    uaHash
-                });
+				const availableMethods = [];
+				if (user.totp_enabled) availableMethods.push('totp');
+				if (user.passkey_enabled) availableMethods.push('passkey');
 
-                const availableMethods = [];
-                if (user.totp_enabled) availableMethods.push('totp');
-                if (user.passkey_enabled) availableMethods.push('passkey');
+				return res.json({
+					ok: false,
+					requires2FA: true,
+					availableMethods: availableMethods,
+					tempSessionId: tempSessionId
+				});
+			}
 
-                return res.json({
-                    ok: false,
-                    requires2FA: true,
-                    availableMethods: availableMethods,
-                    tempSessionId: tempSessionId
-                });
-            }
+			const sessionResult = await createSession({
+				id: user.id,
+				username: user.username,
+				blockDuplicateLogin: user.block_duplicate_login
+			});
 
-            const sessionResult = createSession({
-                id: user.id,
-                username: user.username,
-                blockDuplicateLogin: user.block_duplicate_login
-            });
+			if (!sessionResult.success) {
+				return res.status(409).json({
+					error: sessionResult.error,
+					code: 'DUPLICATE_LOGIN_BLOCKED'
+				});
+			}
 
-            if (!sessionResult.success) {
-                return res.status(409).json({
-                    error: sessionResult.error,
-                    code: 'DUPLICATE_LOGIN_BLOCKED'
-                });
-            }
+			const sessionId = sessionResult.sessionId;
 
-            const sessionId = sessionResult.sessionId;
+			res.cookie(SESSION_COOKIE_NAME, sessionId, {
+				httpOnly: true,
+				sameSite: "strict",
+				secure: COOKIE_SECURE,
+				path: "/",
+				maxAge: SESSION_TTL_MS
+			});
 
-            res.cookie(SESSION_COOKIE_NAME, sessionId, {
-                httpOnly: true,
-                sameSite: "strict",
-                secure: COOKIE_SECURE,
-                path: "/",
-                maxAge: SESSION_TTL_MS
-            });
+			const newCsrfToken = generateCsrfToken();
+			res.cookie(CSRF_COOKIE_NAME, newCsrfToken, {
+				httpOnly: false,
+				sameSite: "strict",
+				secure: COOKIE_SECURE,
+				path: "/",
+				maxAge: SESSION_TTL_MS
+			});
 
-            const newCsrfToken = generateCsrfToken();
-            res.cookie(CSRF_COOKIE_NAME, newCsrfToken, {
-                httpOnly: false,
-                sameSite: "strict",
-                secure: COOKIE_SECURE,
-                path: "/",
-                maxAge: SESSION_TTL_MS
-            });
+			res.json({
+				ok: true,
+				user: {
+					id: user.id,
+					username: user.username
+				}
+			});
 
-            res.json({
-                ok: true,
-                user: {
-                    id: user.id,
-                    username: user.username
-                }
-            });
+			recordLoginAttempt(pool, {
+				userId: user.id,
+				username: user.username,
+				ipAddress: getClientIp(req),
+				port: req.connection.remotePort || 0,
+				success: true,
+				failureReason: null,
+				userAgent: req.headers['user-agent'] || null
+			});
+		} catch (error) {
+			logError("POST /api/auth/login", error);
+			res.status(500).json({ error: "로그인 처리 중 오류가 발생했습니다." });
+		}
+	});
 
-            recordLoginAttempt(pool, {
-                userId: user.id,
-                username: user.username,
-                ipAddress: getClientIp(req),
-                port: req.connection.remotePort || 0,
-                success: true,
-                failureReason: null,
-                userAgent: req.headers['user-agent'] || null
-            });
-        } catch (error) {
-            logError("POST /api/auth/login", error);
-            res.status(500).json({ error: "로그인 처리 중 오류가 발생했습니다." });
-        }
-    });
-
-    router.post("/logout", (req, res) => {
-        const { getSessionFromRequest, wsCloseConnectionsForSession } = dependencies;
-        const session = getSessionFromRequest(req);
+	router.post("/logout", async (req, res) => {
+		const { getSessionFromRequest, wsCloseConnectionsForSession } = dependencies;
+		const session = await getSessionFromRequest(req);
 		if (session) {
+			try { wsCloseConnectionsForSession(session.id, 1008, 'Logout'); } catch (e) {}
+			await revokeSession(session.id, "logout");
+		}
+
+		res.clearCookie(SESSION_COOKIE_NAME, {
+			httpOnly: true,
+			sameSite: "strict",
+			path: "/",
+			secure: COOKIE_SECURE
+		});
+
+		res.json({ ok: true });
+	});
+
+	router.delete("/account", authMiddleware, async (req, res) => {
+		const { password, confirmText } = req.body || {};
+
+		if (typeof password !== "string" || !password.trim()) return res.status(400).json({ error: "비밀번호를 입력해 주세요." });
+
+		if (PASSWORD_CONTROL_CHARS_RE.test(password)) return res.status(400).json({ error: "비밀번호 형식이 올바르지 않습니다." });
+
+		if (confirmText !== "계정 삭제") return res.status(400).json({ error: '확인 문구를 정확히 입력해 주세요. "계정 삭제"를 입력하세요.' });
+
+		try {
+			const [rows] = await pool.execute(
+				`SELECT id, username, password_hash FROM users WHERE id = ?`,
+				[req.user.id]
+			);
+
+			if (!rows.length) return res.status(404).json({ error: "사용자를 찾을 수 없습니다." });
+
+			const user = rows[0];
+
+			const ok = await bcrypt.compare(password, user.password_hash);
+			if (!ok) {
+				const maskedUsername = req.user.username.substring(0, 2) + '***';
+				console.warn(`[계정 삭제 실패] 사용자: ${maskedUsername}, IP: ${getClientIp(req)}, 사유: 비밀번호 불일치`);
+				return res.status(401).json({ error: "비밀번호가 올바르지 않습니다." });
+			}
+
 			try {
-			    wsCloseConnectionsForSession(session.id, 1008, 'Logout');
-			} catch (e) {}
+				if (storagesRepo && typeof storagesRepo.safeDeleteAllOwnedStoragesPreservingCollaborators === 'function') {
+					await storagesRepo.safeDeleteAllOwnedStoragesPreservingCollaborators(req.user.id);
+				}
+			} catch (e) {
+				logError('DELETE /api/auth/account (pre-delete transfer)', e);
+				return res.status(500).json({ error: '계정 삭제 전 데이터 이관에 실패했습니다. 잠시 후 다시 시도해 주세요.' });
+			}
 
-            sessions.delete(session.id);
+			await pool.execute(`DELETE FROM users WHERE id = ?`, [req.user.id]);
 
-            if (session.userId) {
-                const userSessionSet = userSessions.get(session.userId);
-                if (userSessionSet) {
-                    userSessionSet.delete(session.id);
-                    if (userSessionSet.size === 0) {
-                        userSessions.delete(session.userId);
-                    }
-                }
-            }
-        }
+			const maskedUsername = req.user.username.substring(0, 2) + '***';
+			console.log(`[계정 삭제 완료] 사용자 ID: ${req.user.id}, 사용자명: ${maskedUsername}`);
 
-        res.clearCookie(SESSION_COOKIE_NAME, {
-            httpOnly: true,
-            sameSite: "strict",
-            path: "/",
-            secure: COOKIE_SECURE
-        });
+			const { wsCloseConnectionsForSession } = dependencies;
+			const userId = req.user.id;
+			const sessionIds = await listUserSessions(userId);
+			if (sessionIds && sessionIds.length > 0) {
+				for (const sessionId of sessionIds) {
+					try { wsCloseConnectionsForSession(sessionId, 1008, 'Account deleted'); } catch (e) {}
+					await revokeSession(sessionId, "account-deleted");
+				}
+			}
 
-        res.json({ ok: true });
-    });
+			res.clearCookie(SESSION_COOKIE_NAME, {
+				httpOnly: true,
+				sameSite: "strict",
+				path: "/",
+				secure: COOKIE_SECURE
+			});
 
-    router.delete("/account", authMiddleware, async (req, res) => {
-        const { password, confirmText } = req.body || {};
+			res.json({ ok: true });
+		} catch (error) {
+			logError("DELETE /api/auth/account", error);
+			res.status(500).json({ error: "계정 삭제 중 오류가 발생했습니다." });
+		}
+	});
 
-        if (typeof password !== "string" || !password.trim())
-            return res.status(400).json({ error: "비밀번호를 입력해 주세요." });
+	router.post("/register", authLimiter, requireSameOriginForAuth, async (req, res) => {
+		const { username, password } = req.body || {};
 
-        if (PASSWORD_CONTROL_CHARS_RE.test(password))
-            return res.status(400).json({ error: "비밀번호 형식이 올바르지 않습니다." });
+		if (typeof username !== "string" || typeof password !== "string") return res.status(400).json({ error: "아이디와 비밀번호를 모두 입력해 주세요." });
 
-        if (confirmText !== "계정 삭제")
-            return res.status(400).json({ error: '확인 문구를 정확히 입력해 주세요. "계정 삭제"를 입력하세요.' });
+		const trimmedUsername = username.trim();
 
-        try {
-            const [rows] = await pool.execute(
-                `SELECT id, username, password_hash FROM users WHERE id = ?`,
-                [req.user.id]
-            );
+		if (trimmedUsername.length < 3 || trimmedUsername.length > 64) return res.status(400).json({ error: "아이디는 3~64자 사이로 입력해 주세요." });
 
-            if (!rows.length) {
-                return res.status(404).json({ error: "사용자를 찾을 수 없습니다." });
-            }
+		if (USERNAME_CONTROL_CHARS_RE.test(trimmedUsername) || !USERNAME_SAFE_RE.test(trimmedUsername)) return res.status(400).json({ error: "아이디는 한글/영문/숫자 및 . _ - 만 사용할 수 있습니다. (공백/특수문자/HTML 엔티티 불가)" });
 
-            const user = rows[0];
+		const passwordValidation = validatePasswordStrength(password);
+		if (!passwordValidation.valid) return res.status(400).json({ error: passwordValidation.error });
 
-            const ok = await bcrypt.compare(password, user.password_hash);
-            if (!ok) {
-                const maskedUsername = req.user.username.substring(0, 2) + '***';
-                console.warn(`[계정 삭제 실패] 사용자: ${maskedUsername}, IP: ${getClientIp(req)}, 사유: 비밀번호 불일치`);
-                return res.status(401).json({ error: "비밀번호가 올바르지 않습니다." });
-            }
+		try {
+			const [rows] = await pool.execute(
+				`
+				SELECT id
+				FROM users
+				WHERE username = ?
+				`,
+				[trimmedUsername]
+			);
 
-            try {
-                if (storagesRepo && typeof storagesRepo.safeDeleteAllOwnedStoragesPreservingCollaborators === 'function') {
-                    await storagesRepo.safeDeleteAllOwnedStoragesPreservingCollaborators(req.user.id);
-                }
-            } catch (e) {
-                logError('DELETE /api/auth/account (pre-delete transfer)', e);
-                return res.status(500).json({ error: '계정 삭제 전 데이터 이관에 실패했습니다. 잠시 후 다시 시도해 주세요.' });
-            }
+			if (rows.length > 0) return res.status(409).json({ error: "이미 사용 중인 아이디입니다." });
 
-            await pool.execute(`DELETE FROM users WHERE id = ?`, [req.user.id]);
+			const now = new Date();
+			const nowStr = formatDateForDb(now);
 
-            const maskedUsername = req.user.username.substring(0, 2) + '***';
-            console.log(`[계정 삭제 완료] 사용자 ID: ${req.user.id}, 사용자명: ${maskedUsername}`);
+			const passwordHash = await bcrypt.hash(password, BCRYPT_SALT_ROUNDS);
 
-            const { wsCloseConnectionsForSession } = dependencies;
-            const userId = req.user.id;
-            const sessionIds = userSessions.get(userId);
-            if (sessionIds && sessionIds.size > 0) {
-                sessionIds.forEach(sessionId => {
-                    try { wsCloseConnectionsForSession(sessionId, 1008, 'Account deleted'); } catch (e) {}
-                    sessions.delete(sessionId);
-                });
-            }
-            userSessions.delete(userId);
+			const [result] = await pool.execute(
+				`
+				INSERT INTO users (username, password_hash, created_at, updated_at)
+				VALUES (?, ?, ?, ?)
+				`,
+				[trimmedUsername, passwordHash, nowStr, nowStr]
+			);
 
-            res.clearCookie(SESSION_COOKIE_NAME, {
-                httpOnly: true,
-                sameSite: "strict",
-                path: "/",
-                secure: COOKIE_SECURE
-            });
+			const user = {
+				id: result.insertId,
+				username: trimmedUsername,
+				blockDuplicateLogin: false 
+			};
 
-            res.json({ ok: true });
-        } catch (error) {
-            logError("DELETE /api/auth/account", error);
-            res.status(500).json({ error: "계정 삭제 중 오류가 발생했습니다." });
-        }
-    });
+			const storageId = 'stg-' + now.getTime() + '-' + crypto.randomBytes(4).toString('hex');
+			await storagesRepo.createStorage({
+				userId: user.id,
+				id: storageId,
+				name: "기본 저장소",
+				sortOrder: 0,
+				createdAt: nowStr,
+				updatedAt: nowStr
+			});
 
-    router.post("/register", authLimiter, requireSameOriginForAuth, async (req, res) => {
-        const { username, password } = req.body || {};
+			const sessionResult = await createSession(user);
 
-        if (typeof username !== "string" || typeof password !== "string") {
-            return res.status(400).json({ error: "아이디와 비밀번호를 모두 입력해 주세요." });
-        }
+			if (!sessionResult.success) {
+				return res.status(409).json({
+					error: sessionResult.error,
+					code: 'DUPLICATE_LOGIN_BLOCKED'
+				});
+			}
 
-        const trimmedUsername = username.trim();
+			const sessionId = sessionResult.sessionId;
 
-        if (trimmedUsername.length < 3 || trimmedUsername.length > 64) {
-            return res.status(400).json({ error: "아이디는 3~64자 사이로 입력해 주세요." });
-        }
+			res.cookie(SESSION_COOKIE_NAME, sessionId, {
+				httpOnly: true,
+				sameSite: "strict",
+				secure: COOKIE_SECURE,
+				path: "/",
+				maxAge: SESSION_TTL_MS
+			});
 
-        if (USERNAME_CONTROL_CHARS_RE.test(trimmedUsername) || !USERNAME_SAFE_RE.test(trimmedUsername)) {
-            return res.status(400).json({
-                error: "아이디는 한글/영문/숫자 및 . _ - 만 사용할 수 있습니다. (공백/특수문자/HTML 엔티티 불가)"
-            });
-        }
+			const newCsrfToken = generateCsrfToken();
+			res.cookie(CSRF_COOKIE_NAME, newCsrfToken, {
+				httpOnly: false,
+				sameSite: "strict",
+				secure: COOKIE_SECURE,
+				path: "/",
+				maxAge: SESSION_TTL_MS
+			});
 
-        const passwordValidation = validatePasswordStrength(password);
-        if (!passwordValidation.valid) {
-            return res.status(400).json({ error: passwordValidation.error });
-        }
-
-        try {
-            const [rows] = await pool.execute(
-                `
-                SELECT id
-                FROM users
-                WHERE username = ?
-                `,
-                [trimmedUsername]
-            );
-
-            if (rows.length > 0) {
-                return res.status(409).json({ error: "이미 사용 중인 아이디입니다." });
-            }
-
-            const now = new Date();
-            const nowStr = formatDateForDb(now);
-
-            const passwordHash = await bcrypt.hash(password, BCRYPT_SALT_ROUNDS);
-
-            const [result] = await pool.execute(
-                `
-                INSERT INTO users (username, password_hash, created_at, updated_at)
-                VALUES (?, ?, ?, ?)
-                `,
-                [trimmedUsername, passwordHash, nowStr, nowStr]
-            );
-
-            const user = {
-                id: result.insertId,
-                username: trimmedUsername,
-                blockDuplicateLogin: false 
-            };
-
-            const storageId = 'stg-' + now.getTime() + '-' + crypto.randomBytes(4).toString('hex');
-            await storagesRepo.createStorage({
-                userId: user.id,
-                id: storageId,
-                name: "기본 저장소",
-                sortOrder: 0,
-                createdAt: nowStr,
-                updatedAt: nowStr
-            });
-
-            const sessionResult = createSession(user);
-
-            if (!sessionResult.success) {
-                return res.status(409).json({
-                    error: sessionResult.error,
-                    code: 'DUPLICATE_LOGIN_BLOCKED'
-                });
-            }
-
-            const sessionId = sessionResult.sessionId;
-
-            res.cookie(SESSION_COOKIE_NAME, sessionId, {
-                httpOnly: true,
-                sameSite: "strict",
-                secure: COOKIE_SECURE,
-                path: "/",
-                maxAge: SESSION_TTL_MS
-            });
-
-            const newCsrfToken = generateCsrfToken();
-            res.cookie(CSRF_COOKIE_NAME, newCsrfToken, {
-                httpOnly: false,
-                sameSite: "strict",
-                secure: COOKIE_SECURE,
-                path: "/",
-                maxAge: SESSION_TTL_MS
-            });
-
-            return res.status(201).json({
-                ok: true,
-                user: {
-                    id: user.id,
-                    username: user.username
-                }
-            });
-        } catch (error) {
-            logError("POST /api/auth/register", error);
-            return res.status(500).json({ error: "회원가입 처리 중 오류가 발생했습니다." });
-        }
-    });
+			return res.status(201).json({
+				ok: true,
+				user: {
+					id: user.id,
+					username: user.username
+				}
+			});
+		} catch (error) {
+			logError("POST /api/auth/register", error);
+			return res.status(500).json({ error: "회원가입 처리 중 오류가 발생했습니다." });
+		}
+	});
 
     router.get("/me", authMiddleware, async (req, res) => {
         try {

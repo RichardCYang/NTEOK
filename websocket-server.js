@@ -1347,7 +1347,21 @@ async function getStoragePermission(pool, userId, storageId) {
     return null;
 }
 
-function initWebSocketServer(server, sessions, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, SESSION_COOKIE_NAME, getSessionFromId, getClientIpFromRequest, pageSqlPolicy) {
+const { redis, ensureRedis } = require("./lib/redis");
+
+(async () => {
+	await ensureRedis();
+	const sub = redis.duplicate();
+	await sub.connect();
+	await sub.subscribe("session-revoke", (message) => {
+		try {
+			const { sessionId, reason } = JSON.parse(message);
+			wsCloseConnectionsForSession(sessionId, 1008, reason || "Session revoked");
+		} catch (_) {}
+	});
+})();
+
+function initWebSocketServer(server, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, SESSION_COOKIE_NAME, getSessionFromId, getClientIpFromRequest, pageSqlPolicy) {
     _wsPool = pool;
     _wsSanitizeHtmlContent = sanitizeHtmlContent;
     const allowedWsOrigins = (() => {
@@ -1381,9 +1395,7 @@ function initWebSocketServer(server, sessions, pool, sanitizeHtmlContent, IS_PRO
         verifyClient: (info, done) => {
             try {
                 const origin = info?.origin || info?.req?.headers?.origin;
-                if (!isWsOriginAllowed(origin)) {
-                    return done(false, 403, 'Forbidden');
-                }
+                if (!isWsOriginAllowed(origin)) return done(false, 403, 'Forbidden');
                 return done(true);
             } catch (_) {
                 return done(false, 403, 'Forbidden');
@@ -1427,12 +1439,12 @@ function initWebSocketServer(server, sessions, pool, sanitizeHtmlContent, IS_PRO
             registerActive(wsActiveConnectionsBySession, sessionId);
             ws._activeSessionKey = sessionId;
 
-		    const session = typeof getSessionFromId === 'function' ? getSessionFromId(sessionId) : sessions.get(sessionId);
+		    const session = typeof getSessionFromId === 'function' ? await getSessionFromId(sessionId) : null;
 		    if (!session || !session.userId) { ws.close(1008, 'Unauthorized'); return; }
 		    ws.userId = session.userId; ws.username = session.username; ws.sessionId = sessionId; ws.isAlive = true;
 			registerSessionConnection(sessionId, ws);
 		    ws.on('pong', () => { ws.isAlive = true; });
-            ws.on('error', () => {  }); });
+            ws.on('error', () => {  }); 
 
             initWsMessageRateState(ws);
 
@@ -1480,7 +1492,7 @@ function initWebSocketServer(server, sessions, pool, sanitizeHtmlContent, IS_PRO
 async function handleWebSocketMessage(ws, data, pool, sanitizeHtmlContent, getSessionFromId, pageSqlPolicy) {
 	const { type, payload } = data;
 	if (ws.sessionId && typeof getSessionFromId === 'function') {
-	    const s = getSessionFromId(ws.sessionId);
+	    const s = await getSessionFromId(ws.sessionId);
 	    if (!s || !s.userId) { try { ws.close(1008, 'Expired'); } catch (e) {} return; }
 	}
 	switch (type) {

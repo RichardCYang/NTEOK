@@ -30,11 +30,13 @@
 		"express-rate-limit": "^8.2.1",
 		"geoip-lite": "^1.4.10",
 		"ipaddr.js": "^2.3.0",
-		"isomorphic-dompurify": "^3.0.0",
+		"isomorphic-dompurify": "^3.3.0",
 		"jsdom": "^28.1.0",
 		"multer": "^2.1.0",
 		"mysql2": "^3.15.3",
 		"qrcode": "^1.5.4",
+		"rate-limit-redis": "^4.2.0",
+		"redis": "^4.7.0",
 		"speakeasy": "^2.0.0",
 		"ws": "^8.18.3",
 		"y-protocols": "^1.0.6",
@@ -42,6 +44,7 @@
 	},
 	"overrides": {
 		"axios": "^1.13.5",
+		"dompurify": "3.3.2",
 		"minimatch": "^10.2.1"
 	}
 }
