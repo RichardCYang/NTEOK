@@ -116,10 +116,11 @@ module.exports = (dependencies) => {
 	router.get('/shared/:token', async (req, res) => {
 		const token = req.params.token;
 		if (typeof token !== 'string' || token.length !== 64 || !/^[a-f0-9]{64}$/i.test(token)) return res.status(404).json({ error: "페이지를 찾을 수 없습니다." });
+		const tokenHash = dependencies.hashToken(token);
 		const session = await getSessionFromRequest(req);
 		const userId = session ? session.userId : null;
 		try {
-			const [publishRows] = await pool.execute(`SELECT ppl.page_id, ppl.allow_comments FROM page_publish_links ppl JOIN pages p ON p.id = ppl.page_id WHERE ppl.token = ? AND ppl.is_active = 1 AND p.deleted_at IS NULL AND p.is_encrypted = 0 ORDER BY ppl.created_at DESC LIMIT 1`, [token]);
+			const [publishRows] = await pool.execute(`SELECT ppl.page_id, ppl.allow_comments FROM page_publish_links ppl JOIN pages p ON p.id = ppl.page_id WHERE ppl.token = ? AND ppl.is_active = 1 AND p.deleted_at IS NULL AND p.is_encrypted = 0 AND (ppl.expires_at IS NULL OR ppl.expires_at > NOW()) ORDER BY ppl.created_at DESC LIMIT 1`, [tokenHash]);
 			if (publishRows.length === 0) return res.status(404).json({ error: "페이지를 찾을 수 없습니다." });
 			const pageId = publishRows[0].page_id;
 			const allowComments = Number(publishRows[0].allow_comments) === 1;
@@ -139,6 +140,7 @@ module.exports = (dependencies) => {
 	router.post('/shared/:token', sharedCommentWriteLimiter, requireSameOriginForAuth, async (req, res) => {
 		const token = req.params.token;
 		if (typeof token !== 'string' || token.length !== 64 || !/^[a-f0-9]{64}$/i.test(token)) return res.status(404).json({ error: "페이지를 찾을 수 없습니다." });
+		const tokenHash = dependencies.hashToken(token);
 		const session = await getSessionFromRequest(req);
 		const userId = session ? session.userId : null;
 		const { content, guestName } = req.body;
@@ -150,7 +152,7 @@ module.exports = (dependencies) => {
 		const sanitizedContent = sanitizeInput(rawContent);
 		const sanitizedGuestName = userId ? null : sanitizeInput(rawGuestName);
 		try {
-			const [publishRows] = await pool.execute(`SELECT ppl.page_id, ppl.allow_comments FROM page_publish_links ppl JOIN pages p ON p.id = ppl.page_id WHERE ppl.token = ? AND ppl.is_active = 1 AND p.deleted_at IS NULL AND p.is_encrypted = 0 ORDER BY ppl.created_at DESC LIMIT 1`, [token]);
+			const [publishRows] = await pool.execute(`SELECT ppl.page_id, ppl.allow_comments FROM page_publish_links ppl JOIN pages p ON p.id = ppl.page_id WHERE ppl.token = ? AND ppl.is_active = 1 AND p.deleted_at IS NULL AND p.is_encrypted = 0 AND (ppl.expires_at IS NULL OR ppl.expires_at > NOW()) ORDER BY ppl.created_at DESC LIMIT 1`, [tokenHash]);
 			if (!publishRows.length) return res.status(404).json({ error: "페이지를 찾을 수 없습니다." });
 			const pageId = publishRows[0].page_id;
 			const allowComments = Number(publishRows[0].allow_comments) === 1;
@@ -182,7 +184,7 @@ module.exports = (dependencies) => {
 		}
 	});
 
-	router.post('/:pageId', authMiddleware, async (req, res) => {
+	router.post('/:pageId', authMiddleware, csrfMiddleware, async (req, res) => {
 		const pageId = req.params.pageId;
 		const userId = req.user.id;
 		const { content } = req.body;
@@ -200,7 +202,7 @@ module.exports = (dependencies) => {
 		}
 	});
 
-	router.delete('/:commentId', authMiddleware, async (req, res) => {
+	router.delete('/:commentId', authMiddleware, csrfMiddleware, async (req, res) => {
 		const commentId = req.params.commentId;
 		const userId = req.user.id;
 		try {
@@ -220,7 +222,7 @@ module.exports = (dependencies) => {
 		}
 	});
 
-	router.put('/:commentId', authMiddleware, async (req, res) => {
+	router.put('/:commentId', authMiddleware, csrfMiddleware, async (req, res) => {
 		const commentId = req.params.commentId;
 		const session = await getSessionFromRequest(req);
 		const userId = session ? session.userId : null;

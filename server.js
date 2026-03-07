@@ -308,7 +308,7 @@ function maybeRecycleDomPurify() {
     try {
         _dompurifyCallCount = 0;
         clearDomPurifyWindow();
-        applyDomPurifyPolicy(); 
+        applyDomPurifyPolicy();
     } finally {
         _dompurifyClearing = false;
     }
@@ -366,8 +366,8 @@ app.use(compression({
         }
         return compression.filter(req, res);
     },
-    level: 6, 
-    threshold: 1024 
+    level: 6,
+    threshold: 1024
 }));
 
 app.use((req, res, next) => {
@@ -378,8 +378,8 @@ app.use((req, res, next) => {
 const SESSION_COOKIE_NAME_RAW = "nteok_session";
 const CSRF_COOKIE_NAME_RAW = "nteok_csrf";
 
-const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7; 
-const SESSION_ABSOLUTE_TTL_MS = 1000 * 60 * 60 * 24 * 7; 
+const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7;
+const SESSION_ABSOLUTE_TTL_MS = 1000 * 60 * 60 * 24 * 7;
 
 const IS_PRODUCTION = process.env.NODE_ENV === "production";
 const BASE_URL = process.env.BASE_URL || (IS_PRODUCTION ? "https://localhost:3000" : "http://localhost:3000");
@@ -638,7 +638,7 @@ function cleanupOldLoginLogs() {
 
 function generatePageId(now) {
     const iso = now.toISOString().replace(/[:.]/g, "-");
-    const rand = crypto.randomBytes(6).toString("hex"); 
+    const rand = crypto.randomBytes(6).toString("hex");
     return "page-" + iso + "-" + rand;
 }
 
@@ -670,17 +670,17 @@ function sanitizeInput(input) {
     }
     maybeRecycleDomPurify();
     return DOMPurify.sanitize(input, {
-        ALLOWED_TAGS: [], 
-        ALLOWED_ATTR: []  
+        ALLOWED_TAGS: [],
+        ALLOWED_ATTR: []
     });
 }
 
 function sanitizeFilenameComponent(name, maxLen = 120) {
     const s = String(name ?? '').normalize('NFKC');
     const cleaned = s
-        .replace(/[\u0000-\u001F\u007F]/g, '')	
-        .replace(/[\\/]/g, '_')                 
-        .replace(/["'<>`]/g, '')                
+        .replace(/[\u0000-\u001F\u007F]/g, '')
+        .replace(/[\\/]/g, '_')
+        .replace(/["'<>`]/g, '')
         .trim();
     return (cleaned.length ? cleaned : 'file').slice(0, maxLen);
 }
@@ -953,7 +953,11 @@ async function verifyCsrfToken(req) {
 	if (typeof tokenFromHeader !== "string" || typeof tokenFromCookie !== "string") return false;
 	if (tokenFromHeader !== tokenFromCookie) return false;
 	const sessionId = req.cookies?.[SESSION_COOKIE_NAME];
-	if (!sessionId) return false;
+	if (!sessionId) {
+		const guestAllowedPaths = ['/api/comments/shared/'];
+		if (guestAllowedPaths.some(p => req.path.startsWith(p))) return true;
+		return false;
+	}
 	return verifyCsrfTokenForSession(sessionId, tokenFromHeader, "api");
 }
 
@@ -1215,6 +1219,7 @@ async function initDb() {
             owner_user_id INT NOT NULL,
             is_active TINYINT(1) NOT NULL DEFAULT 1,
             allow_comments TINYINT(1) NOT NULL DEFAULT 0,
+            expires_at DATETIME NULL,
             created_at DATETIME NOT NULL,
             updated_at DATETIME NOT NULL,
             CONSTRAINT fk_page_publish_links_page
@@ -1226,7 +1231,8 @@ async function initDb() {
                 REFERENCES users(id)
                 ON DELETE CASCADE,
             INDEX idx_token_active (token, is_active),
-            INDEX idx_page_id (page_id)
+            INDEX idx_page_id (page_id),
+            INDEX idx_expires_at (expires_at)
         ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
     `);
 
@@ -1485,13 +1491,18 @@ function generatePublishToken() {
     return crypto.randomBytes(32).toString('hex');
 }
 
+function hashToken(token) {
+    if (!token) return null;
+    return crypto.createHash('sha256').update(String(token)).digest('hex');
+}
+
 const distributedRateStore = new RedisStore({
 	sendCommand: (...args) => redis.sendCommand(args)
 });
 
 const generalLimiter = rateLimit({
-	windowMs: 1 * 60 * 1000, 
-	max: 100, 
+	windowMs: 1 * 60 * 1000,
+	max: 100,
 	message: { error: "너무 많은 요청이 발생했습니다. 잠시 후 다시 시도해 주세요." },
 	standardHeaders: true,
 	legacyHeaders: false,
@@ -1500,19 +1511,19 @@ const generalLimiter = rateLimit({
 });
 
 const authLimiter = rateLimit({
-	windowMs: 15 * 60 * 1000, 
-	max: 5, 
+	windowMs: 15 * 60 * 1000,
+	max: 5,
 	message: { error: "너무 많은 로그인 시도가 발생했습니다. 15분 후 다시 시도해 주세요." },
 	standardHeaders: true,
 	legacyHeaders: false,
 	store: distributedRateStore,
 	keyGenerator: (req) => ipKeyGenerator(req.clientIp, RATE_LIMIT_IPV6_SUBNET),
-	skipSuccessfulRequests: true, 
+	skipSuccessfulRequests: true,
 });
 
 const totpLimiter = rateLimit({
-	windowMs: 15 * 60 * 1000, 
-	max: 10, 
+	windowMs: 15 * 60 * 1000,
+	max: 10,
 	message: { error: "너무 많은 인증 시도가 발생했습니다. 15분 후 다시 시도해 주세요." },
 	standardHeaders: true,
 	legacyHeaders: false,
@@ -1521,8 +1532,8 @@ const totpLimiter = rateLimit({
 });
 
 const passkeyLimiter = rateLimit({
-	windowMs: 15 * 60 * 1000, 
-	max: 10, 
+	windowMs: 15 * 60 * 1000,
+	max: 10,
 	message: { error: "너무 많은 패스키 인증 요청이 발생했습니다. 잠시 후 다시 시도해 주세요." },
 	standardHeaders: true,
 	legacyHeaders: false,
@@ -1531,8 +1542,8 @@ const passkeyLimiter = rateLimit({
 });
 
 const sseConnectionLimiter = rateLimit({
-	windowMs: 15 * 60 * 1000, 
-	max: 50, 
+	windowMs: 15 * 60 * 1000,
+	max: 50,
 	message: { error: "SSE 연결 제한 초과" },
 	standardHeaders: true,
 	legacyHeaders: false,
@@ -1661,10 +1672,10 @@ app.use("/api", (req, res, next) => {
 
 app.use(express.static(path.join(__dirname, "public"), {
     index: false,
-    maxAge: IS_PRODUCTION ? '7d' : 0, 
-    etag: true, 
-    lastModified: true, 
-    immutable: IS_PRODUCTION, 
+    maxAge: IS_PRODUCTION ? '7d' : 0,
+    etag: true,
+    lastModified: true,
+    immutable: IS_PRODUCTION,
     setHeaders: (res, filePath, stat) => {
         if (filePath.endsWith('.html')) {
             res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
@@ -1673,11 +1684,11 @@ app.use(express.static(path.join(__dirname, "public"), {
         }
         else if (filePath.endsWith('.js') || filePath.endsWith('.css')) {
             res.setHeader('Cache-Control', IS_PRODUCTION
-                ? 'public, max-age=604800, immutable' 
+                ? 'public, max-age=604800, immutable'
                 : 'no-cache');
         }
         else if (filePath.match(/\.(jpg|jpeg|png|gif|ico|svg|woff|woff2|ttf|eot)$/)) {
-            res.setHeader('Cache-Control', 'public, max-age=2592000, immutable'); 
+            res.setHeader('Cache-Control', 'public, max-age=2592000, immutable');
         }
     }
 }));
@@ -1809,13 +1820,13 @@ app.get('/imgs/:userId/:filename', authMiddleware, async (req, res) => {
                 AND p.user_id = ?
                 LIMIT 1`,
             [
-                currentUserId,       
-                requestedUserId,     
-                sanitizedFilename,   
-                likePattern,         
-                currentUserId,       
-                currentUserId,       
-                requestedUserId      
+                currentUserId,
+                requestedUserId,
+                sanitizedFilename,
+                likePattern,
+                currentUserId,
+                currentUserId,
+                requestedUserId
             ]
         );
 
@@ -1840,7 +1851,7 @@ app.get('/imgs/:userId/:filename', authMiddleware, async (req, res) => {
 
 			const ydoc = docInfo.ydoc;
 
-			let hasVerifiedImgRef = null; 
+			let hasVerifiedImgRef = null;
 			const ensureVerifiedImgRef = async () => {
 				if (hasVerifiedImgRef !== null) return hasVerifiedImgRef;
 				const [refRows] = await pool.execute(
@@ -1931,13 +1942,13 @@ app.get('/paperclip/:userId/:filename', authMiddleware, async (req, res) => {
                 AND p.user_id = ?
                 LIMIT 1`,
             [
-                currentUserId,       
-                requestedUserId,     
-                sanitizedFilename,   
-                likePattern,         
-                currentUserId,       
-                currentUserId,       
-                requestedUserId      
+                currentUserId,
+                requestedUserId,
+                sanitizedFilename,
+                likePattern,
+                currentUserId,
+                currentUserId,
+                requestedUserId
             ]
         );
 
@@ -2071,7 +2082,7 @@ const paperclipStorage = multer.diskStorage({
 	    const rawExt = path.extname(file.originalname);
 	    const ext = sanitizeExtension(rawExt);
 	    const base = sanitizeFilenameComponent(path.basename(file.originalname, rawExt), 120)
-	        .replace(/__+/g, '_'); 
+	        .replace(/__+/g, '_');
 
 	    cb(null, `${uniquePrefix}__${base}${ext}`);
     }

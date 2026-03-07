@@ -88,9 +88,10 @@ module.exports = (dependencies) => {
 	router.get("/api/shared/page/:token", async (req, res) => {
 		const token = req.params.token;
 		if (typeof token !== 'string' || token.length !== 64 || !/^[a-f0-9]{64}$/i.test(token)) return res.status(404).json({ error: "페이지를 찾을 수 없습니다." });
+		const tokenHash = dependencies.hashToken(token);
 		const clientIp = getClientIp(req);
 		try {
-			const [pageRows] = await pool.execute(`SELECT p.id, p.title, p.content, p.icon, p.cover_image, p.cover_position FROM page_publish_links ppl JOIN pages p ON p.id = ppl.page_id WHERE ppl.token = ? AND ppl.is_active = 1 AND p.is_encrypted = 0 AND p.deleted_at IS NULL LIMIT 1`, [token]);
+			const [pageRows] = await pool.execute(`SELECT p.id, p.title, p.content, p.icon, p.cover_image, p.cover_position FROM page_publish_links ppl JOIN pages p ON p.id = ppl.page_id WHERE ppl.token = ? AND ppl.is_active = 1 AND p.is_encrypted = 0 AND p.deleted_at IS NULL AND (ppl.expires_at IS NULL OR ppl.expires_at > NOW()) LIMIT 1`, [tokenHash]);
 			const isValid = pageRows.length > 0;
 			if (!(await checkSharedPageAccess(clientIp, token, isValid))) return res.status(429).json({ error: "너무 많은 요청입니다. 잠시 후 다시 시도해주세요." });
 			if (!isValid) return res.status(404).json({ error: "페이지를 찾을 수 없습니다." });

@@ -13,7 +13,7 @@ function toThemeMeta(file) {
 }
 
 module.exports = function(dependencies) {
-    const { express, authMiddleware } = dependencies;
+    const { express, authMiddleware, csrfMiddleware } = dependencies;
     const router = express.Router();
 
     router.get('/', authMiddleware, (req, res) => {
@@ -34,7 +34,7 @@ module.exports = function(dependencies) {
         });
     });
 
-    router.post('/set', authMiddleware, async (req, res) => {
+    router.post('/set', authMiddleware, csrfMiddleware, async (req, res) => {
         const { theme } = req.body;
         const userId = req.user.id;
 

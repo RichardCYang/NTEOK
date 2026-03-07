@@ -1264,7 +1264,7 @@ module.exports = (dependencies) => {
         }
     });
 
-    router.post("/:id/cover", authMiddleware, fileUploadLimiter, coverUpload.single('cover'), async (req, res) => {
+    router.post("/:id/cover", authMiddleware, csrfMiddleware, fileUploadLimiter, coverUpload.single('cover'), async (req, res) => {
         const id = req.params.id;
         const userId = req.user.id;
         if (!req.file) return res.status(400).json({ error: "No file uploaded" });
@@ -1345,7 +1345,7 @@ module.exports = (dependencies) => {
         }
     });
 
-    router.post("/:id/file", authMiddleware, fileUploadLimiter, fileUpload.single('file'), async (req, res) => {
+    router.post("/:id/file", authMiddleware, csrfMiddleware, fileUploadLimiter, fileUpload.single('file'), async (req, res) => {
         const id = req.params.id;
         const userId = req.user.id;
         if (!req.file) return res.status(400).json({ error: "No file uploaded" });
@@ -1728,7 +1728,7 @@ module.exports = (dependencies) => {
         }
     });
 
-    router.post("/:id/editor-image", authMiddleware, fileUploadLimiter, editorImageUpload.single('image'), async (req, res) => {
+    router.post("/:id/editor-image", authMiddleware, csrfMiddleware, fileUploadLimiter, editorImageUpload.single('image'), async (req, res) => {
         const id = req.params.id;
         const userId = req.user.id;
         if (!req.file) return res.status(400).json({ error: "No file uploaded" });
@@ -1798,19 +1798,16 @@ module.exports = (dependencies) => {
             if (!requirePageOwnerForPublish(existing, userId, res)) return;
 
             const [pub] = await pool.execute(
-                `SELECT token, created_at, allow_comments FROM page_publish_links WHERE page_id = ? AND owner_user_id = ? AND is_active = 1 LIMIT 1`,
+                `SELECT created_at, allow_comments, expires_at FROM page_publish_links WHERE page_id = ? AND owner_user_id = ? AND is_active = 1 AND (expires_at IS NULL OR expires_at > NOW()) LIMIT 1`,
                 [id, existing.user_id]
             );
             if (!pub.length) return res.json({ published: false });
 
-            const base = (process.env.BASE_URL || '').replace(/\/$/, '');
             const allowComments = pub[0].allow_comments === 1;
-
             res.json({
                 published: true,
-                token: pub[0].token,
-                url: base ? `${base}/shared/page/${pub[0].token}` : `/shared/page/${pub[0].token}`,
                 createdAt: toIsoString(pub[0].created_at),
+                expiresAt: pub[0].expires_at ? toIsoString(pub[0].expires_at) : null,
                 allowComments
             });
         } catch (e) {
@@ -1832,43 +1829,38 @@ module.exports = (dependencies) => {
             if (existing.is_encrypted === 1) return res.status(400).json({ error: "암호화된 페이지는 발행할 수 없습니다." });
 
             const allowComments = req.body && req.body.allowComments === true;
+            const expiresDays = req.body && Number.isFinite(Number(req.body.expiresDays)) ? Number(req.body.expiresDays) : null;
+            
             const now = new Date();
-            const nowStr = now.toISOString().slice(0, 19).replace('T', ' ');
+            const nowStr = formatDateForDb(now);
+            let expiresAt = null;
+            if (expiresDays && expiresDays > 0) {
+                const exp = new Date(now.getTime() + expiresDays * 24 * 60 * 60 * 1000);
+                expiresAt = formatDateForDb(exp);
+            }
 
             const [active] = await pool.execute(
-                `SELECT id, token FROM page_publish_links WHERE page_id = ? AND owner_user_id = ? AND is_active = 1 LIMIT 1`,
+                `SELECT id FROM page_publish_links WHERE page_id = ? AND owner_user_id = ? AND is_active = 1 LIMIT 1`,
                 [id, existing.user_id]
             );
 
-            let token;
             if (active.length) {
-                token = active[0].token;
                 await pool.execute(
-                    `UPDATE page_publish_links SET allow_comments=?, updated_at=? WHERE id=?`,
-                    [allowComments ? 1 : 0, nowStr, active[0].id]
+                    `UPDATE page_publish_links SET is_active = 0, updated_at = ? WHERE id = ?`,
+                    [nowStr, active[0].id]
                 );
-            } else {
-                let inserted = false;
-                for (let i = 0; i < 3; i++) {
-                    try {
-                        token = generatePublishToken();
-                        await pool.execute(
-                            `INSERT INTO page_publish_links (token, page_id, owner_user_id, is_active, allow_comments, created_at, updated_at) VALUES (?, ?, ?, 1, ?, ?, ?)`,
-                            [token, id, existing.user_id, allowComments ? 1 : 0, nowStr, nowStr]
-                        );
-                        inserted = true;
-                        break;
-                    } catch (err) {
-                        if (err && err.code === 'ER_DUP_ENTRY') continue;
-                        throw err;
-                    }
-                }
-                if (!inserted) return res.status(500).json({ error: "토큰 생성에 실패했습니다." });
             }
+
+            const token = generatePublishToken();
+            const tokenHash = dependencies.hashToken(token);
+            await pool.execute(
+                `INSERT INTO page_publish_links (token, page_id, owner_user_id, is_active, allow_comments, expires_at, created_at, updated_at) VALUES (?, ?, ?, 1, ?, ?, ?, ?)`,
+                [tokenHash, id, existing.user_id, allowComments ? 1 : 0, expiresAt, nowStr, nowStr]
+            );
 
             const base = (process.env.BASE_URL || '').replace(/\/$/, '');
             const url = base ? `${base}/shared/page/${token}` : `/shared/page/${token}`;
-            res.json({ published: true, token, url, allowComments });
+            res.json({ published: true, token, url, allowComments, expiresAt: expiresAt ? toIsoString(new Date(expiresAt)) : null });
         } catch (e) {
             logError("POST /api/pages/:id/publish", e);
             res.status(500).json({ error: "Failed" });
@@ -1886,7 +1878,7 @@ module.exports = (dependencies) => {
             if (!permission) return res.status(403).json({ error: "권한이 없습니다." });
             if (!requirePageOwnerForPublish(existing, userId, res)) return;
 
-            const nowStr = new Date().toISOString().slice(0, 19).replace('T', ' ');
+            const nowStr = formatDateForDb(new Date());
             await pool.execute(
                 `UPDATE page_publish_links SET is_active = 0, updated_at = ? WHERE page_id = ? AND owner_user_id = ? AND is_active = 1`,
                 [nowStr, id, existing.user_id]

@@ -1007,7 +1007,7 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
         }
     });
 
-    router.post('/import', authMiddleware, backupImportLimiter, backupUpload.single('backup'), async (req, res) => {
+    router.post('/import', authMiddleware, csrfMiddleware, backupImportLimiter, backupUpload.single('backup'), async (req, res) => {
         const userId = req.user.id;
         const uploadedFile = req.file;
 
@@ -1015,6 +1015,7 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
 
         let connection;
         let extractDir;
+        const stagingFiles = [];
         try {
             const importResult = await readBackupZipEntriesForImport(uploadedFile.path);
             const zipEntries = importResult.zipEntries;
@@ -1235,6 +1236,9 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
             const backupFileRefs = fileRefsEntry ? (safeJsonParse(fileRefsEntry.data.toString('utf8'), 'file-refs.json')?.fileRefs || []) : [];
 
             let totalPaperclips = 0;
+            const stagingDir = path.join(extractDir, 'staging');
+            fs.mkdirSync(stagingDir, { recursive: true });
+
             for (const entry of zipEntries) {
                 const isImage = entry.entryName.startsWith('images/');
                 const isPaperclip = entry.entryName.startsWith('paperclip/');
@@ -1247,7 +1251,6 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
                 if (!filename) continue;
 
                 const isCover = isImage && coverImageFilenames.has(filename);
-
                 const subDir = isImage ? (isCover ? 'covers' : 'imgs') : 'paperclip';
                 const targetDir = path.join(__dirname, '..', subDir, String(userId));
                 if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
@@ -1264,8 +1267,8 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
                     }
                 }
 
-                const targetPath = unique.fullPath;
-
+                const stagingPath = path.join(stagingDir, `${crypto.randomBytes(12).toString('hex')}-${unique.filename}`);
+                
                 const processFile = (srcPath, destPath, buf) => {
                     if (buf) {
                         if (isImage && !isSupportedImageBuffer(buf, unique.filename)) return false;
@@ -1288,18 +1291,49 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
                         } else {
                             try { assertSafeAttachmentFile(srcPath, unique.filename); } catch (e) { return false; }
                         }
-                        try { fs.renameSync(srcPath, destPath); } catch (e) {
-                            fs.copyFileSync(srcPath, destPath);
-                            fs.unlinkSync(srcPath);
-                        }
+                        fs.copyFileSync(srcPath, destPath);
                     }
                     return true;
                 };
 
-                if (processFile(entry.tempFilePath, targetPath, entry.data)) {
+                if (processFile(entry.tempFilePath, stagingPath, entry.data)) {
+                    stagingFiles.push({ stagingPath, targetPath: unique.fullPath });
                     if (isImage) totalImages++;
                     else totalPaperclips++;
                 }
+            }
+
+            let totalStagingSize = 0;
+            for (const f of stagingFiles) {
+                try { totalStagingSize += fs.statSync(f.stagingPath).size; } catch (_) {}
+            }
+
+            const dirs = [
+                path.join(__dirname, "..", "paperclip", String(userId)),
+                path.join(__dirname, "..", "imgs", String(userId)),
+                path.join(__dirname, "..", "covers", String(userId))
+            ];
+            let currentUsage = 0;
+            for (const d of dirs) {
+                if (fs.existsSync(d)) {
+                    const files = fs.readdirSync(d);
+                    for (const f of files) {
+                        try { currentUsage += fs.statSync(path.join(d, f)).size; } catch (_) {}
+                    }
+                }
+            }
+            const MAX_PAPERCLIP_BYTES_PER_USER = (() => {
+                const raw = String(process.env.MAX_PAPERCLIP_BYTES_PER_USER || '').trim().toLowerCase();
+                if (!raw) return 1024 * 1024 * 1024; 
+                const m = raw.match(/^(\d+(?:\.\d+)?)\s*(b|kb|mb|gb)?$/);
+                if (!m) return 1024 * 1024 * 1024;
+                const n = Number(m[1]);
+                const unit = m[2] || 'b';
+                const mul = unit === 'gb' ? 1024**3 : unit === 'mb' ? 1024**2 : unit === 'kb' ? 1024 : 1;
+                return Math.max(50 * 1024 * 1024, Math.min(20 * 1024**3, Math.floor(n * mul)));
+            })();
+            if (currentUsage + totalStagingSize > MAX_PAPERCLIP_BYTES_PER_USER) {
+                throw new Error('UPLOAD_QUOTA_EXCEEDED');
             }
 
             for (const ref of backupFileRefs) {
@@ -1362,7 +1396,17 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
             }
 
             await connection.commit();
-            fs.unlinkSync(uploadedFile.path);
+            
+            for (const f of stagingFiles) {
+                try {
+                    fs.renameSync(f.stagingPath, f.targetPath);
+                } catch (e) {
+                    fs.copyFileSync(f.stagingPath, f.targetPath);
+                    fs.unlinkSync(f.stagingPath);
+                }
+            }
+
+            if (uploadedFile && fs.existsSync(uploadedFile.path)) fs.unlinkSync(uploadedFile.path);
             res.json({
                 ok: true,
                 storagesCount: workspaceMap.size,
@@ -1375,7 +1419,11 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
             const incidentId = crypto.randomBytes(4).toString("hex").toUpperCase();
             logError(`[IMPORT_ERROR] [${incidentId}]`, error);
             if (connection) await connection.rollback();
+            for (const f of stagingFiles) {
+                try { if (fs.existsSync(f.stagingPath)) fs.unlinkSync(f.stagingPath); } catch (_) {}
+            }
             if (uploadedFile && fs.existsSync(uploadedFile.path)) fs.unlinkSync(uploadedFile.path);
+            if (String(error?.message) === "UPLOAD_QUOTA_EXCEEDED") return res.status(413).json({ error: "업로드 용량 제한을 초과했습니다.", incidentId });
             res.status(500).json({ error: "백업을 가져오는 중 오류가 발생했습니다.", incidentId });
         } finally {
             if (connection) connection.release();
