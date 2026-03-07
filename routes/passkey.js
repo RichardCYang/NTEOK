@@ -1,6 +1,18 @@
 const express = require('express');
 const router = express.Router();
 
+const DEVICE_NAME_MAX_LEN = 80;
+
+function sanitizeDeviceName(input) {
+	if (typeof input !== 'string') return '알 수 없는 디바이스';
+	const cleaned = input
+		.normalize('NFKC')
+		.replace(/[\u0000-\u001F\u007F]/g, '')
+		.replace(/[<>&"'`]/g, '')
+		.trim();
+	return (cleaned || '알 수 없는 디바이스').slice(0, DEVICE_NAME_MAX_LEN);
+}
+
 module.exports = (dependencies) => {
 	const {
 		pool,
@@ -23,7 +35,8 @@ module.exports = (dependencies) => {
 		getClientIpFromRequest,
 		getSession,
 		saveSession,
-		revokeSession
+		revokeSession,
+		requireRecentReauth
 	} = dependencies;
 
 	const TWO_FA_COOKIE_NAME = COOKIE_SECURE ? '__Host-nteok_2fa' : 'nteok_2fa';
@@ -128,7 +141,7 @@ module.exports = (dependencies) => {
 		}
 	});
 
-	router.post("/register/options", authMiddleware, csrfMiddleware, async (req, res) => {
+	router.post("/register/options", authMiddleware, csrfMiddleware, requireRecentReauth(5 * 60 * 1000), async (req, res) => {
 		try {
 			const userId = req.user.id;
 			const username = req.user.username;
@@ -156,10 +169,11 @@ module.exports = (dependencies) => {
 		}
 	});
 
-	router.post("/register/verify", authMiddleware, csrfMiddleware, passkeyLimiter, async (req, res) => {
+	router.post("/register/verify", authMiddleware, csrfMiddleware, requireRecentReauth(5 * 60 * 1000), passkeyLimiter, async (req, res) => {
 		try {
 			const userId = req.user.id;
-			const { credential, deviceName } = req.body;
+			const { credential } = req.body;
+			const deviceName = sanitizeDeviceName(req.body?.deviceName);
 			const sessionId = req.cookies[SESSION_COOKIE_NAME];
 			if (!credential) return res.status(400).json({ error: "인증 정보가 없습니다." });
 			const [challenges] = await pool.execute(`SELECT challenge FROM webauthn_challenges WHERE user_id = ? AND session_id = ? AND operation = 'registration' AND expires_at > NOW() ORDER BY created_at DESC LIMIT 1`, [userId, sessionId]);
@@ -174,7 +188,7 @@ module.exports = (dependencies) => {
 			const nowStr = formatDateForDb(now);
 			const credentialIdBase64 = credentialID;
 			const publicKeyBase64 = Buffer.from(credentialPublicKey).toString('base64');
-			await pool.execute(`INSERT INTO passkeys (user_id, credential_id, public_key, counter, device_name, created_at) VALUES (?, ?, ?, ?, ?, ?)`, [userId, credentialIdBase64, publicKeyBase64, counter, deviceName || '알 수 없는 디바이스', nowStr]);
+			await pool.execute(`INSERT INTO passkeys (user_id, credential_id, public_key, counter, device_name, created_at) VALUES (?, ?, ?, ?, ?, ?)`, [userId, credentialIdBase64, publicKeyBase64, counter, deviceName, nowStr]);
 			await pool.execute("UPDATE users SET passkey_enabled = 1, updated_at = ? WHERE id = ?", [nowStr, userId]);
 			await pool.execute("DELETE FROM webauthn_challenges WHERE user_id = ? AND session_id = ? AND operation = 'registration'", [userId, sessionId]);
 			res.json({ success: true });
@@ -234,7 +248,10 @@ module.exports = (dependencies) => {
 				await recordLoginAttempt(pool, { userId: userId, username: username, ipAddress: getClientIp(req), port: req.connection.remotePort || 0, success: false, failureReason: countryCheck.reason, userAgent: req.headers['user-agent'] || null });
 				return res.status(403).json({ error: "현재 위치에서는 로그인할 수 없습니다. 계정 보안 설정을 확인하세요." });
 			}
-			const sessionResult = await createSession({ id: userId, username: username, blockDuplicateLogin: block_duplicate_login });
+			const sessionResult = await createSession(
+				{ id: userId, username: username, blockDuplicateLogin: block_duplicate_login },
+				{ userAgent: req.headers["user-agent"] || "" }
+			);
 			if (!sessionResult.success) return res.status(409).json({ error: sessionResult.error, code: 'DUPLICATE_LOGIN_BLOCKED' });
 			const sessionId = sessionResult.sessionId;
 			await pool.execute("DELETE FROM webauthn_challenges WHERE session_id = ? AND operation = 'userless_login'", [tempSessionId]);
@@ -306,7 +323,10 @@ module.exports = (dependencies) => {
 				await recordLoginAttempt(pool, { userId: userId, username: username, ipAddress: getClientIp(req), port: req.connection.remotePort || 0, success: false, failureReason: countryCheck.reason, userAgent: req.headers['user-agent'] || null });
 				return res.status(403).json({ error: "현재 위치에서는 로그인할 수 없습니다. 계정 보안 설정을 확인하세요." });
 			}
-			const sessionResult = await createSession({ id: userId, username: username, blockDuplicateLogin: block_duplicate_login });
+			const sessionResult = await createSession(
+				{ id: userId, username: username, blockDuplicateLogin: block_duplicate_login },
+				{ userAgent: req.headers["user-agent"] || "" }
+			);
 			if (!sessionResult.success) return res.status(409).json({ error: sessionResult.error, code: 'DUPLICATE_LOGIN_BLOCKED' });
 			const sessionId = sessionResult.sessionId;
 			await pool.execute("DELETE FROM webauthn_challenges WHERE user_id = ? AND session_id = ? AND operation = 'passkey_login'", [userId, tempSessionId]);
@@ -377,7 +397,10 @@ module.exports = (dependencies) => {
 			const [userRows] = await pool.execute("SELECT username, block_duplicate_login FROM users WHERE id = ?", [userId]);
 			if (userRows.length === 0) return res.status(404).json({ error: "사용자를 찾을 수 없습니다." });
 			const { username, block_duplicate_login } = userRows[0];
-			const sessionResult = await createSession({ id: userId, username: username, blockDuplicateLogin: block_duplicate_login });
+			const sessionResult = await createSession(
+				{ id: userId, username: username, blockDuplicateLogin: block_duplicate_login },
+				{ userAgent: req.headers["user-agent"] || "" }
+			);
 			if (!sessionResult.success) {
 				await revokeSession(tempSessionId, "duplicate-login-blocked");
 				return res.status(409).json({ error: sessionResult.error, code: 'DUPLICATE_LOGIN_BLOCKED' });
@@ -397,7 +420,7 @@ module.exports = (dependencies) => {
 		}
 	});
 
-	router.delete("/:id", authMiddleware, csrfMiddleware, async (req, res) => {
+	router.delete("/:id", authMiddleware, csrfMiddleware, requireRecentReauth(5 * 60 * 1000), async (req, res) => {
 		try {
 			const userId = req.user.id;
 			const passkeyId = parseInt(req.params.id);

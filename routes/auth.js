@@ -151,7 +151,10 @@ module.exports = (dependencies) => {
 				return res.json({ ok: false, requires2FA: true, availableMethods: [user.totp_enabled && 'totp', user.passkey_enabled && 'passkey'].filter(Boolean) });
 			}
 
-			const sessionResult = await createSession({ id: user.id, username: user.username, blockDuplicateLogin: user.block_duplicate_login });
+			const sessionResult = await createSession(
+				{ id: user.id, username: user.username, blockDuplicateLogin: user.block_duplicate_login },
+				{ userAgent: req.headers["user-agent"] || "" }
+			);
 			if (!sessionResult.success) return res.status(409).json({ error: sessionResult.error, code: 'DUPLICATE_LOGIN_BLOCKED' });
 
 			res.cookie(SESSION_COOKIE_NAME, sessionResult.sessionId, { httpOnly: true, sameSite: "strict", secure: COOKIE_SECURE, path: "/", maxAge: SESSION_TTL_MS });
@@ -171,10 +174,38 @@ module.exports = (dependencies) => {
 			const [rows] = await pool.execute(`SELECT password_hash FROM users WHERE id = ?`, [req.user.id]);
 			if (!rows.length) return res.status(404).json({ error: "사용자를 찾을 수 없습니다." });
 			if (!(await bcrypt.compare(password, rows[0].password_hash))) return res.status(401).json({ error: "비밀번호가 올바르지 않습니다." });
-			const session = await getSession(req.cookies[SESSION_COOKIE_NAME]);
+			
+			const oldSessionId = req.cookies[SESSION_COOKIE_NAME];
+			const session = await getSession(oldSessionId);
 			if (session) {
-				session.lastStrongAuthAt = Date.now();
-				await saveSession(req.cookies[SESSION_COOKIE_NAME], session, SESSION_TTL_MS);
+				const now = Date.now();
+				const newSessionId = crypto.randomBytes(24).toString("hex");
+				const rotatedSession = {
+					...session,
+					lastStrongAuthAt: now,
+					reauthenticatedAt: now
+				};
+				const remainingTtl = session.absoluteExpiry
+					? Math.max(1000, session.absoluteExpiry - now)
+					: SESSION_TTL_MS;
+
+				await saveSession(newSessionId, rotatedSession, remainingTtl);
+				await revokeSession(oldSessionId, "reauth-rotate");
+
+				res.cookie(SESSION_COOKIE_NAME, newSessionId, {
+					httpOnly: true,
+					sameSite: "strict",
+					secure: COOKIE_SECURE,
+					path: "/",
+					maxAge: Math.min(SESSION_TTL_MS, remainingTtl)
+				});
+				res.cookie(CSRF_COOKIE_NAME, generateCsrfToken(), {
+					httpOnly: false,
+					sameSite: "strict",
+					secure: COOKIE_SECURE,
+					path: "/",
+					maxAge: Math.min(SESSION_TTL_MS, remainingTtl)
+				});
 			}
 			res.json({ ok: true });
 		} catch (error) {
@@ -320,7 +351,7 @@ module.exports = (dependencies) => {
 				updatedAt: nowStr
 			});
 
-			const sessionResult = await createSession(user);
+			const sessionResult = await createSession(user, { userAgent: req.headers["user-agent"] || "" });
 
 			if (!sessionResult.success) {
 				return res.status(409).json({

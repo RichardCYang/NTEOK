@@ -860,7 +860,11 @@ function verifyCsrfToken(req) {
     }
 }
 
-async function createSession(user) {
+function hashUserAgent(ua) {
+	return crypto.createHash("sha256").update(String(ua || "")).digest("hex");
+}
+
+async function createSession(user, ctx = {}) {
 	const sessionId = crypto.randomBytes(24).toString("hex");
 	const now = Date.now();
 	const expiresAt = now + SESSION_TTL_MS;
@@ -893,6 +897,7 @@ async function createSession(user) {
 		type: "auth",
 		userId: user.id,
 		username: user.username,
+		uaHash: hashUserAgent(ctx.userAgent || ""),
 		expiresAt,
 		absoluteExpiry,
 		createdAt: now,
@@ -914,6 +919,14 @@ async function getSessionFromRequest(req) {
 	const session = await getSession(sessionId);
 	if (!session) return null;
 	if (session.type !== 'auth' || !session.userId) return null;
+
+	const currentUaHash = hashUserAgent(req.headers["user-agent"] || "");
+	if (session.uaHash && session.uaHash !== currentUaHash) {
+		console.warn(`[세션 차단] UA 불일치 - 세션 ID ${sessionId.substring(0, 8)}...`);
+		await revokeSession(sessionId, "ua-mismatch");
+		return null;
+	}
+
 	if (!session.expiresAt || !session.absoluteExpiry) {
 		await revokeSession(sessionId, "invalid-session");
 		return null;

@@ -45,6 +45,12 @@ function bufferLooksLikeActiveContent(buf) {
     return head.includes('<html') || head.includes('<script') || head.includes('<svg') || head.includes('<?xml') || head.includes('javascript:') || head.includes('<iframe') || head.includes('<object') || head.includes('<embed');
 }
 
+function assertSafeCsvContent(buf) {
+    const text = buf.toString('utf8');
+    const dangerous = /^[\s]*[=+\-@]/m;
+    if (dangerous.test(text)) throw new Error('DANGEROUS_CSV_FORMULA');
+}
+
 function assertSafeAttachmentFile(filePath, originalName = '') {
     const ext = path.extname(String(originalName || filePath)).toLowerCase();
     if (!ALLOWED_ATTACHMENT_EXTS.has(ext) || BLOCKED_ATTACHMENT_EXTS.has(ext)) throw new Error('DISALLOWED_ATTACHMENT_TYPE');
@@ -52,9 +58,11 @@ function assertSafeAttachmentFile(filePath, originalName = '') {
     try {
         const head = Buffer.alloc(4096);
         const n = fs.readSync(fd, head, 0, head.length, 0);
-        if (bufferLooksLikeActiveContent(head.slice(0, n))) throw new Error('ACTIVE_CONTENT_ATTACHMENT');
-        if (ext === '.pdf' && !head.slice(0, 5).equals(Buffer.from([0x25, 0x50, 0x44, 0x46, 0x2D]))) throw new Error('BAD_PDF_SIGNATURE');
-        if (['.docx', '.xlsx', '.pptx'].includes(ext) && !head.slice(0, 4).equals(Buffer.from([0x50, 0x4B, 0x03, 0x04]))) throw new Error('BAD_OOXML_SIGNATURE');
+        const sliced = head.slice(0, n);
+        if (bufferLooksLikeActiveContent(sliced)) throw new Error('ACTIVE_CONTENT_ATTACHMENT');
+        if (ext === '.pdf' && !sliced.slice(0, 5).equals(Buffer.from([0x25, 0x50, 0x44, 0x46, 0x2D]))) throw new Error('BAD_PDF_SIGNATURE');
+        if (['.docx', '.xlsx', '.pptx'].includes(ext) && !sliced.slice(0, 4).equals(Buffer.from([0x50, 0x4B, 0x03, 0x04]))) throw new Error('BAD_OOXML_SIGNATURE');
+        if (ext === '.csv') assertSafeCsvContent(sliced);
     } finally {
         fs.closeSync(fd);
     }
@@ -79,5 +87,6 @@ module.exports = {
     detectImageTypeFromMagic,
     assertImageFileSignature,
     assertSafeAttachmentFile,
+    assertSafeCsvContent,
     installDomPurifySecurityHooks
 };

@@ -188,7 +188,7 @@ module.exports = (dependencies) => {
 		}
 	});
 
-	router.post("/setup", authMiddleware, csrfMiddleware, async (req, res) => {
+	router.post("/setup", authMiddleware, csrfMiddleware, requireRecentReauth(5 * 60 * 1000), async (req, res) => {
 		try {
 			const userId = req.user.id;
 			const username = req.user.username;
@@ -206,7 +206,7 @@ module.exports = (dependencies) => {
 		}
 	});
 
-	router.post("/verify-setup", authMiddleware, csrfMiddleware, totpLimiter, async (req, res) => {
+	router.post("/verify-setup", authMiddleware, csrfMiddleware, requireRecentReauth(5 * 60 * 1000), totpLimiter, async (req, res) => {
 		try {
 			const userId = req.user.id;
 			const { token } = req.body;
@@ -236,7 +236,7 @@ module.exports = (dependencies) => {
 		}
 	});
 
-	router.post("/disable", authMiddleware, csrfMiddleware, async (req, res) => {
+	router.post("/disable", authMiddleware, csrfMiddleware, requireRecentReauth(5 * 60 * 1000), async (req, res) => {
 		try {
 			const userId = req.user.id;
 			const { password } = req.body;
@@ -284,7 +284,10 @@ module.exports = (dependencies) => {
 				await revokeSession(tempSessionId, "country-check-failed");
 				return res.status(403).json({ error: "현재 위치에서는 로그인할 수 없습니다. 계정 보안 설정을 확인하세요." });
 			}
-			const sessionResult = await createSession({ id: userId, username: username, blockDuplicateLogin: block_duplicate_login });
+			const sessionResult = await createSession(
+				{ id: userId, username: username, blockDuplicateLogin: block_duplicate_login },
+				{ userAgent: req.headers["user-agent"] || "" }
+			);
 			if (!sessionResult.success) {
 				await revokeSession(tempSessionId, "duplicate-login-blocked");
 				return res.status(409).json({ error: sessionResult.error, code: 'DUPLICATE_LOGIN_BLOCKED' });
@@ -351,7 +354,10 @@ module.exports = (dependencies) => {
 				return res.status(401).json({ error: "잘못된 백업 코드입니다." });
 			}
 			await clearTotpFailures(redis, accountKey);
-			const sessionResult = await createSession({ id: userId, username: username, blockDuplicateLogin: block_duplicate_login });
+			const sessionResult = await createSession(
+				{ id: userId, username: username, blockDuplicateLogin: block_duplicate_login },
+				{ userAgent: req.headers["user-agent"] || "" }
+			);
 			if (!sessionResult.success) {
 				await revokeSession(tempSessionId, "duplicate-login-blocked");
 				return res.status(409).json({ error: sessionResult.error, code: 'DUPLICATE_LOGIN_BLOCKED' });
