@@ -1862,7 +1862,7 @@ module.exports = (dependencies) => {
             );
 
             const base = (process.env.BASE_URL || '').replace(/\/$/, '');
-            const url = base ? `${base}/shared/page/${token}` : `/shared/page/${token}`;
+            const url = base ? `${base}/shared-page.html#${token}` : `/shared-page.html#${token}`;
             res.json({ published: true, token, url, allowComments, expiresAt: expiresAt ? toIsoString(new Date(expiresAt)) : null });
         } catch (e) {
             logError("POST /api/pages/:id/publish", e);

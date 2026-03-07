@@ -118,7 +118,12 @@ async function assertSafeAttachmentFile(filePath, originalName = '') {
 	if (!ALLOWED_ATTACHMENT_EXTS.has(ext)) throw new Error('DISALLOWED_ATTACHMENT_TYPE');
 	const head = readFileHead(filePath, 4096);
 	if (ext === '.pdf') {
-		if (!head.slice(0, 5).equals(Buffer.from([0x25, 0x50, 0x44, 0x46, 0x2D]))) throw new Error('BAD_PDF_SIGNATURE');
+		const full = fs.readFileSync(filePath);
+		if (full.length < 5 || !full.slice(0, 5).equals(Buffer.from([0x25, 0x50, 0x44, 0x46, 0x2D]))) throw new Error('BAD_PDF_SIGNATURE');
+		const head = full.slice(0, 8192).toString('utf8');
+		const tail = full.slice(-4096).toString('utf8');
+		const active = /\/(?:JS|JavaScript|OpenAction|RichMedia|Launch|AcroForm|URI|SubmitForm|Named|EmbeddedFile)/i;
+		if (active.test(head) || active.test(tail)) throw new Error('UNSAFE_PDF_ACTIVE_CONTENT');
 		return;
 	}
 	if (['.docx', '.xlsx', '.pptx'].includes(ext)) {

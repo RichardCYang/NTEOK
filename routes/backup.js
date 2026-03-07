@@ -8,6 +8,23 @@ const fs = require('fs');
 const multer = require('multer');
 const crypto = require('crypto');
 const erl = require('express-rate-limit');
+
+const BACKUP_SIGNING_KEY = process.env.BACKUP_SIGNING_KEY || null;
+
+function signBackupManifest(raw) {
+    if (!BACKUP_SIGNING_KEY) throw new Error('BACKUP_SIGNING_KEY 미설정');
+    return crypto.createHmac('sha256', BACKUP_SIGNING_KEY).update(String(raw)).digest('hex');
+}
+
+function verifyBackupManifest(raw, sig) {
+    if (!BACKUP_SIGNING_KEY) return false;
+    const expected = signBackupManifest(raw);
+    try {
+        return crypto.timingSafeEqual(Buffer.from(expected, 'hex'), Buffer.from(String(sig || '').trim(), 'hex'));
+    } catch (_) {
+        return false;
+    }
+}
 const rateLimit = erl.rateLimit || erl;
 const { ipKeyGenerator } = erl;
 const { Transform, pipeline } = require('stream');
@@ -999,6 +1016,21 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
             };
             archive.append(JSON.stringify(backupInfo, null, 2), { name: 'backup-info.json' });
 
+            const encryptedManifest = {
+                version: 1,
+                createdAt: new Date().toISOString(),
+                storages: storages.map(s => ({
+                    id: s.id,
+                    isEncrypted: Number(s.is_encrypted) === 1,
+                    hasSalt: !!s.encryption_salt,
+                    hasCheck: !!s.encryption_check
+                })),
+                e2eePages: pages.filter(p => !!p.e2ee_yjs_state).map(p => p.id)
+            };
+            const encryptedManifestRaw = JSON.stringify(encryptedManifest);
+            archive.append(encryptedManifestRaw, { name: 'e2ee-manifest.json' });
+            archive.append(signBackupManifest(encryptedManifestRaw), { name: 'e2ee-manifest.sig' });
+
             await archive.finalize();
             console.log(`[백업 내보내기] 사용자 ${userId} 완료 (E2EE 상태: ${e2eeStatesCount})`);
         } catch (error) {
@@ -1021,7 +1053,18 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
             const zipEntries = importResult.zipEntries;
             extractDir = importResult.extractDir;
 
-			const zipEntryByName = new Map((zipEntries || []).map(e => [e.entryName, e]));
+            const manifestEntry = zipEntries.find(e => e.entryName === 'e2ee-manifest.json');
+            const manifestSigEntry = zipEntries.find(e => e.entryName === 'e2ee-manifest.sig');
+            const hasEncryptedMaterial = zipEntries.some(e => e.entryName.startsWith('e2ee/') || e.entryName.startsWith('workspaces/') || e.entryName.startsWith('collections/'));
+
+            if (hasEncryptedMaterial) {
+                if (!manifestEntry || !manifestSigEntry) throw new Error('서명되지 않은 암호화 백업은 가져올 수 없습니다.');
+                const manifestRaw = manifestEntry.data ? manifestEntry.data.toString('utf8') : fs.readFileSync(manifestEntry.tempFilePath, 'utf8');
+                const manifestSig = manifestSigEntry.data ? manifestSigEntry.data.toString('utf8') : fs.readFileSync(manifestSigEntry.tempFilePath, 'utf8');
+                if (!verifyBackupManifest(manifestRaw, manifestSig)) throw new Error('백업 서명 검증 실패: 암호화 메타데이터를 신뢰할 수 없습니다.');
+            }
+
+            const zipEntryByName = new Map((zipEntries || []).map(e => [e.entryName, e]));
 
             connection = await pool.getConnection();
             await connection.beginTransaction();

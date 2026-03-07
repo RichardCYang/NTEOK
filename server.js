@@ -381,12 +381,21 @@ const CSRF_COOKIE_NAME_RAW = "nteok_csrf";
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7;
 const SESSION_ABSOLUTE_TTL_MS = 1000 * 60 * 60 * 24 * 7;
 
+function isLocalhostHost(host) {
+    return host === "localhost" || host === "127.0.0.1" || host === "::1";
+}
+
 const IS_PRODUCTION = process.env.NODE_ENV === "production";
 const BASE_URL = process.env.BASE_URL || (IS_PRODUCTION ? "https://localhost:3000" : "http://localhost:3000");
 
+if (IS_PRODUCTION) {
+    const url = new URL(BASE_URL);
+    if (url.protocol !== "https:" && !isLocalhostHost(url.hostname)) throw new Error("[security] BASE_URL must be HTTPS in production");
+}
+
 const IS_HTTPS_BASE_URL = (() => {
     try { return new URL(BASE_URL).protocol === "https:"; }
-    catch { return /^https:\/\
+    catch { return false; }
 })();
 
 const REQUIRE_HTTPS = String(process.env.REQUIRE_HTTPS || '').toLowerCase() === 'true';
@@ -399,7 +408,9 @@ const FORCE_SECURE_COOKIES = (() => {
     return IS_PRODUCTION;
 })();
 
-const COOKIE_SECURE = (!ALLOW_INSECURE_COOKIES) && (FORCE_SECURE_COOKIES || IS_HTTPS_BASE_URL || REQUIRE_HTTPS);
+const COOKIE_SECURE = IS_PRODUCTION ? true : ((!ALLOW_INSECURE_COOKIES) && (FORCE_SECURE_COOKIES || IS_HTTPS_BASE_URL || REQUIRE_HTTPS));
+
+if (IS_PRODUCTION && !COOKIE_SECURE) throw new Error("[security] COOKIE_SECURE must be true in production");
 
 const SESSION_COOKIE_NAME = COOKIE_SECURE ? `__Host-${SESSION_COOKIE_NAME_RAW}` : SESSION_COOKIE_NAME_RAW;
 const CSRF_COOKIE_NAME = COOKIE_SECURE ? `__Host-${CSRF_COOKIE_NAME_RAW}` : CSRF_COOKIE_NAME_RAW;
@@ -479,6 +490,8 @@ const HSTS_ENABLED = (() => {
 })();
 
 const ALLOW_INSECURE_HTTP_FALLBACK = String(process.env.ALLOW_INSECURE_HTTP_FALLBACK || '').toLowerCase() === 'true';
+
+if (IS_PRODUCTION && ALLOW_INSECURE_HTTP_FALLBACK) throw new Error("[security] ALLOW_INSECURE_HTTP_FALLBACK is forbidden in production");
 
 function decode32ByteKey(raw) {
     if (!raw) return null;

@@ -270,6 +270,8 @@ module.exports = (dependencies) => {
             const storage = await storagesRepo.getStorageByIdForUser(userId, storageId);
             if (!requireStorageOwner(storage, res)) return;
 
+            if (Number(storage.is_encrypted) === 1) return res.status(400).json({ error: '암호화 저장소 협업은 현재 보안상 비활성화되었습니다.' });
+
             if (String(targetUserId) === String(storage.owner_id)) return res.status(400).json({ error: '저장소 소유자는 별도 참여자로 추가할 수 없습니다.' });
             if (String(targetUserId) === String(userId)) return res.status(400).json({ error: '자기 자신에게 협업 권한을 다시 부여할 수 없습니다.' });
 
