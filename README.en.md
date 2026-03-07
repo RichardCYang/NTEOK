@@ -483,7 +483,7 @@ note-taking app, markdown editor, web notes, E2EE, end-to-end encryption, encryp
 ### 2026-02-23~02-25 Security and Access Control Strengthening
 
 - **CWE-400 DoS Vulnerability Fix** - Prevent OOM attacks from Yjs document bloat (document size limits added)
-- **Memory Leak DoS Fix** - isomorphic-dompurify v3.0.0 upgrade and periodic window regeneration
+- **Memory Leak DoS Fix** - isomorphic-dompurify v3.0.0 upgrade (dompurify v3.3.2 override) and periodic window regeneration
 - **Broken Access Control (IDOR) Fix** - Prevent unauthorized file deletion by collaborators (owner verification added)
 - **WebSocket Session Authorization Verification** - Force disconnect existing connections when page encryption/visibility changes
 - **Upload Quota Bypass Prevention** - Accurate quota management in multi-threaded environments (Promise serialization)

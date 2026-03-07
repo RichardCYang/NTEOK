@@ -485,7 +485,7 @@ NTEOK/
 ### 2026-02-23~02-25 보안 및 접근 제어 강화
 
 - **CWE-400 DoS 취약점 수정** - Yjs 문서 비대화로 인한 OOM 공격 방지 (문서 크기 상한선 추가)
-- **메모리 누수 DoS 수정** - isomorphic-dompurify v3.0.0 업그레이드 및 정기적 window 재생성
+- **메모리 누수 DoS 수정** - isomorphic-dompurify v3.0.0 업그레이드 (dompurify v3.3.2 오버라이드) 및 정기적 window 재생성
 - **Broken Access Control(IDOR) 수정** - 협업자의 타 사용자 파일 무단 삭제 방지 (소유자 검증 추가)
 - **WebSocket 세션 권한 검증** - 페이지 암호화/공개 전환 후 기존 연결 강제 종료
 - **업로드 용량 제한 우회 방지** - 멀티스레드 환경에서 정확한 쿼터 관리 (Promise 직렬화)
