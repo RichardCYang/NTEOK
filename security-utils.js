@@ -1,4 +1,19 @@
 const fs = require('fs');
+const path = require('path');
+
+const ALLOWED_ATTACHMENT_EXTS = new Set([
+	'.pdf', '.txt', '.md', '.csv',
+	'.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
+	'.jpg', '.jpeg', '.png', '.gif', '.webp',
+	'.mp3', '.wav', '.mp4', '.mov'
+]);
+
+const BLOCKED_ATTACHMENT_EXTS = new Set([
+	'.html', '.htm', '.xhtml', '.svg', '.xml',
+	'.js', '.mjs', '.cjs', '.hta', '.swf', '.jar', '.wasm',
+	'.exe', '.dll', '.bat', '.cmd', '.ps1', '.msi', '.apk', '.appimage',
+	'.php', '.jsp', '.asp', '.aspx', '.cgi', '.pl', '.sh'
+]);
 
 function detectImageTypeFromMagic(buf) {
 	if (!Buffer.isBuffer(buf)) return null;
@@ -17,7 +32,7 @@ function detectImageTypeFromMagic(buf) {
 		return { ext: 'gif', mime: 'image/gif' };
 
 	if (buf.length >= 12 &&
-		buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46 &&
+		buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x38 &&
 		buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50)
 		return { ext: 'webp', mime: 'image/webp' };
 
@@ -46,17 +61,47 @@ function assertImageFileSignature(filePath, allowedExts) {
 	}
 }
 
+function bufferLooksLikeActiveContent(buf) {
+	const head = Buffer.isBuffer(buf) ? buf.slice(0, 4096).toString('utf8').toLowerCase() : '';
+	return (
+		head.includes('<html') ||
+		head.includes('<script') ||
+		head.includes('<svg') ||
+		head.includes('<?xml') ||
+		head.includes('javascript:') ||
+		head.includes('<iframe') ||
+		head.includes('<object') ||
+		head.includes('<embed')
+	);
+}
+
+function assertSafeAttachmentFile(filePath, originalName = '') {
+	const ext = path.extname(String(originalName || filePath)).toLowerCase();
+	if (!ALLOWED_ATTACHMENT_EXTS.has(ext) || BLOCKED_ATTACHMENT_EXTS.has(ext))
+		throw new Error('DISALLOWED_ATTACHMENT_TYPE');
+
+	const fd = fs.openSync(filePath, 'r');
+	try {
+		const head = Buffer.alloc(4096);
+		const n = fs.readSync(fd, head, 0, head.length, 0);
+		if (bufferLooksLikeActiveContent(head.slice(0, n)))
+			throw new Error('ACTIVE_CONTENT_ATTACHMENT');
+	} finally {
+		fs.closeSync(fd);
+	}
+}
+
 function installDomPurifySecurityHooks(DOMPurify) {
 	if (!DOMPurify?.addHook) return;
 	DOMPurify.addHook('afterSanitizeAttributes', (node) => {
 		if (String(node.tagName).toLowerCase() === 'a') {
 			const target = String(node.getAttribute('target') || '').trim().toLowerCase();
 			if (target === '_blank') {
-			    const rel = (node.getAttribute('rel') || '').toLowerCase();
-			    const set = new Set(rel.split(/\s+/).filter(Boolean));
-			    set.add('noopener'); set.add('noreferrer');
-			    node.setAttribute('rel', Array.from(set).join(' '));
-		    }
+				const rel = (node.getAttribute('rel') || '').toLowerCase();
+				const set = new Set(rel.split(/\s+/).filter(Boolean));
+				set.add('noopener'); set.add('noreferrer');
+				node.setAttribute('rel', Array.from(set).join(' '));
+			}
 		}
 	});
 }
@@ -64,5 +109,6 @@ function installDomPurifySecurityHooks(DOMPurify) {
 module.exports = {
 	detectImageTypeFromMagic,
 	assertImageFileSignature,
+	assertSafeAttachmentFile,
 	installDomPurifySecurityHooks
 };

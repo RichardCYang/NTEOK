@@ -14,6 +14,8 @@ const { Transform, pipeline } = require('stream');
 const { promisify } = require('util');
 const pipelineAsync = promisify(pipeline);
 const { validateAndNormalizeIcon } = require('../utils/icon-utils.js');
+const { assertSafeAttachmentFile } = require("../security-utils.js");
+
 
 const MULTIPART_COMMON_LIMITS = Object.freeze({
     files: 1,
@@ -1309,13 +1311,25 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
                 const processFile = (srcPath, destPath, buf) => {
                     if (buf) {
                         if (isImage && !isSupportedImageBuffer(buf, unique.filename)) return false;
+                        if (!isImage) {
+                            try {
+                                const tp = path.join(tempDir, `v-${crypto.randomBytes(8).toString('hex')}`);
+                                fs.writeFileSync(tp, buf);
+                                assertSafeAttachmentFile(tp, unique.filename);
+                                fs.unlinkSync(tp);
+                            } catch (e) { return false; }
+                        }
                         fs.writeFileSync(destPath, buf);
                     } else {
-                        const fd = fs.openSync(srcPath, 'r');
-                        const header = Buffer.alloc(16);
-                        const n = fs.readSync(fd, header, 0, 16, 0);
-                        fs.closeSync(fd);
-                        if (isImage && !isSupportedImageBuffer(header.slice(0, n), unique.filename)) return false;
+                        if (isImage) {
+                            const fd = fs.openSync(srcPath, 'r');
+                            const h = Buffer.alloc(16);
+                            const n = fs.readSync(fd, h, 0, 16, 0);
+                            fs.closeSync(fd);
+                            if (!isSupportedImageBuffer(h.slice(0, n), unique.filename)) return false;
+                        } else {
+                            try { assertSafeAttachmentFile(srcPath, unique.filename); } catch (e) { return false; }
+                        }
                         try { fs.renameSync(srcPath, destPath); } catch (e) {
                             fs.copyFileSync(srcPath, destPath);
                             fs.unlinkSync(srcPath);

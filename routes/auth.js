@@ -32,6 +32,15 @@ module.exports = (dependencies) => {
 		listUserSessions
 	} = dependencies;
 
+	const TWO_FA_COOKIE_NAME = COOKIE_SECURE ? '__Host-nteok_2fa' : 'nteok_2fa';
+	const TWO_FA_COOKIE_OPTS = {
+		httpOnly: true,
+		sameSite: 'strict',
+		secure: COOKIE_SECURE,
+		path: '/',
+		maxAge: 10 * 60 * 1000
+	};
+
 	const PASSWORD_CONTROL_CHARS_RE = /[\u0000-\u001F\u007F]/;
 
 	let USERNAME_SAFE_RE;
@@ -197,11 +206,11 @@ module.exports = (dependencies) => {
 				if (user.totp_enabled) availableMethods.push('totp');
 				if (user.passkey_enabled) availableMethods.push('passkey');
 
+				res.cookie(TWO_FA_COOKIE_NAME, tempSessionId, TWO_FA_COOKIE_OPTS);
 				return res.json({
 					ok: false,
 					requires2FA: true,
-					availableMethods: availableMethods,
-					tempSessionId: tempSessionId
+					availableMethods
 				});
 			}
 

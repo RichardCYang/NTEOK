@@ -89,6 +89,18 @@ module.exports = (dependencies) => {
 		revokeSession
 	} = dependencies;
 
+	const TWO_FA_COOKIE_NAME = COOKIE_SECURE ? '__Host-nteok_2fa' : 'nteok_2fa';
+	const TWO_FA_COOKIE_OPTS = {
+		httpOnly: true,
+		sameSite: 'strict',
+		secure: COOKIE_SECURE,
+		path: '/'
+	};
+
+	function get2faCookie(req) {
+		return req.cookies?.[TWO_FA_COOKIE_NAME] || '';
+	}
+
 	function getClientIp(req) {
 		return (
 			req.clientIp ||
@@ -107,10 +119,9 @@ module.exports = (dependencies) => {
 		legacyHeaders: false,
 		message: { error: "TOTP 인증 시도가 너무 많습니다. 잠시 후 다시 시도해 주세요." },
 		keyGenerator: async (req) => {
-			const body = req.body || {};
 			const accountKey = await buildStable2FAAccountKeyFromTempSessionId(
 				getSession,
-				body.tempSessionId
+				get2faCookie(req)
 			);
 			const rawIp = getClientIp(req);
 			const ipKey = rawIp && rawIp !== 'unknown' ? ipKeyGenerator(rawIp, RATE_LIMIT_IPV6_SUBNET) : "noip";
@@ -246,7 +257,8 @@ module.exports = (dependencies) => {
 	});
 
 	router.post("/verify-login", totpVerifyLimiter, requireSameOriginForAuth, async (req, res) => {
-		const { token, tempSessionId } = req.body;
+		const { token } = req.body;
+		const tempSessionId = get2faCookie(req);
 		try {
 			if (!token || !/^\d{6}$/.test(token)) return res.status(400).json({ error: "유효한 6자리 코드를 입력하세요." });
 			if (!tempSessionId) return res.status(400).json({ error: "세션 정보가 없습니다." });
@@ -279,6 +291,7 @@ module.exports = (dependencies) => {
 			}
 			const sessionId = sessionResult.sessionId;
 			await revokeSession(tempSessionId, "login-complete");
+			res.clearCookie(TWO_FA_COOKIE_NAME, TWO_FA_COOKIE_OPTS);
 			res.cookie(SESSION_COOKIE_NAME, sessionId, { httpOnly: true, secure: COOKIE_SECURE, sameSite: "strict", path: "/", maxAge: SESSION_TTL_MS });
 			const csrfToken = generateCsrfToken();
 			res.cookie(CSRF_COOKIE_NAME, csrfToken, { httpOnly: false, secure: COOKIE_SECURE, sameSite: "strict", path: "/", maxAge: SESSION_TTL_MS });
@@ -291,7 +304,8 @@ module.exports = (dependencies) => {
 	});
 
 	router.post("/verify-backup-code", totpVerifyLimiter, requireSameOriginForAuth, async (req, res) => {
-		const { backupCode, tempSessionId } = req.body;
+		const { backupCode } = req.body;
+		const tempSessionId = get2faCookie(req);
 		try {
 			if (!backupCode) return res.status(400).json({ error: "백업 코드를 입력하세요." });
 			if (!tempSessionId) return res.status(400).json({ error: "세션 정보가 없습니다." });
@@ -344,6 +358,7 @@ module.exports = (dependencies) => {
 			}
 			const sessionId = sessionResult.sessionId;
 			await revokeSession(tempSessionId, "login-complete");
+			res.clearCookie(TWO_FA_COOKIE_NAME, TWO_FA_COOKIE_OPTS);
 			res.cookie(SESSION_COOKIE_NAME, sessionId, { httpOnly: true, secure: COOKIE_SECURE, sameSite: "strict", path: "/", maxAge: SESSION_TTL_MS });
 			const csrfToken = generateCsrfToken();
 			res.cookie(CSRF_COOKIE_NAME, csrfToken, { httpOnly: false, secure: COOKIE_SECURE, sameSite: "strict", path: "/", maxAge: SESSION_TTL_MS });

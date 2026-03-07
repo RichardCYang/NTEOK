@@ -26,6 +26,18 @@ module.exports = (dependencies) => {
 		revokeSession
 	} = dependencies;
 
+	const TWO_FA_COOKIE_NAME = COOKIE_SECURE ? '__Host-nteok_2fa' : 'nteok_2fa';
+	const TWO_FA_COOKIE_OPTS = {
+		httpOnly: true,
+		sameSite: 'strict',
+		secure: COOKIE_SECURE,
+		path: '/'
+	};
+
+	function get2faCookie(req) {
+		return req.cookies?.[TWO_FA_COOKIE_NAME] || '';
+	}
+
 	function getClientIp(req) {
 		return (
 			req.clientIp ||
@@ -179,7 +191,8 @@ module.exports = (dependencies) => {
 			const expiresAt = new Date(now.getTime() + 5 * 60 * 1000);
 			const tempSessionId = crypto.randomBytes(32).toString('hex');
 			await pool.execute(`INSERT INTO webauthn_challenges (session_id, challenge, operation, created_at, expires_at) VALUES (?, ?, 'userless_login', ?, ?)`, [tempSessionId, options.challenge, formatDateForDb(now), formatDateForDb(expiresAt)]);
-			res.json({ ...options, tempSessionId: tempSessionId });
+			res.cookie(TWO_FA_COOKIE_NAME, tempSessionId, { ...TWO_FA_COOKIE_OPTS, maxAge: 5 * 60 * 1000 });
+			res.json({ ...options });
 		} catch (error) {
 			logError("POST /api/passkey/login/userless/options", error);
 			res.status(500).json({ error: "패스키 로그인 옵션 생성 중 오류가 발생했습니다." });
@@ -188,8 +201,9 @@ module.exports = (dependencies) => {
 
 	router.post("/login/userless/verify", passkeyLimiter, requireSameOriginForAuth, async (req, res) => {
 		try {
-			const { credential, tempSessionId } = req.body;
-			if (typeof tempSessionId !== 'string' || !/^[a-f0-9]{64}$/i.test(tempSessionId)) return res.status(400).json({ error: "tempSessionId 형식이 올바르지 않습니다." });
+			const { credential } = req.body;
+			const tempSessionId = get2faCookie(req);
+			if (typeof tempSessionId !== 'string' || !/^[a-f0-9]{64}$/i.test(tempSessionId)) return res.status(400).json({ error: "세션 정보가 올바르지 않습니다." });
 			if (typeof credential !== 'object' || credential === null || typeof credential.id !== 'string') return res.status(400).json({ error: "credential 형식이 올바르지 않습니다." });
 			if (credential.id.length < 10 || credential.id.length > 512 || !/^[A-Za-z0-9_-]+$/.test(credential.id)) return res.status(400).json({ error: "credential.id 형식이 올바르지 않습니다." });
 			const [challenges] = await pool.execute(`SELECT challenge FROM webauthn_challenges WHERE session_id = ? AND operation = 'userless_login' AND expires_at > NOW() ORDER BY created_at DESC LIMIT 1`, [tempSessionId]);
@@ -224,6 +238,7 @@ module.exports = (dependencies) => {
 			if (!sessionResult.success) return res.status(409).json({ error: sessionResult.error, code: 'DUPLICATE_LOGIN_BLOCKED' });
 			const sessionId = sessionResult.sessionId;
 			await pool.execute("DELETE FROM webauthn_challenges WHERE session_id = ? AND operation = 'userless_login'", [tempSessionId]);
+			res.clearCookie(TWO_FA_COOKIE_NAME, TWO_FA_COOKIE_OPTS);
 			res.cookie(SESSION_COOKIE_NAME, sessionId, { httpOnly: true, secure: COOKIE_SECURE, sameSite: "strict", path: "/", maxAge: SESSION_TTL_MS });
 			const csrfToken = generateCsrfToken();
 			res.cookie(CSRF_COOKIE_NAME, csrfToken, { httpOnly: false, secure: COOKIE_SECURE, sameSite: "strict", path: "/", maxAge: SESSION_TTL_MS });
@@ -246,7 +261,8 @@ module.exports = (dependencies) => {
 			const expiresAt = new Date(now.getTime() + 5 * 60 * 1000);
 			const tempSessionId = crypto.randomBytes(32).toString('hex');
 			await pool.execute(`INSERT INTO webauthn_challenges (user_id, session_id, challenge, operation, created_at, expires_at) VALUES (?, ?, ?, 'passkey_login', ?, ?)`, [challengeUserId, tempSessionId, options.challenge, formatDateForDb(now), formatDateForDb(expiresAt)]);
-			res.json({ ...options, tempSessionId: tempSessionId });
+			res.cookie(TWO_FA_COOKIE_NAME, tempSessionId, { ...TWO_FA_COOKIE_OPTS, maxAge: 5 * 60 * 1000 });
+			res.json({ ...options });
 		} catch (error) {
 			logError("POST /api/passkey/login/options", error);
 			res.status(500).json({ error: "패스키 로그인 옵션 생성 중 오류가 발생했습니다." });
@@ -255,7 +271,8 @@ module.exports = (dependencies) => {
 
 	router.post("/login/verify", passkeyLimiter, requireSameOriginForAuth, async (req, res) => {
 		try {
-			const { credential, tempSessionId } = req.body;
+			const { credential } = req.body;
+			const tempSessionId = get2faCookie(req);
 			if (!credential || !tempSessionId) return res.status(400).json({ error: "인증 정보가 없습니다." });
 			const [challenges] = await pool.execute(`SELECT user_id, challenge FROM webauthn_challenges WHERE session_id = ? AND operation = 'passkey_login' AND expires_at > NOW() ORDER BY created_at DESC LIMIT 1`, [tempSessionId]);
 			if (challenges.length === 0) return res.status(400).json({ error: "유효한 챌린지를 찾을 수 없습니다. 다시 시도해 주세요." });
@@ -293,6 +310,7 @@ module.exports = (dependencies) => {
 			if (!sessionResult.success) return res.status(409).json({ error: sessionResult.error, code: 'DUPLICATE_LOGIN_BLOCKED' });
 			const sessionId = sessionResult.sessionId;
 			await pool.execute("DELETE FROM webauthn_challenges WHERE user_id = ? AND session_id = ? AND operation = 'passkey_login'", [userId, tempSessionId]);
+			res.clearCookie(TWO_FA_COOKIE_NAME, TWO_FA_COOKIE_OPTS);
 			res.cookie(SESSION_COOKIE_NAME, sessionId, { httpOnly: true, secure: COOKIE_SECURE, sameSite: "strict", path: "/", maxAge: SESSION_TTL_MS });
 			const csrfToken = generateCsrfToken();
 			res.cookie(CSRF_COOKIE_NAME, csrfToken, { httpOnly: false, secure: COOKIE_SECURE, sameSite: "strict", path: "/", maxAge: SESSION_TTL_MS });
@@ -306,7 +324,7 @@ module.exports = (dependencies) => {
 
 	router.post("/authenticate/options", requireSameOriginForAuth, async (req, res) => {
 		try {
-			const { tempSessionId } = req.body;
+			const tempSessionId = get2faCookie(req);
 			if (!tempSessionId) return res.status(400).json({ error: "세션 정보가 없습니다." });
 			const tempSession = await getValid2FATempSession(req, tempSessionId);
 			if (!tempSession) return res.status(400).json({ error: "세션이 만료되었습니다. 다시 로그인하세요." });
@@ -331,7 +349,8 @@ module.exports = (dependencies) => {
 
 	router.post("/authenticate/verify", passkeyLimiter, requireSameOriginForAuth, async (req, res) => {
 		try {
-			const { credential, tempSessionId } = req.body;
+			const { credential } = req.body;
+			const tempSessionId = get2faCookie(req);
 			if (!credential || !tempSessionId) return res.status(400).json({ error: "인증 정보가 없습니다." });
 			const tempSession = await getValid2FATempSession(req, tempSessionId);
 			if (!tempSession) return res.status(400).json({ error: "세션이 만료되었습니다. 다시 로그인하세요." });
@@ -365,6 +384,7 @@ module.exports = (dependencies) => {
 			}
 			const sessionId = sessionResult.sessionId;
 			await revokeSession(tempSessionId, "login-complete");
+			res.clearCookie(TWO_FA_COOKIE_NAME, TWO_FA_COOKIE_OPTS);
 			await pool.execute("DELETE FROM webauthn_challenges WHERE user_id = ? AND session_id = ? AND operation = 'authentication'", [userId, tempSessionId]);
 			res.cookie(SESSION_COOKIE_NAME, sessionId, { httpOnly: true, secure: COOKIE_SECURE, sameSite: "strict", path: "/", maxAge: SESSION_TTL_MS });
 			const csrfToken = generateCsrfToken();

@@ -7,7 +7,7 @@ const https = require("node:https");
 const net = require("node:net");
 const ipaddr = require("ipaddr.js");
 const cheerio = require("cheerio");
-const { assertImageFileSignature } = require("../security-utils.js");
+const { assertImageFileSignature, assertSafeAttachmentFile } = require("../security-utils.js");
 const { validateAndNormalizeIcon } = require("../utils/icon-utils.js");
 
 const METADATA_FETCH_TIMEOUT_MS = 5000;
@@ -1409,6 +1409,13 @@ module.exports = (dependencies) => {
             if (isImageExt) {
                 const sig = await assertImageFileSignature(req.file.path).catch(() => null);
                 if (sig) normalizeUploadedImageFile(req.file, sig.ext);
+            } else {
+                try {
+                    assertSafeAttachmentFile(req.file.path, req.file.originalname);
+                } catch (e) {
+                    if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+                    return res.status(400).json({ error: "허용되지 않는 첨부파일 형식입니다." });
+                }
             }
 
             try {
