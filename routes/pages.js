@@ -202,6 +202,8 @@ module.exports = (dependencies) => {
         saveYjsDocToDatabase,
         enqueueYjsDbSave,
         logError,
+        csrfMiddleware,
+        requireRecentReauth,
         generatePublishToken,
         coverUpload,
         editorImageUpload,
@@ -509,7 +511,7 @@ module.exports = (dependencies) => {
 		return { ownerUserId, isEncrypted: Boolean(row && row.is_encrypted === 1), shareAllowed: Boolean(row && row.share_allowed === 1) };
 	}
 
-    router.get("/covers/user", authMiddleware, async (req, res) => {
+    router.get("/covers/user", authMiddleware, csrfMiddleware, async (req, res) => {
         const userId = req.user.id;
         try {
             const userCoversDir = path.join(__dirname, '..', 'covers', String(userId));
@@ -522,7 +524,7 @@ module.exports = (dependencies) => {
         } catch (error) { logError("GET /api/pages/covers/user", error); res.status(500).json({ error: "Failed" }); }
     });
 
-    router.get("/", authMiddleware, async (req, res) => {
+    router.get("/", authMiddleware, csrfMiddleware, async (req, res) => {
         try {
             const userId = req.user.id;
             const storageId = typeof req.query.storageId === "string" ? req.query.storageId.trim() : null;
@@ -539,7 +541,7 @@ module.exports = (dependencies) => {
         } catch (error) { logError("GET /api/pages", error); res.status(500).json({ error: "Failed" }); }
     });
 
-    router.get("/history", authMiddleware, async (req, res) => {
+    router.get("/history", authMiddleware, csrfMiddleware, async (req, res) => {
         const userId = req.user.id;
         const storageId = typeof req.query.storageId === "string" ? req.query.storageId.trim() : null;
         if (!storageId) return res.status(400).json({ error: "storageId required" });
@@ -561,7 +563,7 @@ module.exports = (dependencies) => {
         }
     });
 
-    router.get("/trash", authMiddleware, async (req, res) => {
+    router.get("/trash", authMiddleware, csrfMiddleware, async (req, res) => {
         try {
             const userId = req.user.id;
             const storageId = typeof req.query.storageId === "string" ? req.query.storageId.trim() : null;
@@ -686,7 +688,7 @@ module.exports = (dependencies) => {
         }
     });
 
-    router.get("/:id", authMiddleware, async (req, res) => {
+    router.get("/:id", authMiddleware, csrfMiddleware, async (req, res) => {
         const id = req.params.id;
         const userId = req.user.id;
         try {
@@ -727,7 +729,7 @@ module.exports = (dependencies) => {
         return { ok: true, parentId: normalizedParentId };
     }
 
-    router.post("/", authMiddleware, async (req, res) => {
+    router.post("/", authMiddleware, csrfMiddleware, async (req, res) => {
         const title = sanitizeInput(String(req.body.title || "제목 없음").trim());
         const storageId = req.body.storageId;
         if (!storageId) return res.status(400).json({ error: "storageId required" });
@@ -807,7 +809,7 @@ module.exports = (dependencies) => {
         } catch (e) { logError("POST /api/pages", e); res.status(500).json({ error: "Failed" }); }
     });
 
-    router.put("/:id", authMiddleware, async (req, res) => {
+    router.put("/:id", authMiddleware, csrfMiddleware, async (req, res) => {
         const id = req.params.id;
         const userId = req.user.id;
         try {
@@ -944,7 +946,7 @@ module.exports = (dependencies) => {
         } catch (e) { logError("PUT /api/pages/:id", e); res.status(500).json({ error: "Failed" }); }
     });
 
-    router.patch("/reorder", authMiddleware, async (req, res) => {
+    router.patch("/reorder", authMiddleware, csrfMiddleware, async (req, res) => {
         const { storageId, pageIds, parentId } = req.body;
         const userId = req.user.id;
 
@@ -1042,7 +1044,7 @@ module.exports = (dependencies) => {
         }
     });
 
-    router.post("/:id/restore", authMiddleware, async (req, res) => {
+    router.post("/:id/restore", authMiddleware, csrfMiddleware, async (req, res) => {
         try {
             const userId = req.user.id;
             const { id } = req.params;
@@ -1088,7 +1090,7 @@ module.exports = (dependencies) => {
         }
     });
 
-    router.delete("/:id/permanent", authMiddleware, async (req, res) => {
+    router.delete("/:id/permanent", authMiddleware, csrfMiddleware, async (req, res) => {
         try {
             const userId = req.user.id;
             const { id } = req.params;
@@ -1131,7 +1133,7 @@ module.exports = (dependencies) => {
         }
     });
 
-    router.delete("/:id", authMiddleware, async (req, res) => {
+    router.delete("/:id", authMiddleware, csrfMiddleware, async (req, res) => {
         const id = req.params.id;
         const userId = req.user.id;
         try {
@@ -1214,7 +1216,7 @@ module.exports = (dependencies) => {
         } catch (e) { logError("DELETE /api/pages/:id", e); res.status(500).json({ error: "Failed" }); }
     });
 
-    router.delete("/covers/:filename", authMiddleware, async (req, res) => {
+    router.delete("/covers/:filename", authMiddleware, csrfMiddleware, async (req, res) => {
         const userId = req.user.id;
         const filename = path.basename(req.params.filename);
         try {
@@ -1253,7 +1255,7 @@ module.exports = (dependencies) => {
         }
     });
 
-    router.put("/:id/cover", authMiddleware, async (req, res) => {
+    router.put("/:id/cover", authMiddleware, csrfMiddleware, async (req, res) => {
         const id = req.params.id;
         const userId = req.user.id;
         try {
@@ -1354,7 +1356,7 @@ module.exports = (dependencies) => {
         }
     });
 
-    router.delete("/:id/cover", authMiddleware, async (req, res) => {
+    router.delete("/:id/cover", authMiddleware, csrfMiddleware, async (req, res) => {
         const id = req.params.id;
         const userId = req.user.id;
         try {
@@ -1570,7 +1572,7 @@ module.exports = (dependencies) => {
         }
     }
 
-    router.delete("/:id/file-cleanup", authMiddleware, async (req, res) => {
+    router.delete("/:id/file-cleanup", authMiddleware, csrfMiddleware, async (req, res) => {
         const id = req.params.id;
         const userId = req.user.id;
         const { fileUrl } = req.body;
@@ -1728,7 +1730,7 @@ module.exports = (dependencies) => {
         return { urlUserId, filename };
     }
 
-    router.post("/:id/register-asset-ref", authMiddleware, async (req, res) => {
+    router.post("/:id/register-asset-ref", authMiddleware, csrfMiddleware, async (req, res) => {
         const id = req.params.id;
         const userId = req.user.id;
         const { assetUrl } = req.body || {};
@@ -1859,7 +1861,7 @@ module.exports = (dependencies) => {
         }
     });
 
-    router.post("/:id/publish", authMiddleware, async (req, res) => {
+    router.post("/:id/publish", authMiddleware, csrfMiddleware, requireRecentReauth(10 * 60 * 1000), async (req, res) => {
         const id = req.params.id;
         const userId = req.user.id;
         try {
@@ -1915,7 +1917,7 @@ module.exports = (dependencies) => {
         }
     });
 
-    router.delete("/:id/publish", authMiddleware, async (req, res) => {
+    router.delete("/:id/publish", authMiddleware, csrfMiddleware, async (req, res) => {
         const id = req.params.id;
         const userId = req.user.id;
         try {

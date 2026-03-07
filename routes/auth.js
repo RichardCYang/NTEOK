@@ -26,6 +26,12 @@ module.exports = (dependencies) => {
 		maskIPAddress,
 		checkCountryWhitelist,
 		getClientIpFromRequest,
+		redis,
+		assertLoginNotLocked,
+		recordLoginFailure,
+		clearLoginFailures,
+		requireRecentReauth,
+		csrfMiddleware,
 		saveSession,
 		getSession,
 		revokeSession,
@@ -102,174 +108,82 @@ module.exports = (dependencies) => {
 
 	router.post("/login", authLimiter, requireSameOriginForAuth, async (req, res) => {
 		const { username, password } = req.body || {};
-
 		if (typeof username !== "string" || typeof password !== "string") return res.status(400).json({ error: "아이디와 비밀번호를 모두 입력해 주세요." });
-
-		if (PASSWORD_CONTROL_CHARS_RE.test(password)) {
-			console.warn(`[로그인 실패] IP: ${getClientIp(req)}, 사유: 비정상 비밀번호 입력`);
-			return res.status(401).json({ error: "아이디 또는 비밀번호가 올바르지 않습니다." });
-		}
-
+		if (PASSWORD_CONTROL_CHARS_RE.test(password)) return res.status(401).json({ error: "아이디 또는 비밀번호가 올바르지 않습니다." });
 		const trimmedUsername = username.trim();
+		const lockStatus = await assertLoginNotLocked(redis, trimmedUsername);
+		if (!lockStatus.ok) return res.status(423).json({ error: `너무 많은 로그인 시도로 인해 계정이 잠겼습니다. ${Math.ceil(lockStatus.retryAfterMs / 60000)}분 후 다시 시도해 주세요.` });
 
 		try {
 			const [rows] = await pool.execute(
-				`
-				SELECT id, username, password_hash, totp_enabled, passkey_enabled, block_duplicate_login,
-					   country_whitelist_enabled, allowed_login_countries
-				FROM users
-				WHERE username = ?
-				`,
+				`SELECT id, username, password_hash, totp_enabled, passkey_enabled, block_duplicate_login, country_whitelist_enabled, allowed_login_countries FROM users WHERE username = ?`,
 				[trimmedUsername]
 			);
 
 			if (!rows.length) {
 				await consumeBcryptCostForTiming(password);
-
-				await recordLoginAttempt(pool, {
-					userId: null,
-					username: trimmedUsername,
-					ipAddress: getClientIp(req),
-					port: req.connection.remotePort || 0,
-					success: false,
-					failureReason: '존재하지 않는 사용자',
-					userAgent: req.headers['user-agent'] || null
-				});
-
-				console.warn(`[로그인 실패] IP: ${getClientIp(req)}, 사유: 인증 실패`);
+				await recordLoginFailure(redis, trimmedUsername);
+				await recordLoginAttempt(pool, { userId: null, username: trimmedUsername, ipAddress: getClientIp(req), port: req.connection.remotePort || 0, success: false, failureReason: '존재하지 않는 사용자', userAgent: req.headers['user-agent'] || null });
 				return res.status(401).json({ error: "아이디 또는 비밀번호가 올바르지 않습니다." });
 			}
 
 			const user = rows[0];
-
 			const ok = await bcrypt.compare(password, user.password_hash);
 			if (!ok) {
-				await recordLoginAttempt(pool, {
-					userId: user.id,
-					username: user.username,
-					ipAddress: getClientIp(req),
-					port: req.connection.remotePort || 0,
-					success: false,
-					failureReason: '비밀번호 불일치',
-					userAgent: req.headers['user-agent'] || null
-				});
-
-				console.warn(`[로그인 실패] IP: ${getClientIp(req)}, 사유: 인증 실패`);
+				await recordLoginFailure(redis, trimmedUsername);
+				await recordLoginAttempt(pool, { userId: user.id, username: user.username, ipAddress: getClientIp(req), port: req.connection.remotePort || 0, success: false, failureReason: '비밀번호 불일치', userAgent: req.headers['user-agent'] || null });
 				return res.status(401).json({ error: "아이디 또는 비밀번호가 올바르지 않습니다." });
 			}
 
-			const countryCheck = checkCountryWhitelist(
-				{
-					country_whitelist_enabled: user.country_whitelist_enabled,
-					allowed_login_countries: user.allowed_login_countries
-				},
-				getClientIp(req)
-			);
-
+			const countryCheck = checkCountryWhitelist({ country_whitelist_enabled: user.country_whitelist_enabled, allowed_login_countries: user.allowed_login_countries }, getClientIp(req));
 			if (!countryCheck.allowed) {
-				await recordLoginAttempt(pool, {
-					userId: user.id,
-					username: user.username,
-					ipAddress: getClientIp(req),
-					port: req.connection.remotePort || 0,
-					success: false,
-					failureReason: countryCheck.reason,
-					userAgent: req.headers['user-agent'] || null
-				});
-
-				console.warn(`[로그인 실패] IP: ${getClientIp(req)}, 사유: ${countryCheck.reason}`);
-				return res.status(403).json({
-					error: "현재 위치에서는 로그인할 수 없습니다. 계정 보안 설정을 확인하세요."
-				});
+				await recordLoginAttempt(pool, { userId: user.id, username: user.username, ipAddress: getClientIp(req), port: req.connection.remotePort || 0, success: false, failureReason: countryCheck.reason, userAgent: req.headers['user-agent'] || null });
+				return res.status(403).json({ error: "현재 위치에서는 로그인할 수 없습니다. 계정 보안 설정을 확인하세요." });
 			}
 
+			await clearLoginFailures(redis, trimmedUsername);
 			if (user.totp_enabled || user.passkey_enabled) {
 				const tempSessionId = crypto.randomBytes(32).toString("hex");
 				const now = Date.now();
-				const clientIp = getClientIp(req);
-				const ua = req.headers["user-agent"] || "";
-				const uaHash = crypto.createHash("sha256").update(ua).digest("hex");
-
-				const tempSession = {
-					type: "2fa",
-					pendingUserId: user.id,
-					createdAt: now,
-					expiresAt: now + 10 * 60 * 1000, 
-					lastAccessedAt: now,
-					ipKey: clientIp,
-					uaHash
-				};
-
+				const tempSession = { type: "2fa", pendingUserId: user.id, createdAt: now, expiresAt: now + 10 * 60 * 1000, lastAccessedAt: now, ipKey: getClientIp(req), uaHash: crypto.createHash("sha256").update(req.headers["user-agent"] || "").digest("hex") };
 				await saveSession(tempSessionId, tempSession, 10 * 60 * 1000);
-
-				const availableMethods = [];
-				if (user.totp_enabled) availableMethods.push('totp');
-				if (user.passkey_enabled) availableMethods.push('passkey');
-
 				res.cookie(TWO_FA_COOKIE_NAME, tempSessionId, TWO_FA_COOKIE_OPTS);
-				return res.json({
-					ok: false,
-					requires2FA: true,
-					availableMethods
-				});
+				return res.json({ ok: false, requires2FA: true, availableMethods: [user.totp_enabled && 'totp', user.passkey_enabled && 'passkey'].filter(Boolean) });
 			}
 
-			const sessionResult = await createSession({
-				id: user.id,
-				username: user.username,
-				blockDuplicateLogin: user.block_duplicate_login
-			});
+			const sessionResult = await createSession({ id: user.id, username: user.username, blockDuplicateLogin: user.block_duplicate_login });
+			if (!sessionResult.success) return res.status(409).json({ error: sessionResult.error, code: 'DUPLICATE_LOGIN_BLOCKED' });
 
-			if (!sessionResult.success) {
-				return res.status(409).json({
-					error: sessionResult.error,
-					code: 'DUPLICATE_LOGIN_BLOCKED'
-				});
-			}
-
-			const sessionId = sessionResult.sessionId;
-
-			res.cookie(SESSION_COOKIE_NAME, sessionId, {
-				httpOnly: true,
-				sameSite: "strict",
-				secure: COOKIE_SECURE,
-				path: "/",
-				maxAge: SESSION_TTL_MS
-			});
-
-			const newCsrfToken = generateCsrfToken();
-			res.cookie(CSRF_COOKIE_NAME, newCsrfToken, {
-				httpOnly: false,
-				sameSite: "strict",
-				secure: COOKIE_SECURE,
-				path: "/",
-				maxAge: SESSION_TTL_MS
-			});
-
-			res.json({
-				ok: true,
-				user: {
-					id: user.id,
-					username: user.username
-				}
-			});
-
-			recordLoginAttempt(pool, {
-				userId: user.id,
-				username: user.username,
-				ipAddress: getClientIp(req),
-				port: req.connection.remotePort || 0,
-				success: true,
-				failureReason: null,
-				userAgent: req.headers['user-agent'] || null
-			});
+			res.cookie(SESSION_COOKIE_NAME, sessionResult.sessionId, { httpOnly: true, sameSite: "strict", secure: COOKIE_SECURE, path: "/", maxAge: SESSION_TTL_MS });
+			res.cookie(CSRF_COOKIE_NAME, generateCsrfToken(), { httpOnly: false, sameSite: "strict", secure: COOKIE_SECURE, path: "/", maxAge: SESSION_TTL_MS });
+			res.json({ ok: true, user: { id: user.id, username: user.username } });
+			recordLoginAttempt(pool, { userId: user.id, username: user.username, ipAddress: getClientIp(req), port: req.connection.remotePort || 0, success: true, failureReason: null, userAgent: req.headers['user-agent'] || null });
 		} catch (error) {
 			logError("POST /api/auth/login", error);
 			res.status(500).json({ error: "로그인 처리 중 오류가 발생했습니다." });
 		}
 	});
 
-	router.post("/logout", async (req, res) => {
+	router.post("/reauth", authMiddleware, csrfMiddleware, async (req, res) => {
+		const { password } = req.body || {};
+		if (typeof password !== "string") return res.status(400).json({ error: "비밀번호를 입력해 주세요." });
+		try {
+			const [rows] = await pool.execute(`SELECT password_hash FROM users WHERE id = ?`, [req.user.id]);
+			if (!rows.length) return res.status(404).json({ error: "사용자를 찾을 수 없습니다." });
+			if (!(await bcrypt.compare(password, rows[0].password_hash))) return res.status(401).json({ error: "비밀번호가 올바르지 않습니다." });
+			const session = await getSession(req.cookies[SESSION_COOKIE_NAME]);
+			if (session) {
+				session.lastStrongAuthAt = Date.now();
+				await saveSession(req.cookies[SESSION_COOKIE_NAME], session, SESSION_TTL_MS);
+			}
+			res.json({ ok: true });
+		} catch (error) {
+			logError("POST /api/auth/reauth", error);
+			res.status(500).json({ error: "재인증 중 오류가 발생했습니다." });
+		}
+	});
+
+	router.post("/logout", csrfMiddleware, async (req, res) => {
 		const { getSessionFromRequest, wsCloseConnectionsForSession } = dependencies;
 		const session = await getSessionFromRequest(req);
 		if (session) {
@@ -287,7 +201,7 @@ module.exports = (dependencies) => {
 		res.json({ ok: true });
 	});
 
-	router.delete("/account", authMiddleware, async (req, res) => {
+	router.delete("/account", authMiddleware, csrfMiddleware, requireRecentReauth(10 * 60 * 1000), async (req, res) => {
 		const { password, confirmText } = req.body || {};
 
 		if (typeof password !== "string" || !password.trim()) return res.status(400).json({ error: "비밀번호를 입력해 주세요." });
@@ -472,7 +386,7 @@ module.exports = (dependencies) => {
     });
 
 
-    router.put("/settings", authMiddleware, async (req, res) => {
+    router.put("/settings", authMiddleware, csrfMiddleware, async (req, res) => {
         const { stickyHeader } = req.body;
 
         if (stickyHeader !== undefined && typeof stickyHeader !== "boolean") {
@@ -537,7 +451,7 @@ module.exports = (dependencies) => {
         }
     });
 
-    router.put("/security-settings", authMiddleware, async (req, res) => {
+    router.put("/security-settings", authMiddleware, csrfMiddleware, requireRecentReauth(10 * 60 * 1000), async (req, res) => {
         const { blockDuplicateLogin, countryWhitelistEnabled, allowedLoginCountries } = req.body;
 
         if (blockDuplicateLogin !== undefined && typeof blockDuplicateLogin !== "boolean") {

@@ -10,6 +10,7 @@ module.exports = (dependencies) => {
         storagesRepo,
         bootstrapRepo,
         authMiddleware,
+        csrfMiddleware,
         toIsoString,
         logError,
         formatDateForDb,
@@ -125,7 +126,7 @@ module.exports = (dependencies) => {
         }
     });
 
-    router.post('/', authMiddleware, async (req, res) => {
+    router.post('/', authMiddleware, csrfMiddleware, async (req, res) => {
         try {
             const { name, isEncrypted, encryptionSalt, encryptionCheck } = req.body;
             const check = validateStorageName(name);
@@ -173,7 +174,7 @@ module.exports = (dependencies) => {
         }
     });
 
-    router.put('/:id', authMiddleware, async (req, res) => {
+    router.put('/:id', authMiddleware, csrfMiddleware, async (req, res) => {
         try {
             const { name } = req.body;
             const check = validateStorageName(name);
@@ -198,7 +199,7 @@ module.exports = (dependencies) => {
         }
     });
 
-    router.delete('/:id', authMiddleware, async (req, res) => {
+    router.delete('/:id', authMiddleware, csrfMiddleware, async (req, res) => {
         try {
             const userId = req.user.id;
             const storageId = req.params.id;
@@ -255,7 +256,7 @@ module.exports = (dependencies) => {
         }
     });
 
-    router.post('/:id/collaborators', authMiddleware, async (req, res) => {
+    router.post('/:id/collaborators', authMiddleware, csrfMiddleware, async (req, res) => {
         try {
             const userId = req.user.id;
             const storageId = req.params.id;
@@ -295,7 +296,7 @@ module.exports = (dependencies) => {
         }
     });
 
-    router.delete('/:id/collaborators/:targetUserId', authMiddleware, async (req, res) => {
+    router.delete('/:id/collaborators/:targetUserId', authMiddleware, csrfMiddleware, async (req, res) => {
         try {
             const userId = req.user.id;
             const storageId = req.params.id;

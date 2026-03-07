@@ -27,7 +27,9 @@ function isVulnerableDomPurify(version) {
 if (isVulnerableDomPurify(domPurifyPkg.version)) throw new Error(`[boot] Refusing to start with vulnerable DOMPurify version: ${domPurifyPkg.version}`);
 
 const { redis, ensureRedis } = require("./lib/redis");
+const { assertLoginNotLocked, recordLoginFailure, clearLoginFailures } = require("./lib/login-guard");
 const { getSession, saveSession, listUserSessions, revokeSession } = require("./lib/session-store");
+const buildRecentReauth = require("./middlewares/recent-reauth");
 const { RedisStore } = require("rate-limit-redis");
 
 const clearDomPurifyWindow = typeof _isoDomPurify?.clearWindow === "function"
@@ -893,7 +895,8 @@ async function createSession(user) {
 		username: user.username,
 		expiresAt,
 		absoluteExpiry,
-		createdAt: now
+		createdAt: now,
+		lastStrongAuthAt: now
 	};
 
 	await saveSession(sessionId, session, SESSION_ABSOLUTE_TTL_MS);
@@ -2101,6 +2104,7 @@ function installGracefulShutdownHandlers(httpServer, pool, sanitizeHtmlContent) 
 
 		const routeDependencies = {
 			pool,
+			redis,
 			pageSqlPolicy,
 			...repositories,
 			bcrypt,
@@ -2119,6 +2123,10 @@ function installGracefulShutdownHandlers(httpServer, pool, sanitizeHtmlContent) 
 			logError,
 			authMiddleware,
 			csrfMiddleware,
+			requireRecentReauth: buildRecentReauth({ getSessionFromRequest }).requireRecentReauth,
+			assertLoginNotLocked,
+			recordLoginFailure,
+			clearLoginFailures,
 			toIsoString,
 			sanitizeInput,
 			sanitizeFilenameComponent,

@@ -1368,7 +1368,7 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
                 if (!row.length || row[0].is_encrypted || !row[0].content) continue;
 
                 let content = row[0].content;
-                const oldUserIdPattern = /\/(imgs|paperclip|covers)\/(\d+)\
+                const oldUserIdPattern = /\/(imgs|paperclip|covers)\/(\d+)\//g;
                 let newContent = content.replace(oldUserIdPattern, `/$1/${userId}/`);
 
                 for (const [oldName, newName] of imgFilenameMap.entries()) {
@@ -1414,10 +1414,11 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
                 skippedPublishedLinks
             });
         } catch (error) {
+            const incidentId = crypto.randomBytes(4).toString("hex").toUpperCase();
+            logError(`[IMPORT_ERROR] [${incidentId}]`, error);
             if (connection) await connection.rollback();
             if (uploadedFile && fs.existsSync(uploadedFile.path)) fs.unlinkSync(uploadedFile.path);
-            logError('POST /api/backup/import', error);
-            res.status(500).json({ error: error.message });
+            res.status(500).json({ error: "백업을 가져오는 중 오류가 발생했습니다.", incidentId });
         } finally {
             if (connection) connection.release();
             try { if (typeof extractDir === 'string') fs.rmSync(extractDir, { recursive: true, force: true }); } catch (_) {}
