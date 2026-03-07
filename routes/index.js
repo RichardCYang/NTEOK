@@ -95,8 +95,14 @@ module.exports = (dependencies) => {
 			if (!(await checkSharedPageAccess(clientIp, token, isValid))) return res.status(429).json({ error: "너무 많은 요청입니다. 잠시 후 다시 시도해주세요." });
 			if (!isValid) return res.status(404).json({ error: "페이지를 찾을 수 없습니다." });
 			const page = pageRows[0];
-			res.json({ id: page.id, title: page.title || "제목 없음", content: sanitizeHtmlContent(page.content || "<p></p>"), icon: page.icon || null, coverImage: page.cover_image || null, coverPosition: page.cover_position || 50 });
-		} catch (error) {
+			res.json({
+			    id: page.id,
+			    title: page.title || "제목 없음",
+			    content: sanitizeHtmlContent(page.content || "<p></p>", { profile: "shared" }),
+			    icon: page.icon || null,
+			    coverImage: page.cover_image || null,
+			    coverPosition: page.cover_position || 50
+			});		} catch (error) {
 			logError("GET /api/shared/page/:token", error);
 			res.status(500).json({ error: "페이지 로드 실패" });
 		}

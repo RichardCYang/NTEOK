@@ -8,6 +8,8 @@
 	},
 	"scripts": {
 		"test": "echo \"Error: no test specified\" && exit 1",
+		"sync:dompurify": "cp node_modules/dompurify/dist/purify.js public/lib/dompurify/dompurify.js",
+		"postinstall": "npm run sync:dompurify",
 		"prestart": "node scripts/check-public-leaks.mjs",
 		"start": "node server.js",
 		"security:pin-third-party": "node scripts/pin-third-party.mjs"

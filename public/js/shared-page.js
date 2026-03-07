@@ -90,19 +90,19 @@ function sanitizeSharedHtml(html) {
             'a', 'span', 'div',
             'hr',
             'table', 'thead', 'tbody', 'tr', 'th', 'td',
-            'img', 'figure',
-            'label', 'input'
+            'img', 'figure'
         ],
         ALLOWED_ATTR: [
-            'style', 'class', 'href', 'target', 'rel', 'data-type', 'data-latex',
+            'class', 'href', 'target', 'rel', 'data-type', 'data-latex',
             'colspan', 'rowspan', 'colwidth',
             'src', 'alt', 'data-src', 'data-alt', 'data-caption', 'data-width', 'data-align',
             'data-id', 'data-icon',
             'data-url', 'data-title', 'data-favicon',
-            'data-checked', 'type', 'checked', 'data-callout-type', 'data-content',
+            'data-checked', 'data-callout-type', 'data-content',
             'data-columns', 'data-is-open'
         ],
         ALLOW_DATA_ATTR: true,
+        FORBID_ATTR: ['style'],
         ALLOWED_URI_REGEXP: /^(?:(?:(?:ht)tps?|mailto|tel):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i
     });
 }

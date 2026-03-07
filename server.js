@@ -26,6 +26,16 @@ function isVulnerableDomPurify(version) {
 
 if (isVulnerableDomPurify(domPurifyPkg.version)) throw new Error(`[boot] Refusing to start with vulnerable DOMPurify version: ${domPurifyPkg.version}`);
 
+const publicPurifyPath = path.join(__dirname, "public", "lib", "dompurify", "dompurify.js");
+try {
+    const publicPurifyBundle = fs.readFileSync(publicPurifyPath, "utf8");
+    const expected = String(domPurifyPkg.version);
+    const bundleLooksMatched = publicPurifyBundle.includes(`o.version="${expected}"`) || publicPurifyBundle.includes(`version="${expected}"`) || publicPurifyBundle.includes(`version='${expected}'`);
+    if (!bundleLooksMatched) throw new Error(`[boot] DOMPurify browser bundle mismatch: npm=${expected}, public bundle is stale`);
+} catch (e) {
+    throw new Error(`[boot] DOMPurify bundle integrity check failed: ${e.message}`);
+}
+
 const { redis, ensureRedis } = require("./lib/redis");
 const { assertLoginNotLocked, recordLoginFailure, clearLoginFailures } = require("./lib/login-guard");
 const { getSession, saveSession, listUserSessions, revokeSession } = require("./lib/session-store");
@@ -730,34 +740,61 @@ function prefilterHtmlForSanitizer(html) {
 	return out;
 }
 
-function sanitizeHtmlContent(html) {
-    if (typeof html !== 'string')
-        return html;
+const BASE_ALLOWED_TAGS = [
+    'p', 'br', 'strong', 'em', 'u', 's', 'code', 'pre',
+    'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+    'ul', 'ol', 'li', 'blockquote',
+    'a', 'span', 'div',
+    'hr',
+    'table', 'thead', 'tbody', 'tr', 'th', 'td',
+    'img', 'figure'
+];
+
+const BASE_ALLOWED_ATTR = [
+    'class', 'href', 'target', 'rel',
+    'data-type', 'data-latex',
+    'colspan', 'rowspan', 'colwidth',
+    'src', 'alt', 'data-src', 'data-alt', 'data-caption', 'data-width', 'data-align',
+    'data-url', 'data-title', 'data-favicon', 'data-description', 'data-thumbnail',
+    'data-id', 'data-icon', 'data-checked',
+    'data-callout-type', 'data-content',
+    'data-columns', 'data-is-open'
+];
+
+const EDITOR_ALLOWED_TAGS = [...BASE_ALLOWED_TAGS, 'label', 'input'];
+const EDITOR_ALLOWED_ATTR = [
+    ...BASE_ALLOWED_ATTR,
+    'style', 'type', 'checked',
+    'data-selected-date', 'data-memos'
+];
+
+function sanitizeHtmlContent(html, { profile = 'editor' } = {}) {
+    if (typeof html !== 'string') return html;
 
     const prefiltered = prefilterHtmlForSanitizer(html);
 
-	try {
-		maybeRecycleDomPurify();
-		return DOMPurify.sanitize(prefiltered, {
-	        ALLOWED_TAGS: [
-	            'p', 'br', 'strong', 'em', 'u', 's', 'code', 'pre',
-	            'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
-	            'ul', 'ol', 'li', 'blockquote',
-	            'a', 'span', 'div',
-	            'hr',
-	            'table', 'thead', 'tbody', 'tr', 'th', 'td',
-	            'img', 'figure',
-	            'label', 'input'
-	        ],
-	        ALLOWED_ATTR: ['style', 'class', 'href', 'target', 'rel', 'data-type', 'data-latex', 'colspan', 'rowspan', 'colwidth', 'src', 'alt', 'data-src', 'data-alt', 'data-caption', 'data-width', 'data-align', 'data-url', 'data-title', 'data-favicon', 'data-description', 'data-thumbnail', 'data-id', 'data-icon', 'data-checked', 'type', 'checked', 'data-callout-type', 'data-content', 'data-columns', 'data-is-open', 'data-selected-date', 'data-memos'],
-	        ALLOW_DATA_ATTR: true,
-	        ALLOWED_URI_REGEXP: /^(?:(?:(?:ht)tps?|mailto|tel):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i
-	    });
-	} catch (err) {
-		console.warn('[보안] sanitizeHtmlContent 실패:', err);
-		const escaped = escapeHtmlToText(prefiltered);
-		return `<p>${escaped}</p>`;
-	}
+    try {
+        maybeRecycleDomPurify();
+        const config = profile === 'shared'
+            ? {
+                ALLOWED_TAGS: BASE_ALLOWED_TAGS,
+                ALLOWED_ATTR: BASE_ALLOWED_ATTR,
+                ALLOW_DATA_ATTR: true,
+                FORBID_ATTR: ['style'],
+                ALLOWED_URI_REGEXP: /^(?:(?:(?:ht)tps?|mailto|tel):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i
+            }
+            : {
+                ALLOWED_TAGS: EDITOR_ALLOWED_TAGS,
+                ALLOWED_ATTR: EDITOR_ALLOWED_ATTR,
+                ALLOW_DATA_ATTR: true,
+                ALLOWED_URI_REGEXP: /^(?:(?:(?:ht)tps?|mailto|tel):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i
+            };
+
+        return DOMPurify.sanitize(prefiltered, config);
+    } catch (err) {
+        const escaped = escapeHtmlToText(prefiltered);
+        return `<p>${escaped}</p>`;
+    }
 }
 
 function validatePasswordStrength(password) {
@@ -1577,7 +1614,8 @@ app.use((req, res, next) => {
         "frame-src 'self' https://www.youtube.com https://youtube.com https://www.youtube-nocookie.com https://youtube-nocookie.com; " +
         "form-action 'self'; " +
         `script-src 'nonce-${nonce}' 'strict-dynamic'; ` +
-        "style-src 'self' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://fonts.googleapis.com 'unsafe-inline'; " +
+        `style-src-elem 'self' 'nonce-${nonce}' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://fonts.googleapis.com; ` +
+        "style-src-attr 'none'; " +
         "font-src 'self' https://cdnjs.cloudflare.com https://fonts.gstatic.com; " +
         "img-src 'self' data: https:; " +
         "connect-src 'self';"

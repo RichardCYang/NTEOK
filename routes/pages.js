@@ -1915,7 +1915,7 @@ module.exports = (dependencies) => {
         }
     });
 
-    router.delete("/:id/publish", authMiddleware, csrfMiddleware, async (req, res) => {
+    router.delete("/:id/publish", authMiddleware, csrfMiddleware, requireRecentReauth(10 * 60 * 1000), async (req, res) => {
         const id = req.params.id;
         const userId = req.user.id;
         try {

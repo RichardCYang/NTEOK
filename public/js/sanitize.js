@@ -76,27 +76,54 @@ if (!DOMPurify.__nteokSecurityHooksInstalled) {
 
 export const EDITOR_PURIFY_CONFIG = {
     ALLOWED_TAGS: [
-        'p','br','strong','em','u','s','code','pre',
-        'h1','h2','h3','h4','h5','h6',
-        'ul','ol','li','blockquote',
-        'a','span','div','hr',
-        'table','thead','tbody','tr','th','td',
-        'img','figure',
-        'label','input'
+        'p', 'br', 'strong', 'em', 'u', 's', 'code', 'pre',
+        'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+        'ul', 'ol', 'li', 'blockquote',
+        'a', 'span', 'div',
+        'hr',
+        'table', 'thead', 'tbody', 'tr', 'th', 'td',
+        'img', 'figure',
+        'label', 'input'
     ],
     ALLOWED_ATTR: [
-        'style','class','href','target','rel','data-type','data-latex','colspan','rowspan','colwidth',
-        'src','alt','data-src','data-alt','data-caption','data-width','data-align','data-url','data-title',
-        'data-description','data-thumbnail','data-id','data-icon','data-checked','type','checked',
-        'data-callout-type','data-content','data-columns','data-is-open','data-selected-date','data-memos'
+        'style', 'class', 'href', 'target', 'rel', 'data-type', 'data-latex', 'colspan', 'rowspan', 'colwidth',
+        'src', 'alt', 'data-src', 'data-alt', 'data-caption', 'data-width', 'data-align', 'data-url', 'data-title',
+        'data-description', 'data-thumbnail', 'data-id', 'data-icon', 'data-checked', 'type', 'checked',
+        'data-callout-type', 'data-content', 'data-columns', 'data-is-open', 'data-selected-date', 'data-memos'
     ],
     ALLOW_DATA_ATTR: true,
+    ALLOWED_URI_REGEXP: /^(?:(?:(?:ht)tps?|mailto|tel):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i
+};
+
+export const SHARED_PURIFY_CONFIG = {
+    ALLOWED_TAGS: [
+        'p', 'br', 'strong', 'em', 'u', 's', 'code', 'pre',
+        'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+        'ul', 'ol', 'li', 'blockquote',
+        'a', 'span', 'div',
+        'hr',
+        'table', 'thead', 'tbody', 'tr', 'th', 'td',
+        'img', 'figure'
+    ],
+    ALLOWED_ATTR: [
+        'class', 'href', 'target', 'rel', 'data-type', 'data-latex', 'colspan', 'rowspan', 'colwidth',
+        'src', 'alt', 'data-src', 'data-alt', 'data-caption', 'data-width', 'data-align', 'data-url', 'data-title',
+        'data-description', 'data-thumbnail', 'data-id', 'data-icon', 'data-checked',
+        'data-callout-type', 'data-content', 'data-columns', 'data-is-open'
+    ],
+    ALLOW_DATA_ATTR: true,
+    FORBID_ATTR: ['style'],
     ALLOWED_URI_REGEXP: /^(?:(?:(?:ht)tps?|mailto|tel):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i
 };
 
 export function sanitizeEditorHtml(html) {
     if (!html || typeof html !== 'string') return html;
     return DOMPurify.sanitize(html, EDITOR_PURIFY_CONFIG);
+}
+
+export function sanitizeSharedHtml(html) {
+    if (!html || typeof html !== 'string') return html;
+    return DOMPurify.sanitize(html, SHARED_PURIFY_CONFIG);
 }
 
 export function htmlToPlainText(html, { maxLength = 0 } = {}) {
