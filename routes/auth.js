@@ -11,6 +11,7 @@ module.exports = (dependencies) => {
 		createSession,
 		generateCsrfToken,
 		generateCsrfTokenForSession,
+		verifyCsrfTokenForSession,
 		generatePreAuthCsrfToken,
 		verifyPreAuthCsrfToken,
 		PREAUTH_CSRF_COOKIE_NAME,
@@ -208,18 +209,38 @@ module.exports = (dependencies) => {
 		}
 	});
 
-	router.post("/logout", csrfMiddleware, async (req, res) => {
+	router.post("/logout", async (req, res) => {
 		const { getSessionFromRequest, wsCloseConnectionsForSession } = dependencies;
+
 		const session = await getSessionFromRequest(req);
+
 		if (session) {
-			try { wsCloseConnectionsForSession(session.id, 1008, 'Logout'); } catch (e) {}
-			await revokeSession(session.id, "logout");
+			const tokenFromHeader = req.headers['x-csrf-token'];
+			const tokenFromCookie = req.cookies?.[CSRF_COOKIE_NAME];
+
+			if (typeof tokenFromHeader !== 'string' || typeof tokenFromCookie !== 'string') {
+				console.warn('CSRF 토큰 누락: /auth/logout');
+				return res.status(403).json({ error: 'CSRF 토큰이 유효하지 않습니다.' });
+			}
+
+			if (tokenFromHeader !== tokenFromCookie) {
+				console.warn('CSRF 토큰 불일치: /auth/logout');
+				return res.status(403).json({ error: 'CSRF 토큰이 유효하지 않습니다.' });
+			}
+
+			if (!verifyCsrfTokenForSession(session.id, tokenFromHeader, 'api')) {
+				console.warn('CSRF 토큰 서명 검증 실패: /auth/logout - 세션 삭제 후 성공 처리');
+				await revokeSession(session.id, 'csrf-verify-failed');
+			} else {
+				try { wsCloseConnectionsForSession(session.id, 1008, 'Logout'); } catch (e) {}
+				await revokeSession(session.id, 'logout');
+			}
 		}
 
 		res.clearCookie(SESSION_COOKIE_NAME, {
 			httpOnly: true,
-			sameSite: "strict",
-			path: "/",
+			sameSite: 'strict',
+			path: '/',
 			secure: COOKIE_SECURE
 		});
 
