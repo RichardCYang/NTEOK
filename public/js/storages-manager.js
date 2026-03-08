@@ -600,8 +600,8 @@ export function initStoragesManager(appState, onStorageSelected) {
             const pw = createPw.value;
             const pwConf = createPwConfirm.value;
 
-            if (pw.length < 8) {
-                createError.textContent = '비밀번호는 8자 이상이어야 합니다.';
+            if (pw.length < 12) {
+                createError.textContent = '암호 문구는 12 자 이상이어야 합니다.';
                 return;
             }
             if (pw !== pwConf) {

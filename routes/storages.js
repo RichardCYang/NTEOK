@@ -136,7 +136,7 @@ module.exports = (dependencies) => {
 
     router.post('/', authMiddleware, csrfMiddleware, async (req, res) => {
         try {
-            const { name, isEncrypted, encryptionSalt, encryptionCheck, dekVersion, wrappedDek, wrappingKid } = req.body;
+            const { name, isEncrypted, encryptionSalt, dekVersion, wrappedDek, wrappingKid } = req.body;
             const check = validateStorageName(name);
             if (!check) return res.status(400).json({ error: '저장소 이름을 입력해주세요.' });
             if (!check.ok) return res.status(400).json({ error: check.error });
@@ -145,9 +145,9 @@ module.exports = (dependencies) => {
             const useDekV1 = isEncrypted && Number(dekVersion) === 1;
 
             if (isEncrypted && !useDekV1) {
-                // Legacy PBKDF2 mode
-                if (!encryptionSalt || !encryptionCheck) return res.status(400).json({ error: '암호화 저장소 생성에 필요한 정보가 부족합니다.' });
-                if (typeof encryptionSalt !== 'string' || typeof encryptionCheck !== 'string') return res.status(400).json({ error: '암호화 정보 형식이 올바르지 않습니다.' });
+                return res.status(400).json({
+                    error: '레거시 비밀번호 직접암호화 저장소는 더 이상 생성할 수 없습니다. DEK v1 만 허용됩니다.'
+                });
             } else if (useDekV1) {
                 // DEK v1 mode
                 if (!wrappedDek || !wrappingKid) return res.status(400).json({ error: '암호화 저장소 생성에 필요한 정보가 부족합니다.' });
@@ -174,8 +174,8 @@ module.exports = (dependencies) => {
                 createdAt: nowStr,
                 updatedAt: nowStr,
                 isEncrypted: isEncrypted ? 1 : 0,
-                encryptionSalt: useDekV1 ? encryptionSalt : (isEncrypted ? encryptionSalt : null),
-                encryptionCheck: useDekV1 ? null : (isEncrypted ? encryptionCheck : null),
+                encryptionSalt: isEncrypted ? encryptionSalt : null,
+                encryptionCheck: null,
                 dekVersion: useDekV1 ? 1 : 0
             });
 
@@ -195,8 +195,8 @@ module.exports = (dependencies) => {
                 ...storage,
                 is_encrypted: isEncrypted ? 1 : 0,
                 isEncrypted: isEncrypted ? 1 : 0,
-                encryption_salt: useDekV1 ? encryptionSalt : (isEncrypted ? encryptionSalt : null),
-                encryption_check: useDekV1 ? null : (isEncrypted ? encryptionCheck : null),
+                encryption_salt: isEncrypted ? encryptionSalt : null,
+                encryption_check: null,
                 dek_version: useDekV1 ? 1 : 0,
                 is_owner: 1,
                 owner_name: req.user.username,

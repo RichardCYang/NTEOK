@@ -995,8 +995,7 @@ async function verifyCsrfToken(req) {
 		'/passkey/login/',
 		'/passkey/authenticate/',
 		'/totp/verify-login',
-		'/totp/verify-backup-code',
-		'/shared/page/exchange'
+		'/totp/verify-backup-code'
 	];
 	if (guestAllowedPaths.some(p => req.path.startsWith(p))) return true;
 

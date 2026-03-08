@@ -3,6 +3,7 @@ import { secureFetch, escapeHtml } from './ui-utils.js';
 const state = {
 	pageId: null,
     shareToken: null,
+    sharedCsrfToken: null,
     comments: [],
     isVisible: true,
     currentUser: null,
@@ -20,7 +21,7 @@ export async function loadAndRenderComments(pageId, containerId = 'page-comments
     if (!container) return;
 
 
-    try {
+	try {
     	const endpoint = shareToken ? `/api/comments/shared/${encodeURIComponent(shareToken)}` : `/api/comments/${pageId}`;
         const res = await secureFetch(endpoint);
 
@@ -34,7 +35,34 @@ export async function loadAndRenderComments(pageId, containerId = 'page-comments
             throw new Error('댓글 로드 실패');
         }
 
-        state.comments = await res.json();
+        const payload = await res.json();
+        if (Array.isArray(payload)) {
+            state.comments = payload;
+            state.sharedCsrfToken = null;
+        } else {
+            state.comments = payload.comments || [];
+            state.sharedCsrfToken = payload.csrfToken || null;
+        }
+        container.classList.remove('hidden');
+        renderComments(container);
+
+    } catch (error) {
+        console.error('댓글 로드 오류:', error);
+        container.classList.add('hidden');
+    }
+
+        if (!res.ok) {
+            throw new Error('댓글 로드 실패');
+        }
+
+        const payload = await res.json();
+        if (Array.isArray(payload)) {
+            state.comments = payload;
+            state.sharedCsrfToken = null;
+        } else {
+            state.comments = payload.comments || [];
+            state.sharedCsrfToken = payload.csrfToken || null;
+        }
         container.classList.remove('hidden');
         renderComments(container);
 
@@ -275,9 +303,14 @@ async function submitComment() {
     try {
         const body = { content, guestName };
 		const endpoint = state.shareToken ? `/api/comments/shared/${encodeURIComponent(state.shareToken)}` : `/api/comments/${state.pageId}`;
+		const headers = { 'Content-Type': 'application/json' };
+        if (state.shareToken && state.sharedCsrfToken) {
+            headers['X-Shared-CSRF-Token'] = state.sharedCsrfToken;
+        }
+
 		const res = await secureFetch(endpoint, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers,
             body: JSON.stringify(body)
         });
 

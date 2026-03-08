@@ -51,12 +51,28 @@ export async function handleEncryption(event) {
         return;
     }
 
-    const password = passwordInput.value.trim();
-    const confirm = confirmInput.value.trim();
+    const password = passwordInput.value;
+    const confirm = confirmInput.value;
     errorEl.textContent = "";
 
     if (!password || !confirm) {
         errorEl.textContent = "비밀번호를 입력해 주세요.";
+        return;
+    }
+
+    if (password !== confirm) {
+        errorEl.textContent = "비밀번호가 일치하지 않습니다.";
+        alert("비밀번호가 일치하지 않습니다. 다시 확인해 주세요.");
+        return;
+    }
+
+    if (password.length < 12) {
+        errorEl.textContent = "암호 문구는 최소 12 자 이상이어야 합니다.";
+        return;
+    }
+
+    if (/^\s+$/.test(password)) {
+        errorEl.textContent = "공백만으로는 설정할 수 없습니다.";
         return;
     }
 
@@ -224,11 +240,28 @@ export async function handleDecryption(event) {
         return;
     }
 
-    const password = passwordInput.value.trim();
+    const password = passwordInput.value;
+    const confirm = confirmInput.value;
     errorEl.textContent = "";
 
-    if (!password) {
+    if (!password || !confirm) {
         errorEl.textContent = "비밀번호를 입력해 주세요.";
+        return;
+    }
+
+    if (password !== confirm) {
+        errorEl.textContent = "비밀번호가 일치하지 않습니다.";
+        alert("비밀번호가 일치하지 않습니다. 다시 확인해 주세요.");
+        return;
+    }
+
+    if (password.length < 12) {
+        errorEl.textContent = "암호 문구는 최소 12 자 이상이어야 합니다.";
+        return;
+    }
+
+    if (/^\s+$/.test(password)) {
+        errorEl.textContent = "공백만으로는 설정할 수 없습니다.";
         return;
     }
 

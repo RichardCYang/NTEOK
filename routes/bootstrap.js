@@ -31,7 +31,7 @@ module.exports = (dependencies) => {
                 owner_name: row.owner_name,
                 is_encrypted: row.is_encrypted,
                 encryption_salt: row.encryption_salt,
-                encryption_check: row.encryption_check
+                dek_version: row.dek_version
             }));
 
             res.json({ user, storages });

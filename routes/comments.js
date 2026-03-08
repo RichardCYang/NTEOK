@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const crypto = require('crypto');
 
 const erl = require("express-rate-limit");
 const rateLimit = erl.rateLimit || erl;
@@ -10,6 +11,27 @@ const RATE_LIMIT_IPV6_SUBNET = (() => {
 	if (!Number.isFinite(n)) return 56;
 	return Math.max(0, Math.min(128, n));
 })();
+
+const SHARED_COMMENT_CSRF_SECRET = String(process.env.SHARED_COMMENT_CSRF_SECRET || process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex'));
+
+function makeSharedCommentCookieName(tokenHash) {
+	return `shared_comment_sid_${tokenHash.substring(0, 12)}`;
+}
+
+function signSharedCommentCsrf(tokenHash, sid) {
+	return crypto
+		.createHmac('sha256', SHARED_COMMENT_CSRF_SECRET)
+		.update(`${tokenHash}:${sid}`)
+		.digest('hex');
+}
+
+function safeEqualHex(a, b) {
+	if (typeof a !== 'string' || typeof b !== 'string') return false;
+	const ab = Buffer.from(a, 'hex');
+	const bb = Buffer.from(b, 'hex');
+	if (ab.length !== bb.length) return false;
+	return crypto.timingSafeEqual(ab, bb);
+}
 
 
 module.exports = (dependencies) => {
@@ -131,7 +153,35 @@ module.exports = (dependencies) => {
 				if (!page) return res.status(403).json({ error: "댓글이 비활성화되었습니다." });
 			}
 			const [comments] = await pool.execute(`SELECT c.id, c.content, c.created_at, c.user_id, c.guest_name, u.username FROM comments c LEFT JOIN users u ON c.user_id = u.id WHERE c.page_id = ? ORDER BY c.created_at ASC`, [pageId]);
-			res.json(comments.map(c => ({ id: c.id, content: c.content, createdAt: toIsoString(c.created_at), author: c.user_id ? c.username : c.guest_name, isGuest: !c.user_id, isMyComment: userId ? (c.user_id === userId) : false })));
+			
+			let csrfToken = null;
+			if (!userId) {
+				const cookieName = makeSharedCommentCookieName(tokenHash);
+				let sid = req.cookies?.[cookieName];
+				if (!sid) {
+					sid = crypto.randomBytes(24).toString('hex');
+					res.cookie(cookieName, sid, {
+						httpOnly: true,
+						secure: process.env.NODE_ENV === 'production',
+						sameSite: 'Strict',
+						path: `/api/comments/shared/${token}`,
+						maxAge: 60 * 60 * 1000
+					});
+				}
+				csrfToken = signSharedCommentCsrf(tokenHash, sid);
+			}
+
+			res.json({
+				comments: comments.map(c => ({
+					id: c.id,
+					content: c.content,
+					createdAt: toIsoString(c.created_at),
+					author: c.user_id ? c.username : c.guest_name,
+					isGuest: !c.user_id,
+					isMyComment: userId ? (c.user_id === userId) : false
+				})),
+				csrfToken
+			});
 		} catch (e) {
 			logError("GET /api/comments/shared/:token", e);
 			res.status(500).json({ error: "댓글 목록 조회 실패" });
@@ -162,6 +212,20 @@ module.exports = (dependencies) => {
 				const page = await pagesRepo.getPageByIdForUser({ userId, pageId });
 				if (!page) return res.status(403).json({ error: "댓글을 작성할 권한이 없습니다." });
 			}
+			
+			if (!userId) {
+				const cookieName = makeSharedCommentCookieName(tokenHash);
+				const sid = req.cookies?.[cookieName];
+				const tokenFromHeader = req.headers['x-shared-csrf-token'];
+				if (!sid || typeof tokenFromHeader !== 'string') {
+					return res.status(403).json({ error: "CSRF 토큰이 필요합니다." });
+				}
+				const expected = signSharedCommentCsrf(tokenHash, sid);
+				if (!safeEqualHex(expected, tokenFromHeader)) {
+					return res.status(403).json({ error: "CSRF 토큰이 유효하지 않습니다." });
+				}
+			}
+
 			const nowStr = formatDateForDb(new Date());
 			await pool.execute(`INSERT INTO comments (page_id, user_id, guest_name, content, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`, [pageId, userId, sanitizedGuestName, sanitizedContent, nowStr, nowStr]);
 			res.status(201).json({ success: true });

@@ -43,7 +43,6 @@ module.exports = ({ pool }) => {
                 `SELECT s.id, s.name, s.sort_order, s.created_at, s.updated_at, s.user_id as owner_id,
                         s.is_encrypted,
                         CASE WHEN s.user_id = ? THEN s.encryption_salt ELSE NULL END AS encryption_salt,
-                        CASE WHEN s.user_id = ? THEN s.encryption_check ELSE NULL END AS encryption_check,
                         s.dek_version,
                         u.username as owner_name,
                         CASE WHEN s.user_id = ? THEN 1 ELSE 0 END as is_owner,
@@ -53,7 +52,7 @@ module.exports = ({ pool }) => {
                  LEFT JOIN storage_shares ss ON s.id = ss.storage_id AND ss.shared_with_user_id = ?
                  WHERE s.user_id = ? OR ss.shared_with_user_id = ?
                  ORDER BY is_owner DESC, s.sort_order ASC, s.updated_at DESC`,
-                [userId, userId, userId, userId, userId, userId]
+                [userId, userId, userId, userId, userId]
             );
             return rows || [];
         },
@@ -63,14 +62,13 @@ module.exports = ({ pool }) => {
                 `SELECT s.id, s.name, s.sort_order, s.created_at, s.updated_at, s.user_id as owner_id,
                         s.is_encrypted,
                         CASE WHEN s.user_id = ? THEN s.encryption_salt ELSE NULL END AS encryption_salt,
-                        CASE WHEN s.user_id = ? THEN s.encryption_check ELSE NULL END AS encryption_check,
                         s.dek_version,
                         CASE WHEN s.user_id = ? THEN 1 ELSE 0 END as is_owner,
                         ss.permission
                  FROM storages s
                  LEFT JOIN storage_shares ss ON s.id = ss.storage_id AND ss.shared_with_user_id = ?
                  WHERE s.id = ? AND (s.user_id = ? OR ss.shared_with_user_id = ?)`,
-                [userId, userId, userId, userId, storageId, userId, userId]
+                [userId, userId, userId, storageId, userId, userId]
             );
             return rows?.[0] || null;
         },

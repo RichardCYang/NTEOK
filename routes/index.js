@@ -79,42 +79,36 @@ module.exports = (dependencies) => {
 		return true;
 	}
 
-	router.post("/api/shared/page/exchange", async (req, res) => {
-		const { token } = req.body;
-		if (typeof token !== 'string' || token.length !== 64 || !/^[a-f0-9]{64}$/i.test(token)) return res.status(404).json({ error: "Invalid token" });
+	router.get("/api/shared/page/:token", async (req, res) => {
+		const token = String(req.params.token || "");
+		if (token.length !== 64 || !/^[a-f0-9]{64}$/i.test(token)) {
+			return res.status(404).json({ error: "Page not found" });
+		}
 		const tokenHash = dependencies.hashToken(token);
 		const clientIp = getClientIp(req);
 		try {
-			const [rows] = await pool.execute(`SELECT 1 FROM page_publish_links ppl JOIN pages p ON p.id = ppl.page_id WHERE ppl.token = ? AND ppl.is_active = 1 AND p.is_encrypted = 0 AND p.deleted_at IS NULL AND (ppl.expires_at IS NULL OR ppl.expires_at > NOW()) LIMIT 1`, [tokenHash]);
+			const [rows] = await pool.execute(
+				`SELECT 1
+				   FROM page_publish_links ppl
+				   JOIN pages p ON p.id = ppl.page_id
+				  WHERE ppl.token = ?
+				    AND ppl.is_active = 1
+				    AND p.is_encrypted = 0
+				    AND p.deleted_at IS NULL
+				    AND (ppl.expires_at IS NULL OR ppl.expires_at > NOW())
+				  LIMIT 1`,
+				[tokenHash]
+			);
 			const isValid = rows.length > 0;
-			if (!(await checkSharedPageAccess(clientIp, token, isValid))) return res.status(429).json({ error: "Too many requests" });
+			if (!(await checkSharedPageAccess(clientIp, token, isValid))) {
+				return res.status(429).json({ error: "Too many requests" });
+			}
 			if (!isValid) return res.status(404).json({ error: "Page not found" });
-			const cookieName = `shared_page_token_${tokenHash.substring(0, 16)}`;
-			res.cookie(cookieName, token, {
-				httpOnly: true,
-				secure: COOKIE_SECURE,
-				sameSite: 'Lax',
-				path: '/api/shared/page',
-				maxAge: 3600000
-			});
-			res.json({ ok: true, cookieName });
-		} catch (error) { logError("POST /api/shared/page/exchange", error); res.status(500).json({ error: "Exchange failed" }); }
-	});
-			res.json({ ok: true, cookieName });
-		} catch (error) { logError("POST /api/shared/page/exchange", error); res.status(500).json({ error: "Exchange failed" }); }
-	});
 
-	router.get("/api/shared/page", async (req, res) => {
-		const { cookieName } = req.query;
-		if (!cookieName || !cookieName.startsWith('shared_page_token_')) return res.status(400).json({ error: "Missing cookieName" });
-		const token = req.cookies?.[cookieName];
-		if (!token) return res.status(401).json({ error: "Token expired or missing" });
-		const tokenHash = dependencies.hashToken(token);
-		if (cookieName !== `shared_page_token_${tokenHash.substring(0, 16)}`) return res.status(403).json({ error: "Invalid exchange" });
-		try {
 			const [pageRows] = await pool.execute(`SELECT p.id, p.title, p.content, p.icon, p.cover_image, p.cover_position FROM page_publish_links ppl JOIN pages p ON p.id = ppl.page_id WHERE ppl.token = ? AND ppl.is_active = 1 AND p.is_encrypted = 0 AND p.deleted_at IS NULL AND (ppl.expires_at IS NULL OR ppl.expires_at > NOW()) LIMIT 1`, [tokenHash]);
 			if (pageRows.length === 0) return res.status(404).json({ error: "Page not found" });
 			const page = pageRows[0];
+			res.set("Cache-Control", "private, no-store");
 			res.json({ id: page.id, title: page.title || "제목 없음", content: sanitizeHtmlContent(page.content || "<p></p>", { profile: "shared" }), icon: page.icon || null, coverImage: page.cover_image || null, coverPosition: page.cover_position || 50 });
 		} catch (error) { logError("GET /api/shared/page", error); res.status(500).json({ error: "Failed to load page" }); }
 	});

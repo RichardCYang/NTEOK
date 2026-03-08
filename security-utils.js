@@ -146,6 +146,15 @@ async function assertSafeAttachmentFile(filePath, originalName = '') {
 	}
 
 	const head = readFileHead(filePath, 4096);
+	
+	if (['.jpg', '.jpeg', '.png', '.gif', '.webp'].includes(ext)) {
+		const detected = assertImageFileSignature(filePath, new Set(['jpg', 'jpeg', 'png', 'gif', 'webp']));
+		const normalized = `.${detected.ext === 'jpg' ? 'jpg' : detected.ext}`;
+		const equivalent = (ext === '.jpeg' && normalized === '.jpg') || ext === normalized;
+		if (!equivalent) throw new Error('IMAGE_EXTENSION_MISMATCH');
+		return;
+	}
+
 	if (ext === '.pdf') {
 		const full = fs.readFileSync(filePath);
 		if (full.length < 5 || !full.slice(0, 5).equals(Buffer.from([0x25, 0x50, 0x44, 0x46, 0x2D]))) throw new Error('BAD_PDF_SIGNATURE');
@@ -174,7 +183,11 @@ async function assertSafeAttachmentFile(filePath, originalName = '') {
 		if (bufferLooksLikeActiveContent(Buffer.from(text, 'utf8'))) throw new Error('ACTIVE_CONTENT_ATTACHMENT');
 		return;
 	}
+
+	// Any remaining binary type must be explicitly recognized above.
+	// Reject unknown/polyglot binaries even if the extension is allowlisted.
 	if (bufferLooksLikeActiveContent(head)) throw new Error('ACTIVE_CONTENT_ATTACHMENT');
+	throw new Error('UNRECOGNIZED_ATTACHMENT_SIGNATURE');
 }
 
 function installDomPurifySecurityHooks(DOMPurify) {

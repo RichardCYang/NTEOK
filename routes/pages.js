@@ -1374,7 +1374,7 @@ module.exports = (dependencies) => {
                 return res.status(403).json({ error: "Forbidden" });
             }
 
-            const ext = path.extname(req.file.originalname).toLowerCase();
+            const ext = path.extname(req.file.filename).toLowerCase();
             const isImageExt = ['.jpg', '.jpeg', '.png', '.gif', '.webp'].includes(ext);
 
             if (isImageExt) {
@@ -1382,7 +1382,7 @@ module.exports = (dependencies) => {
                 if (sig) normalizeUploadedImageFile(req.file, sig.ext);
             } else {
                 try {
-                    await assertSafeAttachmentFile(req.file.path, req.file.originalname);
+                    await assertSafeAttachmentFile(req.file.path, req.file.filename);
                 } catch (e) {
                     if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
                     const msg =
