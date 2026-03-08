@@ -488,7 +488,6 @@ module.exports = (dependencies) => {
 	    if (!target.startsWith(base + path.sep)) return null;
 	    return target;
     }
-}
 
 function escapeRegExp(s) {
     return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

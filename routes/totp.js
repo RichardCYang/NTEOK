@@ -89,7 +89,8 @@ module.exports = (dependencies) => {
 		redis,
 		getSession,
 		saveSession,
-		revokeSession
+		revokeSession,
+		requireRecentReauth
 	} = dependencies;
 
 	const TWO_FA_COOKIE_NAME = COOKIE_SECURE ? '__Host-nteok_2fa' : 'nteok_2fa';

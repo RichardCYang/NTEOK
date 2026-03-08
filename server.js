@@ -1561,8 +1561,9 @@ function hashToken(token) {
     return crypto.createHash('sha256').update(String(token)).digest('hex');
 }
 
-const distributedRateStore = new RedisStore({
-	sendCommand: (...args) => redis.sendCommand(args)
+const createRedisStore = (prefix) => new RedisStore({
+	sendCommand: (...args) => redis.sendCommand(args),
+	prefix: `nteok:rl:${prefix}:`
 });
 
 const generalLimiter = rateLimit({
@@ -1571,7 +1572,7 @@ const generalLimiter = rateLimit({
 	message: { error: "너무 많은 요청이 발생했습니다. 잠시 후 다시 시도해 주세요." },
 	standardHeaders: true,
 	legacyHeaders: false,
-	store: distributedRateStore,
+	store: createRedisStore("general"),
 	keyGenerator: (req) => ipKeyGenerator(req.clientIp, RATE_LIMIT_IPV6_SUBNET)
 });
 
@@ -1581,7 +1582,7 @@ const authLimiter = rateLimit({
 	message: { error: "너무 많은 로그인 시도가 발생했습니다. 15분 후 다시 시도해 주세요." },
 	standardHeaders: true,
 	legacyHeaders: false,
-	store: distributedRateStore,
+	store: createRedisStore("auth"),
 	keyGenerator: (req) => ipKeyGenerator(req.clientIp, RATE_LIMIT_IPV6_SUBNET),
 	skipSuccessfulRequests: true,
 });
@@ -1592,7 +1593,7 @@ const totpLimiter = rateLimit({
 	message: { error: "너무 많은 인증 시도가 발생했습니다. 15분 후 다시 시도해 주세요." },
 	standardHeaders: true,
 	legacyHeaders: false,
-	store: distributedRateStore,
+	store: createRedisStore("totp"),
 	keyGenerator: (req) => ipKeyGenerator(req.clientIp, RATE_LIMIT_IPV6_SUBNET)
 });
 
@@ -1602,7 +1603,7 @@ const passkeyLimiter = rateLimit({
 	message: { error: "너무 많은 패스키 인증 요청이 발생했습니다. 잠시 후 다시 시도해 주세요." },
 	standardHeaders: true,
 	legacyHeaders: false,
-	store: distributedRateStore,
+	store: createRedisStore("passkey"),
 	keyGenerator: (req) => ipKeyGenerator(req.clientIp, RATE_LIMIT_IPV6_SUBNET)
 });
 
@@ -1612,7 +1613,7 @@ const sseConnectionLimiter = rateLimit({
 	message: { error: "SSE 연결 제한 초과" },
 	standardHeaders: true,
 	legacyHeaders: false,
-	store: distributedRateStore,
+	store: createRedisStore("sse"),
 	keyGenerator: (req) => (req.user?.id ? `user:${req.user.id}` : ipKeyGenerator(req.clientIp, RATE_LIMIT_IPV6_SUBNET))
 });
 
@@ -1622,7 +1623,7 @@ const outboundFetchLimiter = rateLimit({
 	message: { error: "외부 리소스 요청이 너무 많습니다. 잠시 후 다시 시도해 주세요." },
 	standardHeaders: true,
 	legacyHeaders: false,
-	store: distributedRateStore,
+	store: createRedisStore("outbound"),
 	keyGenerator: (req) => (req.user?.id ? `user:${req.user.id}` : ipKeyGenerator(req.clientIp, RATE_LIMIT_IPV6_SUBNET))
 });
 
