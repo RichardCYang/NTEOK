@@ -88,6 +88,11 @@ module.exports = (dependencies) => {
 		}
 	}
 
+	async function genericPasskeyFailure(res) {
+		await new Promise(resolve => setTimeout(resolve, 180));
+		return res.status(401).json({ error: "패스키 인증에 실패했습니다." });
+	}
+
 	async function getValid2FATempSession(req, tempSessionId) {
 		const s = await getSession(tempSessionId);
 		if (!s || s.type !== "2fa" || !s.pendingUserId) return null;
@@ -229,7 +234,7 @@ module.exports = (dependencies) => {
 			const expectedChallenge = challenges[0].challenge;
 			const credentialIdBase64 = credential.id;
 			const [passkeys] = await pool.execute("SELECT id, user_id, public_key, counter, transports FROM passkeys WHERE credential_id = ?", [credentialIdBase64]);
-			if (passkeys.length === 0) return res.status(404).json({ error: "등록되지 않은 패스키입니다." });
+			if (passkeys.length === 0) return genericPasskeyFailure(res);
 			const passkey = passkeys[0];
 			const userId = passkey.user_id;
 			const publicKey = Buffer.from(passkey.public_key, 'base64');
@@ -245,80 +250,7 @@ module.exports = (dependencies) => {
 			const nowStr = formatDateForDb(now);
 			await pool.execute("UPDATE passkeys SET counter = ?, last_used_at = ? WHERE id = ?", [newCounter, nowStr, passkey.id]);
 			const [userRows] = await pool.execute("SELECT username, block_duplicate_login, country_whitelist_enabled, allowed_login_countries FROM users WHERE id = ?", [userId]);
-			if (userRows.length === 0) return res.status(404).json({ error: "사용자를 찾을 수 없습니다." });
-			const { username, block_duplicate_login, country_whitelist_enabled, allowed_login_countries } = userRows[0];
-			const countryCheck = checkCountryWhitelist({ country_whitelist_enabled: country_whitelist_enabled, allowed_login_countries: allowed_login_countries }, getClientIp(req));
-			if (!countryCheck.allowed) {
-				await recordLoginAttempt(pool, { userId: userId, username: username, ipAddress: getClientIp(req), port: req.connection.remotePort || 0, success: false, failureReason: countryCheck.reason, userAgent: req.headers['user-agent'] || null });
-				return res.status(403).json({ error: "현재 위치에서는 로그인할 수 없습니다." });
-			}
-			const sessionResult = await createSession({ id: userId, username: username, blockDuplicateLogin: block_duplicate_login }, { userAgent: req.headers["user-agent"] || "" });
-			if (!sessionResult.success) return res.status(409).json({ error: sessionResult.error, code: 'DUPLICATE_LOGIN_BLOCKED' });
-			const sessionId = sessionResult.sessionId;
-			await pool.execute("DELETE FROM webauthn_challenges WHERE session_id = ? AND operation = 'userless_login'", [tempSessionId]);
-			res.clearCookie(TWO_FA_COOKIE_NAME, TWO_FA_COOKIE_OPTS);
-			res.clearCookie(PREAUTH_CSRF_COOKIE_NAME, { path: "/", secure: COOKIE_SECURE });
-			res.cookie(SESSION_COOKIE_NAME, sessionId, { httpOnly: true, secure: COOKIE_SECURE, sameSite: "strict", path: "/", maxAge: SESSION_TTL_MS });
-			res.cookie(CSRF_COOKIE_NAME, generateCsrfTokenForSession(sessionId, "api"), { httpOnly: false, secure: COOKIE_SECURE, sameSite: "strict", path: "/", maxAge: SESSION_TTL_MS });
-			res.json({ success: true });
-			recordLoginAttempt(pool, { userId: userId, username: username, ipAddress: getClientIp(req), port: req.connection.remotePort || 0, success: true, failureReason: null, userAgent: req.headers['user-agent'] || null });
-		} catch (error) {
-			logError("POST /api/passkey/login/userless/verify", error);
-			res.status(500).json({ error: "패스키 로그인 중 오류가 발생했습니다." });
-		}
-	});
-
-	router.post("/login/options", passkeyLimiter, requireSameOriginForAuth, async (req, res) => {
-		try {
-			const { username } = req.body;
-			if (!username) return res.status(400).json({ error: "아이디를 입력해주세요." });
-			const [userRows] = await pool.execute("SELECT id, passkey_enabled FROM users WHERE username = ?", [username]);
-			const challengeUserId = (userRows.length > 0 && userRows[0].passkey_enabled) ? userRows[0].id : 0;
-			const options = await generateAuthenticationOptions({ rpID: rpID, timeout: 60000, userVerification: 'required' });
-			const now = new Date();
-			const expiresAt = new Date(now.getTime() + 5 * 60 * 1000);
-			const tempSessionId = crypto.randomBytes(32).toString('hex');
-			await pool.execute(`INSERT INTO webauthn_challenges (user_id, session_id, challenge, operation, created_at, expires_at) VALUES (?, ?, ?, 'passkey_login', ?, ?)`, [challengeUserId, tempSessionId, options.challenge, formatDateForDb(now), formatDateForDb(expiresAt)]);
-			res.cookie(TWO_FA_COOKIE_NAME, tempSessionId, { ...TWO_FA_COOKIE_OPTS, maxAge: 5 * 60 * 1000 });
-			res.json({ ...options });
-		} catch (error) {
-			logError("POST /api/passkey/login/options", error);
-			res.status(500).json({ error: "패스키 로그인 옵션 생성 중 오류가 발생했습니다." });
-		}
-	});
-
-	router.post("/login/verify", passkeyLimiter, requireSameOriginForAuth, async (req, res) => {
-		if (!verifyPreAuthCsrfToken(req)) return res.status(403).json({ error: "유효하지 않은 요청입니다." });
-		try {
-			const { credential } = req.body;
-			const tempSessionId = get2faCookie(req);
-			if (!credential || !tempSessionId) return res.status(400).json({ error: "인증 정보가 없습니다." });
-			const [challenges] = await pool.execute(`SELECT user_id, challenge FROM webauthn_challenges WHERE session_id = ? AND operation = 'passkey_login' AND expires_at > NOW() ORDER BY created_at DESC LIMIT 1`, [tempSessionId]);
-			if (challenges.length === 0) return res.status(400).json({ error: "유효한 챌린지를 찾을 수 없습니다. 다시 시도해 주세요." });
-			const expectedChallenge = challenges[0].challenge;
-			const userId = challenges[0].user_id;
-			if (!userId || userId <= 0) {
-				await pool.execute("DELETE FROM webauthn_challenges WHERE session_id = ? AND operation = 'passkey_login'", [tempSessionId]);
-				return res.status(401).json({ error: "인증에 실패했습니다." });
-			}
-			const credentialIdBase64 = credential.id;
-			const [passkeys] = await pool.execute("SELECT id, public_key, counter, transports FROM passkeys WHERE credential_id = ? AND user_id = ?", [credentialIdBase64, userId]);
-			if (passkeys.length === 0) return res.status(404).json({ error: "등록되지 않은 패스키입니다." });
-			const passkey = passkeys[0];
-			const publicKey = Buffer.from(passkey.public_key, 'base64');
-			const verification = await verifyAuthenticationResponse({ response: credential, expectedChallenge: expectedChallenge, expectedOrigin: expectedOrigin, expectedRPID: rpID, credential: { id: credentialIdBase64, publicKey: publicKey, counter: passkey.counter, transports: passkey.transports ? passkey.transports.split(',') : [] }, requireUserVerification: true });
-			if (!verification.verified) {
-				const [userRows] = await pool.execute("SELECT username FROM users WHERE id = ?", [userId]);
-				const username = userRows.length > 0 ? userRows[0].username : '알 수 없음';
-				await recordLoginAttempt(pool, { userId: userId, username: username, ipAddress: getClientIp(req), port: req.connection.remotePort || 0, success: false, failureReason: '패스키 로그인 인증 실패', userAgent: req.headers['user-agent'] || null });
-				return res.status(401).json({ error: "패스키 인증에 실패했습니다." });
-			}
-			const newCounter = verification.authenticationInfo.newCounter;
-			const now = new Date();
-			const nowStr = formatDateForDb(now);
-			await pool.execute("UPDATE passkeys SET counter = ?, last_used_at = ? WHERE id = ?", [newCounter, nowStr, passkey.id]);
-			const [userRows] = await pool.execute("SELECT username, block_duplicate_login, country_whitelist_enabled, allowed_login_countries FROM users WHERE id = ?", [userId]);
-			if (userRows.length === 0) return res.status(404).json({ error: "사용자를 찾을 수 없습니다." });
+			if (userRows.length === 0) return genericPasskeyFailure(res);
 			const { username, block_duplicate_login, country_whitelist_enabled, allowed_login_countries } = userRows[0];
 			const countryCheck = checkCountryWhitelist({ country_whitelist_enabled: country_whitelist_enabled, allowed_login_countries: allowed_login_countries }, getClientIp(req));
 			if (!countryCheck.allowed) {
@@ -380,7 +312,7 @@ module.exports = (dependencies) => {
 			const expectedChallenge = challenges[0].challenge;
 			const credentialIdBase64 = credential.id;
 			const [passkeys] = await pool.execute("SELECT id, public_key, counter, transports FROM passkeys WHERE credential_id = ? AND user_id = ?", [credentialIdBase64, userId]);
-			if (passkeys.length === 0) return res.status(404).json({ error: "등록되지 않은 패스키입니다." });
+			if (passkeys.length === 0) return genericPasskeyFailure(res);
 			const passkey = passkeys[0];
 			const publicKey = Buffer.from(passkey.public_key, 'base64');
 			const verification = await verifyAuthenticationResponse({ response: credential, expectedChallenge: expectedChallenge, expectedOrigin: expectedOrigin, expectedRPID: rpID, credential: { id: credentialIdBase64, publicKey: publicKey, counter: passkey.counter, transports: passkey.transports ? passkey.transports.split(',') : [] }, requireUserVerification: true });
@@ -395,7 +327,7 @@ module.exports = (dependencies) => {
 			const nowStr = formatDateForDb(now);
 			await pool.execute("UPDATE passkeys SET counter = ?, last_used_at = ? WHERE id = ?", [newCounter, nowStr, passkey.id]);
 			const [userRows] = await pool.execute("SELECT username, block_duplicate_login FROM users WHERE id = ?", [userId]);
-			if (userRows.length === 0) return res.status(404).json({ error: "사용자를 찾을 수 없습니다." });
+			if (userRows.length === 0) return genericPasskeyFailure(res);
 			const { username, block_duplicate_login } = userRows[0];
 			const sessionResult = await createSession({ id: userId, username: username, blockDuplicateLogin: block_duplicate_login }, { userAgent: req.headers["user-agent"] || "" });
 			if (!sessionResult.success) {

@@ -4,7 +4,7 @@ const router = express.Router();
 const fsNative = require('fs');
 
 module.exports = (dependencies) => {
-	const { getSessionFromRequest, fs, pool, logError, getClientIpFromRequest, sanitizeHtmlContent, redis } = dependencies;
+	const { getSessionFromRequest, fs, pool, logError, getClientIpFromRequest, sanitizeHtmlContent, redis, COOKIE_SECURE } = dependencies;
 
 	function getClientIp(req) {
 		return (
@@ -90,7 +90,16 @@ module.exports = (dependencies) => {
 			if (!(await checkSharedPageAccess(clientIp, token, isValid))) return res.status(429).json({ error: "Too many requests" });
 			if (!isValid) return res.status(404).json({ error: "Page not found" });
 			const cookieName = `shared_page_token_${tokenHash.substring(0, 16)}`;
-			res.cookie(cookieName, token, { httpOnly: true, secure: process.env.COOKIE_SECURE === 'true', sameSite: 'Lax', maxAge: 3600000 });
+			res.cookie(cookieName, token, {
+				httpOnly: true,
+				secure: COOKIE_SECURE,
+				sameSite: 'Lax',
+				path: '/api/shared/page',
+				maxAge: 3600000
+			});
+			res.json({ ok: true, cookieName });
+		} catch (error) { logError("POST /api/shared/page/exchange", error); res.status(500).json({ error: "Exchange failed" }); }
+	});
 			res.json({ ok: true, cookieName });
 		} catch (error) { logError("POST /api/shared/page/exchange", error); res.status(500).json({ error: "Exchange failed" }); }
 	});

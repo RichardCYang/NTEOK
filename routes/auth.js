@@ -129,7 +129,8 @@ module.exports = (dependencies) => {
 		if (typeof username !== "string" || typeof password !== "string") return res.status(400).json({ error: "아이디와 비밀번호를 모두 입력해 주세요." });
 		if (PASSWORD_CONTROL_CHARS_RE.test(password)) return res.status(401).json({ error: "아이디 또는 비밀번호가 올바르지 않습니다." });
 		const trimmedUsername = username.trim();
-		const lockStatus = await assertLoginNotLocked(redis, trimmedUsername);
+		const clientIp = getClientIp(req);
+		const lockStatus = await assertLoginNotLocked(redis, trimmedUsername, clientIp);
 		if (!lockStatus.ok) return res.status(423).json({ error: `너무 많은 로그인 시도로 인해 계정이 잠겼습니다. ${Math.ceil(lockStatus.retryAfterMs / 60000)}분 후 다시 시도해 주세요.` });
 
 		try {
@@ -140,26 +141,26 @@ module.exports = (dependencies) => {
 
 			if (!rows.length) {
 				await consumeBcryptCostForTiming(password);
-				await recordLoginFailure(redis, trimmedUsername);
-				await recordLoginAttempt(pool, { userId: null, username: trimmedUsername, ipAddress: getClientIp(req), port: req.connection.remotePort || 0, success: false, failureReason: '존재하지 않는 사용자', userAgent: req.headers['user-agent'] || null });
+				await recordLoginFailure(redis, trimmedUsername, clientIp);
+				await recordLoginAttempt(pool, { userId: null, username: trimmedUsername, ipAddress: clientIp, port: req.connection.remotePort || 0, success: false, failureReason: '로그인 실패', userAgent: req.headers['user-agent'] || null });
 				return res.status(401).json({ error: "아이디 또는 비밀번호가 올바르지 않습니다." });
 			}
 
 			const user = rows[0];
 			const ok = await bcrypt.compare(password, user.password_hash);
 			if (!ok) {
-				await recordLoginFailure(redis, trimmedUsername);
-				await recordLoginAttempt(pool, { userId: user.id, username: user.username, ipAddress: getClientIp(req), port: req.connection.remotePort || 0, success: false, failureReason: '비밀번호 불일치', userAgent: req.headers['user-agent'] || null });
+				await recordLoginFailure(redis, trimmedUsername, clientIp);
+				await recordLoginAttempt(pool, { userId: user.id, username: user.username, ipAddress: clientIp, port: req.connection.remotePort || 0, success: false, failureReason: '로그인 실패', userAgent: req.headers['user-agent'] || null });
 				return res.status(401).json({ error: "아이디 또는 비밀번호가 올바르지 않습니다." });
 			}
 
 			const countryCheck = checkCountryWhitelist({ country_whitelist_enabled: user.country_whitelist_enabled, allowed_login_countries: user.allowed_login_countries }, getClientIp(req));
 			if (!countryCheck.allowed) {
-				await recordLoginAttempt(pool, { userId: user.id, username: user.username, ipAddress: getClientIp(req), port: req.connection.remotePort || 0, success: false, failureReason: countryCheck.reason, userAgent: req.headers['user-agent'] || null });
+				await recordLoginAttempt(pool, { userId: user.id, username: user.username, ipAddress: clientIp, port: req.connection.remotePort || 0, success: false, failureReason: countryCheck.reason, userAgent: req.headers['user-agent'] || null });
 				return res.status(403).json({ error: "현재 위치에서는 로그인할 수 없습니다." });
 			}
 
-			await clearLoginFailures(redis, trimmedUsername);
+			await clearLoginFailures(redis, trimmedUsername, clientIp);
 			if (user.totp_enabled || user.passkey_enabled) {
 				const tempSessionId = crypto.randomBytes(32).toString("hex");
 				const now = Date.now();

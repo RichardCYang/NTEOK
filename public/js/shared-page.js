@@ -27,9 +27,10 @@ function _sanitizeBookmarkImageUrl(value) {
     if (!v || _CONTROL_CHARS_RE.test(v) || v.startsWith('//') || v.startsWith('#')) return null;
     if (v.startsWith('/')) return v;
     try {
-        const u = new URL(v);
+        const u = new URL(v, window.location.origin);
         if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
         if (u.username || u.password) return null;
+        if (u.origin !== window.location.origin) return null;
         return u.toString();
     } catch {
         return null;

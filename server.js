@@ -210,6 +210,10 @@ function normalizeYouTubeEmbedUrl(value) {
     return out.toString();
 }
 
+const BASE_ORIGIN = (() => {
+    try { return new URL(BASE_URL).origin; } catch { return null; }
+})();
+
 function sanitizeBookmarkImageUrl(value) {
     if (typeof value !== "string") return null;
     const v = value.trim();
@@ -219,10 +223,11 @@ function sanitizeBookmarkImageUrl(value) {
     if (v.startsWith("/")) return v;
 
     try {
-        const u = new URL(v);
+        const u = new URL(v, BASE_ORIGIN || undefined);
+        if (!BASE_ORIGIN) return null;
+        if (u.origin !== BASE_ORIGIN) return null;
         if (u.protocol !== "http:" && u.protocol !== "https:") return null;
         if (u.username || u.password) return null;
-        if (net.isIP(u.hostname) && isPrivateOrLocalIP(u.hostname)) return null;
         return u.toString();
     } catch {
         return null;
