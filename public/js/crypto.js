@@ -3,16 +3,13 @@ class CryptoManager {
     constructor() {
         this.encryptionKey = null;
         this.salt = null;
-        this.password = null;
 
         this.storageKey = null;
         this.storageSalt = null;
-        this.storagePassword = null;
 
         this.inactivityTimer = null;
         this.INACTIVITY_TIMEOUT = 15 * 60 * 1000;
 
-        // DEK and ECDH state
         this._extractableDek = null;
         this._myEcdhPrivateKey = null;
     }
@@ -29,7 +26,6 @@ class CryptoManager {
 
             this.storageKey = key;
             this.storageSalt = salt;
-            this.storagePassword = password;
             return true;
         } catch (e) {
             console.error("Storage key verification failed:", e);
@@ -53,7 +49,6 @@ class CryptoManager {
     clearStorageKey() {
         this.storageKey = null;
         this.storageSalt = null;
-        this.storagePassword = null;
         this._extractableDek = null;
         this.clearEcdhPrivateKey();
     }
@@ -119,7 +114,6 @@ class CryptoManager {
         const { key, salt: derivedSalt } = await this.deriveKeyFromPassword(password, salt);
         this.encryptionKey = key;
         this.salt = derivedSalt;
-        this.password = password; 
 
         this.resetInactivityTimer();
 
@@ -170,13 +164,11 @@ class CryptoManager {
             const saltBase64 = parts[1];
             const encryptedBase64 = parts[3];
 
-            const pwd = password || this.password;
-            if (!pwd) {
-                throw new Error('복호화에 필요한 비밀번호가 없습니다.');
+            let key = this.encryptionKey;
+            if (!key) {
+                if (!password) throw new Error('복호화에 필요한 비밀번호가 없습니다.');
+                key = (await this.deriveKeyFromPassword(password, new Uint8Array(this.base64ToArrayBuffer(saltBase64)))).key;
             }
-
-            const salt = new Uint8Array(this.base64ToArrayBuffer(saltBase64));
-            const { key } = await this.deriveKeyFromPassword(pwd, salt);
 
             const combined = new Uint8Array(this.base64ToArrayBuffer(encryptedBase64));
 
@@ -245,7 +237,6 @@ class CryptoManager {
     clearKey() {
         this.encryptionKey = null;
         this.salt = null;
-        this.password = null; 
         this.stopInactivityTimer();
     }
 
@@ -253,9 +244,7 @@ class CryptoManager {
         return this.encryptionKey !== null;
     }
 
-    getPassword() {
-        return this.password;
-    }
+
 
     resetInactivityTimer() {
         this.stopInactivityTimer();
@@ -385,15 +374,12 @@ class CryptoManager {
         const dek = await this.unwrapDekWithKek(wrappedDekB64, kek);
 
         this.storageKey = dek;
-        this.storagePassword = password;
 
-        // Keep an extractable copy for wrapping collaborator keys
         const extractableDek = await crypto.subtle.generateKey(
             { name: 'AES-GCM', length: 256 },
             true,
             ['encrypt', 'decrypt']
         );
-        // Export and re-import the DEK as extractable
         const rawDek = await crypto.subtle.exportKey('raw', dek);
         this._extractableDek = await crypto.subtle.importKey(
             'raw',

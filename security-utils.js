@@ -5,20 +5,43 @@ const yauzl = require('yauzl');
 const { promisify } = require('util');
 const { isPrivateOrLocalIP } = require('./network-utils');
 
-const ALLOWED_ATTACHMENT_EXTS = new Set([
-	'.pdf', '.txt', '.md', '.csv',
-	'.docx', '.xlsx', '.pptx',
-	'.jpg', '.jpeg', '.png', '.gif', '.webp'
+const SAFE_BASE_ATTACHMENT_EXTS = new Set([
+	'.jpg', '.jpeg', '.png', '.gif', '.webp', '.pdf'
 ]);
+
+const RICH_DOC_ATTACHMENT_EXTS = new Set([
+	'.txt', '.md', '.csv', '.docx', '.xlsx', '.pptx'
+]);
+
+const ALLOWED_ATTACHMENT_EXTS = new Set(SAFE_BASE_ATTACHMENT_EXTS);
+if (String(process.env.ENABLE_RICH_DOCUMENT_ATTACHMENTS).toLowerCase() === 'true') {
+	for (const ext of RICH_DOC_ATTACHMENT_EXTS) ALLOWED_ATTACHMENT_EXTS.add(ext);
+}
+
+const LINK_PREVIEW_ALLOWED_HOSTS = new Set(
+	String(process.env.LINK_PREVIEW_ALLOWED_HOSTS || '')
+		.split(',')
+		.map(v => v.trim().toLowerCase())
+		.filter(Boolean)
+);
+
+function hostMatchesPreviewAllowlist(host) {
+	for (const rule of LINK_PREVIEW_ALLOWED_HOSTS) {
+		if (host === rule) return true;
+		if (host.endsWith(`.${rule}`)) return true;
+	}
+	return false;
+}
 
 function isHostnameAllowedForPreview(hostname) {
 	if (typeof hostname !== 'string') return false;
 	const h = hostname.toLowerCase().trim();
 	if (!h || h.includes('..') || h.startsWith('.') || h.endsWith('.')) return false;
-	if (net.isIP(h) && isPrivateOrLocalIP(h)) return false;
+	if (net.isIP(h)) return false;
 	const BLOCKED_HOSTS = new Set(['localhost', '127.0.0.1', '::1', 'metadata.google.internal', '169.254.169.254']);
 	if (BLOCKED_HOSTS.has(h)) return false;
-	return true;
+	if (LINK_PREVIEW_ALLOWED_HOSTS.size === 0) return false;
+	return hostMatchesPreviewAllowlist(h);
 }
 
 function detectImageTypeFromMagic(buf) {
@@ -116,6 +139,12 @@ async function assertSafeOoxmlArchive(filePath) {
 async function assertSafeAttachmentFile(filePath, originalName = '') {
 	const ext = path.extname(String(originalName || filePath)).toLowerCase();
 	if (!ALLOWED_ATTACHMENT_EXTS.has(ext)) throw new Error('DISALLOWED_ATTACHMENT_TYPE');
+
+	if (RICH_DOC_ATTACHMENT_EXTS.has(ext) &&
+	    String(process.env.ENABLE_RICH_DOCUMENT_ATTACHMENTS).toLowerCase() !== 'true') {
+		throw new Error('RICH_DOCUMENT_ATTACHMENTS_DISABLED');
+	}
+
 	const head = readFileHead(filePath, 4096);
 	if (ext === '.pdf') {
 		const full = fs.readFileSync(filePath);
@@ -127,6 +156,9 @@ async function assertSafeAttachmentFile(filePath, originalName = '') {
 		return;
 	}
 	if (['.docx', '.xlsx', '.pptx'].includes(ext)) {
+		if (String(process.env.REQUIRE_OFFICE_ATTACHMENT_SCAN).toLowerCase() !== 'true') {
+			throw new Error('OFFICE_SCAN_REQUIRED');
+		}
 		if (!head.slice(0, 4).equals(Buffer.from([0x50, 0x4B, 0x03, 0x04]))) throw new Error('BAD_OOXML_SIGNATURE');
 		await assertSafeOoxmlArchive(filePath);
 		return;

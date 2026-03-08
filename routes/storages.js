@@ -5,6 +5,13 @@ const erl = require('express-rate-limit');
 const rateLimit = erl.rateLimit || erl;
 const { ipKeyGenerator } = erl;
 
+const wrappedDekExportLimiter = rateLimit({
+    windowMs: 10 * 60 * 1000,
+    max: 10,
+    standardHeaders: true,
+    legacyHeaders: false
+});
+
 module.exports = (dependencies) => {
     const {
         storagesRepo,
@@ -15,7 +22,8 @@ module.exports = (dependencies) => {
         logError,
         formatDateForDb,
         wsKickUserFromStorage,
-        getClientIpFromRequest
+        getClientIpFromRequest,
+        requireRecentReauth
     } = dependencies;
 
     const USER_SEARCH_CONTROL_CHARS_RE = /[\u0000-\u001F\u007F]/;
@@ -283,22 +291,26 @@ module.exports = (dependencies) => {
         }
     });
 
-    router.get('/:id/my-wrapped-dek', authMiddleware, async (req, res) => {
+    router.post('/:id/my-wrapped-dek', authMiddleware, csrfMiddleware, requireRecentReauth(5 * 60 * 1000), wrappedDekExportLimiter, async (req, res) => {
         try {
             const userId = req.user.id;
             const storageId = req.params.id;
+            const { purpose } = req.body || {};
+
+            if (purpose !== 'unlock-storage') {
+                return res.status(400).json({ error: 'purpose=unlock-storage 가 필요합니다.' });
+            }
 
             const storage = await storagesRepo.getStorageByIdForUser(userId, storageId);
             if (!storage) return res.status(404).json({ error: '저장소를 찾을 수 없습니다.' });
 
-            // Check if it's DEK v1 encrypted
             if (Number(storage.is_encrypted) !== 1 || Number(storage.dek_version) !== 1) {
                 return res.status(400).json({ error: '이 저장소는 DEK v1 암호화를 사용하지 않습니다.' });
             }
 
             const wrappedDekRecord = await storageShareKeysRepo.getWrappedDek(storageId, userId);
             if (!wrappedDekRecord) {
-                return res.status(404).json({ error: '이 저장소에 대한 wrapped DEK를 찾을 수 없습니다.' });
+                return res.status(404).json({ error: '이 저장소에 대한 wrapped DEK 를 찾을 수 없습니다.' });
             }
 
             res.json({
@@ -306,6 +318,11 @@ module.exports = (dependencies) => {
                 wrappingKid: wrappedDekRecord.wrapping_kid,
                 ephemeralPublicKey: wrappedDekRecord.ephemeral_public_key
             });
+        } catch (error) {
+            logError('POST /api/storages/:id/my-wrapped-dek', error);
+            res.status(500).json({ error: 'wrapped DEK 를 불러오지 못했습니다.' });
+        }
+    });
         } catch (error) {
             logError('GET /api/storages/:id/my-wrapped-dek', error);
             res.status(500).json({ error: 'wrapped DEK를 불러오지 못했습니다.' });

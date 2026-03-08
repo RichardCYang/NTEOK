@@ -625,14 +625,22 @@ module.exports = (dependencies) => {
 
     router.get("/fetch-metadata", authMiddleware, outboundFetchLimiter, async (req, res) => {
         const { url } = req.query;
-        if (!url) return res.status(400).json({ error: "URL이 필요합니다." });
+        if (!url) return res.status(400).json({ error: "URL 이 필요합니다." });
         try {
             let targetUrl;
             try { targetUrl = new URL(url); } catch (e) { return res.status(400).json({ error: "유효하지 않은 URL 형식입니다." }); }
-            if (!['http:', 'https:'].includes(targetUrl.protocol)) return res.status(400).json({ error: "HTTP/HTTPS 프로토콜만 허용됩니다." });
-            if (targetUrl.username || targetUrl.password) return res.status(400).json({ error: "인증 정보가 포함된 URL은 허용되지 않습니다." });
+            if (targetUrl.protocol !== 'https:') {
+                return res.status(400).json({ error: "링크 미리보기는 HTTPS 만 허용됩니다." });
+            }
+            if (net.isIP(targetUrl.hostname)) {
+                return res.status(403).json({ error: "IP 직접 지정 URL 은 허용되지 않습니다." });
+            }
+            if (targetUrl.username || targetUrl.password) return res.status(400).json({ error: "인증 정보가 포함된 URL 은 허용되지 않습니다." });
             if (typeof isHostnameAllowedForPreview !== "function") return res.status(500).json({ error: "링크 미리보기 보안 구성이 올바르지 않습니다." });
             if (!isHostnameAllowedForPreview(targetUrl.hostname)) return res.status(403).json({ error: "허용되지 않은 호스트입니다." });
+
+            console.warn(`[preview-fetch] user=${req.user.id} host=${targetUrl.hostname}`);
+
             const resolvedIps = await resolvePublicOutboundAddresses(targetUrl.hostname, isPrivateOrLocalIP);
             const html = await fetchHtmlWithoutRedirects(targetUrl, resolvedIps, isPrivateOrLocalIP);
             const $ = cheerio.load(html);
@@ -1377,8 +1385,15 @@ module.exports = (dependencies) => {
                     await assertSafeAttachmentFile(req.file.path, req.file.originalname);
                 } catch (e) {
                     if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
-                    return res.status(400).json({ error: "허용되지 않는 첨부파일 형식입니다." });
+                    const msg =
+                        e?.message === 'RICH_DOCUMENT_ATTACHMENTS_DISABLED'
+                            ? '문서 첨부는 서버 보안 스캔 구성이 완료된 경우에만 허용됩니다.'
+                            : e?.message === 'OFFICE_SCAN_REQUIRED'
+                                ? 'Office 문서는 AV/CDR 스캔이 활성화되어야 업로드할 수 있습니다.'
+                                : '허용되지 않는 첨부파일 형식입니다.';
+                    return res.status(400).json({ error: msg });
                 }
+            }
             }
 
             try {

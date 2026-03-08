@@ -7,11 +7,11 @@ async function ensureUserKeyPair(loginPassword) {
         // Check if user has existing keys
         const existingKeys = await api.get('/api/user-keys/me');
         if (existingKeys && existingKeys.length > 0) {
-            // Decrypt and set the most recent private key
             const latestKey = existingKeys[0];
+            const exported = await api.post(`/api/user-keys/${encodeURIComponent(latestKey.kid)}/export-private`, {});
             const privKey = await window.cryptoManager.decryptPrivateKey(
-                latestKey.encrypted_private_key,
-                latestKey.key_wrap_salt,
+                exported.encryptedPrivateKey,
+                exported.keyWrapSalt,
                 loginPassword
             );
             window.cryptoManager.setMyEcdhPrivateKey(privKey);
@@ -482,14 +482,17 @@ export function initStoragesManager(appState, onStorageSelected) {
                                 }
 
                                 const latestKey = keyPairs[0];
+                                const exported = await api.post(`/api/user-keys/${encodeURIComponent(latestKey.kid)}/export-private`, {});
                                 const privKey = await window.cryptoManager.decryptPrivateKey(
-                                    latestKey.encrypted_private_key,
-                                    latestKey.key_wrap_salt,
+                                    exported.encryptedPrivateKey,
+                                    exported.keyWrapSalt,
                                     password
                                 );
 
                                 // Get wrapped DEK from server
-                                const wrappedDekRecord = await api.get(`/api/storages/${storage.id}/my-wrapped-dek`);
+                                const wrappedDekRecord = await api.post(`/api/storages/${storage.id}/my-wrapped-dek`, {
+                                    purpose: 'unlock-storage'
+                                });
 
                                 // Unlock with ECDH
                                 success = await window.cryptoManager.unlockStorageWithEcdh(
@@ -521,6 +524,8 @@ export function initStoragesManager(appState, onStorageSelected) {
                         unlockError.textContent = '비밀번호가 올바르지 않습니다.';
                         unlockInput.select();
                     }
+                } finally {
+                    unlockInput.value = '';
                 } catch (error) {
                     console.error('Unlock error:', error);
                     unlockError.textContent = error.message || '복호화 중 오류가 발생했습니다.';
