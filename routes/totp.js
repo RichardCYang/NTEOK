@@ -261,6 +261,7 @@ module.exports = (dependencies) => {
 	});
 
 	router.post("/verify-login", totpVerifyLimiter, requireSameOriginForAuth, async (req, res) => {
+		if (!verifyPreAuthCsrfToken(req)) return res.status(403).json({ error: "유효하지 않은 요청입니다." });
 		const { token } = req.body;
 		const tempSessionId = get2faCookie(req);
 		try {
@@ -311,6 +312,7 @@ module.exports = (dependencies) => {
 	});
 
 	router.post("/verify-backup-code", totpVerifyLimiter, requireSameOriginForAuth, async (req, res) => {
+		if (!verifyPreAuthCsrfToken(req)) return res.status(403).json({ error: "유효하지 않은 요청입니다." });
 		const { backupCode } = req.body;
 		const tempSessionId = get2faCookie(req);
 		try {

@@ -88,7 +88,16 @@ async function handleRegister(event) {
     }
 }
 
+async function initCsrf() {
+    try {
+        await fetch("/api/auth/csrf");
+    } catch (e) {
+        console.error("CSRF 초기화 실패:", e);
+    }
+}
+
 document.addEventListener("DOMContentLoaded", () => {
+    initCsrf();
     const form = document.querySelector("#register-form");
     if (form) {
         form.addEventListener("submit", handleRegister);

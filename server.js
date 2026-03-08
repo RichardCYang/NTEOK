@@ -983,16 +983,24 @@ function logError(context, error) {
 }
 
 async function verifyCsrfToken(req) {
+	const guestAllowedPaths = [
+		'/comments/shared/',
+		'/auth/login',
+		'/auth/register',
+		'/passkey/login/',
+		'/passkey/authenticate/',
+		'/totp/verify-login',
+		'/totp/verify-backup-code',
+		'/shared/page/exchange'
+	];
+	if (guestAllowedPaths.some(p => req.path.startsWith(p))) return true;
+
 	const tokenFromHeader = req.headers["x-csrf-token"];
 	const tokenFromCookie = req.cookies[CSRF_COOKIE_NAME];
 	if (typeof tokenFromHeader !== "string" || typeof tokenFromCookie !== "string") return false;
 	if (tokenFromHeader !== tokenFromCookie) return false;
 	const sessionId = req.cookies?.[SESSION_COOKIE_NAME];
-	if (!sessionId) {
-		const guestAllowedPaths = ['/api/comments/shared/'];
-		if (guestAllowedPaths.some(p => req.path.startsWith(p))) return true;
-		return false;
-	}
+	if (!sessionId) return false;
 	return verifyCsrfTokenForSession(sessionId, tokenFromHeader, "api");
 }
 

@@ -173,7 +173,16 @@ async function useBackupCode() {
 	}
 }
 
+async function initCsrf() {
+	try {
+		await fetch("/api/auth/csrf");
+	} catch (e) {
+		console.error("CSRF 초기화 실패:", e);
+	}
+}
+
 document.addEventListener("DOMContentLoaded", () => {
+	initCsrf();
 	const form = document.querySelector("#login-form");
 	if (form) form.addEventListener("submit", handleLogin);
 

@@ -9,7 +9,7 @@ function getCookie(name) {
 }
 
 function getCsrfToken() {
-    return getCookie('__Host-nteok_csrf') || getCookie('nteok_csrf');
+    return getCookie('__Host-nteok_csrf') || getCookie('nteok_csrf') || getCookie('__Host-nteok_preauth_csrf') || getCookie('nteok_preauth_csrf');
 }
 
 function addCsrfHeader(options = {}) {
