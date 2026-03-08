@@ -2,6 +2,7 @@ require('dotenv').config();
 
 const express = require("express");
 const path = require("path");
+const fs = require("fs");
 const mysql = require("mysql2/promise");
 const bcrypt = require("bcrypt");
 const cookieParser = require("cookie-parser");
@@ -10,7 +11,25 @@ const expressRateLimit = require("express-rate-limit");
 const rateLimit = expressRateLimit.rateLimit || expressRateLimit;
 const _isoDomPurify = require("isomorphic-dompurify");
 const DOMPurify = _isoDomPurify?.default || _isoDomPurify;
-const domPurifyPkg = require("dompurify/package.json");
+
+// Safely get dompurify version since package.json might not be exported in v3+
+let domPurifyPkg;
+try {
+	domPurifyPkg = require("dompurify/package.json");
+} catch (e) {
+	// Fallback: Use version from object or manually read package.json via fs to bypass exports restriction
+	let version = DOMPurify?.version;
+	if (!version) {
+		try {
+			const entry = require.resolve("dompurify");
+			const pkgPath = path.join(path.dirname(entry), "package.json");
+			const pkgPathUp = path.join(path.dirname(entry), "..", "package.json");
+			const target = fs.existsSync(pkgPath) ? pkgPath : (fs.existsSync(pkgPathUp) ? pkgPathUp : null);
+			if (target) version = JSON.parse(fs.readFileSync(target, "utf8")).version;
+		} catch (e2) {}
+	}
+	domPurifyPkg = { version: version || "unknown" };
+}
 
 function isVulnerableDomPurify(version) {
 	const [maj, min, patch] = String(version).split(".").map(n => Number(n));
@@ -30,7 +49,11 @@ const publicPurifyPath = path.join(__dirname, "public", "lib", "dompurify", "dom
 try {
     const publicPurifyBundle = fs.readFileSync(publicPurifyPath, "utf8");
     const expected = String(domPurifyPkg.version);
-    const bundleLooksMatched = publicPurifyBundle.includes(`o.version="${expected}"`) || publicPurifyBundle.includes(`version="${expected}"`) || publicPurifyBundle.includes(`version='${expected}'`);
+    const bundleLooksMatched = publicPurifyBundle.includes(`o.version="${expected}"`) || 
+                               publicPurifyBundle.includes(`version="${expected}"`) || 
+                               publicPurifyBundle.includes(`version='${expected}'`) ||
+                               publicPurifyBundle.includes(`DOMPurify.version = '${expected}'`) ||
+                               publicPurifyBundle.includes(`DOMPurify.version = "${expected}"`);
     if (!bundleLooksMatched) throw new Error(`[boot] DOMPurify browser bundle mismatch: npm=${expected}, public bundle is stale`);
 } catch (e) {
     throw new Error(`[boot] DOMPurify bundle integrity check failed: ${e.message}`);
@@ -52,7 +75,6 @@ const https = require("https");
 const http = require("http");
 const certManager = require("./cert-manager");
 const multer = require("multer");
-const fs = require("fs");
 
 const MULTIPART_COMMON_LIMITS = Object.freeze({
     files: 1,
