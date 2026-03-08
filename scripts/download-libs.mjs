@@ -98,7 +98,7 @@ const LIBRARIES = [
         name: "dompurify",
         files: [
             {
-                url: "https://esm.sh/dompurify@3.3.1?bundle&target=es2022",
+                url: "https://esm.sh/dompurify@3.3.2?bundle&target=es2022",
                 path: "dompurify.js"
             }
         ],

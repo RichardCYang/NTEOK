@@ -255,10 +255,34 @@ export const SLASH_ITEMS = [
         command(editor) {
             const input = document.createElement('input');
             input.type = 'file';
-            input.accept = 'image
-);
-            if (match?.[2].length === 11) editor.chain().focus().setYoutubeBlock({ src: `https://www.youtube.com/embed/${match[2]}` }).run();
-            else alert("올바른 URL이 아닙니다.");
+            input.accept = 'image/*';
+            input.onchange = async () => {
+                if (input.files?.length) {
+                    const file = input.files[0];
+                    try {
+                        await handleImageUpload(editor, file);
+                    } catch (e) {
+                        alert(e.message);
+                    }
+                }
+            };
+            input.click();
+        }
+    },
+    {
+        id: "youtube",
+        label: "YouTube",
+        description: "유튜브 비디오 임베드",
+        icon: "▶",
+        command(editor) {
+            const url = prompt("YouTube 비디오 URL을 입력하세요:");
+            if (!url) return;
+            const match = url.match(/(?:https?:\/\/)?(?:www\.)?(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/shorts\/)([A-Za-z0-9_-]{11})/);
+            if (match?.[1]) {
+                editor.chain().focus().setYoutubeBlock({ src: `https://www.youtube.com/embed/${match[1]}` }).run();
+            } else {
+                alert("올바른 YouTube URL이 아닙니다.");
+            }
         }
     },
     { id: "bookmark", label: "링크 블록", description: "북마크 추출", icon: "🔗", command(editor) { editor.chain().focus().setBookmarkBlock().run(); } },

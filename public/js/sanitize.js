@@ -1,4 +1,7 @@
-import DOMPurify from 'dompurify';
+import * as DOMPurifyModule from '../lib/dompurify/dompurify.js';
+const _DOMPurify = DOMPurifyModule.default || DOMPurifyModule;
+const DOMPurify = (typeof _DOMPurify === 'function' && !_DOMPurify.sanitize) ? _DOMPurify(window) : _DOMPurify;
+
 import { sanitizeHttpHref } from './url-utils.js';
 
 const CONTROL_CHARS_RE = /[\u0000-\u001F\u007F]/;
@@ -11,8 +14,10 @@ function sanitizeNavHref(value, { allowRelative = true } = {}) {
     });
 }
 
-if (!DOMPurify.__nteokSecurityHooksInstalled) {
-    DOMPurify.__nteokSecurityHooksInstalled = true;
+let hooksInstalled = false;
+
+if (!hooksInstalled) {
+    hooksInstalled = true;
 
     DOMPurify.addHook('uponSanitizeAttribute', (node, data) => {
         const name = String(data?.attrName || '').toLowerCase();

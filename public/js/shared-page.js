@@ -1,7 +1,15 @@
 import { sanitizeHttpHref } from './url-utils.js';
 import { escapeHtml, addIcon, secureFetch } from './ui-utils.js';
 import { loadAndRenderComments, initCommentsManager } from './comments-manager.js';
-import DOMPurify from 'dompurify';
+import * as DOMPurifyModule from '../lib/dompurify/dompurify.js';
+
+function createPurifier() {
+    let m = DOMPurifyModule;
+    if (m.default) m = m.default;
+    if (typeof m === 'function' && !m.sanitize) return m(window);
+    return m;
+}
+const DOMPurify = createPurifier();
 
 const _CONTROL_CHARS_RE = /[\u0000-\u001F\u007F]/;
 
@@ -28,7 +36,7 @@ function _sanitizeBookmarkImageUrl(value) {
     }
 }
 
-const _purifier = (typeof DOMPurify === 'function' && !DOMPurify.sanitize) ? DOMPurify(window) : DOMPurify;
+const _purifier = DOMPurify;
 
 if (typeof _purifier?.addHook === 'function') {
     _purifier.addHook('uponSanitizeAttribute', (node, hookEvent) => {

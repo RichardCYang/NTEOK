@@ -1,6 +1,14 @@
 
 import { addIcon } from './ui-utils.js';
-import DOMPurify from 'dompurify';
+import * as DOMPurifyModule from '../lib/dompurify/dompurify.js';
+
+function createPurifier() {
+    let m = DOMPurifyModule;
+    if (m.default) m = m.default;
+    if (typeof m === 'function' && !m.sanitize) return m(window);
+    return m;
+}
+const DOMPurify = createPurifier();
 
 const Node = Tiptap.Core.Node;
 

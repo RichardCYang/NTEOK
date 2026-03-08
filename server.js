@@ -1702,7 +1702,7 @@ app.use((req, res, next) => {
         "form-action 'self'; " +
         `script-src 'nonce-${nonce}' 'strict-dynamic'; ` +
         `style-src-elem 'self' 'nonce-${nonce}' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://fonts.googleapis.com; ` +
-        "style-src-attr 'none'; " +
+        "style-src-attr 'self' 'unsafe-inline'; " +
         "font-src 'self' https://cdnjs.cloudflare.com https://fonts.gstatic.com; " +
         "img-src 'self' data: https:; " +
         "connect-src 'self';"
