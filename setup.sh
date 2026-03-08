@@ -60,6 +60,20 @@ else
     TOTP_KEY=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 32 | head -n 1)
 fi
 
+# CSRF HMAC 키 생성 (CSPRNG)
+if command -v openssl >/dev/null 2>&1; then
+    CSRF_KEY=$(openssl rand -hex 32)
+else
+    CSRF_KEY=$(cat /dev/urandom | tr -dc 'a-f0-9' | fold -w 64 | head -n 1)
+fi
+
+# CSRF HMAC 키 생성 (CSPRNG)
+if command -v openssl >/dev/null 2>&1; then
+    CSRF_KEY=$(openssl rand -hex 32)
+else
+    CSRF_KEY=$(cat /dev/urandom | tr -dc 'a-f0-9' | fold -w 64 | head -n 1)
+fi
+
 echo ""
 echo ".env 파일을 생성 중입니다..."
 
@@ -89,6 +103,9 @@ echo ""
 fi)
 # 보안을 위해 자동 생성된 TOTP 암호화 키
 TOTP_SECRET_ENC_KEY=$TOTP_KEY
+
+# CSRF 토큰 서명용 HMAC 키
+CSRF_HMAC_KEY=$CSRF_KEY
 EOF
 
 echo ""

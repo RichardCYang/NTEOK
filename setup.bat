@@ -54,6 +54,9 @@ if /i "!USE_HTTPS!"=="Y" (
 :: TOTP 암호화 키 생성 (CSPRNG 사용)
 for /f "delims=" %%a in ('powershell -NoProfile -Command "$bytes = New-Object Byte[] 32; (New-Object System.Security.Cryptography.RNGCryptoServiceProvider).GetBytes($bytes); [Convert]::ToBase64String($bytes)"') do set "TOTP_KEY=%%a"
 
+:: CSRF HMAC 키 생성 (CSPRNG 사용)
+for /f "delims=" %%a in ('powershell -NoProfile -Command "$bytes = New-Object Byte[] 32; (New-Object System.Security.Cryptography.RNGCryptoServiceProvider).GetBytes($bytes); [System.BitConverter]::ToString($bytes).Replace('-','').ToLowerInvariant()"') do set "CSRF_KEY=%%a"
+
 echo.
 echo .env 파일을 생성 중입니다...
 
@@ -85,6 +88,9 @@ if /i "!USE_HTTPS!"=="Y" (
 
 echo # 보안을 위해 자동 생성된 TOTP 암호화 키 >> .env
 echo TOTP_SECRET_ENC_KEY=!TOTP_KEY! >> .env
+echo. >> .env
+echo # CSRF 토큰 서명용 HMAC 키 >> .env
+echo CSRF_HMAC_KEY=!CSRF_KEY! >> .env
 
 echo.
 echo [성공] .env 파일이 생성되었습니다! (모드: !NODE_ENV!, 포트: !PORT!)
