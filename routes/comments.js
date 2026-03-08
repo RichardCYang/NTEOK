@@ -18,6 +18,7 @@ module.exports = (dependencies) => {
 		pagesRepo,
 		storagesRepo,
 		authMiddleware,
+		csrfMiddleware,
 		toIsoString,
 		sanitizeInput,
 		logError,

@@ -245,6 +245,7 @@ module.exports = (dependencies) => {
         backupRepo,
 		flushAllPendingE2eeSaves,
         authMiddleware,
+        csrfMiddleware,
         toIsoString,
         sanitizeInput,
 		sanitizeHtmlContent,
