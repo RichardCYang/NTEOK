@@ -55,6 +55,8 @@ const cursorState = {
     blurHandler: null
 };
 
+let appStateRef = null;
+
 const state = {
     editor: null,
     currentPageId: null,
@@ -167,13 +169,23 @@ function getPrimaryWriterClientId() {
 }
 
 export function initSyncManager(appState) {
+    appStateRef = appState;
     state.editor = appState.editor;
     state.fetchPageList = appState.fetchPageList;
     state.pages = appState.pages;
 
-    Object.defineProperty(state, 'currentPageId', { get: () => appState.currentPageId });
-    Object.defineProperty(state, 'currentStorageId', { get: () => appState.currentStorageId });
-    Object.defineProperty(state, 'currentPageUpdatedAt', { get: () => appState.currentPageUpdatedAt });
+    Object.defineProperty(state, 'currentPageId', {
+        get: () => appStateRef.currentPageId,
+        set: (v) => { appStateRef.currentPageId = v; }
+    });
+    Object.defineProperty(state, 'currentStorageId', {
+        get: () => appStateRef.currentStorageId,
+        set: (v) => { appStateRef.currentStorageId = v; }
+    });
+    Object.defineProperty(state, 'currentPageUpdatedAt', {
+        get: () => appStateRef.currentPageUpdatedAt,
+        set: (v) => { appStateRef.currentPageUpdatedAt = v; }
+    });
 
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
