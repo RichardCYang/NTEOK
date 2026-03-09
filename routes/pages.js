@@ -37,10 +37,10 @@ function normalizeResolvedAddress(entry) {
 
 async function resolvePublicOutboundAddresses(hostname, isPrivateOrLocalIP) {
     const host = String(hostname || '').trim().replace(/^\[/, '').replace(/\]$/, '');
-    if (!host) throw makeFetchError('HOST_REQUIRED');
+    if (!host) throw makeFetchError('HOST_REQUIRED', '호스트 주소가 필요합니다.');
 
     if (net.isIP(host)) {
-        if (isPrivateOrLocalIP(host)) throw makeFetchError('BLOCKED_PRIVATE_IP');
+        if (isPrivateOrLocalIP(host)) throw makeFetchError('BLOCKED_PRIVATE_IP', '차단된 내부 IP 주소입니다.');
         return [host];
     }
 
@@ -50,11 +50,11 @@ async function resolvePublicOutboundAddresses(hostname, isPrivateOrLocalIP) {
         .map(normalizeResolvedAddress)
         .filter(Boolean);
 
-    if (addresses.length === 0) throw makeFetchError('HOST_NOT_FOUND');
+    if (addresses.length === 0) throw makeFetchError('HOST_NOT_FOUND', '호스트를 찾을 수 없습니다.');
 
     const uniqueAddresses = [...new Set(addresses)];
     for (const ip of uniqueAddresses) {
-        if (isPrivateOrLocalIP(ip)) throw makeFetchError('BLOCKED_PRIVATE_IP');
+        if (isPrivateOrLocalIP(ip)) throw makeFetchError('BLOCKED_PRIVATE_IP', '차단된 내부 IP 주소입니다.');
     }
 
     return uniqueAddresses;
@@ -65,9 +65,7 @@ function fetchHtmlFromPinnedAddress(targetUrl, pinnedIp, isPrivateOrLocalIP) {
         const protocolModule = targetUrl.protocol === 'https:' ? https : http;
         const port = Number(targetUrl.port || (targetUrl.protocol === 'https:' ? 443 : 80));
 
-        if (!LINK_PREVIEW_ALLOWED_PORTS.has(port)) {
-            return reject(makeFetchError('DISALLOWED_PORT'));
-        }
+        if (!LINK_PREVIEW_ALLOWED_PORTS.has(port)) return reject(makeFetchError('DISALLOWED_PORT', '허용되지 않는 포트입니다.'));
 
         const req = protocolModule.request({
             protocol: targetUrl.protocol,
@@ -89,23 +87,23 @@ function fetchHtmlFromPinnedAddress(targetUrl, pinnedIp, isPrivateOrLocalIP) {
             const remoteIp = upstreamRes.socket?.remoteAddress;
             if (remoteIp && isPrivateOrLocalIP(remoteIp)) {
                 upstreamRes.resume();
-                return reject(makeFetchError('BLOCKED_PRIVATE_IP'));
+                return reject(makeFetchError('BLOCKED_PRIVATE_IP', '차단된 내부 IP 주소입니다.'));
             }
 
             const status = Number(upstreamRes.statusCode || 0);
             if (status >= 300 && status < 400) {
                 upstreamRes.resume();
-                return reject(makeFetchError('REDIRECT_BLOCKED'));
+                return reject(makeFetchError('REDIRECT_BLOCKED', '리다이렉트가 차단되었습니다.'));
             }
             if (status < 200 || status >= 400) {
                 upstreamRes.resume();
-                return reject(makeFetchError('UPSTREAM_BAD_STATUS'));
+                return reject(makeFetchError('UPSTREAM_BAD_STATUS', '대상을 불러올 수 없습니다.'));
             }
 
             const contentType = String(upstreamRes.headers['content-type'] || '').toLowerCase();
             if (contentType && !contentType.includes('text/html') && !contentType.includes('application/xhtml+xml')) {
                 upstreamRes.resume();
-                return reject(makeFetchError('NOT_HTML'));
+                return reject(makeFetchError('NOT_HTML', 'HTML 문서가 아닙니다.'));
             }
 
             const chunks = [];
@@ -114,7 +112,7 @@ function fetchHtmlFromPinnedAddress(targetUrl, pinnedIp, isPrivateOrLocalIP) {
             upstreamRes.on('data', (chunk) => {
                 total += chunk.length;
                 if (total > METADATA_FETCH_MAX_BYTES) {
-                    req.destroy(makeFetchError('TOO_LARGE'));
+                    req.destroy(makeFetchError('TOO_LARGE', '데이터가 너무 큽니다.'));
                     return;
                 }
                 chunks.push(chunk);
@@ -125,7 +123,7 @@ function fetchHtmlFromPinnedAddress(targetUrl, pinnedIp, isPrivateOrLocalIP) {
             });
         });
 
-        req.on('timeout', () => req.destroy(makeFetchError('ETIMEDOUT')));
+        req.on('timeout', () => req.destroy(makeFetchError('ETIMEDOUT', '요청 시간이 초과되었습니다.')));
         req.on('error', reject);
         req.end();
     });
@@ -1440,7 +1438,12 @@ module.exports = (dependencies) => {
                 } catch (e) {
                     if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
                     if (e?.message === 'PDF_SCAN_TOO_LARGE') return res.status(413).json({ error: 'PDF 파일이 너무 커서 안전 검사를 수행할 수 없습니다. 더 작은 파일로 업로드해 주세요.' });
-                    const msg = e?.message === 'RICH_DOCUMENT_ATTACHMENTS_DISABLED' ? '문서 첨부는 서버 보안 스캔 구성이 완료된 경우에만 허용됩니다.' : e?.message === 'OFFICE_SCAN_REQUIRED' ? 'Office 문서는 AV/CDR 스캔이 활성화되어야 업로드할 수 있습니다.' : '허용되지 않는 첨부파일 형식입니다.';
+                    if (e?.message === 'PDF_SCAN_REQUIRED' || e?.message === 'UNSAFE_PDF_BY_SCANNER') return res.status(400).json({ error: 'PDF 첨부는 AV/CDR 검사를 통과해야 업로드할 수 있습니다.' });
+                    const msg = e?.message === 'RICH_DOCUMENT_ATTACHMENTS_DISABLED'
+                        ? '문서 첨부는 서버 보안 스캔 구성이 완료된 경우에만 허용됩니다.'
+                        : e?.message === 'OFFICE_SCAN_REQUIRED'
+                        ? 'Office 문서는 AV/CDR 스캔이 활성화되어야 업로드할 수 있습니다.'
+                        : '허용되지 않는 첨부파일 형식입니다.';
                     return res.status(400).json({ error: msg });
                 }
             }

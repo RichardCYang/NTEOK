@@ -397,7 +397,7 @@ module.exports = (dependencies) => {
                 });
             }
 
-            try { if (typeof wsKickUserFromStorage === 'function') wsKickUserFromStorage(storageId, targetUserId, 1008, 'Storage permission changed'); } catch (e) {}
+            try { if (typeof wsKickUserFromStorage === 'function') wsKickUserFromStorage(storageId, targetUserId, 1008, '저장소 권한이 변경되었습니다.'); } catch (e) {}
 
             res.json({ success: true });
         } catch (error) {
@@ -421,10 +421,10 @@ module.exports = (dependencies) => {
             await storagesRepo.removeCollaborator(storageId, targetUserId);
 
             if (Number(storage.is_encrypted) === 1 && Number(storage.dek_version) === 1) {
-                try { await storageShareKeysRepo.deleteWrappedDek(storageId, targetUserId); } catch (e) { logError('DELETE wrapped DEK', e); }
+                try { await storageShareKeysRepo.deleteWrappedDek(storageId, targetUserId); } catch (e) { logError('wrapped DEK 삭제 실패', e); }
             }
 
-            try { if (typeof wsKickUserFromStorage === 'function') wsKickUserFromStorage(storageId, targetUserId, 1008, 'Storage access revoked'); } catch (e) {}
+            try { if (typeof wsKickUserFromStorage === 'function') wsKickUserFromStorage(storageId, targetUserId, 1008, '저장소 접근 권한이 회수되었습니다.'); } catch (e) {}
 
             res.json({ success: true });
         } catch (error) {

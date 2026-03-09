@@ -43,7 +43,7 @@ function isVulnerableDomPurify(version) {
 	return false;
 }
 
-if (isVulnerableDomPurify(domPurifyPkg.version)) throw new Error(`[boot] Refusing to start with vulnerable DOMPurify version: ${domPurifyPkg.version}`);
+if (isVulnerableDomPurify(domPurifyPkg.version)) throw new Error(`[부팅] 취약점이 발견된 DOMPurify 버전을 사용 중입니다: ${domPurifyPkg.version}`);
 
 const publicPurifyPath = path.join(__dirname, "public", "lib", "dompurify", "dompurify.js");
 try {
@@ -54,9 +54,9 @@ try {
                                publicPurifyBundle.includes(`version='${expected}'`) ||
                                publicPurifyBundle.includes(`DOMPurify.version = '${expected}'`) ||
                                publicPurifyBundle.includes(`DOMPurify.version = "${expected}"`);
-    if (!bundleLooksMatched) throw new Error(`[boot] DOMPurify browser bundle mismatch: npm=${expected}, public bundle is stale`);
+    if (!bundleLooksMatched) throw new Error(`[부팅] DOMPurify 브라우저 번들이 일치하지 않습니다: npm=${expected}, public 번들이 오래되었습니다.`);
 } catch (e) {
-    throw new Error(`[boot] DOMPurify bundle integrity check failed: ${e.message}`);
+    throw new Error(`[부팅] DOMPurify 번들 무결성 검사 실패: ${e.message}`);
 }
 
 const { redis, ensureRedis } = require("./lib/redis");
@@ -478,6 +478,9 @@ const CSRF_COOKIE_NAME = COOKIE_SECURE ? `__Host-${CSRF_COOKIE_NAME_RAW}` : CSRF
 const PREAUTH_CSRF_COOKIE_NAME_RAW = "nteok_preauth_csrf";
 const PREAUTH_CSRF_COOKIE_NAME = COOKIE_SECURE ? `__Host-${PREAUTH_CSRF_COOKIE_NAME_RAW}` : PREAUTH_CSRF_COOKIE_NAME_RAW;
 
+const IS_PRODUCTION = process.env.NODE_ENV === "production";
+if (IS_PRODUCTION && !process.env.CSRF_HMAC_KEY) throw new Error("[security] CSRF_HMAC_KEY must be set in production");
+
 const CSRF_HMAC_KEY = Buffer.from(
 	process.env.CSRF_HMAC_KEY || crypto.randomBytes(32).toString("hex"),
 	"utf8"
@@ -594,7 +597,7 @@ function decryptTotpSecret(storedValue) {
     if (!s.startsWith("v1:") || !TOTP_SECRET_ENC_KEY) return s;
 
     const parts = s.split(":");
-    if (parts.length !== 4) throw new Error("유효하지 않은 암호화 TOTP 비밀키 형식");
+    if (parts.length !== 4) throw new Error("유효하지 않은 암호화 TOTP 비밀키 형식입니다.");
 
     const iv = Buffer.from(parts[1], "base64");
     const tag = Buffer.from(parts[2], "base64");
@@ -1048,7 +1051,7 @@ function generateStrongPassword(length = 20) {
     const SPECIAL = "!@#$%^&*(),.?\":{}|<>";
 
     const pick = (chars) => {
-        if (!chars || chars.length === 0) throw new Error("generateStrongPassword: empty charset");
+        if (!chars || chars.length === 0) throw new Error("강한 비밀번호 생성: 문자 집합이 비어 있습니다.");
         return chars[crypto.randomInt(0, chars.length)];
     };
 
@@ -1141,7 +1144,7 @@ function hashIpPrefix(ip) {
 }
 
 async function createSession(user, ctx = {}) {
-    if (IS_PRODUCTION && !ctx.clientIp) throw new Error("createSession: 운영 환경에서는 clientIp가 필수입니다.");
+    if (IS_PRODUCTION && !ctx.clientIp) throw new Error("세션 생성: 운영 환경에서는 clientIp가 필수입니다.");
     const sessionId = crypto.randomBytes(24).toString("hex");
     const now = Date.now();
     const expiresAt = now + SESSION_TTL_MS;
@@ -1986,9 +1989,7 @@ app.get('/covers/:userId/:filename', authMiddleware, async (req, res) => {
 
         const ext = path.extname(sanitizedFilename).toLowerCase();
         const ALLOWED_COVER_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp']);
-        if (!ALLOWED_COVER_EXTS.has(ext)) {
-            return res.status(400).json({ error: '지원하지 않는 파일 형식입니다.' });
-        }
+        if (!ALLOWED_COVER_EXTS.has(ext)) return res.status(400).json({ error: '지원하지 않는 파일 형식입니다.' });
 
         const filePath = path.join(__dirname, 'covers', String(requestedUserId), sanitizedFilename);
 
@@ -2050,9 +2051,7 @@ app.get('/imgs/:userId/:filename', authMiddleware, async (req, res) => {
 
         const ext = path.extname(sanitizedFilename).toLowerCase();
         const ALLOWED_IMG_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp']);
-        if (!ALLOWED_IMG_EXTS.has(ext)) {
-            return res.status(400).json({ error: '지원하지 않는 파일 형식입니다.' });
-        }
+        if (!ALLOWED_IMG_EXTS.has(ext)) return res.status(400).json({ error: '지원하지 않는 파일 형식입니다.' });
 
         const filePath = path.join(__dirname, 'imgs', String(requestedUserId), sanitizedFilename);
 

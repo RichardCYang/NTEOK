@@ -340,7 +340,7 @@ module.exports = (dependencies) => {
 			} catch (dbErr) {
 				if (dbErr && (dbErr.code === 'ER_DUP_ENTRY' || dbErr.errno === 1062)) {
 					await consumeBcryptCostForTiming(password);
-					return res.status(400).json({ error: "회원가입을 완료할 수 없습니다. 입력값을 확인해 주세요." });
+					return res.status(400).json({ error: "이미 사용 중인 아이디입니다." });
 				}
 				throw dbErr;
 			}
@@ -367,9 +367,7 @@ module.exports = (dependencies) => {
                 [req.user.id]
             );
 
-            if (!rows.length) {
-                return res.status(404).json({ error: "사용자를 찾을 수 없습니다." });
-            }
+            if (!rows.length) return res.status(404).json({ error: "사용자를 찾을 수 없습니다." });
 
             const user = rows[0];
             res.json({

@@ -216,10 +216,17 @@ function renderBookmarks(container) {
 
 (async () => {
     try {
-        const token = window.location.pathname.split('/').pop();
+        const token = window.location.hash.replace(/^#/, '').trim();
         if (!token) throw new Error('토큰이 없습니다.');
 
-        const response = await secureFetch(`/api/shared/page/${encodeURIComponent(token)}`);
+        const response = await secureFetch('/api/shared/page', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Share-Token': token
+            },
+            body: JSON.stringify({ token })
+        });
         if (!response.ok) throw new Error('페이지를 찾을 수 없습니다.');
 
         const data = await response.json();

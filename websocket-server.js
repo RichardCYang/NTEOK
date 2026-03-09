@@ -1432,17 +1432,23 @@ function initWebSocketServer(server, pool, sanitizeHtmlContent, IS_PRODUCTION, B
             registerActive(wsActiveConnectionsBySession, sessionId);
             ws._activeSessionKey = sessionId;
 
-		    const session = typeof getSessionFromId === 'function'
-		        ? await getSessionFromId(sessionId, {
-		            enforceUa: true,
-					enforceNetwork: true,
-					clientIp: getClientIpFromRequest(req),
-		            userAgent: req.headers["user-agent"] || ""
-		        })
-		        : null;
-		    if (!session || !session.userId) { ws.close(1008, 'Unauthorized'); return; }
-		    ws.userId = session.userId; ws.username = session.username; ws.sessionId = sessionId; ws.isAlive = true;
-			registerSessionConnection(sessionId, ws);
+            const session = typeof getSessionFromId === 'function'
+                ? await getSessionFromId(sessionId, {
+                    enforceUa: true,
+                    enforceNetwork: true,
+                    clientIp: getClientIpFromRequest(req),
+                    userAgent: req.headers["user-agent"] || ""
+                })
+                : null;
+            if (!session || !session.userId) { ws.close(1008, 'Unauthorized'); return; }
+            ws.userId = session.userId;
+            ws.username = session.username;
+            ws.sessionId = sessionId;
+            ws.isAlive = true;
+            ws.boundUserAgent = req.headers["user-agent"] || "";
+            ws.boundClientIp = getClientIpFromRequest(req) || req.socket?.remoteAddress || "";
+            ws.lastFullSessionCheckAt = 0;
+            registerSessionConnection(sessionId, ws);
 		    ws.on('pong', () => { ws.isAlive = true; });
             ws.on('error', () => {  }); 
 
@@ -1490,11 +1496,27 @@ function initWebSocketServer(server, pool, sanitizeHtmlContent, IS_PRODUCTION, B
 }
 
 async function handleWebSocketMessage(ws, data, pool, sanitizeHtmlContent, getSessionFromId, pageSqlPolicy) {
-	const { type, payload } = data;
-	if (ws.sessionId && typeof getSessionFromId === 'function') {
-		const s = await getSessionFromId(ws.sessionId, { enforceUa: false });
-		if (!s || !s.userId) { try { ws.close(1008, 'Expired'); } catch (e) {} return; }
-	}
+    const { type, payload } = data;
+    if (ws.sessionId && typeof getSessionFromId === 'function') {
+        const now = Date.now();
+        const mustFullyRevalidate = !ws.lastFullSessionCheckAt || (now - ws.lastFullSessionCheckAt) > (5 * 60 * 1000);
+        const s = await getSessionFromId(
+            ws.sessionId,
+            mustFullyRevalidate
+                ? {
+                    enforceUa: true,
+                    enforceNetwork: true,
+                    userAgent: ws.boundUserAgent,
+                    clientIp: ws.boundClientIp
+                  }
+                : { enforceUa: false }
+        );
+        if (!s || !s.userId) {
+            try { ws.close(1008, 'Expired'); } catch (e) {}
+            return;
+        }
+        if (mustFullyRevalidate) ws.lastFullSessionCheckAt = now;
+    }
 	switch (type) {
         case 'subscribe-page': await handleSubscribePage(ws, payload, pool, sanitizeHtmlContent, pageSqlPolicy); break;
         case 'unsubscribe-page': handleUnsubscribePage(ws, payload, pool, sanitizeHtmlContent); break;
@@ -2118,9 +2140,9 @@ async function handleYjsUpdate(ws, payload, pool, sanitizeHtmlContent, pageSqlPo
         if (!['EDIT', 'ADMIN'].includes(freshPerm)) return;
 
         const ydoc = await loadOrCreateYjsDoc(pool, sanitizeHtmlContent, pageId);
-        if (update.length > WS_MAX_YJS_UPDATE_B64_CHARS) throw new Error('Update too large');
+        if (update.length > WS_MAX_YJS_UPDATE_B64_CHARS) throw new Error('업데이트 데이터가 너무 큽니다.');
         const updateBuf = Buffer.from(update, 'base64');
-        if (updateBuf.length > WS_MAX_YJS_UPDATE_BYTES) throw new Error('Update too large');
+        if (updateBuf.length > WS_MAX_YJS_UPDATE_BYTES) throw new Error('업데이트 데이터가 너무 큽니다.');
 
         const BAD = [
             Buffer.from('javascript:', 'utf8'),

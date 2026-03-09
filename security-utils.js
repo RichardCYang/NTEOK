@@ -166,29 +166,42 @@ async function assertSafePdfFile(filePath, maxBytes = PDF_SCAN_MAX_BYTES) {
 	}
 }
 
+async function scanPdfWithAvOrCdr(filePath) {
+    const cmd = String(process.env.PDF_ATTACHMENT_SCAN_CMD || "").trim();
+    if (!cmd) throw new Error("PDF 스캔 설정이 필요합니다.");
+    const { execFile } = require("child_process");
+    await new Promise((resolve, reject) => {
+        execFile(cmd, [filePath], { timeout: 60000 }, (err) => {
+            if (err) return reject(new Error("보안 스캐너가 위험한 PDF로 판단했습니다."));
+            resolve();
+        });
+    });
+}
+
 async function assertSafeAttachmentFile(filePath, originalName = '') {
-	const ext = path.extname(String(originalName || filePath)).toLowerCase();
-	if (!ALLOWED_ATTACHMENT_EXTS.has(ext)) throw new Error('DISALLOWED_ATTACHMENT_TYPE');
+    const ext = path.extname(String(originalName || filePath)).toLowerCase();
+    if (!ALLOWED_ATTACHMENT_EXTS.has(ext)) throw new Error('허용되지 않는 첨부파일 형식입니다.');
 
-	if (RICH_DOC_ATTACHMENT_EXTS.has(ext) &&
-	    String(process.env.ENABLE_RICH_DOCUMENT_ATTACHMENTS).toLowerCase() !== 'true') {
-		throw new Error('RICH_DOCUMENT_ATTACHMENTS_DISABLED');
-	}
+    if (RICH_DOC_ATTACHMENT_EXTS.has(ext) &&
+        String(process.env.ENABLE_RICH_DOCUMENT_ATTACHMENTS).toLowerCase() !== 'true') {
+        throw new Error('문서 첨부 기능이 비활성화되어 있습니다.');
+    }
 
-	const head = readFileHead(filePath, 4096);
-	
-	if (['.jpg', '.jpeg', '.png', '.gif', '.webp'].includes(ext)) {
-		const detected = assertImageFileSignature(filePath, new Set(['jpg', 'jpeg', 'png', 'gif', 'webp']));
-		const normalized = `.${detected.ext === 'jpg' ? 'jpg' : detected.ext}`;
-		const equivalent = (ext === '.jpeg' && normalized === '.jpg') || ext === normalized;
-		if (!equivalent) throw new Error('IMAGE_EXTENSION_MISMATCH');
-		return;
-	}
+    const head = readFileHead(filePath, 4096);
+    
+    if (['.jpg', '.jpeg', '.png', '.gif', '.webp'].includes(ext)) {
+        const detected = assertImageFileSignature(filePath, new Set(['jpg', 'jpeg', 'png', 'gif', 'webp']));
+        const normalized = `.${detected.ext === 'jpg' ? 'jpg' : detected.ext}`;
+        const equivalent = (ext === '.jpeg' && normalized === '.jpg') || ext === normalized;
+        if (!equivalent) throw new Error('이미지 확장자가 실제 파일 형식과 일치하지 않습니다.');
+        return;
+    }
 
-	if (ext === '.pdf') {
-		await assertSafePdfFile(filePath);
-		return;
-	}
+    if (ext === '.pdf') {
+        await assertSafePdfFile(filePath);
+        await scanPdfWithAvOrCdr(filePath);
+        return;
+    }
 	if (['.docx', '.xlsx', '.pptx'].includes(ext)) {
 		if (String(process.env.REQUIRE_OFFICE_ATTACHMENT_SCAN).toLowerCase() !== 'true') {
 			throw new Error('OFFICE_SCAN_REQUIRED');
