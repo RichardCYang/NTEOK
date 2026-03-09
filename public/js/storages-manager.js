@@ -524,12 +524,12 @@ export function initStoragesManager(appState, onStorageSelected) {
                         unlockError.textContent = '비밀번호가 올바르지 않습니다.';
                         unlockInput.select();
                     }
-                } finally {
-                    unlockInput.value = '';
                 } catch (error) {
                     console.error('Unlock error:', error);
                     unlockError.textContent = error.message || '복호화 중 오류가 발생했습니다.';
                     unlockInput.select();
+                } finally {
+                    unlockInput.value = '';
                 }
             };
 
