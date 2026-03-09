@@ -907,6 +907,8 @@ const BASE_ALLOWED_ATTR = [
     'data-columns', 'data-is-open'
 ];
 
+const SHARED_ALLOWED_ATTR = BASE_ALLOWED_ATTR.filter(attr => attr !== 'class');
+
 const EDITOR_ALLOWED_TAGS = [...BASE_ALLOWED_TAGS, 'label', 'input'];
 const EDITOR_ALLOWED_ATTR = [
     ...BASE_ALLOWED_ATTR,
@@ -928,6 +930,11 @@ function isUrlAllowedForShared(url) {
     }
 }
 
+function isSafeSharedLocalAssetPath(url) {
+    if (typeof url !== "string") return false;
+    return /^\/(?:imgs|covers|paperclip)\/(?:default|\d{1,12})\/[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/.test(url);
+}
+
 function sanitizeHtmlContent(html, { profile = 'editor' } = {}) {
 	if (typeof html !== 'string') return html;
 	const prefiltered = prefilterHtmlForSanitizer(html);
@@ -936,7 +943,7 @@ function sanitizeHtmlContent(html, { profile = 'editor' } = {}) {
 		const config = profile === 'shared'
 			? {
 				ALLOWED_TAGS: BASE_ALLOWED_TAGS,
-				ALLOWED_ATTR: BASE_ALLOWED_ATTR,
+				ALLOWED_ATTR: SHARED_ALLOWED_ATTR,
 				ALLOW_DATA_ATTR: true,
 				FORBID_ATTR: ['style'],
 				ALLOWED_URI_REGEXP: /^(?:(?:(?:ht)tps?|mailto|tel):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i
@@ -951,15 +958,43 @@ function sanitizeHtmlContent(html, { profile = 'editor' } = {}) {
 		if (profile !== 'shared') return sanitized;
 		const dom = new JSDOM(sanitized);
 		const doc = dom.window.document;
-		const elements = doc.querySelectorAll('[src], [href]');
+		const elements = doc.querySelectorAll('[src], [href], [data-url], [data-thumbnail], [data-favicon], [data-src]');
 		for (const el of elements) {
 			if (el.hasAttribute('src')) {
 				const src = el.getAttribute('src');
-				if (!isUrlAllowedForShared(src)) el.removeAttribute('src');
+				if (!(isSafeSharedLocalAssetPath(src) || isUrlAllowedForShared(src))) el.removeAttribute('src');
 			}
 			if (el.hasAttribute('href')) {
 				const href = el.getAttribute('href');
 				if (!isUrlAllowedForShared(href)) el.removeAttribute('href');
+			}
+			if (el.hasAttribute('data-url')) {
+				const value = sanitizeHttpHrefStrict(el.getAttribute('data-url'), { allowRelative: false });
+				if (!value || !isUrlAllowedForShared(value)) el.removeAttribute('data-url');
+				else el.setAttribute('data-url', value);
+			}
+			if (el.hasAttribute('data-thumbnail')) {
+				const value = sanitizeHttpHrefStrict(el.getAttribute('data-thumbnail'), { allowRelative: false });
+				if (!value || !isUrlAllowedForShared(value)) el.removeAttribute('data-thumbnail');
+				else el.setAttribute('data-thumbnail', value);
+			}
+			if (el.hasAttribute('data-favicon')) {
+				const value = sanitizeBookmarkImageUrl(el.getAttribute('data-favicon'));
+				if (!value || !isSafeSharedLocalAssetPath(value)) el.removeAttribute('data-favicon');
+				else el.setAttribute('data-favicon', value);
+			}
+			if (el.hasAttribute('data-src')) {
+				const nodeType = String(el.getAttribute('data-type') || '').toLowerCase();
+				const raw = String(el.getAttribute('data-src') || '');
+				if (nodeType === 'youtube-block' || nodeType === 'youtube') {
+					const value = normalizeYouTubeEmbedUrl(raw);
+					if (!value || !isUrlAllowedForShared(value)) el.removeAttribute('data-src');
+					else el.setAttribute('data-src', value);
+				} else {
+					const value = sanitizeHttpHrefStrict(raw, { allowRelative: true });
+					if (!value || !(isSafeSharedLocalAssetPath(value) || isUrlAllowedForShared(value))) el.removeAttribute('data-src');
+					else el.setAttribute('data-src', value);
+				}
 			}
 		}
 		return doc.body.innerHTML;
@@ -1817,32 +1852,37 @@ app.use((req, res, next) => {
 
 app.use((req, res, next) => {
     const nonce = res.locals.cspNonce;
+    const isSharedPage = req.path === "/shared-page.html" || req.path.startsWith("/shared/");
     res.setHeader(
         "Content-Security-Policy",
-		"default-src 'self'; " +
-		"base-uri 'self'; " +
-        "object-src 'none'; " +
-        "frame-ancestors 'none'; " +
-        "frame-src 'self' https://www.youtube.com https://youtube.com https://www.youtube-nocookie.com https://youtube-nocookie.com; " +
-        "form-action 'self'; " +
-        `script-src 'nonce-${nonce}' 'strict-dynamic'; ` +
-        `style-src-elem 'self' 'nonce-${nonce}' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://fonts.googleapis.com; ` +
-        "style-src-attr 'self' 'unsafe-inline'; " +
-        "font-src 'self' https://cdnjs.cloudflare.com https://fonts.gstatic.com; " +
-        "img-src 'self' data: https:; " +
-        "connect-src 'self';"
+        [
+            "default-src 'self'",
+            "base-uri 'self'",
+            "object-src 'none'",
+            "frame-ancestors 'none'",
+            "frame-src 'self' https://www.youtube.com https://youtube.com https://www.youtube-nocookie.com https://youtube-nocookie.com",
+            "form-action 'self'",
+            `script-src 'nonce-${nonce}' 'strict-dynamic'`,
+            `style-src-elem 'self' 'nonce-${nonce}' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://fonts.googleapis.com`,
+            isSharedPage ? "style-src-attr 'none'" : "style-src-attr 'self' 'unsafe-inline'",
+            "font-src 'self' https://cdnjs.cloudflare.com https://fonts.gstatic.com",
+            "img-src 'self' data: https:",
+            "connect-src 'self'",
+            isSharedPage ? "require-trusted-types-for 'script'" : null,
+            isSharedPage ? "trusted-types shared-page" : null
+        ].filter(Boolean).join("; ") + ";"
     );
 
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('X-Frame-Options', 'DENY');
-	res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
 
     res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
 
     if (HSTS_ENABLED)
         res.setHeader('Strict-Transport-Security', 'max-age=15552000; includeSubDomains');
 
-	next();
+    next();
 });
 
 app.use((req, res, next) => {
@@ -1869,6 +1909,36 @@ app.use("/api", (req, res, next) => {
     next();
 });
 
+app.get("/shared-page.html", (req, res) => {
+    const filePath = path.join(__dirname, "public", "shared-page.html");
+    fs.readFile(filePath, "utf8", (err, html) => {
+        if (err) return res.status(500).send("페이지 로드 실패");
+
+        const nonce = res.locals.cspNonce || "";
+        let out = html.replace(/__CSP_NONCE__/g, nonce);
+        out = out.replace(/<script\b(?![^>]*\bnonce=)([^>]*?)>/gi, `<script nonce="${nonce}"$1>`);
+        out = out.replace(/<style\b(?![^>]*\bnonce=)([^>]*?)>/gi, `<style nonce="${nonce}"$1>`);
+
+        if (out.includes("__IMPORTMAP_INTEGRITY__")) {
+            try {
+                const integrityPath = path.join(__dirname, "public", "importmap-integrity.json");
+                const raw = fs.readFileSync(integrityPath, "utf8").trim();
+                if (!raw) throw new Error("empty importmap integrity");
+                out = out.replace(/__IMPORTMAP_INTEGRITY__/g, raw);
+            } catch (e) {
+                console.error("무결성 맵 로드 실패:", e.message);
+                return res.status(500).send("무결성 매니페스트 누락");
+            }
+        }
+
+        res.setHeader("Content-Type", "text/html; charset=utf-8");
+        res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+        res.setHeader("Pragma", "no-cache");
+        res.setHeader("Expires", "0");
+        return res.send(out);
+    });
+});
+
 app.use(express.static(path.join(__dirname, "public"), {
     index: false,
     maxAge: IS_PRODUCTION ? '7d' : 0,
@@ -1876,10 +1946,6 @@ app.use(express.static(path.join(__dirname, "public"), {
     lastModified: true,
     immutable: IS_PRODUCTION,
     setHeaders: (res, filePath, stat) => {
-        if (filePath.endsWith(path.sep + 'shared-page.html')) {
-            res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https:; sandbox allow-scripts allow-forms allow-popups;");
-            res.setHeader('X-Frame-Options', 'DENY');
-        }
         if (filePath.endsWith('.html')) {
             res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
             res.setHeader('Pragma', 'no-cache');

@@ -39,6 +39,18 @@ function _sanitizeBookmarkImageUrl(value) {
 
 const _purifier = DOMPurify;
 
+const trustedHtmlPolicy = window.trustedTypes?.createPolicy('shared-page', {
+    createHTML(input) {
+        return sanitizeSharedHtml(typeof input === 'string' ? input : '');
+    }
+}) ?? null;
+
+function setSafeHtml(el, html) {
+    const sanitized = sanitizeSharedHtml(typeof html === 'string' ? html : '');
+    if (trustedHtmlPolicy) el.innerHTML = trustedHtmlPolicy.createHTML(sanitized);
+    else el.innerHTML = sanitized;
+}
+
 if (typeof _purifier?.addHook === 'function') {
     _purifier.addHook('uponSanitizeAttribute', (node, hookEvent) => {
         const name = String(hookEvent?.attrName || '').toLowerCase();
@@ -102,7 +114,7 @@ function sanitizeSharedHtml(html) {
             'img', 'figure'
         ],
         ALLOWED_ATTR: [
-            'class', 'href', 'target', 'rel', 'data-type', 'data-latex',
+            'href', 'target', 'rel', 'data-type', 'data-latex',
             'colspan', 'rowspan', 'colwidth',
             'src', 'alt', 'data-src', 'data-alt', 'data-caption', 'data-width', 'data-align',
             'data-id', 'data-icon',
@@ -148,7 +160,7 @@ function renderCheckboxes(container) {
             label.appendChild(checkbox);
             li.appendChild(label);
             const contentDiv = document.createElement('div');
-            contentDiv.innerHTML = sanitizeSharedHtml(content);
+            setSafeHtml(contentDiv, content);
             li.appendChild(contentDiv);
         });
     });
@@ -233,7 +245,7 @@ function renderBookmarks(container) {
         }
 
         const editorEl = document.getElementById('page-editor');
-        editorEl.innerHTML = sanitizeSharedHtml(data.content || '<p></p>');
+        setSafeHtml(editorEl, data.content || '<p></p>');
         editorEl.classList.remove('shared-page-loading');
 
         renderCheckboxes(editorEl);
