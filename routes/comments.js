@@ -14,8 +14,9 @@ const RATE_LIMIT_IPV6_SUBNET = (() => {
 
 const SHARED_COMMENT_CSRF_SECRET = String(process.env.SHARED_COMMENT_CSRF_SECRET || process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex'));
 
-function makeSharedCommentCookieName(tokenHash) {
-	return `shared_comment_sid_${tokenHash.substring(0, 12)}`;
+function makeSharedCommentCookieName(tokenHash, cookieSecure) {
+	const prefix = cookieSecure ? '__Secure-' : '';
+	return `${prefix}shared_comment_sid_${tokenHash.substring(0, 12)}`;
 }
 
 function signSharedCommentCsrf(tokenHash, sid) {
@@ -46,7 +47,8 @@ module.exports = (dependencies) => {
 		logError,
 		formatDateForDb,
 		getClientIpFromRequest,
-		getSessionFromRequest
+		getSessionFromRequest,
+		COOKIE_SECURE
 	} = dependencies;
 
 	function getClientIp(req) {
@@ -156,13 +158,13 @@ module.exports = (dependencies) => {
 			
 			let csrfToken = null;
 			if (!userId) {
-				const cookieName = makeSharedCommentCookieName(tokenHash);
+				const cookieName = makeSharedCommentCookieName(tokenHash, COOKIE_SECURE);
 				let sid = req.cookies?.[cookieName];
 				if (!sid) {
 					sid = crypto.randomBytes(24).toString('hex');
 					res.cookie(cookieName, sid, {
 						httpOnly: true,
-						secure: process.env.NODE_ENV === 'production',
+						secure: COOKIE_SECURE,
 						sameSite: 'Strict',
 						path: `/api/comments/shared/${token}`,
 						maxAge: 60 * 60 * 1000
@@ -214,7 +216,7 @@ module.exports = (dependencies) => {
 			}
 			
 			if (!userId) {
-				const cookieName = makeSharedCommentCookieName(tokenHash);
+				const cookieName = makeSharedCommentCookieName(tokenHash, COOKIE_SECURE);
 				const sid = req.cookies?.[cookieName];
 				const tokenFromHeader = req.headers['x-shared-csrf-token'];
 				if (!sid || typeof tokenFromHeader !== 'string') {

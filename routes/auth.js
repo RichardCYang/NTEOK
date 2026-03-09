@@ -230,12 +230,12 @@ module.exports = (dependencies) => {
 			}
 
 			if (!verifyCsrfTokenForSession(session.id, tokenFromHeader, 'api')) {
-				console.warn('CSRF 토큰 서명 검증 실패: /auth/logout - 세션 삭제 후 성공 처리');
-				await revokeSession(session.id, 'csrf-verify-failed');
-			} else {
-				try { wsCloseConnectionsForSession(session.id, 1008, 'Logout'); } catch (e) {}
-				await revokeSession(session.id, 'logout');
+				console.warn('CSRF 토큰 서명 검증 실패: /auth/logout');
+				return res.status(403).json({ error: 'CSRF 토큰이 유효하지 않습니다.' });
 			}
+
+			try { wsCloseConnectionsForSession(session.id, 1008, 'Logout'); } catch (e) {}
+			await revokeSession(session.id, 'logout');
 		}
 
 		res.clearCookie(SESSION_COOKIE_NAME, {
@@ -323,12 +323,19 @@ module.exports = (dependencies) => {
 		if (!passwordValidation.valid) return res.status(400).json({ error: passwordValidation.error });
 
 		try {
-			const [rows] = await pool.execute(`SELECT id FROM users WHERE username = ?`, [trimmedUsername]);
-			if (rows.length > 0) return res.status(409).json({ error: "이미 사용 중인 아이디입니다." });
 			const now = new Date();
 			const nowStr = formatDateForDb(now);
 			const passwordHash = await bcrypt.hash(password, BCRYPT_SALT_ROUNDS);
-			const [result] = await pool.execute(`INSERT INTO users (username, password_hash, created_at, updated_at) VALUES (?, ?, ?, ?)`, [trimmedUsername, passwordHash, nowStr, nowStr]);
+			let result;
+			try {
+				[result] = await pool.execute(`INSERT INTO users (username, password_hash, created_at, updated_at) VALUES (?, ?, ?, ?)`, [trimmedUsername, passwordHash, nowStr, nowStr]);
+			} catch (dbErr) {
+				if (dbErr && (dbErr.code === 'ER_DUP_ENTRY' || dbErr.errno === 1062)) {
+					await consumeBcryptCostForTiming(password);
+					return res.status(400).json({ error: "회원가입을 완료할 수 없습니다. 입력값을 확인해 주세요." });
+				}
+				throw dbErr;
+			}
 			const user = { id: result.insertId, username: trimmedUsername, blockDuplicateLogin: false };
 			const storageId = 'stg-' + now.getTime() + '-' + crypto.randomBytes(4).toString('hex');
 			await storagesRepo.createStorage({ userId: user.id, id: storageId, name: "기본 저장소", sortOrder: 0, createdAt: nowStr, updatedAt: nowStr });

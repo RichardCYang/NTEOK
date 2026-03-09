@@ -1378,6 +1378,7 @@ module.exports = (dependencies) => {
                     await assertSafeAttachmentFile(req.file.path, req.file.filename);
                 } catch (e) {
                     if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+                    if (e?.message === 'PDF_SCAN_TOO_LARGE') return res.status(413).json({ error: 'PDF 파일이 너무 커서 안전 검사를 수행할 수 없습니다. 더 작은 파일로 업로드해 주세요.' });
                     const msg = e?.message === 'RICH_DOCUMENT_ATTACHMENTS_DISABLED' ? '문서 첨부는 서버 보안 스캔 구성이 완료된 경우에만 허용됩니다.' : e?.message === 'OFFICE_SCAN_REQUIRED' ? 'Office 문서는 AV/CDR 스캔이 활성화되어야 업로드할 수 있습니다.' : '허용되지 않는 첨부파일 형식입니다.';
                     return res.status(400).json({ error: msg });
                 }

@@ -136,6 +136,36 @@ async function assertSafeOoxmlArchive(filePath) {
 	});
 }
 
+const PDF_ACTIVE_TOKEN_RE = /\/(?:JS|JavaScript|OpenAction|RichMedia|Launch|AcroForm|URI|SubmitForm|Named|EmbeddedFile)\b/i;
+const PDF_SCAN_MAX_BYTES = 16 * 1024 * 1024;
+
+async function assertSafePdfFile(filePath, maxBytes = PDF_SCAN_MAX_BYTES) {
+	const fh = await fs.promises.open(filePath, 'r');
+	try {
+		const st = await fh.stat();
+		if (st.size < 5) throw new Error('BAD_PDF_SIGNATURE');
+		if (st.size > maxBytes) throw new Error('PDF_SCAN_TOO_LARGE');
+		const signature = Buffer.alloc(5);
+		await fh.read(signature, 0, signature.length, 0);
+		if (!signature.equals(Buffer.from([0x25, 0x50, 0x44, 0x46, 0x2D]))) throw new Error('BAD_PDF_SIGNATURE');
+		const chunk = Buffer.alloc(64 * 1024);
+		const overlapBytes = 128;
+		let offset = 0;
+		let carry = '';
+		while (offset < st.size) {
+			const toRead = Math.min(chunk.length, st.size - offset);
+			const { bytesRead } = await fh.read(chunk, 0, toRead, offset);
+			if (!bytesRead) break;
+			const windowText = carry + chunk.subarray(0, bytesRead).toString('latin1');
+			if (PDF_ACTIVE_TOKEN_RE.test(windowText)) throw new Error('UNSAFE_PDF_ACTIVE_CONTENT');
+			carry = windowText.slice(-overlapBytes);
+			offset += bytesRead;
+		}
+	} finally {
+		await fh.close();
+	}
+}
+
 async function assertSafeAttachmentFile(filePath, originalName = '') {
 	const ext = path.extname(String(originalName || filePath)).toLowerCase();
 	if (!ALLOWED_ATTACHMENT_EXTS.has(ext)) throw new Error('DISALLOWED_ATTACHMENT_TYPE');
@@ -156,12 +186,7 @@ async function assertSafeAttachmentFile(filePath, originalName = '') {
 	}
 
 	if (ext === '.pdf') {
-		const full = fs.readFileSync(filePath);
-		if (full.length < 5 || !full.slice(0, 5).equals(Buffer.from([0x25, 0x50, 0x44, 0x46, 0x2D]))) throw new Error('BAD_PDF_SIGNATURE');
-		const head = full.slice(0, 8192).toString('utf8');
-		const tail = full.slice(-4096).toString('utf8');
-		const active = /\/(?:JS|JavaScript|OpenAction|RichMedia|Launch|AcroForm|URI|SubmitForm|Named|EmbeddedFile)/i;
-		if (active.test(head) || active.test(tail)) throw new Error('UNSAFE_PDF_ACTIVE_CONTENT');
+		await assertSafePdfFile(filePath);
 		return;
 	}
 	if (['.docx', '.xlsx', '.pptx'].includes(ext)) {
