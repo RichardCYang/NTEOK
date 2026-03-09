@@ -66,6 +66,7 @@ module.exports = (dependencies) => {
 		try {
 			const page = await pagesRepo.getPageByIdForUser({ userId, pageId });
 			if (!page) {
+				if (await forbidPrivateEncryptedPageComments(pageId, userId, res)) return null;
 				res.status(404).json({ error: "페이지를 찾을 수 없습니다." });
 				return null;
 			}
@@ -137,6 +138,24 @@ module.exports = (dependencies) => {
 		}
 	}
 
+
+	async function isPrivateEncryptedPageForOtherUser(pageId, userId) {
+		const [rows] = await pool.execute(
+			`SELECT is_encrypted, share_allowed, user_id FROM pages WHERE id = ?`,
+			[pageId]
+		);
+		if (rows.length === 0) return false;
+		const page = rows[0];
+		return Number(page.is_encrypted) === 1
+			&& Number(page.share_allowed) === 0
+			&& Number(page.user_id) !== Number(userId);
+	}
+
+	async function forbidPrivateEncryptedPageComments(pageId, userId, res) {
+		if (!await isPrivateEncryptedPageForOtherUser(pageId, userId)) return false;
+		res.status(403).json({ error: "비공개 암호화 페이지에는 댓글을 작성할 수 없습니다." });
+		return true;
+	}
 
 	router.get('/shared/:token', async (req, res) => {
 		const token = req.params.token;

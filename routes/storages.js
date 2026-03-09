@@ -224,14 +224,18 @@ module.exports = (dependencies) => {
 
     router.put('/:id', authMiddleware, csrfMiddleware, async (req, res) => {
         try {
+            const userId = req.user.id;
+            const storageId = req.params.id;
+
+            const storage = await storagesRepo.getStorageByIdForUser(userId, storageId);
+            if (!requireStorageOwner(storage, res, '수정할')) return;
+
             const { name } = req.body;
             const check = validateStorageName(name);
             if (!check) return res.status(400).json({ error: '저장소 이름을 입력해주세요.' });
             if (!check.ok) return res.status(400).json({ error: check.error });
             const storageName = check.value;
 
-            const userId = req.user.id;
-            const storageId = req.params.id;
             const now = new Date();
             const nowStr = formatDateForDb(now);
 

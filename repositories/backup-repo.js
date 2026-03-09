@@ -11,17 +11,21 @@ module.exports = ({
     return {
         async getExportRows(userId) {
             const storages = await storagesRepo.listStoragesForUser(userId);
-            
             const pages = await pagesRepo.listPagesForBackupExport({ userId });
 
-            const pageIds = (pages || []).map(p => p.id);
+            const safePages = (pages || []).filter(p => {
+                if (Number(p.is_encrypted) === 1 && Number(p.share_allowed) === 0) return Number(p.user_id) === Number(userId);
+                return true;
+            });
+
+            const pageIds = safePages.map(p => p.id);
             const publishes = pageIds.length > 0 
                 ? await pagePublishLinksRepo.listActiveLinksForPageIds(pageIds)
                 : [];
 
             return {
                 storages,
-                pages,
+                pages: safePages,
                 publishes
             };
         },

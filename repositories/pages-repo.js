@@ -74,7 +74,7 @@ module.exports = ({ pool, pageSqlPolicy }) => {
     return {
         async listPagesForUser({ userId, storageId = null }) {
             if (!storageId) return [];
-            const vis = pageSqlPolicy.andVisible({ alias: "p", viewerUserId: userId, storageAlias: "s" });
+            const vis = pageSqlPolicy.andVisible({ alias: "p", viewerUserId: userId });
             const query = `
                 (
                     SELECT p.id, p.title, p.updated_at, p.parent_id, p.sort_order,
@@ -112,7 +112,7 @@ module.exports = ({ pool, pageSqlPolicy }) => {
         },
 
         async getPageByIdForUser({ userId, pageId, includeDeleted = false }) {
-            const vis = pageSqlPolicy.andVisible({ alias: "p", viewerUserId: userId, storageAlias: "s" });
+            const vis = pageSqlPolicy.andVisible({ alias: "p", viewerUserId: userId });
             let sql = `SELECT p.id, p.title, p.content, p.encryption_salt, p.encrypted_content,
                         p.created_at, p.updated_at, p.parent_id, p.sort_order, p.storage_id,
                         p.is_encrypted, p.share_allowed, p.user_id, p.icon, p.cover_image, p.cover_position,
@@ -133,7 +133,7 @@ module.exports = ({ pool, pageSqlPolicy }) => {
         },
 
         async listTrashedPagesForUser({ userId, storageId }) {
-            const vis = pageSqlPolicy.andVisible({ alias: "p", viewerUserId: userId, storageAlias: "s" });
+            const vis = pageSqlPolicy.andVisible({ alias: "p", viewerUserId: userId });
             const [rows] = await pool.execute(
                 `SELECT p.id, p.title, p.updated_at, p.deleted_at, p.storage_id, p.user_id
                  FROM pages p
@@ -269,7 +269,7 @@ module.exports = ({ pool, pageSqlPolicy }) => {
         },
 
         async listPagesForBackupExport({ userId }) {
-            const vis = pageSqlPolicy.andVisible({ alias: "p", viewerUserId: userId, storageAlias: "s" });
+            const vis = pageSqlPolicy.andVisible({ alias: "p", viewerUserId: userId });
             const [rows] = await pool.execute(
                 `SELECT p.id, p.title, p.content, p.encryption_salt, p.encrypted_content,
                         p.e2ee_yjs_state, p.e2ee_yjs_state_updated_at,
@@ -308,7 +308,7 @@ module.exports = ({ pool, pageSqlPolicy }) => {
                     },
 
         async getUpdateHistory({ userId, storageId, limit = 50 }) {
-            const vis = pageSqlPolicy.visiblePredicate({ alias: "p", viewerUserId: userId, storageAlias: "s" });
+            const vis = pageSqlPolicy.visiblePredicate({ alias: "p", viewerUserId: userId });
 
             const [rows] = await pool.execute(
                 `SELECT h.*, u.username, p.title as page_title
