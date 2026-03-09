@@ -1385,22 +1385,15 @@ module.exports = (dependencies) => {
                     await assertSafeAttachmentFile(req.file.path, req.file.filename);
                 } catch (e) {
                     if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
-                    const msg =
-                        e?.message === 'RICH_DOCUMENT_ATTACHMENTS_DISABLED'
-                            ? '문서 첨부는 서버 보안 스캔 구성이 완료된 경우에만 허용됩니다.'
-                            : e?.message === 'OFFICE_SCAN_REQUIRED'
-                                ? 'Office 문서는 AV/CDR 스캔이 활성화되어야 업로드할 수 있습니다.'
-                                : '허용되지 않는 첨부파일 형식입니다.';
+                    const msg = e?.message === 'RICH_DOCUMENT_ATTACHMENTS_DISABLED' ? '문서 첨부는 서버 보안 스캔 구성이 완료된 경우에만 허용됩니다.' : e?.message === 'OFFICE_SCAN_REQUIRED' ? 'Office 문서는 AV/CDR 스캔이 활성화되어야 업로드할 수 있습니다.' : '허용되지 않는 첨부파일 형식입니다.';
                     return res.status(400).json({ error: msg });
                 }
-            }
             }
 
             try {
                 await enforceUploadQuotaOrThrow(userId, req.file.path);
             } catch (e) {
-                if (String(e?.message) === "UPLOAD_QUOTA_EXCEEDED")
-                    return res.status(413).json({ error: "업로드 용량 제한을 초과했습니다. (첨부파일 정리 후 다시 시도해주세요)" });
+                if (String(e?.message) === "UPLOAD_QUOTA_EXCEEDED") return res.status(413).json({ error: "업로드 용량 제한을 초과했습니다. (첨부파일 정리 후 다시 시도해주세요)" });
                 throw e;
             }
 

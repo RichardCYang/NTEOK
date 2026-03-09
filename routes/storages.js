@@ -194,7 +194,6 @@ module.exports = (dependencies) => {
             res.json({
                 ...storage,
                 is_encrypted: isEncrypted ? 1 : 0,
-                isEncrypted: isEncrypted ? 1 : 0,
                 encryption_salt: isEncrypted ? encryptionSalt : null,
                 encryption_check: null,
                 dek_version: useDekV1 ? 1 : 0,
@@ -259,18 +258,22 @@ module.exports = (dependencies) => {
         }
     });
 
-    router.get('/users/search', authMiddleware, collaboratorUserSearchLimiter, async (req, res) => {
+    router.get('/:id/users/search', authMiddleware, collaboratorUserSearchLimiter, async (req, res) => {
         try {
+            const storageId = req.params.id;
+            const storage = await storagesRepo.getStorageByIdForUser(req.user.id, storageId);
+            if (!requireStorageOwner(storage, res)) return;
+
             const normalizedQuery = normalizeUserSearchQuery(req.query.q);
             if (!normalizedQuery) return res.json([]);
 
-            const users = await dependencies.usersRepo.searchUsers(
+            const user = await dependencies.usersRepo.findUserByExactUsername(
                 normalizedQuery,
                 req.user.id
             );
-            res.json(users);
+            res.json(user ? [user] : []);
         } catch (error) {
-            logError('GET /api/storages/users/search', error);
+            logError('GET /api/storages/:id/users/search', error);
             res.status(500).json({ error: '사용자 검색 중 오류가 발생했습니다.' });
         }
     });
@@ -321,11 +324,6 @@ module.exports = (dependencies) => {
         } catch (error) {
             logError('POST /api/storages/:id/my-wrapped-dek', error);
             res.status(500).json({ error: 'wrapped DEK 를 불러오지 못했습니다.' });
-        }
-    });
-        } catch (error) {
-            logError('GET /api/storages/:id/my-wrapped-dek', error);
-            res.status(500).json({ error: 'wrapped DEK를 불러오지 못했습니다.' });
         }
     });
 

@@ -15,21 +15,13 @@ module.exports = ({ pool }) => {
             return rows?.[0] || null;
         },
 
-        async searchUsers(query, excludeUserId) {
-            const q = String(query ?? '').trim();
-            if (!q) return [];
-
-            const escaped = escapeLikePattern(q);
-
+        async findUserByExactUsername(username, excludeUserId) {
+            if (!username) return null;
             const [rows] = await pool.execute(
-                `SELECT id, username FROM users 
-                 WHERE username LIKE ? ESCAPE '\\\\'
-                   AND id != ?
-                 ORDER BY username ASC
-                 LIMIT 10`,
-                [`${escaped}%`, excludeUserId]
+                `SELECT id, username FROM users WHERE username = ? AND id != ?`,
+                [username, excludeUserId]
             );
-            return rows;
+            return rows[0] || null;
         },
 
         async getUserById(userId) {

@@ -25,6 +25,14 @@ function verifyBackupManifest(raw, sig) {
         return false;
     }
 }
+
+function sha256HexFromBuffer(buf) {
+    return crypto.createHash('sha256').update(buf).digest('hex');
+}
+
+function readEntryBuffer(entry) {
+    return entry.data ? entry.data : fs.readFileSync(entry.tempFilePath);
+}
 const rateLimit = erl.rateLimit || erl;
 const { ipKeyGenerator } = erl;
 const { Transform, pipeline } = require('stream');
@@ -252,8 +260,17 @@ module.exports = (dependencies) => {
         generatePublishToken,
         generatePageId,
         formatDateForDb,
-        logError
+        logError,
+        requireRecentReauth
 	} = dependencies;
+
+    const backupExportLimiter = rateLimit({
+        windowMs: 10 * 60 * 1000,
+        max: 3,
+        standardHeaders: true,
+        legacyHeaders: false,
+        keyGenerator: (req) => String(req.user?.id || ipKeyGenerator(req)),
+    });
 
     const wsConnections = dependencies.wsConnections;
     const yjsDocuments = dependencies.yjsDocuments;
@@ -772,11 +789,15 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
         }
     }
 
-    router.get('/export', authMiddleware, async (req, res) => {
+    router.post('/export', authMiddleware, csrfMiddleware, requireRecentReauth(10 * 60 * 1000), backupExportLimiter, async (req, res) => {
         const userId = req.user.id;
 
         try {
+            res.set('Cache-Control', 'no-store, max-age=0');
+            res.set('Pragma', 'no-cache');
+
             await flushAllPendingE2eeSaves(pool);
+            ... (rest of the code until res.attachment)
 
             try {
                 const [ownedRows] = await pool.execute(
@@ -860,11 +881,23 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
             res.type('application/zip');
 
             archive.on('error', (err) => {
-                console.error('ZIP 생성 오류:', err);
-                res.status(500).json({ error: 'ZIP 생성 실패' });
+                logError('ZIP 생성 오류', err);
+                if (!res.headersSent) res.status(500).json({ error: 'ZIP 생성 실패' });
             });
 
             archive.pipe(res);
+
+            const integrityEntries = [];
+            const appendTrackedBuffer = (name, data) => {
+                const buf = Buffer.isBuffer(data) ? data : Buffer.from(String(data), 'utf8');
+                integrityEntries.push({ name, sha256: sha256HexFromBuffer(buf) });
+                archive.append(buf, { name });
+            };
+            const appendTrackedFile = (name, filePath) => {
+                const buf = fs.readFileSync(filePath);
+                integrityEntries.push({ name, sha256: sha256HexFromBuffer(buf) });
+                archive.append(buf, { name });
+            };
 
             const imagesToInclude = new Set();
             const paperclipsToInclude = new Set();
@@ -873,7 +906,6 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
 
             for (const ref of fileRefs) {
                 const ftype = normalizeFileType(ref.file_type);
-
                 if (ftype === FILE_TYPE.IMGS) {
                     const normalized = normalizeUserImageRefForExport(`${ref.owner_user_id}/${ref.stored_filename}`, userId);
                     if (normalized) imagesToInclude.add(normalized);
@@ -923,9 +955,9 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
                     encryptionCheck: storage.encryption_check || null
                 };
 
-                archive.append(
-                    JSON.stringify(storageMetadata, null, 2),
-                    { name: `workspaces/${storageFolderName}.json` }
+                appendTrackedBuffer(
+                    `workspaces/${storageFolderName}.json`,
+                    JSON.stringify(storageMetadata, null, 2)
                 );
             }
 
@@ -949,14 +981,14 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
                 const pageData = normalizePageRowForBackupExport(page, publishInfo);
 
                 const html = convertPageToHTML(pageData);
-                archive.append(html, { name: `pages/${storageFolderName}/${pageFileName}.html` });
+                appendTrackedBuffer(`pages/${storageFolderName}/${pageFileName}.html`, html);
 
                 if (page.e2ee_yjs_state) {
                     try {
                         const buf = Buffer.isBuffer(page.e2ee_yjs_state)
                             ? page.e2ee_yjs_state
                             : Buffer.from(String(page.e2ee_yjs_state), 'utf8');
-                        archive.append(buf, { name: `e2ee/${page.id}.bin` });
+                        appendTrackedBuffer(`e2ee/${page.id}.bin`, buf);
                         e2eeStatesCount++;
                     } catch (_) {}
                 }
@@ -975,7 +1007,7 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
 
                 const finalPath = coverPath || imgPath;
                 if (finalPath) {
-                    archive.file(finalPath, { name: `images/${imageRef}` });
+                    appendTrackedFile(`images/${imageRef}`, finalPath);
                 }
             }
 
@@ -987,7 +1019,7 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
                 const pcRoot = path.join(__dirname, '..', 'paperclip');
                 const finalPath = resolveSafeUserFilePath(pcRoot, ownerId, filename);
                 if (finalPath) {
-                    archive.file(finalPath, { name: `paperclip/${pcRef}` });
+                    appendTrackedFile(`paperclip/${pcRef}`, finalPath);
                 }
             }
 
@@ -1003,7 +1035,7 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
                     };
                 })
                 .filter(Boolean);
-            archive.append(JSON.stringify({ fileRefs: safeFileRefs }, null, 2), { name: 'file-refs.json' });
+            appendTrackedBuffer('file-refs.json', JSON.stringify({ fileRefs: safeFileRefs }, null, 2));
 
             const backupInfo = {
                 version: '2.2 (E2EE yjs_state binary support)',
@@ -1014,34 +1046,42 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
                 imagesCount: imagesToInclude.size,
                 paperclipsCount: paperclipsToInclude.size
             };
-            archive.append(JSON.stringify(backupInfo, null, 2), { name: 'backup-info.json' });
+            appendTrackedBuffer('backup-info.json', JSON.stringify(backupInfo, null, 2));
 
-            const encryptedManifest = {
+            const backupManifest = {
                 version: 1,
                 createdAt: new Date().toISOString(),
-                storages: storages.map(s => ({
-                    id: s.id,
-                    isEncrypted: Number(s.is_encrypted) === 1,
-                    hasSalt: !!s.encryption_salt,
-                    hasCheck: !!s.encryption_check
-                })),
-                e2eePages: pages.filter(p => !!p.e2ee_yjs_state).map(p => p.id)
+                entries: integrityEntries.sort((a, b) => a.name.localeCompare(b.name)),
+                encrypted: {
+                    storages: storages.map(s => ({
+                        id: s.id,
+                        isEncrypted: Number(s.is_encrypted) === 1,
+                        hasSalt: !!s.encryption_salt,
+                        hasCheck: !!s.encryption_check
+                    })),
+                    e2eePages: pages.filter(p => !!p.e2ee_yjs_state).map(p => p.id)
+                }
             };
-            const encryptedManifestRaw = JSON.stringify(encryptedManifest);
-            archive.append(encryptedManifestRaw, { name: 'e2ee-manifest.json' });
-            archive.append(signBackupManifest(encryptedManifestRaw), { name: 'e2ee-manifest.sig' });
+            const backupManifestRaw = JSON.stringify(backupManifest);
+            archive.append(backupManifestRaw, { name: 'backup-manifest.json' });
+            archive.append(signBackupManifest(backupManifestRaw), { name: 'backup-manifest.sig' });
 
             await archive.finalize();
             console.log(`[백업 내보내기] 사용자 ${userId} 완료 (E2EE 상태: ${e2eeStatesCount})`);
         } catch (error) {
-            logError('GET /api/backup/export', error);
+            logError('POST /api/backup/export', error);
             if (!res.headersSent) res.status(500).json({ error: '백업 내보내기 실패' });
         }
     });
 
-    router.post('/import', authMiddleware, csrfMiddleware, backupImportLimiter, backupUpload.single('backup'), async (req, res) => {
+    router.post('/import', authMiddleware, csrfMiddleware, requireRecentReauth(10 * 60 * 1000), backupImportLimiter, backupUpload.single('backup'), async (req, res) => {
         const userId = req.user.id;
         const uploadedFile = req.file;
+
+        if (req.body.confirm !== 'IMPORT_BACKUP') {
+            if (uploadedFile && fs.existsSync(uploadedFile.path)) fs.unlinkSync(uploadedFile.path);
+            return res.status(400).json({ error: '가져오기 확인이 필요합니다.' });
+        }
 
         if (!uploadedFile) return res.status(400).json({ error: '파일이 없습니다.' });
 
@@ -1053,15 +1093,23 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
             const zipEntries = importResult.zipEntries;
             extractDir = importResult.extractDir;
 
-            const manifestEntry = zipEntries.find(e => e.entryName === 'e2ee-manifest.json');
-            const manifestSigEntry = zipEntries.find(e => e.entryName === 'e2ee-manifest.sig');
-            const hasEncryptedMaterial = zipEntries.some(e => e.entryName.startsWith('e2ee/') || e.entryName.startsWith('workspaces/') || e.entryName.startsWith('collections/'));
+            const manifestEntry = zipEntries.find(e => e.entryName === 'backup-manifest.json');
+            const manifestSigEntry = zipEntries.find(e => e.entryName === 'backup-manifest.sig');
+            if (!manifestEntry || !manifestSigEntry) throw new Error('서명되지 않은 백업은 가져올 수 없습니다.');
 
-            if (hasEncryptedMaterial) {
-                if (!manifestEntry || !manifestSigEntry) throw new Error('서명되지 않은 암호화 백업은 가져올 수 없습니다.');
-                const manifestRaw = manifestEntry.data ? manifestEntry.data.toString('utf8') : fs.readFileSync(manifestEntry.tempFilePath, 'utf8');
-                const manifestSig = manifestSigEntry.data ? manifestSigEntry.data.toString('utf8') : fs.readFileSync(manifestSigEntry.tempFilePath, 'utf8');
-                if (!verifyBackupManifest(manifestRaw, manifestSig)) throw new Error('백업 서명 검증 실패: 암호화 메타데이터를 신뢰할 수 없습니다.');
+            const manifestRaw = manifestEntry.data ? manifestEntry.data.toString('utf8') : fs.readFileSync(manifestEntry.tempFilePath, 'utf8');
+            const manifestSig = manifestSigEntry.data ? manifestSigEntry.data.toString('utf8') : fs.readFileSync(manifestSigEntry.tempFilePath, 'utf8');
+            if (!verifyBackupManifest(manifestRaw, manifestSig)) throw new Error('백업 서명 검증 실패: 신뢰할 수 없는 백업입니다.');
+
+            const manifest = safeJsonParse(manifestRaw, 'backup-manifest.json');
+            if (!manifest || !Array.isArray(manifest.entries)) throw new Error('백업 매니페스트 형식이 올바르지 않습니다.');
+
+            const zipEntryByName = new Map((zipEntries || []).map(e => [e.entryName, e]));
+            for (const item of manifest.entries) {
+                const entry = zipEntryByName.get(item.name);
+                if (!entry) throw new Error(`백업 무결성 오류: 항목 누락 (${item.name})`);
+                const actualHash = sha256HexFromBuffer(readEntryBuffer(entry));
+                if (actualHash !== item.sha256) throw new Error(`백업 무결성 오류: 해시 불일치 (${item.name})`);
             }
 
             const zipEntryByName = new Map((zipEntries || []).map(e => [e.entryName, e]));
