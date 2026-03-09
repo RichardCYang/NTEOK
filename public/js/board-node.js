@@ -1,6 +1,7 @@
 
 import { addIcon } from './ui-utils.js';
 import * as DOMPurifyModule from '../lib/dompurify/dompurify.js';
+import { safeJsonClone, safeJsonParse } from './safe-json.js';
 
 function createPurifier() {
     let m = DOMPurifyModule;
@@ -13,45 +14,45 @@ const DOMPurify = createPurifier();
 const Node = Tiptap.Core.Node;
 
 const BOARD_CARD_PURIFY_CONFIG = {
-	USE_PROFILES: { html: true },
-	ALLOWED_TAGS: [
-		'br','p','div','span',
-		'strong','b','em','i','u','s',
-		'code','pre','ul','ol','li','blockquote',
-		'a'
-	],
-	ALLOWED_ATTR: ['href','target','rel'],
-	FORBID_TAGS: ['style','script','svg','math'],
+    USE_PROFILES: { html: true },
+    ALLOWED_TAGS: [
+        'br','p','div','span',
+        'strong','b','em','i','u','s',
+        'code','pre','ul','ol','li','blockquote',
+        'a'
+    ],
+    ALLOWED_ATTR: ['href','target','rel'],
+    FORBID_TAGS: ['style','script','svg','math'],
 };
 
 function sanitizeBoardCardHtml(html) {
-	const clean = DOMPurify.sanitize(String(html ?? ''), BOARD_CARD_PURIFY_CONFIG);
+    const clean = DOMPurify.sanitize(String(html ?? ''), BOARD_CARD_PURIFY_CONFIG);
 
-	const tmp = document.createElement('div');
-	tmp.innerHTML = clean;
-	tmp.querySelectorAll('a').forEach((a) => {
-		const target = (a.getAttribute('target') || '').toLowerCase();
-		if (target === '_blank') {
-		    const rel = new Set((a.getAttribute('rel') || '').split(/\s+/).filter(Boolean).map((s) => s.toLowerCase()));
-		    rel.add('noopener');
-		    rel.add('noreferrer');
-		    a.setAttribute('rel', Array.from(rel).join(' '));
-		}
-	});
-	return tmp.innerHTML;
+    const tmp = document.createElement('div');
+    tmp.innerHTML = clean;
+    tmp.querySelectorAll('a').forEach((a) => {
+        const target = (a.getAttribute('target') || '').toLowerCase();
+        if (target === '_blank') {
+            const rel = new Set((a.getAttribute('rel') || '').split(/\s+/).filter(Boolean).map((s) => s.toLowerCase()));
+            rel.add('noopener');
+            rel.add('noreferrer');
+            a.setAttribute('rel', Array.from(rel).join(' '));
+        }
+    });
+    return tmp.innerHTML;
 }
 
 function sanitizeBoardColumns(columns) {
-	if (!Array.isArray(columns)) return columns;
-	for (const col of columns) {
-		if (!col || typeof col !== 'object') continue;
-		if (!Array.isArray(col.cards)) col.cards = [];
-		for (const card of col.cards) {
-		    if (!card || typeof card !== 'object') continue;
-		    card.content = sanitizeBoardCardHtml(card.content);
-		}
-	}
-	return columns;
+    if (!Array.isArray(columns)) return columns;
+    for (const col of columns) {
+        if (!col || typeof col !== 'object') continue;
+        if (!Array.isArray(col.cards)) col.cards = [];
+        for (const card of col.cards) {
+            if (!card || typeof card !== 'object') continue;
+            card.content = sanitizeBoardCardHtml(card.content);
+        }
+    }
+    return columns;
 }
 
 const BOARD_THEME_ICONS = [
@@ -95,17 +96,13 @@ export const BoardBlock = Node.create({
                 ],
                 parseHTML: element => {
                     const data = element.getAttribute('data-columns');
-                    try {
-						if (!data) return null;
-						const parsed = JSON.parse(data);
-						return sanitizeBoardColumns(parsed);
-                    } catch (e) {
-                        return null;
-                    }
+                    if (!data) return null;
+                    const parsed = safeJsonParse(data, null);
+                    return sanitizeBoardColumns(parsed);
                 },
                 renderHTML: attributes => {
-					const safeColumns = sanitizeBoardColumns(JSON.parse(JSON.stringify(attributes.columns ?? [])));
-					return { 'data-columns': JSON.stringify(safeColumns) };
+                    const safeColumns = sanitizeBoardColumns(safeJsonClone(attributes.columns ?? [], []));
+                    return { 'data-columns': JSON.stringify(safeColumns) };
                 }
             }
         };
@@ -129,7 +126,7 @@ export const BoardBlock = Node.create({
             container.className = 'board-container';
             container.contentEditable = 'false';
 
-            let columns = sanitizeBoardColumns(JSON.parse(JSON.stringify(node.attrs.columns))); 
+            let columns = sanitizeBoardColumns(safeJsonClone(node.attrs.columns, [])); 
             let draggedCardId = null;
             let draggedFromColId = null;
             let lastIsEditable = editor.isEditable; 

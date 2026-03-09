@@ -1,4 +1,6 @@
 
+import { sanitizeBlockAlign, sanitizeCssLength } from './node-attr-sanitizers.js';
+
 const Node = Tiptap.Core.Node;
 
 const _YT_ALLOWED_HOSTS = new Set([
@@ -76,11 +78,11 @@ export const YoutubeBlock = Node.create({
             {
                 tag: 'div[data-type="youtube"]',
                 getAttrs: (element) => {
-                	const normalized = normalizeYouTubeEmbedUrl(element.getAttribute('data-src') || '');
+                    const normalized = normalizeYouTubeEmbedUrl(element.getAttribute('data-src') || '');
                     return {
                         src: normalized,
-                        width: element.getAttribute('data-width') || '100%',
-                        align: element.getAttribute('data-align') || 'center',
+                        width: sanitizeCssLength(element.getAttribute('data-width'), '100%'),
+                        align: sanitizeBlockAlign(element.getAttribute('data-align'), 'center'),
                         caption: element.getAttribute('data-caption') || ''
                     };
                 }
@@ -89,17 +91,19 @@ export const YoutubeBlock = Node.create({
     },
 
     renderHTML({ node, HTMLAttributes }) {
-    	const safeSrc = normalizeYouTubeEmbedUrl(node.attrs.src || '') || 'about:blank';
+        const safeSrc = normalizeYouTubeEmbedUrl(node.attrs.src || '') || 'about:blank';
+        const safeWidth = sanitizeCssLength(node.attrs.width, '100%');
+        const safeAlign = sanitizeBlockAlign(node.attrs.align, 'center');
         return [
             'div',
             {
                 'data-type': 'youtube',
                 'data-src': safeSrc,
-                'data-width': node.attrs.width || '100%',
-                'data-align': node.attrs.align || 'center',
+                'data-width': safeWidth,
+                'data-align': safeAlign,
                 'data-caption': node.attrs.caption || '',
                 'class': 'youtube-block-wrapper',
-                'style': `width: ${node.attrs.width || '100%'};`
+                'style': `width: ${safeWidth};`
             },
             [
                 'div',
@@ -129,11 +133,11 @@ export const YoutubeBlock = Node.create({
             const wrapper = document.createElement('div');
             wrapper.className = 'youtube-block-wrapper';
             wrapper.contentEditable = 'false';
-            wrapper.style.width = node.attrs.width || '100%';
-            wrapper.setAttribute('data-align', node.attrs.align || 'center');
+            wrapper.style.width = sanitizeCssLength(node.attrs.width, '100%');
+            wrapper.setAttribute('data-align', sanitizeBlockAlign(node.attrs.align, 'center'));
 
-            let currentWidth = node.attrs.width || '100%';
-            let currentAlign = node.attrs.align || 'center';
+            let currentWidth = sanitizeCssLength(node.attrs.width, '100%');
+            let currentAlign = sanitizeBlockAlign(node.attrs.align, 'center');
             let currentCaption = node.attrs.caption || '';
 
             const container = document.createElement('div');

@@ -1,6 +1,7 @@
 
 import { addIcon } from './ui-utils.js';
 import * as DOMPurifyModule from '../lib/dompurify/dompurify.js';
+import { safeJsonParse } from './safe-json.js';
 
 function createPurifier() {
     let m = DOMPurifyModule;
@@ -43,7 +44,8 @@ export const DatabaseBlock = Node.create({
                 ],
                 parseHTML: element => {
                     const data = element.getAttribute('data-columns');
-                    try { return data ? JSON.parse(data) : null; } catch (e) { return null; }
+                    const parsed = safeJsonParse(data, null);
+                    return Array.isArray(parsed) ? parsed : null;
                 },
                 renderHTML: attributes => ({ 'data-columns': JSON.stringify(attributes.columns) })
             },
@@ -53,7 +55,8 @@ export const DatabaseBlock = Node.create({
                 ],
                 parseHTML: element => {
                     const data = element.getAttribute('data-rows');
-                    try { return data ? JSON.parse(data) : null; } catch (e) { return null; }
+                    const parsed = safeJsonParse(data, null);
+                    return Array.isArray(parsed) ? parsed : null;
                 },
                 renderHTML: attributes => ({ 'data-rows': JSON.stringify(attributes.rows) })
             }

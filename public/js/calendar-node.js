@@ -1,4 +1,7 @@
 
+import { sanitizeBlockAlign, sanitizeCssLength } from './node-attr-sanitizers.js';
+import { safeJsonParse } from './safe-json.js';
+
 const Node = Tiptap.Core.Node;
 
 export const CalendarBlock = Node.create({
@@ -21,11 +24,8 @@ export const CalendarBlock = Node.create({
                 default: {},
                 parseHTML: element => {
                     const memos = element.getAttribute('data-memos');
-                    try {
-                        return memos ? JSON.parse(memos) : {};
-                    } catch (e) {
-                        return {};
-                    }
+                    const parsed = safeJsonParse(memos, {});
+                    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
                 },
                 renderHTML: attributes => {
                     return { 'data-memos': JSON.stringify(attributes.memos) };
@@ -33,16 +33,16 @@ export const CalendarBlock = Node.create({
             },
             width: {
                 default: '100%',
-                parseHTML: element => element.getAttribute('data-width') || '100%',
+                parseHTML: element => sanitizeCssLength(element.getAttribute('data-width'), '100%'),
                 renderHTML: attributes => {
-                    return { 'data-width': attributes.width };
+                    return { 'data-width': sanitizeCssLength(attributes.width, '100%') };
                 }
             },
             align: {
                 default: 'center',
-                parseHTML: element => element.getAttribute('data-align') || 'center',
+                parseHTML: element => sanitizeBlockAlign(element.getAttribute('data-align'), 'center'),
                 renderHTML: attributes => {
-                    return { 'data-align': attributes.align };
+                    return { 'data-align': sanitizeBlockAlign(attributes.align, 'center') };
                 }
             }
         };
@@ -57,13 +57,14 @@ export const CalendarBlock = Node.create({
     },
 
     renderHTML({ node, HTMLAttributes }) {
+        const safeWidth = sanitizeCssLength(node.attrs.width, '100%');
         return [
             'div',
             {
                 ...HTMLAttributes,
                 'data-type': 'calendar-block',
                 'class': 'calendar-block',
-                'style': `width: ${node.attrs.width};`
+                'style': `width: ${safeWidth};`
             }
         ];
     },
@@ -74,12 +75,12 @@ export const CalendarBlock = Node.create({
             const wrapper = document.createElement('div');
             wrapper.className = 'calendar-block-wrapper';
             wrapper.contentEditable = 'false';
-            wrapper.style.width = node.attrs.width || '100%';
-            wrapper.setAttribute('data-align', node.attrs.align || 'center');
+            wrapper.style.width = sanitizeCssLength(node.attrs.width, '100%');
+            wrapper.setAttribute('data-align', sanitizeBlockAlign(node.attrs.align, 'center'));
 
             let selectedDateStr = node.attrs.selectedDate || new Date().toISOString().split('T')[0];
             let memos = { ...node.attrs.memos };
-            let currentAlign = node.attrs.align || 'center';
+            let currentAlign = sanitizeBlockAlign(node.attrs.align, 'center');
             let currentViewDate = new Date(selectedDateStr);
             currentViewDate.setDate(1);
             let lastIsEditable = editor.isEditable;

@@ -3,6 +3,7 @@ const _DOMPurify = DOMPurifyModule.default || DOMPurifyModule;
 const DOMPurify = (typeof _DOMPurify === 'function' && !_DOMPurify.sanitize) ? _DOMPurify(window) : _DOMPurify;
 
 import { sanitizeHttpHref } from './url-utils.js';
+import { sanitizeBlockAlign, sanitizeCssLength } from './node-attr-sanitizers.js';
 
 const CONTROL_CHARS_RE = /[\u0000-\u001F\u007F]/;
 
@@ -31,6 +32,16 @@ if (!hooksInstalled) {
                 return;
             }
             data.attrValue = safe;
+        }
+
+        if (name === 'data-width') {
+            data.attrValue = sanitizeCssLength(raw, '100%');
+            return;
+        }
+
+        if (name === 'data-align') {
+            data.attrValue = sanitizeBlockAlign(raw, 'center');
+            return;
         }
 
         if (name === 'data-url' || name === 'data-thumbnail') {

@@ -323,6 +323,24 @@ module.exports = (dependencies) => {
         handler: (_req, res) => res.status(429).json({ error: "업로드 요청이 너무 많습니다. 잠시 후 다시 시도해주세요." })
     });
 
+    const imageUploadLimiter = rateLimit({
+        windowMs: 60 * 60 * 1000,
+        max: Number.parseInt(process.env.IMAGE_UPLOAD_MAX_PER_HOUR || "100", 10),
+        standardHeaders: true,
+        legacyHeaders: false,
+        keyGenerator: (req) => req.user?.id ? `user:${req.user.id}` : `ip:${getClientIp(req)}`,
+        handler: (_req, res) => res.status(429).json({ error: "이미지 업로드 요청이 너무 많습니다." })
+    });
+
+    const attachmentUploadLimiter = rateLimit({
+        windowMs: 60 * 60 * 1000,
+        max: Number.parseInt(process.env.ATTACHMENT_UPLOAD_MAX_PER_HOUR || "30", 10),
+        standardHeaders: true,
+        legacyHeaders: false,
+        keyGenerator: (req) => req.user?.id ? `user:${req.user.id}` : `ip:${getClientIp(req)}`,
+        handler: (_req, res) => res.status(429).json({ error: "첨부파일 업로드 요청이 너무 많습니다." })
+    });
+
     const usageCache = new Map(); 
     const USAGE_CACHE_TTL_MS = 30 * 1000;
 
@@ -361,14 +379,12 @@ module.exports = (dependencies) => {
                 path.join(__dirname, "..", "covers", String(userId))
             ];
 
-            const bases = dirs.map(d => path.resolve(d) + path.sep);
             const resolvedNew = newFilePath ? path.resolve(newFilePath) : "";
-            const isNewPathSafe =
-                resolvedNew &&
-                bases.some(b => resolvedNew.startsWith(b));
+            const tmpDir = path.resolve(__dirname, "..", ".upload-tmp") + path.sep;
+            const isNewPathInTmp = resolvedNew && resolvedNew.startsWith(tmpDir);
 
             const safeUnlinkNewFile = () => {
-                if (!isNewPathSafe) return;
+                if (!isNewPathInTmp) return;
                 try { if (newFilePath && fs.existsSync(newFilePath)) fs.unlinkSync(newFilePath); } catch (_) {}
             };
 
@@ -377,7 +393,7 @@ module.exports = (dependencies) => {
 
             if (cached && (now - cached.ts) < USAGE_CACHE_TTL_MS) {
                 let addedBytes = 0;
-                if (isNewPathSafe) {
+                if (isNewPathInTmp) {
                     try {
                         const st = await fs.promises.stat(newFilePath);
                         if (st && typeof st.size === "number" && st.size > 0) addedBytes = st.size;
@@ -407,6 +423,17 @@ module.exports = (dependencies) => {
                 throw new Error("UPLOAD_QUOTA_EXCEEDED");
             }
         });
+    }
+
+    async function moveUploadedFileToOwnedDir(fileObj, userId, subDir) {
+        const destDir = path.join(__dirname, '..', subDir, String(userId));
+        if (!fs.existsSync(destDir)) fs.mkdirSync(destDir, { recursive: true });
+        const destPath = path.join(destDir, fileObj.filename);
+        if (fileObj.path !== destPath) {
+            fs.renameSync(fileObj.path, destPath);
+            fileObj.path = destPath;
+        }
+        return destPath;
     }
 
     async function loadPageForMutationOr404(userId, pageId, res) {
@@ -1268,7 +1295,7 @@ module.exports = (dependencies) => {
         }
     });
 
-    router.post("/:id/cover", authMiddleware, csrfMiddleware, fileUploadLimiter, coverUpload.single('cover'), async (req, res) => {
+    router.post("/:id/cover", authMiddleware, csrfMiddleware, imageUploadLimiter, coverUpload.single('cover'), async (req, res) => {
         const id = req.params.id;
         const userId = req.user.id;
         if (!req.file) return res.status(400).json({ error: "No file uploaded" });
@@ -1296,6 +1323,8 @@ module.exports = (dependencies) => {
                     return res.status(413).json({ error: "업로드 용량 제한을 초과했습니다. (파일 정리 후 다시 시도해주세요)" });
                 throw e;
             }
+
+            await moveUploadedFileToOwnedDir(req.file, userId, 'covers');
 
             const coverPath = `${userId}/${req.file.filename}`;
             await pool.execute(`UPDATE pages SET cover_image=?, cover_position=50, updated_at=NOW() WHERE id=?`, [coverPath, id]);
@@ -1349,7 +1378,7 @@ module.exports = (dependencies) => {
         }
     });
 
-    router.post("/:id/file", authMiddleware, csrfMiddleware, fileUploadLimiter, fileUpload.single('file'), async (req, res) => {
+    router.post("/:id/file", authMiddleware, csrfMiddleware, attachmentUploadLimiter, fileUpload.single('file'), async (req, res) => {
         const id = req.params.id;
         const userId = req.user.id;
         if (!req.file) return res.status(400).json({ error: "No file uploaded" });
@@ -1390,6 +1419,8 @@ module.exports = (dependencies) => {
                 if (String(e?.message) === "UPLOAD_QUOTA_EXCEEDED") return res.status(413).json({ error: "업로드 용량 제한을 초과했습니다. (첨부파일 정리 후 다시 시도해주세요)" });
                 throw e;
             }
+
+            await moveUploadedFileToOwnedDir(req.file, userId, 'paperclip');
 
             const fileUrl = `/paperclip/${userId}/${req.file.filename}`;
 
@@ -1733,7 +1764,7 @@ module.exports = (dependencies) => {
         }
     });
 
-    router.post("/:id/editor-image", authMiddleware, csrfMiddleware, fileUploadLimiter, editorImageUpload.single('image'), async (req, res) => {
+    router.post("/:id/editor-image", authMiddleware, csrfMiddleware, imageUploadLimiter, editorImageUpload.single('image'), async (req, res) => {
         const id = req.params.id;
         const userId = req.user.id;
         if (!req.file) return res.status(400).json({ error: "No file uploaded" });
@@ -1761,6 +1792,8 @@ module.exports = (dependencies) => {
                     return res.status(413).json({ error: "업로드 용량 제한을 초과했습니다. (이미지 정리 후 다시 시도해주세요)" });
                 throw e;
             }
+
+            await moveUploadedFileToOwnedDir(req.file, userId, 'imgs');
 
             const imageUrl = `/imgs/${userId}/${req.file.filename}`;
 

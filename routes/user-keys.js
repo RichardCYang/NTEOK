@@ -125,7 +125,7 @@ module.exports = (dependencies) => {
         }
     });
 
-    router.delete('/:kid', authMiddleware, csrfMiddleware, async (req, res) => {
+    router.delete('/:kid', authMiddleware, csrfMiddleware, requireRecentReauth(10 * 60 * 1000), async (req, res) => {
         try {
             const userId = req.user.id;
             const kid = req.params.kid;

@@ -1,6 +1,7 @@
 
 import { sanitizeHttpHref } from './url-utils.js';
 import { secureFetch } from './ui-utils.js';
+import { sanitizeBlockAlign, sanitizeCssLength } from './node-attr-sanitizers.js';
 
 const Node = Tiptap.Core.Node;
 
@@ -101,8 +102,8 @@ export const ImageWithCaption = Node.create({
                                 src: safeDataSrc,
                                 alt: dataAlt || '',
                                 caption: dataCaption || '',
-                                width: dataWidth || '100%',
-                                align: dataAlign || 'center'
+                                width: sanitizeCssLength(dataWidth, '100%'),
+                                align: sanitizeBlockAlign(dataAlign, 'center')
                             };
                         }
                     }
@@ -116,8 +117,11 @@ export const ImageWithCaption = Node.create({
                         src: safeImgSrc,
                         alt: img?.getAttribute('alt') || '',
                         caption: captionDiv?.textContent || captionInput?.value || '',
-                        width: element.style.width || '100%',
-                        align: element.getAttribute('data-align') || 'center'
+                        width: sanitizeCssLength(
+                            element.getAttribute('data-width') || element.style.width,
+                            '100%'
+                        ),
+                        align: sanitizeBlockAlign(element.getAttribute('data-align'), 'center')
                     };
                 }
             }
@@ -126,6 +130,8 @@ export const ImageWithCaption = Node.create({
 
     renderHTML({ node, HTMLAttributes }) {
         const safeSrc = sanitizeImageSrc(node.attrs.src || '') || '';
+        const safeWidth = sanitizeCssLength(node.attrs.width, '100%');
+        const safeAlign = sanitizeBlockAlign(node.attrs.align, 'center');
         return [
             'figure',
             {
@@ -134,10 +140,10 @@ export const ImageWithCaption = Node.create({
                 'data-src': safeSrc,
                 'data-alt': node.attrs.alt || '',
                 'data-caption': node.attrs.caption || '',
-                'data-width': node.attrs.width || '100%',
-                'data-align': node.attrs.align || 'center',
+                'data-width': safeWidth,
+                'data-align': safeAlign,
                 'class': 'image-with-caption',
-                'style': `width: ${node.attrs.width || '100%'};`
+                'style': `width: ${safeWidth};`
             },
             [
                 'div',
@@ -168,8 +174,8 @@ export const ImageWithCaption = Node.create({
             const figure = document.createElement('figure');
             figure.className = 'image-with-caption-wrapper';
             figure.contentEditable = 'false';
-            figure.style.width = node.attrs.width || '100%';
-            figure.setAttribute('data-align', node.attrs.align || 'center');
+            figure.style.width = sanitizeCssLength(node.attrs.width, '100%');
+            figure.setAttribute('data-align', sanitizeBlockAlign(node.attrs.align, 'center'));
 
             try {
                 const pageId = window.appState?.currentPageId;
@@ -180,7 +186,7 @@ export const ImageWithCaption = Node.create({
             } catch (_) {}
 
             let currentCaption = node.attrs.caption || '';
-            let currentAlign = node.attrs.align || 'center';
+            let currentAlign = sanitizeBlockAlign(node.attrs.align, 'center');
 
             const imageContainer = document.createElement('div');
             imageContainer.className = 'image-container';

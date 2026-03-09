@@ -234,6 +234,28 @@ function sanitizeBookmarkImageUrl(value) {
     }
 }
 
+function sanitizeAlignValue(value, fallback = 'center') {
+    const v = String(value ?? '').trim().toLowerCase();
+    return (v === 'left' || v === 'center' || v === 'right') ? v : fallback;
+}
+
+function sanitizeCssLengthValue(value, fallback = '100%') {
+    const v = String(value ?? '').trim().toLowerCase();
+    if (!v) return fallback;
+    if (v === 'auto') return 'auto';
+    const px = v.match(/^(\d{1,4})px$/);
+    if (px) {
+        const n = Number(px[1]);
+        return (n >= 32 && n <= 2400) ? `${n}px` : fallback;
+    }
+    const pct = v.match(/^(\d{1,3})%$/);
+    if (pct) {
+        const n = Number(pct[1]);
+        return (n >= 10 && n <= 100) ? `${n}%` : fallback;
+    }
+    return fallback;
+}
+
 function applyDomPurifyPolicy() {
     try {
         if (typeof DOMPurify.removeAllHooks === "function") DOMPurify.removeAllHooks();
@@ -252,6 +274,16 @@ function applyDomPurifyPolicy() {
                 } else {
                     hookEvent.attrValue = safe;
                 }
+            }
+
+            if (name === "data-width") {
+                hookEvent.attrValue = sanitizeCssLengthValue(String(hookEvent.attrValue || ""), "100%");
+                return;
+            }
+
+            if (name === "data-align") {
+                hookEvent.attrValue = sanitizeAlignValue(String(hookEvent.attrValue || ""), "center");
+                return;
             }
 
             if (name === "data-url" || name === "data-thumbnail") {
@@ -2122,16 +2154,13 @@ app.get('/paperclip/:userId/:filename', authMiddleware, async (req, res) => {
     }
 });
 
+const UPLOAD_TMP_DIR = path.join(__dirname, '.upload-tmp');
+
 const coverStorage = multer.diskStorage({
-    destination: (req, file, cb) => {
-        const userId = req.user.id;
-        const userCoverDir = path.join(__dirname, 'covers', String(userId));
-        fs.mkdirSync(userCoverDir, { recursive: true });
-        cb(null, userCoverDir);
-    },
+    destination: (_req, _file, cb) => cb(null, UPLOAD_TMP_DIR),
     filename: (req, file, cb) => {
-	    const uniqueBase = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}`;
-	    cb(null, `${uniqueBase}.upload`);
+        const uniqueBase = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}`;
+        cb(null, `${uniqueBase}.upload`);
     }
 });
 
@@ -2154,12 +2183,7 @@ const coverUpload = multer({
 });
 
 const editorImageStorage = multer.diskStorage({
-    destination: (req, file, cb) => {
-        const userId = req.user.id;
-        const userImgDir = path.join(__dirname, 'imgs', String(userId));
-        fs.mkdirSync(userImgDir, { recursive: true });
-        cb(null, userImgDir);
-    },
+    destination: (_req, _file, cb) => cb(null, UPLOAD_TMP_DIR),
     filename: (req, file, cb) => {
 		const uniqueBase = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}`;
 		cb(null, `${uniqueBase}.upload`);
@@ -2185,12 +2209,7 @@ const editorImageUpload = multer({
 });
 
 const paperclipStorage = multer.diskStorage({
-    destination: (req, file, cb) => {
-        const userId = req.user.id;
-        const userFileDir = path.join(__dirname, 'paperclip', String(userId));
-        fs.mkdirSync(userFileDir, { recursive: true });
-        cb(null, userFileDir);
-    },
+    destination: (_req, _file, cb) => cb(null, UPLOAD_TMP_DIR),
     filename: (req, file, cb) => {
 	    const uniquePrefix = `${Date.now()}-${crypto.randomBytes(16).toString('hex')}`;
 	    const rawExt = path.extname(file.originalname);
@@ -2261,7 +2280,7 @@ function installGracefulShutdownHandlers(httpServer, pool, sanitizeHtmlContent) 
     try {
         await initDb();
 
-        const uploadDirs = ['covers', 'imgs', 'paperclip'];
+        const uploadDirs = ['covers', 'imgs', 'paperclip', '.upload-tmp'];
         uploadDirs.forEach(dir => {
             const dirPath = path.join(__dirname, dir);
             if (!fs.existsSync(dirPath)) {
