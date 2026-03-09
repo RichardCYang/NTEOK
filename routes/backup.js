@@ -30,8 +30,15 @@ function sha256HexFromBuffer(buf) {
     return crypto.createHash('sha256').update(buf).digest('hex');
 }
 
-function readEntryBuffer(entry) {
-    return entry.data ? entry.data : fs.readFileSync(entry.tempFilePath);
+async function sha256HexFromEntry(entry) {
+    if (entry.data) return crypto.createHash('sha256').update(entry.data).digest('hex');
+    return await new Promise((resolve, reject) => {
+        const hash = crypto.createHash('sha256');
+        const rs = fs.createReadStream(entry.tempFilePath, { highWaterMark: 64 * 1024 });
+        rs.on('data', (chunk) => hash.update(chunk));
+        rs.on('error', reject);
+        rs.on('end', () => resolve(hash.digest('hex')));
+    });
 }
 const rateLimit = erl.rateLimit || erl;
 const { ipKeyGenerator } = erl;
@@ -250,6 +257,7 @@ async function readStreamToTempFileWithLimits(stream, { outPath, perEntryLimitBy
 module.exports = (dependencies) => {
     const {
 		pool,
+        redis,
         backupRepo,
 		flushAllPendingE2eeSaves,
         authMiddleware,
@@ -1085,10 +1093,18 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
 
         if (!uploadedFile) return res.status(400).json({ error: '파일이 없습니다.' });
 
+        const importLockKey = `backup-import:${userId}`;
+        const importLockValue = crypto.randomBytes(16).toString('hex');
+
         let connection;
         let extractDir;
         const stagingFiles = [];
         try {
+            if (redis) {
+                const locked = await redis.set(importLockKey, importLockValue, { NX: true, PX: 15 * 60 * 1000 });
+                if (!locked) return res.status(429).json({ error: '이미 백업 가져오기가 진행 중입니다. 잠시 후 다시 시도하세요.' });
+            }
+
             const importResult = await readBackupZipEntriesForImport(uploadedFile.path);
             const zipEntries = importResult.zipEntries;
             extractDir = importResult.extractDir;
@@ -1103,12 +1119,13 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
 
             const manifest = safeJsonParse(manifestRaw, 'backup-manifest.json');
             if (!manifest || !Array.isArray(manifest.entries)) throw new Error('백업 매니페스트 형식이 올바르지 않습니다.');
+            if (manifest.entries.length > 1000) throw new Error('백업 매니페스트 항목 수가 너무 많습니다.');
 
             const zipEntryByName = new Map((zipEntries || []).map(e => [e.entryName, e]));
             for (const item of manifest.entries) {
                 const entry = zipEntryByName.get(item.name);
                 if (!entry) throw new Error(`백업 무결성 오류: 항목 누락 (${item.name})`);
-                const actualHash = sha256HexFromBuffer(readEntryBuffer(entry));
+                const actualHash = await sha256HexFromEntry(entry);
                 if (actualHash !== item.sha256) throw new Error(`백업 무결성 오류: 해시 불일치 (${item.name})`);
             }
 
@@ -1521,6 +1538,12 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
             if (String(error?.message) === "UPLOAD_QUOTA_EXCEEDED") return res.status(413).json({ error: "업로드 용량 제한을 초과했습니다.", incidentId });
             res.status(500).json({ error: "백업을 가져오는 중 오류가 발생했습니다.", incidentId });
         } finally {
+            if (redis) {
+                try {
+                    const current = await redis.get(importLockKey);
+                    if (current === importLockValue) await redis.del(importLockKey);
+                } catch (_) {}
+            }
             if (connection) connection.release();
             try { if (typeof extractDir === 'string') fs.rmSync(extractDir, { recursive: true, force: true }); } catch (_) {}
         }

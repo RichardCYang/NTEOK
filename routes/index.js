@@ -1,10 +1,19 @@
 const express = require('express');
 const path = require('path');
+const crypto = require('crypto');
+const erl = require('express-rate-limit');
+const { ipKeyGenerator } = erl;
 const router = express.Router();
 const fsNative = require('fs');
 
 module.exports = (dependencies) => {
     const { getSessionFromRequest, fs, pool, logError, getClientIpFromRequest, sanitizeHtmlContent, redis, COOKIE_SECURE } = dependencies;
+
+    const RATE_LIMIT_IPV6_SUBNET = (() => {
+        const n = Number(process.env.RATE_LIMIT_IPV6_SUBNET ?? 56);
+        if (!Number.isFinite(n)) return 56;
+        return Math.max(32, Math.min(64, n));
+    })();
 
     function getClientIp(req) {
         return (
@@ -15,6 +24,14 @@ module.exports = (dependencies) => {
             req.socket?.remoteAddress ||
             'unknown'
         );
+    }
+
+    function rateLimitIpKey(rawIp) {
+        return ipKeyGenerator(rawIp || '0.0.0.0', RATE_LIMIT_IPV6_SUBNET);
+    }
+
+    function tokenFingerprint(token) {
+        return crypto.createHash('sha256').update(String(token)).digest('hex').slice(0, 16);
     }
 
     function sendHtmlWithNonce(res, filename, theme = 'default') {
@@ -70,16 +87,25 @@ module.exports = (dependencies) => {
     router.get("/api/debug/ping", (req, res) => res.json({ ok: true, time: new Date().toISOString() }));
 
     async function checkSharedPageAccess(clientIp, token, isValid) {
-        const key = `shared-page-access:${clientIp}`;
+        const ipKey = rateLimitIpKey(clientIp);
+        const fp = tokenFingerprint(token);
+        const key = `shared-page-access:${ipKey}`;
         const raw = await redis.get(key);
         const SHARED_PAGE_RATE_LIMIT_WINDOW = 60 * 1000;
         const SHARED_PAGE_MAX_ATTEMPTS = 20;
         const SHARED_PAGE_MAX_FAILED_TOKENS = 5;
-        let attempts = raw ? JSON.parse(raw) : { count: 0, tokens: [] };
+        let attempts = raw ? JSON.parse(raw) : { count: 0, tokens: [], invalidByToken: {} };
+        if (!Array.isArray(attempts.tokens)) attempts.tokens = [];
+        if (!attempts.invalidByToken || typeof attempts.invalidByToken !== 'object') attempts.invalidByToken = {};
         attempts.count++;
-        if (!isValid && !attempts.tokens.includes(token)) attempts.tokens.push(token);
+        if (!isValid) {
+            if (!attempts.tokens.includes(fp)) attempts.tokens.push(fp);
+            attempts.invalidByToken[fp] = (attempts.invalidByToken[fp] || 0) + 1;
+        }
         await redis.set(key, JSON.stringify(attempts), { PX: SHARED_PAGE_RATE_LIMIT_WINDOW });
-        if (attempts.count > SHARED_PAGE_MAX_ATTEMPTS || attempts.tokens.length > SHARED_PAGE_MAX_FAILED_TOKENS) return false;
+        if (attempts.count > SHARED_PAGE_MAX_ATTEMPTS) return false;
+        if (attempts.tokens.length > SHARED_PAGE_MAX_FAILED_TOKENS) return false;
+        if (!isValid && (attempts.invalidByToken[fp] || 0) > 3) return false;
         return true;
     }
 
@@ -103,7 +129,10 @@ module.exports = (dependencies) => {
             );
             const isValid = rows.length > 0;
             if (!(await checkSharedPageAccess(clientIp, token, isValid))) return res.status(429).json({ error: "요청이 너무 많습니다." });
-            if (!isValid) return res.status(404).json({ error: "페이지를 찾을 수 없습니다." });
+            if (!isValid) {
+                await new Promise(r => setTimeout(r, 150));
+                return res.status(404).json({ error: "페이지를 찾을 수 없습니다." });
+            }
 
             const [pageRows] = await pool.execute(`SELECT p.id, p.title, p.content, p.icon, p.cover_image, p.cover_position FROM page_publish_links ppl JOIN pages p ON p.id = ppl.page_id WHERE ppl.token = ? AND ppl.is_active = 1 AND p.is_encrypted = 0 AND p.deleted_at IS NULL AND (ppl.expires_at IS NULL OR ppl.expires_at > NOW()) LIMIT 1`, [tokenHash]);
             if (pageRows.length === 0) return res.status(404).json({ error: "페이지를 찾을 수 없습니다." });

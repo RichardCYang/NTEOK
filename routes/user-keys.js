@@ -71,20 +71,21 @@ module.exports = (dependencies) => {
         }
     });
 
-    router.get('/public/:userId', authMiddleware, async (req, res) => {
+    router.get('/public/:userId', authMiddleware, requireRecentReauth(10 * 60 * 1000), async (req, res) => {
         try {
             const targetUserId = req.params.userId;
             const storageId = req.query.storageId;
+            const limit = req.query.limit || 1;
             if (!storageId) return res.status(400).json({ error: 'storageId 가 필요합니다.' });
 
             const storage = await storagesRepo.getStorageByIdForUser(req.user.id, storageId);
             if (!storage) return res.status(404).json({ error: '저장소를 찾을 수 없거나 권한이 없습니다.' });
-            if (!storage.is_owner && storage.permission !== 'ADMIN') return res.status(403).json({ error: '저장소 소유자 또는 관리자만 공개키를 조회할 수 있습니다.' });
+            if (!storage.is_owner) return res.status(403).json({ error: '저장소 소유자만 공개키를 조회할 수 있습니다.' });
 
             const targetStorage = await storagesRepo.getStorageByIdForUser(targetUserId, storageId);
             if (!targetStorage) return res.status(404).json({ error: '해당 사용자는 이 저장소의 협업 대상이 아닙니다.' });
 
-            const publicKeys = await userKeysRepo.listPublicKeysByUserId(targetUserId);
+            const publicKeys = await userKeysRepo.listLimitedPublicKeysByUserId(targetUserId, limit);
             res.setHeader('Cache-Control', 'no-store');
             res.json(publicKeys.map(k => ({
                 kid: k.kid,

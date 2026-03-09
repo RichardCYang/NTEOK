@@ -2110,11 +2110,6 @@ app.get('/imgs/:userId/:filename', authMiddleware, async (req, res) => {
         }
 
         const imagePath = `${requestedUserId}/${sanitizedFilename}`;
-        const imageUrl = `/imgs/${imagePath}`;
-
-        const escapeLike = (s) => String(s).replace(/[\\%_]/g, (m) => `\\${m}`);
-        const likePattern = `%${escapeLike(imageUrl)}%`;
-
         const [rows] = await pool.execute(
             `SELECT p.id
                 FROM page_file_refs pfr
@@ -2124,29 +2119,22 @@ app.get('/imgs/:userId/:filename', authMiddleware, async (req, res) => {
                 WHERE pfr.owner_user_id = ?
                 AND pfr.stored_filename = ?
                 AND pfr.file_type = 'imgs'
-                AND p.content LIKE ? ESCAPE '\\\\'
                 AND p.deleted_at IS NULL
                 AND (s.user_id = ? OR ss_cur.shared_with_user_id IS NOT NULL)
-                -- 보안패치: 암호화 + 공유불가 페이지의 자산은
-                -- 페이지 본문 접근이 차단된 사용자(컬렉션 소유자 포함)에게도 노출되면 안 됨
                 AND NOT (p.is_encrypted = 1 AND p.share_allowed = 0 AND p.user_id != ?)
-                -- 보안패치: 파일 소유자와 참조하는 페이지 소유자를 반드시 일치시킴
                 AND p.user_id = ?
                 LIMIT 1`,
             [
                 currentUserId,
                 requestedUserId,
                 sanitizedFilename,
-                likePattern,
                 currentUserId,
                 currentUserId,
                 requestedUserId
             ]
         );
 
-        if (rows.length > 0) {
-            return sendSafeImage(res, filePath);
-        }
+        if (rows.length > 0) return sendSafeImage(res, filePath);
 
 		for (const [pageId, connections] of wsConnections.pages) {
 			const myConn = Array.from(connections).find(c => c.userId === currentUserId);
@@ -2233,10 +2221,6 @@ app.get('/paperclip/:userId/:filename', authMiddleware, async (req, res) => {
         }
 
         const fileUrlPart = `/paperclip/${requestedUserId}/${sanitizedFilename}`;
-
-        const escapeLike = (s) => String(s).replace(/[\\%_]/g, (m) => `\\${m}`);
-        const likePattern = `%${escapeLike(fileUrlPart)}%`;
-
         const [rows] = await pool.execute(
             `SELECT p.id
                 FROM page_file_refs pfr
@@ -2246,20 +2230,15 @@ app.get('/paperclip/:userId/:filename', authMiddleware, async (req, res) => {
                 WHERE pfr.owner_user_id = ?
                 AND pfr.stored_filename = ?
                 AND pfr.file_type = 'paperclip'
-                AND p.content LIKE ? ESCAPE '\\\\'
                 AND p.deleted_at IS NULL
                 AND (s.user_id = ? OR ss_cur.shared_with_user_id IS NOT NULL)
-                -- 보안패치: 암호화 + 공유불가 페이지의 첨부파일은
-                -- 페이지 본문 접근이 차단된 사용자에게 우회적으로 다운로드되면 안 됨
                 AND NOT (p.is_encrypted = 1 AND p.share_allowed = 0 AND p.user_id != ?)
-                -- 보안패치: 파일 소유자 == 참조 페이지 소유자
                 AND p.user_id = ?
                 LIMIT 1`,
             [
                 currentUserId,
                 requestedUserId,
                 sanitizedFilename,
-                likePattern,
                 currentUserId,
                 currentUserId,
                 requestedUserId

@@ -23,6 +23,19 @@ module.exports = ({ pool }) => {
             return rows || [];
         },
 
+        async listLimitedPublicKeysByUserId(userId, limit = 1) {
+            const l = Math.max(1, Math.min(5, Number(limit) || 1));
+            const [rows] = await pool.execute(
+                `SELECT kid, user_id, public_key_spki, device_label, created_at
+                 FROM user_key_pairs
+                 WHERE user_id = ?
+                 ORDER BY created_at DESC
+                 LIMIT ${l}`,
+                [userId]
+            );
+            return rows || [];
+        },
+
         async listMyKeyPairs(userId) {
             const [rows] = await pool.execute(
                 `SELECT kid, user_id, public_key_spki, encrypted_private_key, key_wrap_salt, device_label, created_at

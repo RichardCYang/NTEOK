@@ -1812,7 +1812,7 @@ async function handleYjsUpdateE2EE(ws, payload, pool, pageSqlPolicy) {
 }
 
 async function handleYjsStateE2EE(ws, payload, pool, pageSqlPolicy) {
-    const { pageId, encryptedState, encryptedHtml } = payload || {};
+    const { pageId, encryptedState, encryptedHtml, refs } = payload || {};
     try {
         if (!pageId || typeof encryptedState !== 'string' || !isSubscribedToPage(ws, pageId)) return;
 
@@ -1843,6 +1843,28 @@ async function handleYjsStateE2EE(ws, payload, pool, pageSqlPolicy) {
         touchE2eeLeader(pageId, myConn);
 
         scheduleE2EESave(pool, pageId, encryptedState, encryptedHtml, Date.now());
+
+        if (Array.isArray(refs)) {
+            try {
+                const [pRows] = await pool.execute("SELECT user_id FROM pages WHERE id = ?", [pageId]);
+                if (pRows.length > 0) {
+                    const pageOwnerUserId = Number(pRows[0].user_id);
+                    await pool.execute("DELETE FROM page_file_refs WHERE page_id = ?", [pageId]);
+                    for (const file of refs) {
+                        if (!file || typeof file !== 'object') continue;
+                        const normalized = normalizePaperclipRefForOwner(file.ref, pageOwnerUserId);
+                        if (normalized) {
+                            const [ownerId, filename] = normalized.split('/');
+                            await pool.execute(
+                                `INSERT IGNORE INTO page_file_refs (page_id, owner_user_id, stored_filename, file_type, created_at)
+                                 VALUES (?, ?, ?, ?, NOW())`,
+                                [pageId, ownerId, filename, file.type || 'paperclip']
+                            );
+                        }
+                    }
+                }
+            } catch (regErr) { console.error('E2EE 보안 레지스트리 동기화 실패:', regErr); }
+        }
 
     } catch (e) {}
 }
@@ -1992,7 +2014,7 @@ async function handleForceSave(ws, payload, pool, sanitizeHtmlContent, pageSqlPo
 }
 
 async function handleForceSaveE2EE(ws, payload, pool, pageSqlPolicy) {
-    const { pageId } = payload || {};
+    const { pageId, refs } = payload || {};
     if (!pageId || !isSubscribedToPage(ws, pageId)) return;
 
     const conns = wsConnections.pages.get(pageId);
@@ -2002,20 +2024,34 @@ async function handleForceSaveE2EE(ws, payload, pool, pageSqlPolicy) {
     let access;
     try {
         access = await ensureActivePageAccess(pool, pageSqlPolicy, pageId, myConn, { forcePermissionRefresh: true });
-    } catch (_) { return; }
+        if (!access.ok || !['EDIT', 'ADMIN'].includes(access.permission)) return;
 
-    if (!access.ok) {
-        revokePageSubscription(ws, pageId, conns, myConn, access.reason);
-        return;
-    }
-    if (!['EDIT', 'ADMIN'].includes(access.permission)) return;
+        await flushPendingE2eeSaveForPage(pool, pageId);
 
-    await flushPendingE2eeSaveForPage(pool, pageId);
+        if (Array.isArray(refs)) {
+            try {
+                const pageOwnerUserId = Number(access.page.user_id);
+                await pool.execute("DELETE FROM page_file_refs WHERE page_id = ?", [pageId]);
+                for (const file of refs) {
+                    if (!file || typeof file !== 'object') continue;
+                    const normalized = normalizePaperclipRefForOwner(file.ref, pageOwnerUserId);
+                    if (normalized) {
+                        const [ownerId, filename] = normalized.split('/');
+                        await pool.execute(
+                            `INSERT IGNORE INTO page_file_refs (page_id, owner_user_id, stored_filename, file_type, created_at)
+                             VALUES (?, ?, ?, ?, NOW())`,
+                            [pageId, ownerId, filename, file.type || 'paperclip']
+                        );
+                    }
+                }
+            } catch (regErr) { console.error('E2EE 보안 레지스트리 동기화(강제저장) 실패:', regErr); }
+        }
 
-    ws.send(JSON.stringify({
-        event: 'page-saved',
-        data: { pageId: String(pageId), updatedAt: new Date().toISOString() }
-    }));
+        ws.send(JSON.stringify({
+            event: 'page-saved',
+            data: { pageId: String(pageId), updatedAt: new Date().toISOString() }
+        }));
+    } catch (_) {}
 }
 
 function revokePageSubscription(ws, pageId, conns, myConn, reason = 'Access revoked') {
