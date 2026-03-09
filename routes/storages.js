@@ -105,7 +105,14 @@ module.exports = (dependencies) => {
         try {
             const storages = await storagesRepo.listStoragesForUser(req.user.id);
             res.json(storages.map(s => ({
-                ...s,
+                id: s.id,
+                name: s.name,
+                sortOrder: s.sort_order,
+                is_owner: s.is_owner,
+                permission: s.permission,
+                owner_name: s.owner_name,
+                is_encrypted: s.is_encrypted,
+                dek_version: s.dek_version,
                 createdAt: toIsoString(s.created_at),
                 updatedAt: toIsoString(s.updated_at)
             })));
@@ -331,7 +338,8 @@ module.exports = (dependencies) => {
             res.json({
                 wrappedDek: wrappedDekRecord.wrapped_dek,
                 wrappingKid: wrappedDekRecord.wrapping_kid,
-                ephemeralPublicKey: wrappedDekRecord.ephemeral_public_key
+                ephemeralPublicKey: wrappedDekRecord.ephemeral_public_key,
+                encryptionSalt: storage.encryption_salt
             });
         } catch (error) {
             logError('POST /api/storages/:id/my-wrapped-dek', error);

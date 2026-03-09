@@ -79,11 +79,13 @@ module.exports = (dependencies) => {
             if (!storage) return res.status(404).json({ error: '저장소를 찾을 수 없거나 권한이 없습니다.' });
             if (!storage.is_owner && storage.permission !== 'ADMIN') return res.status(403).json({ error: '저장소 소유자 또는 관리자만 공개키를 조회할 수 있습니다.' });
 
+            const targetStorage = await storagesRepo.getStorageByIdForUser(targetUserId, storageId);
+            if (!targetStorage) return res.status(404).json({ error: '해당 사용자는 이 저장소의 협업 대상이 아닙니다.' });
+
             const publicKeys = await userKeysRepo.listPublicKeysByUserId(targetUserId);
             res.json(publicKeys.map(k => ({
                 kid: k.kid,
-                publicKeySpki: k.public_key_spki,
-                deviceLabel: k.device_label
+                publicKeySpki: k.public_key_spki
             })));
         } catch (error) {
             logError('GET /api/user-keys/public/:userId', error);

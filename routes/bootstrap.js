@@ -30,7 +30,6 @@ module.exports = (dependencies) => {
                 permission: row.permission,
                 owner_name: row.owner_name,
                 is_encrypted: row.is_encrypted,
-                encryption_salt: row.encryption_salt,
                 dek_version: row.dek_version
             }));
 

@@ -168,11 +168,7 @@ module.exports = (dependencies) => {
 			if (publishRows.length === 0) return res.status(404).json({ error: "페이지를 찾을 수 없습니다." });
 			const pageId = publishRows[0].page_id;
 			const allowComments = Number(publishRows[0].allow_comments) === 1;
-			if (!allowComments) {
-				if (!userId) return res.status(403).json({ error: "댓글이 비활성화되었습니다." });
-				const page = await pagesRepo.getPageByIdForUser({ userId, pageId });
-				if (!page) return res.status(403).json({ error: "댓글이 비활성화되었습니다." });
-			}
+			if (!allowComments) return res.status(403).json({ error: "공유 페이지 댓글이 비활성화되었습니다." });
 			const [comments] = await pool.execute(`SELECT c.id, c.content, c.created_at, c.user_id, c.guest_name, u.username FROM comments c LEFT JOIN users u ON c.user_id = u.id WHERE c.page_id = ? ORDER BY c.created_at ASC`, [pageId]);
 			
 			let csrfToken = null;
@@ -228,11 +224,7 @@ module.exports = (dependencies) => {
 			if (!publishRows.length) return res.status(404).json({ error: "페이지를 찾을 수 없습니다." });
 			const pageId = publishRows[0].page_id;
 			const allowComments = Number(publishRows[0].allow_comments) === 1;
-			if (!allowComments) {
-				if (!userId) return res.status(403).json({ error: "댓글을 작성할 권한이 없습니다." });
-				const page = await pagesRepo.getPageByIdForUser({ userId, pageId });
-				if (!page) return res.status(403).json({ error: "댓글을 작성할 권한이 없습니다." });
-			}
+			if (!allowComments) return res.status(403).json({ error: "공유 페이지 댓글이 비활성화되었습니다." });
 			
 			if (!userId) {
 				const cookieName = makeSharedCommentCookieName(tokenHash, COOKIE_SECURE);

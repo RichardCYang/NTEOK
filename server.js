@@ -612,9 +612,12 @@ if (!DEFAULT_ADMIN_PASSWORD) {
         process.exit(1);
     }
     DEFAULT_ADMIN_PASSWORD = generateStrongPassword();
-    if (String(process.env.SHOW_BOOTSTRAP_PASSWORD_IN_LOGS).toLowerCase() === "true") {
-        console.warn(`⚠️  임시 관리자 비밀번호: ${DEFAULT_ADMIN_PASSWORD}`);
-    }
+    console.warn("⚠️  개발용 관리자 비밀번호가 자동 생성되었습니다. 로그 출력은 금지됩니다.");
+}
+
+if (String(process.env.SHOW_BOOTSTRAP_PASSWORD_IN_LOGS).toLowerCase() === "true") {
+    console.error("🛑 [보안] SHOW_BOOTSTRAP_PASSWORD_IN_LOGS는 더 이상 지원되지 않습니다.");
+    process.exit(1);
 }
 
 {
@@ -641,18 +644,17 @@ if (IS_PRODUCTION) {
     }
 }
 
-function envOrDie(name, { defaultValue, allowInsecureDev = false } = {}) {
+function envOrDie(name) {
     const v = String(process.env[name] || "").trim();
     if (v) return v;
-    if (allowInsecureDev && String(process.env.ALLOW_INSECURE_DB_DEFAULTS).toLowerCase() === 'true') return defaultValue;
     console.error(`🛑 필수 환경변수 누락: ${name}`);
     process.exit(1);
 }
 
-const DB_HOST = envOrDie("DB_HOST", { defaultValue: "localhost", allowInsecureDev: true });
-const DB_USER = envOrDie("DB_USER", { defaultValue: "root", allowInsecureDev: true });
-const DB_PASSWORD = envOrDie("DB_PASSWORD", { defaultValue: "admin", allowInsecureDev: true });
-const DB_NAME = envOrDie("DB_NAME", { defaultValue: "nteok", allowInsecureDev: true });
+const DB_HOST = envOrDie("DB_HOST");
+const DB_USER = envOrDie("DB_USER");
+const DB_PASSWORD = envOrDie("DB_PASSWORD");
+const DB_NAME = envOrDie("DB_NAME");
 
 const DB_CONFIG = {
     host: DB_HOST,
