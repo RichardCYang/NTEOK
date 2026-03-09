@@ -230,6 +230,7 @@ module.exports = (dependencies) => {
 			if (!session) return res.status(401).json({ error: "세션이 만료되었습니다." });
 			session.totpTempSecret = secret.base32;
 			await saveSession(sessionId, session, SESSION_TTL_MS);
+			res.setHeader('Cache-Control', 'no-store');
 			res.json({ secret: secret.base32, qrCode: qrCodeUrl });
 		} catch (error) {
 			logError("POST /api/totp/setup", error);

@@ -15,6 +15,21 @@ function sanitizeNavHref(value, { allowRelative = true } = {}) {
     });
 }
 
+function sanitizeLocalAssetSrc(raw) {
+    const safe = sanitizeNavHref(raw, { allowRelative: true });
+    if (!safe || safe.startsWith('#') || safe.startsWith('//')) return null;
+    if (/^(https?:)/i.test(safe)) {
+        try {
+            const u = new URL(safe, window.location.origin);
+            if (u.origin !== window.location.origin) return null;
+            return /^\/(?:imgs|covers|paperclip)\//.test(u.pathname) ? u.pathname : null;
+        } catch {
+            return null;
+        }
+    }
+    return /^\/(?:imgs|covers|paperclip)\//.test(safe) ? safe : null;
+}
+
 let hooksInstalled = false;
 
 if (!hooksInstalled) {
@@ -23,6 +38,16 @@ if (!hooksInstalled) {
     DOMPurify.addHook('uponSanitizeAttribute', (node, data) => {
         const name = String(data?.attrName || '').toLowerCase();
         const raw = String(data?.attrValue || '');
+
+        if (name === 'src') {
+            const safe = sanitizeLocalAssetSrc(raw);
+            if (!safe) {
+                data.keepAttr = false;
+                data.forceKeepAttr = false;
+                return;
+            }
+            data.attrValue = safe;
+        }
 
         if (name === 'href') {
             const safe = sanitizeNavHref(raw, { allowRelative: true });

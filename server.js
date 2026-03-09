@@ -951,7 +951,7 @@ function isUrlAllowedForShared(url) {
     }
 }
 
-function isSafeSharedLocalAssetPath(url) {
+function isSafeLocalAssetPath(url) {
     if (typeof url !== "string") return false;
     return /^\/(?:imgs|covers|paperclip)\/(?:default|\d{1,12})\/[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/.test(url);
 }
@@ -976,29 +976,55 @@ function sanitizeHtmlContent(html, { profile = 'editor' } = {}) {
 				ALLOWED_URI_REGEXP: /^(?:(?:(?:ht)tps?|mailto|tel):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i
 			};
 		const sanitized = DOMPurify.sanitize(prefiltered, config);
-		if (profile !== 'shared') return sanitized;
 		const dom = new JSDOM(sanitized);
 		const doc = dom.window.document;
 		const elements = doc.querySelectorAll('[src], [href], [data-url], [data-thumbnail], [data-favicon], [data-src]');
 		for (const el of elements) {
 			if (el.hasAttribute('src')) {
 				const src = el.getAttribute('src');
-				if (!(isSafeSharedLocalAssetPath(src) || isUrlAllowedForShared(src))) el.removeAttribute('src');
+				if (!isSafeLocalAssetPath(src)) el.removeAttribute('src');
 			}
 			if (el.hasAttribute('href')) {
 				const href = el.getAttribute('href');
-				if (!isUrlAllowedForShared(href)) el.removeAttribute('href');
+				const value = sanitizeHttpHrefStrict(href, { allowRelative: true });
+				if (!value || (profile === 'shared' && !(isSafeLocalAssetPath(value) || isUrlAllowedForShared(value)))) el.removeAttribute('href');
+				else el.setAttribute('href', value);
 			}
 			if (el.hasAttribute('data-url')) {
 				const value = sanitizeHttpHrefStrict(el.getAttribute('data-url'), { allowRelative: false });
-				if (!value || !isUrlAllowedForShared(value)) el.removeAttribute('data-url');
+				if (!value || (profile === 'shared' && !isUrlAllowedForShared(value))) el.removeAttribute('data-url');
 				else el.setAttribute('data-url', value);
 			}
 			if (el.hasAttribute('data-thumbnail')) {
 				const value = sanitizeHttpHrefStrict(el.getAttribute('data-thumbnail'), { allowRelative: false });
-				if (!value || !isUrlAllowedForShared(value)) el.removeAttribute('data-thumbnail');
+				if (!value || (profile === 'shared' && !isUrlAllowedForShared(value))) el.removeAttribute('data-thumbnail');
 				else el.setAttribute('data-thumbnail', value);
 			}
+			if (el.hasAttribute('data-favicon')) {
+				const value = sanitizeBookmarkImageUrl(el.getAttribute('data-favicon'));
+				if (!value || !isSafeLocalAssetPath(value)) el.removeAttribute('data-favicon');
+				else el.setAttribute('data-favicon', value);
+			}
+			if (el.hasAttribute('data-src')) {
+				const nodeType = String(el.getAttribute('data-type') || '').toLowerCase();
+				const raw = String(el.getAttribute('data-src') || '');
+				if (nodeType === 'youtube-block' || nodeType === 'youtube') {
+					const value = normalizeYouTubeEmbedUrl(raw);
+					if (!value || (profile === 'shared' && !isUrlAllowedForShared(value))) el.removeAttribute('data-src');
+					else el.setAttribute('data-src', value);
+				} else {
+					const value = sanitizeHttpHrefStrict(raw, { allowRelative: true });
+					if (!value || !(isSafeLocalAssetPath(value) || (profile === 'shared' && isUrlAllowedForShared(value)))) el.removeAttribute('data-src');
+					else el.setAttribute('data-src', value);
+				}
+			}
+		}
+		return doc.body.innerHTML;
+	} catch (err) {
+		const escaped = escapeHtmlToText(prefiltered);
+		return `<p>${escaped}</p>`;
+	}
+}
 			if (el.hasAttribute('data-favicon')) {
 				const value = sanitizeBookmarkImageUrl(el.getAttribute('data-favicon'));
 				if (!value || !isSafeSharedLocalAssetPath(value)) el.removeAttribute('data-favicon');
@@ -1431,8 +1457,10 @@ async function initDb() {
             operation VARCHAR(20) NOT NULL,
             created_at DATETIME NOT NULL,
             expires_at DATETIME NOT NULL,
+            used_at DATETIME NULL,
             INDEX idx_session_id (session_id),
-            INDEX idx_expires_at (expires_at)
+            INDEX idx_expires_at (expires_at),
+            INDEX idx_active_lookup (session_id, operation, used_at, expires_at)
         ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
     `);
 
@@ -1887,7 +1915,7 @@ app.use((req, res, next) => {
             `style-src-elem 'self' 'nonce-${nonce}' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://fonts.googleapis.com`,
             isSharedPage ? "style-src-attr 'none'" : "style-src-attr 'self' 'unsafe-inline'",
             "font-src 'self' https://cdnjs.cloudflare.com https://fonts.gstatic.com",
-            "img-src 'self' data: https:",
+            "img-src 'self' data:",
             "connect-src 'self'",
             isSharedPage ? "require-trusted-types-for 'script'" : null,
             isSharedPage ? "trusted-types shared-page" : null

@@ -345,6 +345,7 @@ module.exports = (dependencies) => {
             const wrappedDekRecord = await storageShareKeysRepo.getWrappedDek(storageId, userId);
             if (!wrappedDekRecord) return res.status(404).json({ error: '이 저장소에 대한 wrapped DEK 를 찾을 수 없습니다.' });
 
+            res.setHeader('Cache-Control', 'no-store');
             res.json({
                 wrappedDek: wrappedDekRecord.wrapped_dek,
                 wrappingKid: wrappedDekRecord.wrapping_kid,

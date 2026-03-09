@@ -36,6 +36,7 @@ module.exports = (dependencies) => {
         try {
             const userId = req.user.id;
             const keyPairs = await userKeysRepo.listMyKeyPairs(userId);
+            res.setHeader('Cache-Control', 'no-store');
             res.json(
                 keyPairs.map(({ encrypted_private_key, key_wrap_salt, ...rest }) => ({
                     ...rest,
@@ -58,6 +59,7 @@ module.exports = (dependencies) => {
             if (!keyPair) return res.status(404).json({ error: '키 쌍을 찾을 수 없습니다.' });
             if (Number(keyPair.user_id) !== Number(userId)) return res.status(403).json({ error: '이 키 쌍을 조회할 권한이 없습니다.' });
 
+            res.setHeader('Cache-Control', 'no-store');
             return res.json({
                 kid: keyPair.kid,
                 encryptedPrivateKey: keyPair.encrypted_private_key,
@@ -83,6 +85,7 @@ module.exports = (dependencies) => {
             if (!targetStorage) return res.status(404).json({ error: '해당 사용자는 이 저장소의 협업 대상이 아닙니다.' });
 
             const publicKeys = await userKeysRepo.listPublicKeysByUserId(targetUserId);
+            res.setHeader('Cache-Control', 'no-store');
             res.json(publicKeys.map(k => ({
                 kid: k.kid,
                 publicKeySpki: k.public_key_spki
@@ -120,6 +123,7 @@ module.exports = (dependencies) => {
                 createdAt: nowStr
             });
 
+            res.setHeader('Cache-Control', 'no-store');
             res.status(201).json({ success: true, kid });
         } catch (error) {
             logError('POST /api/user-keys', error);

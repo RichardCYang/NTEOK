@@ -220,38 +220,21 @@ module.exports = (dependencies) => {
 
 	router.post("/logout", async (req, res) => {
 		const { getSessionFromRequest, wsCloseConnectionsForSession } = dependencies;
-
 		const session = await getSessionFromRequest(req);
-
 		if (session) {
 			const tokenFromHeader = req.headers['x-csrf-token'];
 			const tokenFromCookie = req.cookies?.[CSRF_COOKIE_NAME];
-
-			if (typeof tokenFromHeader !== 'string' || typeof tokenFromCookie !== 'string') {
-				console.warn('CSRF 토큰 누락: /auth/logout');
-				return res.status(403).json({ error: 'CSRF 토큰이 유효하지 않습니다.' });
+			if (typeof tokenFromHeader === 'string' && typeof tokenFromCookie === 'string' && tokenFromHeader === tokenFromCookie && verifyCsrfTokenForSession(session.id, tokenFromHeader, 'api')) {
+				try { wsCloseConnectionsForSession(session.id, 1008, 'Logout'); } catch (e) {}
+				await revokeSession(session.id, 'logout');
 			}
-
-			if (tokenFromHeader !== tokenFromCookie) {
-				console.warn('CSRF 토큰 불일치: /auth/logout');
-				return res.status(403).json({ error: 'CSRF 토큰이 유효하지 않습니다.' });
-			}
-
-			if (!verifyCsrfTokenForSession(session.id, tokenFromHeader, 'api')) {
-				console.warn('CSRF 토큰 서명 검증 실패: /auth/logout');
-				return res.status(403).json({ error: 'CSRF 토큰이 유효하지 않습니다.' });
-			}
-
-			try { wsCloseConnectionsForSession(session.id, 1008, 'Logout'); } catch (e) {}
-			await revokeSession(session.id, 'logout');
 		}
 
-		res.clearCookie(SESSION_COOKIE_NAME, {
-			httpOnly: true,
-			sameSite: 'strict',
-			path: '/',
-			secure: COOKIE_SECURE
-		});
+		res.setHeader('Clear-Site-Data', '"cookies", "storage"');
+		res.clearCookie(SESSION_COOKIE_NAME, { httpOnly: true, sameSite: 'strict', path: '/', secure: COOKIE_SECURE });
+		res.clearCookie(CSRF_COOKIE_NAME, { httpOnly: false, sameSite: 'strict', path: '/', secure: COOKIE_SECURE });
+		res.clearCookie(TWO_FA_COOKIE_NAME, { httpOnly: true, sameSite: 'strict', path: '/', secure: COOKIE_SECURE });
+		res.clearCookie(PREAUTH_CSRF_COOKIE_NAME, { path: '/', secure: COOKIE_SECURE });
 
 		res.json({ ok: true });
 	});

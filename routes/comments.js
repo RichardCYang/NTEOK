@@ -162,6 +162,11 @@ module.exports = (dependencies) => {
         return true;
     }
 
+    function getSharedAuthorName(comment) {
+        if (!comment.user_id) return comment.guest_name || 'Guest';
+        return '회원';
+    }
+
     router.get(['/shared', '/shared/:token'], async (req, res) => {
         const token = extractShareToken(req);
         if (typeof token !== 'string' || token.length !== 64 || !/^[a-f0-9]{64}$/i.test(token)) return res.status(404).json({ error: "페이지를 찾을 수 없습니다." });
@@ -198,7 +203,7 @@ module.exports = (dependencies) => {
                     id: c.id,
                     content: c.content,
                     createdAt: toIsoString(c.created_at),
-                    author: c.user_id ? c.username : c.guest_name,
+                    author: getSharedAuthorName(c),
                     isGuest: !c.user_id,
                     isMyComment: userId ? (c.user_id === userId) : false
                 })),

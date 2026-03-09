@@ -648,8 +648,9 @@ async function renderCustomBlocks(container) {
     const images = container.querySelectorAll('img');
     const promises = Array.from(images).map(img => {
         const src = img.getAttribute('src');
-        if (src && (src.startsWith('http') || src.startsWith('//'))) {
-            img.src = getProxiedImageUrl(src);
+        if (src && !/^\/(?:imgs|covers|paperclip)\//.test(src)) {
+            img.remove();
+            return Promise.resolve();
         }
         img.setAttribute('crossorigin', 'anonymous');
         return new Promise(resolve => {
