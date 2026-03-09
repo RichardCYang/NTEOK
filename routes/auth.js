@@ -9,6 +9,7 @@ module.exports = (dependencies) => {
 		bcrypt,
 		crypto,
 		createSession,
+        buildSessionContextFromReq,
 		generateCsrfToken,
 		generateCsrfTokenForSession,
 		verifyCsrfTokenForSession,
@@ -170,7 +171,7 @@ module.exports = (dependencies) => {
 				return res.json({ ok: false, requires2FA: true, availableMethods: [user.totp_enabled && 'totp', user.passkey_enabled && 'passkey'].filter(Boolean) });
 			}
 
-			const sessionResult = await createSession({ id: user.id, username: user.username, blockDuplicateLogin: user.block_duplicate_login }, { userAgent: req.headers["user-agent"] || "" });
+			const sessionResult = await createSession({ id: user.id, username: user.username, blockDuplicateLogin: user.block_duplicate_login }, buildSessionContextFromReq(req, getClientIp));
 			if (!sessionResult.success) return res.status(409).json({ error: sessionResult.error, code: 'DUPLICATE_LOGIN_BLOCKED' });
 
 			res.clearCookie(PREAUTH_CSRF_COOKIE_NAME, { path: "/", secure: COOKIE_SECURE });
@@ -346,7 +347,7 @@ module.exports = (dependencies) => {
 			const user = { id: result.insertId, username: trimmedUsername, blockDuplicateLogin: false };
 			const storageId = 'stg-' + now.getTime() + '-' + crypto.randomBytes(4).toString('hex');
 			await storagesRepo.createStorage({ userId: user.id, id: storageId, name: "기본 저장소", sortOrder: 0, createdAt: nowStr, updatedAt: nowStr });
-			const sessionResult = await createSession(user, { userAgent: req.headers["user-agent"] || "" });
+			const sessionResult = await createSession(user, buildSessionContextFromReq(req, getClientIp));
 			if (!sessionResult.success) return res.status(409).json({ error: sessionResult.error, code: 'DUPLICATE_LOGIN_BLOCKED' });
 
 			res.clearCookie(PREAUTH_CSRF_COOKIE_NAME, { path: "/", secure: COOKIE_SECURE });

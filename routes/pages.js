@@ -1936,8 +1936,8 @@ module.exports = (dependencies) => {
                 [tokenHash, id, existing.user_id, allowComments ? 1 : 0, expiresAt, nowStr, nowStr]
             );
 
-            const base = (process.env.BASE_URL || '').replace(/\/$/, '');
-            const url = base ? `${base}/shared-page.html#${token}` : `/shared-page.html#${token}`;
+            const sharedBase = (process.env.SHARED_BASE_URL || process.env.BASE_URL || '').replace(/\/$/, '');
+            const url = sharedBase ? `${sharedBase}/shared-page.html#${token}` : `/shared-page.html#${token}`;
             res.json({ published: true, token, url, allowComments, expiresAt: expiresAt ? toIsoString(new Date(expiresAt)) : null });
         } catch (e) {
             logError("POST /api/pages/:id/publish", e);

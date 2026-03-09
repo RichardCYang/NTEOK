@@ -1112,7 +1112,11 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
                 if (actualHash !== item.sha256) throw new Error(`백업 무결성 오류: 해시 불일치 (${item.name})`);
             }
 
-            const zipEntryByName = new Map((zipEntries || []).map(e => [e.entryName, e]));
+            const manifestEntriesSet = new Set(manifest.entries.map(e => e.name));
+            for (const entry of zipEntries) {
+                if (entry.entryName === 'backup-manifest.json' || entry.entryName === 'backup-manifest.sig') continue;
+                if (!manifestEntriesSet.has(entry.entryName)) throw new Error(`[보안] 매니페스트에 기재되지 않은 파일이 포함되어 있습니다: ${entry.entryName}`);
+            }
 
             connection = await pool.getConnection();
             await connection.beginTransaction();

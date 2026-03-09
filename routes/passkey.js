@@ -21,6 +21,7 @@ module.exports = (dependencies) => {
 		csrfMiddleware,
 		passkeyLimiter,
 		createSession,
+        buildSessionContextFromReq,
 		generateCsrfToken,
 		generateCsrfTokenForSession,
 		verifyPreAuthCsrfToken,
@@ -318,7 +319,7 @@ module.exports = (dependencies) => {
 				await recordLoginAttempt(pool, { userId: userId, username: username, ipAddress: getClientIp(req), port: req.connection.remotePort || 0, success: false, failureReason: countryCheck.reason, userAgent: req.headers['user-agent'] || null });
 				return res.status(403).json({ error: "현재 위치에서는 로그인할 수 없습니다." });
 			}
-			const sessionResult = await createSession({ id: userId, username: username, blockDuplicateLogin: block_duplicate_login }, { userAgent: req.headers["user-agent"] || "" });
+			const sessionResult = await createSession({ id: userId, username: username, blockDuplicateLogin: block_duplicate_login }, buildSessionContextFromReq(req, getClientIp));
 			if (!sessionResult.success) return res.status(409).json({ error: sessionResult.error, code: 'DUPLICATE_LOGIN_BLOCKED' });
 			const sessionId = sessionResult.sessionId;
 			await pool.execute("DELETE FROM webauthn_challenges WHERE user_id = ? AND session_id = ? AND operation = 'passkey_login'", [userId, tempSessionId]);
@@ -396,7 +397,7 @@ module.exports = (dependencies) => {
 			const [userRows] = await pool.execute("SELECT username, block_duplicate_login FROM users WHERE id = ?", [userId]);
 			if (userRows.length === 0) return genericPasskeyFailure(res);
 			const { username, block_duplicate_login } = userRows[0];
-			const sessionResult = await createSession({ id: userId, username: username, blockDuplicateLogin: block_duplicate_login }, { userAgent: req.headers["user-agent"] || "" });
+			const sessionResult = await createSession({ id: userId, username: username, blockDuplicateLogin: block_duplicate_login }, buildSessionContextFromReq(req, getClientIp));
 			if (!sessionResult.success) {
 				await revokeSession(tempSessionId, "duplicate-login-blocked");
 				return res.status(409).json({ error: sessionResult.error, code: 'DUPLICATE_LOGIN_BLOCKED' });

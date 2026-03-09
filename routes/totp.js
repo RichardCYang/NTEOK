@@ -85,6 +85,7 @@ module.exports = (dependencies) => {
 		csrfMiddleware,
 		totpLimiter,
 		createSession,
+        buildSessionContextFromReq,
 		generateCsrfToken,
 		generateCsrfTokenForSession,
 		verifyPreAuthCsrfToken,
@@ -321,7 +322,7 @@ module.exports = (dependencies) => {
 			}
 			const sessionResult = await createSession(
 				{ id: userId, username: username, blockDuplicateLogin: block_duplicate_login },
-				{ userAgent: req.headers["user-agent"] || "" }
+				buildSessionContextFromReq(req, getClientIp)
 			);
 			if (!sessionResult.success) {
 				await revokeSession(tempSessionId, "duplicate-login-blocked");
@@ -394,7 +395,7 @@ module.exports = (dependencies) => {
 			await clearTotpFailures(redis, accountKey, ipKey);
 			const sessionResult = await createSession(
 				{ id: userId, username: username, blockDuplicateLogin: block_duplicate_login },
-				{ userAgent: req.headers["user-agent"] || "" }
+				buildSessionContextFromReq(req, getClientIp)
 			);
 			if (!sessionResult.success) {
 				await revokeSession(tempSessionId, "duplicate-login-blocked");

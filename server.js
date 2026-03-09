@@ -447,6 +447,7 @@ function isLocalhostHost(host) {
 
 const IS_PRODUCTION = process.env.NODE_ENV === "production";
 const BASE_URL = process.env.BASE_URL || (IS_PRODUCTION ? "https://localhost:3000" : "http://localhost:3000");
+const SHARED_BASE_URL = process.env.SHARED_BASE_URL || null;
 
 if (IS_PRODUCTION) {
     const url = new URL(BASE_URL);
@@ -914,18 +915,17 @@ const EDITOR_ALLOWED_ATTR = [
 ];
 
 function isUrlAllowedForShared(url) {
-	if (!url) return true;
-	if (url.startsWith('/') || url.startsWith('./') || url.startsWith('../')) return true;
-	try {
-		const u = new URL(url);
-		const b = new URL(BASE_URL);
-		if (u.origin === b.origin) return true;
-		const allowed = (process.env.SHARED_PAGE_ALLOWED_DOMAINS || "").split(",").map(s => s.trim()).filter(Boolean);
-		if (allowed.some(d => u.hostname === d || u.hostname.endsWith('.' + d))) return true;
-		return false;
-	} catch (_) {
-		return false;
-	}
+    if (!url) return true;
+    if (url.startsWith('#')) return true;
+    try {
+        const u = new URL(url);
+        if (!['https:', 'mailto:', 'tel:'].includes(u.protocol)) return false;
+        const allowed = (process.env.SHARED_PAGE_ALLOWED_DOMAINS || "").split(",").map(s => s.trim()).filter(Boolean);
+        if (allowed.some(d => u.hostname === d || u.hostname.endsWith('.' + d))) return true;
+        return false;
+    } catch (_) {
+        return false;
+    }
 }
 
 function sanitizeHtmlContent(html, { profile = 'editor' } = {}) {
@@ -1106,29 +1106,37 @@ function hashIpPrefix(ip) {
 }
 
 async function createSession(user, ctx = {}) {
-	const sessionId = crypto.randomBytes(24).toString("hex");
-	const now = Date.now();
-	const expiresAt = now + SESSION_TTL_MS;
-	const absoluteExpiry = now + SESSION_ABSOLUTE_TTL_MS;
-	const existingSessions = await listUserSessions(user.id);
-	if (existingSessions && existingSessions.length > 0) {
-		if (user.blockDuplicateLogin) return { success: false, error: '이미 다른 위치에서 로그인 중입니다.' };
-		wsBroadcastToUser(user.id, 'duplicate-login', { message: '다른 위치에서 로그인하여 현재 세션이 종료됩니다.', timestamp: new Date().toISOString() });
-		for (const oldSessionId of existingSessions) await revokeSession(oldSessionId, "duplicate-login");
-	}
-	const session = {
-		type: "auth",
-		userId: user.id,
-		username: user.username,
-		uaHash: hashUserAgent(ctx.userAgent || ""),
-		ipPrefixHash: hashIpPrefix(ctx.clientIp || ""),
-		expiresAt,
-		absoluteExpiry,
-		createdAt: now,
-		lastStrongAuthAt: now
-	};
-	await saveSession(sessionId, session, SESSION_ABSOLUTE_TTL_MS);
-	return { success: true, sessionId };
+    if (IS_PRODUCTION && !ctx.clientIp) throw new Error("createSession: 운영 환경에서는 clientIp가 필수입니다.");
+    const sessionId = crypto.randomBytes(24).toString("hex");
+    const now = Date.now();
+    const expiresAt = now + SESSION_TTL_MS;
+    const absoluteExpiry = now + SESSION_ABSOLUTE_TTL_MS;
+    const existingSessions = await listUserSessions(user.id);
+    if (existingSessions && existingSessions.length > 0) {
+        if (user.blockDuplicateLogin) return { success: false, error: '이미 다른 위치에서 로그인 중입니다.' };
+        wsBroadcastToUser(user.id, 'duplicate-login', { message: '다른 위치에서 로그인하여 현재 세션이 종료됩니다.', timestamp: new Date().toISOString() });
+        for (const oldSessionId of existingSessions) await revokeSession(oldSessionId, "duplicate-login");
+    }
+    const session = {
+        type: "auth",
+        userId: user.id,
+        username: user.username,
+        uaHash: hashUserAgent(ctx.userAgent || ""),
+        ipPrefixHash: hashIpPrefix(ctx.clientIp || ""),
+        expiresAt,
+        absoluteExpiry,
+        createdAt: now,
+        lastStrongAuthAt: now
+    };
+    await saveSession(sessionId, session, SESSION_ABSOLUTE_TTL_MS);
+    return { success: true, sessionId };
+}
+
+function buildSessionContextFromReq(req, getClientIpFromRequest) {
+    return {
+        userAgent: req.headers?.["user-agent"] || "",
+        clientIp: req.clientIp || (typeof getClientIpFromRequest === "function" ? getClientIpFromRequest(req) : null) || req.socket?.remoteAddress || ""
+    };
 }
 
 async function getSessionFromId(sessionId, ctx = {}) {
@@ -1868,6 +1876,10 @@ app.use(express.static(path.join(__dirname, "public"), {
     lastModified: true,
     immutable: IS_PRODUCTION,
     setHeaders: (res, filePath, stat) => {
+        if (filePath.endsWith(path.sep + 'shared-page.html')) {
+            res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https:; sandbox allow-scripts allow-forms allow-popups;");
+            res.setHeader('X-Frame-Options', 'DENY');
+        }
         if (filePath.endsWith('.html')) {
             res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
             res.setHeader('Pragma', 'no-cache');
@@ -2353,6 +2365,7 @@ function installGracefulShutdownHandlers(httpServer, pool, sanitizeHtmlContent) 
 			speakeasy,
 			QRCode,
 			createSession,
+            buildSessionContextFromReq,
 			getSessionFromRequest,
 			generateCsrfToken,
 			generateCsrfTokenForSession,
