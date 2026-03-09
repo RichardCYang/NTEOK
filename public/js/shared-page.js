@@ -120,7 +120,7 @@ function sanitizeSharedHtml(html) {
             'data-id', 'data-icon',
             'data-url', 'data-title', 'data-favicon',
             'data-checked', 'data-callout-type', 'data-content',
-            'data-columns', 'data-is-open'
+            'data-columns', 'data-rows', 'data-is-open'
         ],
         ALLOW_DATA_ATTR: true,
         FORBID_ATTR: ['style'],

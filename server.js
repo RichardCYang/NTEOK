@@ -925,7 +925,7 @@ const BASE_ALLOWED_ATTR = [
     'data-url', 'data-title', 'data-favicon', 'data-description', 'data-thumbnail',
     'data-id', 'data-icon', 'data-checked',
     'data-callout-type', 'data-content',
-    'data-columns', 'data-is-open'
+    'data-columns', 'data-rows', 'data-is-open'
 ];
 
 const SHARED_ALLOWED_ATTR = BASE_ALLOWED_ATTR.filter(attr => attr !== 'class');

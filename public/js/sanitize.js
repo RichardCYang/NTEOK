@@ -130,7 +130,7 @@ export const EDITOR_PURIFY_CONFIG = {
         'style', 'class', 'href', 'target', 'rel', 'data-type', 'data-latex', 'colspan', 'rowspan', 'colwidth',
         'src', 'alt', 'data-src', 'data-alt', 'data-caption', 'data-width', 'data-align', 'data-url', 'data-title',
         'data-description', 'data-thumbnail', 'data-id', 'data-icon', 'data-checked', 'type', 'checked',
-        'data-callout-type', 'data-content', 'data-columns', 'data-is-open', 'data-selected-date', 'data-memos'
+        'data-callout-type', 'data-content', 'data-columns', 'data-rows', 'data-is-open', 'data-selected-date', 'data-memos'
     ],
     ALLOW_DATA_ATTR: true,
     ALLOWED_URI_REGEXP: /^(?:(?:(?:ht)tps?|mailto|tel):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i
@@ -150,7 +150,7 @@ export const SHARED_PURIFY_CONFIG = {
         'class', 'href', 'target', 'rel', 'data-type', 'data-latex', 'colspan', 'rowspan', 'colwidth',
         'src', 'alt', 'data-src', 'data-alt', 'data-caption', 'data-width', 'data-align', 'data-url', 'data-title',
         'data-description', 'data-thumbnail', 'data-id', 'data-icon', 'data-checked',
-        'data-callout-type', 'data-content', 'data-columns', 'data-is-open'
+        'data-callout-type', 'data-content', 'data-columns', 'data-rows', 'data-is-open'
     ],
     ALLOW_DATA_ATTR: true,
     FORBID_ATTR: ['style'],

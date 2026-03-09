@@ -83,10 +83,29 @@ export const DatabaseBlock = Node.create({
 
             let { title, columns, rows } = node.attrs;
             let lastIsEditable = editor.isEditable;
-            let cancelActiveResize = null; 
+            let cancelActiveResize = null;
+            let activeCellRefs = [];
+
+            const flushDirtyCells = () => {
+                let changed = false;
+                for (const ref of activeCellRefs) {
+                    if (!ref.el || !ref.el.isConnected) continue;
+                    const newValue = sanitizeCellHtml(ref.el.innerHTML);
+                    if (ref.row.values[ref.colId] !== newValue) {
+                        ref.row.values[ref.colId] = newValue;
+                        changed = true;
+                    }
+                }
+                if (changed) {
+                    updateAttrs({ rows: [...rows] });
+                }
+                return changed;
+            };
 
             const render = () => {
                 if (cancelActiveResize) { cancelActiveResize(); cancelActiveResize = null; }
+                flushDirtyCells();
+                activeCellRefs = [];
                 lastIsEditable = editor.isEditable;
                 container.innerHTML = '';
                 
@@ -301,6 +320,9 @@ export const DatabaseBlock = Node.create({
                             if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); cell.blur(); return; }
                             e.stopPropagation();
                         };
+                        if (editor.isEditable) {
+                            activeCellRefs.push({ el: cell, row, colId: col.id });
+                        }
                         td.appendChild(cell);
 
                         if (editor.isEditable) {
@@ -368,11 +390,13 @@ export const DatabaseBlock = Node.create({
                 dom: container,
                 update: (updatedNode) => {
                     if (updatedNode.type.name !== node.type.name) return false;
-                    const isDataChanged = JSON.stringify(updatedNode.attrs) !== JSON.stringify({ title, columns, rows });
-                    if (isDataChanged) {
-                        title = updatedNode.attrs.title;
-                        columns = updatedNode.attrs.columns;
-                        rows = updatedNode.attrs.rows;
+                    const incoming = updatedNode.attrs;
+                    const incomingJson = JSON.stringify(incoming);
+                    const currentJson = JSON.stringify({ title, columns, rows });
+                    if (incomingJson !== currentJson) {
+                        title = incoming.title;
+                        columns = incoming.columns;
+                        rows = incoming.rows;
                         render();
                     }
                     return true;
@@ -384,6 +408,7 @@ export const DatabaseBlock = Node.create({
                 },
                 ignoreMutation: () => true,
                 destroy: () => {
+                    flushDirtyCells();
                     editor.off('transaction', checkEditable);
                     observer.disconnect();
                 }
