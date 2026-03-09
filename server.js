@@ -447,12 +447,31 @@ function isLocalhostHost(host) {
 
 const IS_PRODUCTION = process.env.NODE_ENV === "production";
 const BASE_URL = process.env.BASE_URL || (IS_PRODUCTION ? "https://localhost:3000" : "http://localhost:3000");
+
+function assertNoDefaultSecrets() {
+    if (!IS_PRODUCTION) return;
+    const banned = new Set([
+        '',
+        'admin',
+        'password',
+        'password123',
+        'your_secure_password_here',
+        'change_me_to_a_long_random_secret'
+    ]);
+    const dbPassword = String(process.env.DB_PASSWORD || '').trim().toLowerCase();
+    const adminUsername = String(process.env.ADMIN_USERNAME || '').trim().toLowerCase();
+    const adminPassword = String(process.env.ADMIN_PASSWORD || '').trim().toLowerCase();
+    if (banned.has(dbPassword)) throw new Error('[보안] DB_PASSWORD에 기본값이나 예제 값을 사용할 수 없습니다');
+    if (adminUsername === 'admin' && banned.has(adminPassword)) throw new Error('[보안] 관리자 계정이 기본값이나 예제 자격 증명을 사용하고 있습니다');
+}
+
 const SHARED_BASE_URL = process.env.SHARED_BASE_URL || null;
 
 if (IS_PRODUCTION) {
     const url = new URL(BASE_URL);
-    if (url.protocol !== "https:" && !isLocalhostHost(url.hostname)) throw new Error("[security] BASE_URL must be HTTPS in production");
+    if (url.protocol !== "https:" && !isLocalhostHost(url.hostname)) throw new Error("[보안] 운영 환경에서 BASE_URL은 반드시 HTTPS여야 합니다");
 }
+assertNoDefaultSecrets();
 
 const IS_HTTPS_BASE_URL = (() => {
     try { return new URL(BASE_URL).protocol === "https:"; }
@@ -478,8 +497,7 @@ const CSRF_COOKIE_NAME = COOKIE_SECURE ? `__Host-${CSRF_COOKIE_NAME_RAW}` : CSRF
 const PREAUTH_CSRF_COOKIE_NAME_RAW = "nteok_preauth_csrf";
 const PREAUTH_CSRF_COOKIE_NAME = COOKIE_SECURE ? `__Host-${PREAUTH_CSRF_COOKIE_NAME_RAW}` : PREAUTH_CSRF_COOKIE_NAME_RAW;
 
-const IS_PRODUCTION = process.env.NODE_ENV === "production";
-if (IS_PRODUCTION && !process.env.CSRF_HMAC_KEY) throw new Error("[security] CSRF_HMAC_KEY must be set in production");
+if (IS_PRODUCTION && !process.env.CSRF_HMAC_KEY) throw new Error("[보안] 운영 환경에서 CSRF_HMAC_KEY 설정이 필수입니다");
 
 const CSRF_HMAC_KEY = Buffer.from(
 	process.env.CSRF_HMAC_KEY || crypto.randomBytes(32).toString("hex"),

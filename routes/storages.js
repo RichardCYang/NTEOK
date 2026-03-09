@@ -14,8 +14,11 @@ const wrappedDekExportLimiter = rateLimit({
 
 module.exports = (dependencies) => {
     const {
+        pool,
         storagesRepo,
         bootstrapRepo,
+        userKeysRepo,
+        storageShareKeysRepo,
         authMiddleware,
         csrfMiddleware,
         toIsoString,
@@ -28,6 +31,12 @@ module.exports = (dependencies) => {
 
     const USER_SEARCH_CONTROL_CHARS_RE = /[\u0000-\u001F\u007F]/;
     const USER_SEARCH_SAFE_RE = /^[가-힣A-Za-z0-9._-]+$/u;
+
+    function isValidBase64(s, maxLen = 4096) {
+        if (typeof s !== 'string' || !s) return false;
+        if (s.length > maxLen) return false;
+        return /^[A-Za-z0-9+/=_-]+$/.test(s);
+    }
 
     function normalizeUserSearchQuery(input) {
         if (typeof input !== 'string') return null;
@@ -156,6 +165,7 @@ module.exports = (dependencies) => {
     });
 
     router.post('/', authMiddleware, csrfMiddleware, async (req, res) => {
+        let connection;
         try {
             const { name, isEncrypted, encryptionSalt, dekVersion, wrappedDek, wrappingKid } = req.body;
             const check = validateStorageName(name);
@@ -165,20 +175,13 @@ module.exports = (dependencies) => {
 
             const useDekV1 = isEncrypted && Number(dekVersion) === 1;
 
-            if (isEncrypted && !useDekV1) {
-                return res.status(400).json({
-                    error: '레거시 비밀번호 직접암호화 저장소는 더 이상 생성할 수 없습니다. DEK v1 만 허용됩니다.'
-                });
-            } else if (useDekV1) {
-                // DEK v1 mode
-                if (!wrappedDek || !wrappingKid) return res.status(400).json({ error: '암호화 저장소 생성에 필요한 정보가 부족합니다.' });
-                if (typeof wrappedDek !== 'string' || typeof wrappingKid !== 'string') return res.status(400).json({ error: '암호화 정보 형식이 올바르지 않습니다.' });
+            if (isEncrypted) {
+                if (!useDekV1) return res.status(400).json({ error: '레거시 암호화 저장소는 더 이상 생성할 수 없습니다.' });
+                if (!isValidBase64(encryptionSalt, 64)) return res.status(400).json({ error: '유효하지 않은 encryptionSalt 입니다.' });
+                if (!isValidBase64(wrappedDek, 4096) || !wrappingKid) return res.status(400).json({ error: '암호화 저장소 생성 정보가 부족하거나 올바르지 않습니다.' });
 
-                // Validate wrappingKid belongs to the user
                 const keyPair = await userKeysRepo.getKeyPairByKid(wrappingKid);
-                if (!keyPair || Number(keyPair.user_id) !== Number(req.user.id)) {
-                    return res.status(400).json({ error: 'wrappingKid가 유효하지 않습니다.' });
-                }
+                if (!keyPair || Number(keyPair.user_id) !== Number(req.user.id)) return res.status(400).json({ error: '유효하지 않은 wrappingKid 입니다.' });
             }
 
             const userId = req.user.id;
@@ -186,6 +189,9 @@ module.exports = (dependencies) => {
             const nowStr = formatDateForDb(now);
             const id = 'stg-' + now.getTime() + '-' + crypto.randomBytes(4).toString('hex');
             const sortOrder = await storagesRepo.getNextSortOrder(userId);
+
+            connection = await pool.getConnection();
+            await connection.beginTransaction();
 
             const storage = await storagesRepo.createStorage({
                 userId,
@@ -198,9 +204,8 @@ module.exports = (dependencies) => {
                 encryptionSalt: isEncrypted ? encryptionSalt : null,
                 encryptionCheck: null,
                 dekVersion: useDekV1 ? 1 : 0
-            });
+            }, connection);
 
-            // For DEK v1, store the owner's wrapped DEK
             if (useDekV1) {
                 await storageShareKeysRepo.upsertWrappedDek({
                     storageId: id,
@@ -209,8 +214,10 @@ module.exports = (dependencies) => {
                     wrappingKid,
                     ephemeralPublicKey: null,
                     createdAt: nowStr
-                });
+                }, connection);
             }
+
+            await connection.commit();
 
             res.json({
                 ...storage,
@@ -224,8 +231,11 @@ module.exports = (dependencies) => {
                 updatedAt: now.toISOString()
             });
         } catch (error) {
+            if (connection) await connection.rollback();
             logError('POST /api/storages', error);
             res.status(500).json({ error: '저장소 생성에 실패했습니다.' });
+        } finally {
+            if (connection) connection.release();
         }
     });
 
