@@ -44,24 +44,38 @@ module.exports = (dependencies) => {
         return normalized;
     }
 
+    function userAndIpRateKey(req) {
+        const rawIp = (typeof getClientIpFromRequest === 'function' ? getClientIpFromRequest(req) : (req.ip || '')) || '0.0.0.0';
+        const ipPart = ipKeyGenerator(rawIp);
+        const userPart = req.user?.id ? String(req.user.id) : 'anon';
+        return `${userPart}:${ipPart}`;
+    }
+
     const collaboratorUserSearchLimiter = rateLimit({
-        windowMs: 60 * 1000, 
-        max: 30,             
+        windowMs: 60 * 1000,
+        max: 30,
         standardHeaders: true,
         legacyHeaders: false,
-        keyGenerator: (req) => {
-            const rawIp = (typeof getClientIpFromRequest === 'function'
-                ? getClientIpFromRequest(req)
-                : (req.ip || '')
-            ) || '0.0.0.0';
+        keyGenerator: userAndIpRateKey,
+        message: { error: '사용자 검색 요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.' }
+    });
 
-            const ipPart = ipKeyGenerator(rawIp);
-            const userPart = req.user?.id ? String(req.user.id) : 'anon';
-            return `${userPart}:${ipPart}`;
-        },
-        message: {
-            error: '사용자 검색 요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.'
-        }
+    const collaboratorMutationLimiter = rateLimit({
+        windowMs: 10 * 60 * 1000,
+        max: 20,
+        standardHeaders: true,
+        legacyHeaders: false,
+        keyGenerator: userAndIpRateKey,
+        message: { error: '협업 권한 변경 요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.' }
+    });
+
+    const destructiveStorageLimiter = rateLimit({
+        windowMs: 10 * 60 * 1000,
+        max: 10,
+        standardHeaders: true,
+        legacyHeaders: false,
+        keyGenerator: userAndIpRateKey,
+        message: { error: '민감한 저장소 변경 요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.' }
     });
 
     const CONTROL_CHARS_RE = /[\u0000-\u001F\u007F]/;
@@ -233,7 +247,7 @@ module.exports = (dependencies) => {
         }
     });
 
-    router.delete('/:id', authMiddleware, csrfMiddleware, async (req, res) => {
+    router.delete('/:id', authMiddleware, csrfMiddleware, requireRecentReauth(10 * 60 * 1000), destructiveStorageLimiter, async (req, res) => {
         try {
             const userId = req.user.id;
             const storageId = req.params.id;
@@ -300,21 +314,15 @@ module.exports = (dependencies) => {
             const storageId = req.params.id;
             const { purpose } = req.body || {};
 
-            if (purpose !== 'unlock-storage') {
-                return res.status(400).json({ error: 'purpose=unlock-storage 가 필요합니다.' });
-            }
+            if (purpose !== 'unlock-storage') return res.status(400).json({ error: 'purpose=unlock-storage 가 필요합니다.' });
 
             const storage = await storagesRepo.getStorageByIdForUser(userId, storageId);
             if (!storage) return res.status(404).json({ error: '저장소를 찾을 수 없습니다.' });
 
-            if (Number(storage.is_encrypted) !== 1 || Number(storage.dek_version) !== 1) {
-                return res.status(400).json({ error: '이 저장소는 DEK v1 암호화를 사용하지 않습니다.' });
-            }
+            if (Number(storage.is_encrypted) !== 1 || Number(storage.dek_version) !== 1) return res.status(400).json({ error: '이 저장소는 DEK v1 암호화를 사용하지 않습니다.' });
 
             const wrappedDekRecord = await storageShareKeysRepo.getWrappedDek(storageId, userId);
-            if (!wrappedDekRecord) {
-                return res.status(404).json({ error: '이 저장소에 대한 wrapped DEK 를 찾을 수 없습니다.' });
-            }
+            if (!wrappedDekRecord) return res.status(404).json({ error: '이 저장소에 대한 wrapped DEK 를 찾을 수 없습니다.' });
 
             res.json({
                 wrappedDek: wrappedDekRecord.wrapped_dek,
@@ -327,7 +335,7 @@ module.exports = (dependencies) => {
         }
     });
 
-    router.post('/:id/collaborators', authMiddleware, csrfMiddleware, async (req, res) => {
+    router.post('/:id/collaborators', authMiddleware, csrfMiddleware, requireRecentReauth(5 * 60 * 1000), collaboratorMutationLimiter, async (req, res) => {
         try {
             const userId = req.user.id;
             const storageId = req.params.id;
@@ -341,28 +349,17 @@ module.exports = (dependencies) => {
             const storage = await storagesRepo.getStorageByIdForUser(userId, storageId);
             if (!requireStorageOwner(storage, res)) return;
 
-            // Check encryption type
-            if (Number(storage.is_encrypted) === 1 && Number(storage.dek_version) !== 1) {
-                return res.status(400).json({ error: '이 암호화 저장소는 공유를 지원하지 않습니다.' });
-            }
+            if (Number(storage.is_encrypted) === 1 && Number(storage.dek_version) !== 1) return res.status(400).json({ error: '이 암호화 저장소는 공유를 지원하지 않습니다.' });
 
             if (String(targetUserId) === String(storage.owner_id)) return res.status(400).json({ error: '저장소 소유자는 별도 참여자로 추가할 수 없습니다.' });
             if (String(targetUserId) === String(userId)) return res.status(400).json({ error: '자기 자신에게 협업 권한을 다시 부여할 수 없습니다.' });
 
-            // For DEK v1 encrypted storage, validate and store wrapped DEK
             if (Number(storage.is_encrypted) === 1 && Number(storage.dek_version) === 1) {
-                if (!wrappedDek || !wrappingKid) {
-                    return res.status(400).json({ error: '암호화 저장소 협업에 필요한 키 정보가 부족합니다.' });
-                }
-                if (typeof wrappedDek !== 'string' || typeof wrappingKid !== 'string') {
-                    return res.status(400).json({ error: '키 정보 형식이 올바르지 않습니다.' });
-                }
+                if (!wrappedDek || !wrappingKid) return res.status(400).json({ error: '암호화 저장소 협업에 필요한 키 정보가 부족합니다.' });
+                if (typeof wrappedDek !== 'string' || typeof wrappingKid !== 'string') return res.status(400).json({ error: '키 정보 형식이 올바르지 않습니다.' });
 
-                // Validate that wrappingKid belongs to targetUserId
                 const keyPair = await userKeysRepo.getKeyPairByKid(wrappingKid);
-                if (!keyPair || Number(keyPair.user_id) !== Number(targetUserId)) {
-                    return res.status(400).json({ error: 'wrappingKid가 대상 사용자 키가 아닙니다.' });
-                }
+                if (!keyPair || Number(keyPair.user_id) !== Number(targetUserId)) return res.status(400).json({ error: 'wrappingKid가 대상 사용자 키가 아닙니다.' });
             }
 
             const now = new Date();
@@ -377,7 +374,6 @@ module.exports = (dependencies) => {
                 updatedAt: nowStr
             });
 
-            // For DEK v1, store the wrapped DEK
             if (Number(storage.is_encrypted) === 1 && Number(storage.dek_version) === 1) {
                 await storageShareKeysRepo.upsertWrappedDek({
                     storageId,
@@ -389,9 +385,7 @@ module.exports = (dependencies) => {
                 });
             }
 
-            try {
-                if (typeof wsKickUserFromStorage === 'function') wsKickUserFromStorage(storageId, targetUserId, 1008, 'Storage permission changed');
-            } catch (e) {}
+            try { if (typeof wsKickUserFromStorage === 'function') wsKickUserFromStorage(storageId, targetUserId, 1008, 'Storage permission changed'); } catch (e) {}
 
             res.json({ success: true });
         } catch (error) {
@@ -400,7 +394,7 @@ module.exports = (dependencies) => {
         }
     });
 
-    router.delete('/:id/collaborators/:targetUserId', authMiddleware, csrfMiddleware, async (req, res) => {
+    router.delete('/:id/collaborators/:targetUserId', authMiddleware, csrfMiddleware, requireRecentReauth(5 * 60 * 1000), collaboratorMutationLimiter, async (req, res) => {
         try {
             const userId = req.user.id;
             const storageId = req.params.id;
@@ -414,18 +408,11 @@ module.exports = (dependencies) => {
 
             await storagesRepo.removeCollaborator(storageId, targetUserId);
 
-            // For DEK v1, delete the wrapped DEK
             if (Number(storage.is_encrypted) === 1 && Number(storage.dek_version) === 1) {
-                try {
-                    await storageShareKeysRepo.deleteWrappedDek(storageId, targetUserId);
-                } catch (e) {
-                    logError('DELETE wrapped DEK', e);
-                }
+                try { await storageShareKeysRepo.deleteWrappedDek(storageId, targetUserId); } catch (e) { logError('DELETE wrapped DEK', e); }
             }
 
-            try {
-                if (typeof wsKickUserFromStorage === 'function') wsKickUserFromStorage(storageId, targetUserId, 1008, 'Storage access revoked');
-            } catch (e) {}
+            try { if (typeof wsKickUserFromStorage === 'function') wsKickUserFromStorage(storageId, targetUserId, 1008, 'Storage access revoked'); } catch (e) {}
 
             res.json({ success: true });
         } catch (error) {

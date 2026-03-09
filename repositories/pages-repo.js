@@ -62,6 +62,15 @@ module.exports = ({ pool, pageSqlPolicy }) => {
         }
     }
 
+    async function deleteByIdInBatches(sqlPrefixWhereIdIn, ids, paramsBeforeIds = []) {
+        if (!Array.isArray(ids) || ids.length === 0) return;
+        for (const chunk of chunkArray(ids, SUBTREE_BATCH_SIZE)) {
+            const placeholders = chunk.map(() => '?').join(',');
+            const sql = `${sqlPrefixWhereIdIn} (${placeholders})`;
+            await pool.execute(sql, [...paramsBeforeIds, ...chunk]);
+        }
+    }
+
     return {
         async listPagesForUser({ userId, storageId = null }) {
             if (!storageId) return [];
@@ -182,21 +191,17 @@ module.exports = ({ pool, pageSqlPolicy }) => {
             const subtreeIds = collectSubtreeIds(allPages || [], pageId);
             const rowsById = new Map((allPages || []).map(r => [r.id, r]));
 
-            if (!isAdmin) {
-                const deletableSet = new Set();
-                for (const id of subtreeIds) {
-                    const row = rowsById.get(id);
-                    if (row && Number(row.user_id) === Number(userId)) deletableSet.add(id);
-                }
+            const { allowed: deletableIds, disallowed: keptIds } = splitIdsByPermission(rowsById, subtreeIds, userId, isAdmin);
+            if (!deletableIds || deletableIds.length === 0) return;
 
+            if (!isAdmin && keptIds.length > 0) {
+                const deletableSet = new Set(deletableIds);
                 const keptRootIds = [];
-                for (const id of subtreeIds) {
+                for (const id of keptIds) {
                     const row = rowsById.get(id);
                     if (!row) continue;
-                    if (Number(row.user_id) === Number(userId)) continue;
                     if (row.parent_id && deletableSet.has(row.parent_id)) keptRootIds.push(row.id);
                 }
-
                 if (keptRootIds.length > 0) {
                     await updateByIdInBatches(
                         `UPDATE pages SET parent_id = NULL, updated_at = NOW() WHERE id IN`,
@@ -205,9 +210,9 @@ module.exports = ({ pool, pageSqlPolicy }) => {
                 }
             }
 
-            await pool.execute(
-                `DELETE FROM pages WHERE id = ?`,
-                [pageId]
+            await deleteByIdInBatches(
+                `DELETE FROM pages WHERE id IN`,
+                deletableIds
             );
         },
 

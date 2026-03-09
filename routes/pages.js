@@ -1059,7 +1059,7 @@ module.exports = (dependencies) => {
         }
     });
 
-    router.delete("/:id/permanent", authMiddleware, csrfMiddleware, async (req, res) => {
+    router.delete("/:id/permanent", authMiddleware, csrfMiddleware, requireRecentReauth(10 * 60 * 1000), async (req, res) => {
         try {
             const userId = req.user.id;
             const { id } = req.params;
@@ -1068,18 +1068,11 @@ module.exports = (dependencies) => {
             if (!page) return res.status(404).json({ error: "Not found" });
 
             const permission = await storagesRepo.getPermission(userId, page.storage_id);
-            if (!permission) {
-                return res.status(403).json({ error: "권한이 없습니다." });
-            }
+            if (!permission) return res.status(403).json({ error: "권한이 없습니다." });
 
             const isOwnerOfPage = Number(page.user_id) === Number(userId);
-            const canDelete =
-                permission === 'ADMIN' ||
-                (permission === 'EDIT' && isOwnerOfPage);
-
-            if (!canDelete) {
-                return res.status(403).json({ error: "이 페이지를 영구 삭제할 권한이 없습니다." });
-            }
+            const canDelete = permission === 'ADMIN' || (permission === 'EDIT' && isOwnerOfPage);
+            if (!canDelete) return res.status(403).json({ error: "이 페이지를 영구 삭제할 권한이 없습니다." });
 
             await pagesRepo.permanentlyDeletePageAndDescendants({
                 pageId: id,
