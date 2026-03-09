@@ -1432,7 +1432,12 @@ function initWebSocketServer(server, pool, sanitizeHtmlContent, IS_PRODUCTION, B
             registerActive(wsActiveConnectionsBySession, sessionId);
             ws._activeSessionKey = sessionId;
 
-		    const session = typeof getSessionFromId === 'function' ? await getSessionFromId(sessionId) : null;
+		    const session = typeof getSessionFromId === 'function'
+		        ? await getSessionFromId(sessionId, {
+		            enforceUa: true,
+		            userAgent: req.headers["user-agent"] || ""
+		        })
+		        : null;
 		    if (!session || !session.userId) { ws.close(1008, 'Unauthorized'); return; }
 		    ws.userId = session.userId; ws.username = session.username; ws.sessionId = sessionId; ws.isAlive = true;
 			registerSessionConnection(sessionId, ws);
@@ -1485,8 +1490,8 @@ function initWebSocketServer(server, pool, sanitizeHtmlContent, IS_PRODUCTION, B
 async function handleWebSocketMessage(ws, data, pool, sanitizeHtmlContent, getSessionFromId, pageSqlPolicy) {
 	const { type, payload } = data;
 	if (ws.sessionId && typeof getSessionFromId === 'function') {
-	    const s = await getSessionFromId(ws.sessionId);
-	    if (!s || !s.userId) { try { ws.close(1008, 'Expired'); } catch (e) {} return; }
+		const s = await getSessionFromId(ws.sessionId, { enforceUa: false });
+		if (!s || !s.userId) { try { ws.close(1008, 'Expired'); } catch (e) {} return; }
 	}
 	switch (type) {
         case 'subscribe-page': await handleSubscribePage(ws, payload, pool, sanitizeHtmlContent, pageSqlPolicy); break;

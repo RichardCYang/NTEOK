@@ -878,33 +878,59 @@ const EDITOR_ALLOWED_ATTR = [
     'data-selected-date', 'data-memos'
 ];
 
+function isUrlAllowedForShared(url) {
+	if (!url) return true;
+	if (url.startsWith('/') || url.startsWith('./') || url.startsWith('../')) return true;
+	try {
+		const u = new URL(url);
+		const b = new URL(BASE_URL);
+		if (u.origin === b.origin) return true;
+		const allowed = (process.env.SHARED_PAGE_ALLOWED_DOMAINS || "").split(",").map(s => s.trim()).filter(Boolean);
+		if (allowed.some(d => u.hostname === d || u.hostname.endsWith('.' + d))) return true;
+		return false;
+	} catch (_) {
+		return false;
+	}
+}
+
 function sanitizeHtmlContent(html, { profile = 'editor' } = {}) {
-    if (typeof html !== 'string') return html;
-
-    const prefiltered = prefilterHtmlForSanitizer(html);
-
-    try {
-        maybeRecycleDomPurify();
-        const config = profile === 'shared'
-            ? {
-                ALLOWED_TAGS: BASE_ALLOWED_TAGS,
-                ALLOWED_ATTR: BASE_ALLOWED_ATTR,
-                ALLOW_DATA_ATTR: true,
-                FORBID_ATTR: ['style'],
-                ALLOWED_URI_REGEXP: /^(?:(?:(?:ht)tps?|mailto|tel):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i
-            }
-            : {
-                ALLOWED_TAGS: EDITOR_ALLOWED_TAGS,
-                ALLOWED_ATTR: EDITOR_ALLOWED_ATTR,
-                ALLOW_DATA_ATTR: true,
-                ALLOWED_URI_REGEXP: /^(?:(?:(?:ht)tps?|mailto|tel):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i
-            };
-
-        return DOMPurify.sanitize(prefiltered, config);
-    } catch (err) {
-        const escaped = escapeHtmlToText(prefiltered);
-        return `<p>${escaped}</p>`;
-    }
+	if (typeof html !== 'string') return html;
+	const prefiltered = prefilterHtmlForSanitizer(html);
+	try {
+		maybeRecycleDomPurify();
+		if (profile === 'shared') {
+			DOMPurify.addHook('afterSanitizeAttributes', (node) => {
+				if (node.hasAttribute('src')) {
+					const src = node.getAttribute('src');
+					if (!isUrlAllowedForShared(src)) node.removeAttribute('src');
+				}
+				if (node.hasAttribute('href')) {
+					const href = node.getAttribute('href');
+					if (!isUrlAllowedForShared(href)) node.removeAttribute('href');
+				}
+			});
+		}
+		const config = profile === 'shared'
+			? {
+				ALLOWED_TAGS: BASE_ALLOWED_TAGS,
+				ALLOWED_ATTR: BASE_ALLOWED_ATTR,
+				ALLOW_DATA_ATTR: true,
+				FORBID_ATTR: ['style'],
+				ALLOWED_URI_REGEXP: /^(?:(?:(?:ht)tps?|mailto|tel):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i
+			}
+			: {
+				ALLOWED_TAGS: EDITOR_ALLOWED_TAGS,
+				ALLOWED_ATTR: EDITOR_ALLOWED_ATTR,
+				ALLOW_DATA_ATTR: true,
+				ALLOWED_URI_REGEXP: /^(?:(?:(?:ht)tps?|mailto|tel):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i
+			};
+		const sanitized = DOMPurify.sanitize(prefiltered, config);
+		if (profile === 'shared') DOMPurify.removeHook('afterSanitizeAttributes');
+		return sanitized;
+	} catch (err) {
+		const escaped = escapeHtmlToText(prefiltered);
+		return `<p>${escaped}</p>`;
+	}
 }
 
 function validatePasswordStrength(password) {
@@ -1037,16 +1063,16 @@ async function createSession(user, ctx = {}) {
 	return { success: true, sessionId };
 }
 
-async function getSessionFromRequest(req) {
-	if (!req.cookies) return null;
-	const sessionId = req.cookies[SESSION_COOKIE_NAME];
+async function getSessionFromId(sessionId, ctx = {}) {
 	if (!sessionId) return null;
 	const session = await getSession(sessionId);
 	if (!session || session.type !== 'auth' || !session.userId) return null;
-	const currentUaHash = hashUserAgent(req.headers["user-agent"] || "");
-	if (session.uaHash && session.uaHash !== currentUaHash) {
-		await revokeSession(sessionId, "ua-mismatch");
-		return null;
+	if (ctx.enforceUa === true) {
+		const currentUaHash = hashUserAgent(ctx.userAgent || "");
+		if (session.uaHash && session.uaHash !== currentUaHash) {
+			await revokeSession(sessionId, "ua-mismatch");
+			return null;
+		}
 	}
 	const now = Date.now();
 	if (session.absoluteExpiry <= now || session.expiresAt <= now) {
@@ -1056,6 +1082,16 @@ async function getSessionFromRequest(req) {
 	session.expiresAt = now + SESSION_TTL_MS;
 	await saveSession(sessionId, session, SESSION_ABSOLUTE_TTL_MS);
 	return { id: sessionId, ...session };
+}
+
+async function getSessionFromRequest(req) {
+	if (!req.cookies) return null;
+	const sessionId = req.cookies[SESSION_COOKIE_NAME];
+	if (!sessionId) return null;
+	return await getSessionFromId(sessionId, {
+		enforceUa: true,
+		userAgent: req.headers?.["user-agent"] || ""
+	});
 }
 
 async function authMiddleware(req, res, next) {
@@ -2176,10 +2212,6 @@ const fileUpload = multer({
     },
 });
 
-async function getSessionFromId(sessionId) {
-	if (!sessionId) return null;
-	return await getSessionFromRequest({ cookies: { [SESSION_COOKIE_NAME]: sessionId } });
-}
 
 
 function installGracefulShutdownHandlers(httpServer, pool, sanitizeHtmlContent) {

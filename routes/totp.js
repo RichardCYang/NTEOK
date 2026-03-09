@@ -11,31 +11,48 @@ const RATE_LIMIT_IPV6_SUBNET = (() => {
 	return Math.max(0, Math.min(128, n));
 })();
 
-async function assertNotLocked(redis, accountKey) {
-	const key = `totp-lock:${accountKey}`;
-	const raw = await redis.get(key);
-	if (!raw) return { ok: true };
-	const st = JSON.parse(raw);
-	if (st.lockedUntil && Date.now() < st.lockedUntil) return { ok: false, retryAfterMs: st.lockedUntil - Date.now() };
+async function assertNotLocked(redis, accountKey, ipKey) {
+	const uKey = `totp-lock:user:${accountKey}`;
+	const iKey = `totp-lock:ip:${ipKey}`;
+	const [uRaw, iRaw] = await Promise.all([redis.get(uKey), redis.get(iKey)]);
+	const now = Date.now();
+	if (uRaw) {
+		const st = JSON.parse(uRaw);
+		if (st.lockedUntil && now < st.lockedUntil) return { ok: false, retryAfterMs: st.lockedUntil - now };
+	}
+	if (iRaw) {
+		const st = JSON.parse(iRaw);
+		if (st.lockedUntil && now < st.lockedUntil) return { ok: false, retryAfterMs: st.lockedUntil - now };
+	}
 	return { ok: true };
 }
 
-async function recordTotpFailure(redis, accountKey) {
-	const key = `totp-lock:${accountKey}`;
-	const raw = await redis.get(key);
-	const cur = raw ? JSON.parse(raw) : { failCount: 0, lockedUntil: 0 };
-	const TOTP_MAX_FAILS = Number(process.env.TOTP_MAX_FAILS || 8);
+async function recordTotpFailure(redis, accountKey, ipKey) {
+	const TOTP_MAX_FAILS_USER = Number(process.env.TOTP_MAX_FAILS_USER || 8);
+	const TOTP_MAX_FAILS_IP = Number(process.env.TOTP_MAX_FAILS_IP || 20);
 	const TOTP_LOCK_MS = Number(process.env.TOTP_LOCK_MS || (10 * 60 * 1000));
-	cur.failCount += 1;
-	if (cur.failCount >= TOTP_MAX_FAILS) {
-		cur.lockedUntil = Date.now() + TOTP_LOCK_MS;
-		cur.failCount = 0; 
-	}
-	await redis.set(key, JSON.stringify(cur), { PX: TOTP_LOCK_MS * 2 });
+	const now = Date.now();
+	const incr = async (key, max) => {
+		const raw = await redis.get(key);
+		const cur = raw ? JSON.parse(raw) : { failCount: 0, lockedUntil: 0 };
+		cur.failCount += 1;
+		if (cur.failCount >= max) {
+			cur.lockedUntil = now + TOTP_LOCK_MS;
+			cur.failCount = 0;
+		}
+		await redis.set(key, JSON.stringify(cur), { PX: TOTP_LOCK_MS * 2 });
+	};
+	await Promise.all([
+		incr(`totp-lock:user:${accountKey}`, TOTP_MAX_FAILS_USER),
+		incr(`totp-lock:ip:${ipKey}`, TOTP_MAX_FAILS_IP)
+	]);
 }
 
-async function clearTotpFailures(redis, accountKey) {
-	await redis.del(`totp-lock:${accountKey}`);
+async function clearTotpFailures(redis, accountKey, ipKey) {
+	await Promise.all([
+		redis.del(`totp-lock:user:${accountKey}`),
+		redis.del(`totp-lock:ip:${ipKey}`)
+	]);
 }
 
 function sanitizeTempSessionId(raw) {
@@ -54,13 +71,6 @@ async function buildStable2FAAccountKeyFromTempSessionId(getSession, tempSession
 function buildStable2FAAccountKeyFromSession(tempSession) {
 	if (tempSession && tempSession.pendingUserId) return `uid:${String(tempSession.pendingUserId)}`;
 	return "unknown";
-}
-
-function buildTotpLockKey(req, tempSession) {
-	const accountKey = buildStable2FAAccountKeyFromSession(tempSession);
-	const ip = getClientIp(req);
-	const ipKey = ip && ip !== 'unknown' ? ipKeyGenerator(ip, RATE_LIMIT_IPV6_SUBNET) : "noip";
-	return `${accountKey}:${ipKey}`;
 }
 
 
@@ -276,20 +286,22 @@ module.exports = (dependencies) => {
 			if (!tempSessionId) return res.status(400).json({ error: "세션 정보가 없습니다." });
 			const tempSession = await getValid2FATempSession(req, tempSessionId);
 			if (!tempSession) return res.status(400).json({ error: "세션이 만료되었습니다. 다시 로그인하세요." });
-			const lockKey = buildTotpLockKey(req, tempSession);
-			const lock = await assertNotLocked(redis, lockKey);
-			if (!lock.ok) return res.status(429).json({ error: "TOTP 인증 실패가 누적되어 잠시 잠금되었습니다.", retryAfterMs: lock.retryAfterMs });
+			const accountKey = buildStable2FAAccountKeyFromSession(tempSession);
+			const ip = getClientIp(req);
+			const ipKey = ip && ip !== 'unknown' ? ipKeyGenerator(ip, RATE_LIMIT_IPV6_SUBNET) : "noip";
+			const lock = await assertNotLocked(redis, accountKey, ipKey);
+			if (!lock.ok) return res.status(429).json({ error: "인증 실패가 누적되어 잠시 잠금되었습니다.", retryAfterMs: lock.retryAfterMs });
 			const userId = tempSession.pendingUserId;
 			const [rows] = await pool.execute("SELECT totp_secret, username, block_duplicate_login, country_whitelist_enabled, allowed_login_countries FROM users WHERE id = ? AND totp_enabled = 1", [userId]);
 			if (rows.length === 0) return res.status(404).json({ error: "TOTP 가 활성화되지 않았습니다." });
 			const { totp_secret, username, block_duplicate_login, country_whitelist_enabled, allowed_login_countries } = rows[0];
 			const verified = speakeasy.totp.verify({ secret: decryptTotpSecret(totp_secret), encoding: 'base32', token: token, window: 2 });
 			if (!verified) {
-				await recordTotpFailure(redis, lockKey);
+				await recordTotpFailure(redis, accountKey, ipKey);
 				await recordLoginAttempt(pool, { userId: userId, username: username, ipAddress: getClientIp(req), port: req.connection.remotePort || 0, success: false, failureReason: 'TOTP 인증 실패', userAgent: req.headers['user-agent'] || null });
 				return res.status(401).json({ error: "잘못된 인증 코드입니다." });
 			}
-			await clearTotpFailures(redis, lockKey);
+			await clearTotpFailures(redis, accountKey, ipKey);
 			const countryCheck = checkCountryWhitelist({ country_whitelist_enabled: country_whitelist_enabled, allowed_login_countries: allowed_login_countries }, getClientIp(req));
 			if (!countryCheck.allowed) {
 				await recordLoginAttempt(pool, { userId: userId, username: username, ipAddress: getClientIp(req), port: req.connection.remotePort || 0, success: false, failureReason: countryCheck.reason, userAgent: req.headers['user-agent'] || null });
@@ -327,9 +339,11 @@ module.exports = (dependencies) => {
 			if (!tempSessionId) return res.status(400).json({ error: "세션 정보가 없습니다." });
 			const tempSession = await getValid2FATempSession(req, tempSessionId);
 			if (!tempSession) return res.status(400).json({ error: "세션이 만료되었습니다. 다시 로그인하세요." });
-			const lockKey = buildTotpLockKey(req, tempSession);
-			const lock = await assertNotLocked(redis, lockKey);
-			if (!lock.ok) return res.status(429).json({ error: "백업 코드 인증 실패가 누적되어 잠시 잠금되었습니다.", retryAfterMs: lock.retryAfterMs });
+			const accountKey = buildStable2FAAccountKeyFromSession(tempSession);
+			const ip = getClientIp(req);
+			const ipKey = ip && ip !== 'unknown' ? ipKeyGenerator(ip, RATE_LIMIT_IPV6_SUBNET) : "noip";
+			const lock = await assertNotLocked(redis, accountKey, ipKey);
+			if (!lock.ok) return res.status(429).json({ error: "인증 실패가 누적되어 잠시 잠금되었습니다.", retryAfterMs: lock.retryAfterMs });
 			const userId = tempSession.pendingUserId;
 			const [userRows] = await pool.execute("SELECT username, block_duplicate_login, country_whitelist_enabled, allowed_login_countries FROM users WHERE id = ?", [userId]);
 			if (userRows.length === 0) {
@@ -354,7 +368,7 @@ module.exports = (dependencies) => {
 				}
 			}
 			if (!validCodeId) {
-				await recordTotpFailure(redis, lockKey);
+				await recordTotpFailure(redis, accountKey, ipKey);
 				await recordLoginAttempt(pool, { userId, username, ipAddress: getClientIp(req), port: req.connection.remotePort || 0, success: false, failureReason: '백업 코드 불일치', userAgent: req.headers['user-agent'] || null });
 				return res.status(401).json({ error: "잘못된 백업 코드입니다." });
 			}
@@ -362,11 +376,11 @@ module.exports = (dependencies) => {
 			const nowStr = formatDateForDb(now);
 			const [consumeResult] = await pool.execute(`UPDATE backup_codes SET used = 1, used_at = ? WHERE id = ? AND user_id = ? AND used = 0`, [nowStr, validCodeId, userId]);
 			if (!consumeResult || Number(consumeResult.affectedRows || 0) !== 1) {
-				await recordTotpFailure(redis, lockKey);
+				await recordTotpFailure(redis, accountKey, ipKey);
 				await recordLoginAttempt(pool, { userId, username, ipAddress: getClientIp(req), port: req.connection.remotePort || 0, success: false, failureReason: '백업 코드 재사용 또는 동시 사용 경합 감지', userAgent: req.headers['user-agent'] || null });
 				return res.status(401).json({ error: "잘못된 백업 코드입니다." });
 			}
-			await clearTotpFailures(redis, lockKey);
+			await clearTotpFailures(redis, accountKey, ipKey);
 			const sessionResult = await createSession(
 				{ id: userId, username: username, blockDuplicateLogin: block_duplicate_login },
 				{ userAgent: req.headers["user-agent"] || "" }

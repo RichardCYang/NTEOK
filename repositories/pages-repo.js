@@ -74,20 +74,18 @@ module.exports = ({ pool, pageSqlPolicy }) => {
     return {
         async listPagesForUser({ userId, storageId = null }) {
             if (!storageId) return [];
-
-            const visOwner = pageSqlPolicy.andVisible({ alias: "p", viewerUserId: userId });
-            const visShared = pageSqlPolicy.andVisible({ alias: "p", viewerUserId: userId });
-
+            const vis = pageSqlPolicy.andVisible({ alias: "p", viewerUserId: userId, storageAlias: "s" });
             const query = `
                 (
                     SELECT p.id, p.title, p.updated_at, p.parent_id, p.sort_order,
                            p.storage_id, p.is_encrypted, p.share_allowed, p.user_id,
                            p.icon, p.cover_image, p.cover_position, p.horizontal_padding
                     FROM pages p
-                    WHERE p.user_id = ?
+                    INNER JOIN storages s ON p.storage_id = s.id
+                    WHERE s.user_id = ?
                     AND p.storage_id = ?
                     AND p.deleted_at IS NULL
-                    ${visOwner.sql}
+                    ${vis.sql}
                 )
                 UNION ALL
                 (
@@ -96,55 +94,57 @@ module.exports = ({ pool, pageSqlPolicy }) => {
                            p.icon, p.cover_image, p.cover_position, p.horizontal_padding
                     FROM pages p
                     INNER JOIN storage_shares ss ON p.storage_id = ss.storage_id
+                    INNER JOIN storages s ON p.storage_id = s.id
                     WHERE ss.shared_with_user_id = ?
                     AND p.storage_id = ?
+                    AND s.user_id != ?
                     AND p.deleted_at IS NULL
-                    ${visShared.sql}
+                    ${vis.sql}
                 )
                 ORDER BY parent_id IS NULL DESC, sort_order ASC, updated_at DESC
             `;
-
             const params = [
-                userId, storageId, ...visOwner.params,
-                userId, storageId, ...visShared.params
+                userId, storageId, ...vis.params,
+                userId, storageId, userId, ...vis.params
             ];
-
             const [rows] = await pool.execute(query, params);
             return rows || [];
         },
 
         async getPageByIdForUser({ userId, pageId, includeDeleted = false }) {
-            const vis = pageSqlPolicy.andVisible({ alias: "p", viewerUserId: userId });
+            const vis = pageSqlPolicy.andVisible({ alias: "p", viewerUserId: userId, storageAlias: "s" });
             let sql = `SELECT p.id, p.title, p.content, p.encryption_salt, p.encrypted_content,
                         p.created_at, p.updated_at, p.parent_id, p.sort_order, p.storage_id,
                         p.is_encrypted, p.share_allowed, p.user_id, p.icon, p.cover_image, p.cover_position,
                         p.horizontal_padding, p.deleted_at
                  FROM pages p
+                 INNER JOIN storages s ON p.storage_id = s.id
                  LEFT JOIN storage_shares ss ON p.storage_id = ss.storage_id AND ss.shared_with_user_id = ?
-                 WHERE p.id = ? AND (p.user_id = ? OR ss.storage_id IS NOT NULL)
+                 WHERE p.id = ? AND (p.user_id = ? OR ss.storage_id IS NOT NULL OR s.user_id = ?)
                  ${vis.sql}`;
 
             if (!includeDeleted) {
                 sql += ` AND p.deleted_at IS NULL`;
             }
 
-            const [rows] = await pool.execute(sql, [userId, pageId, userId, ...vis.params]);
+            const [rows] = await pool.execute(sql, [userId, pageId, userId, userId, ...vis.params]);
 
             return rows?.[0] || null;
         },
 
         async listTrashedPagesForUser({ userId, storageId }) {
-            const vis = pageSqlPolicy.andVisible({ alias: "p", viewerUserId: userId });
+            const vis = pageSqlPolicy.andVisible({ alias: "p", viewerUserId: userId, storageAlias: "s" });
             const [rows] = await pool.execute(
                 `SELECT p.id, p.title, p.updated_at, p.deleted_at, p.storage_id, p.user_id
                  FROM pages p
+                 INNER JOIN storages s ON p.storage_id = s.id
                  LEFT JOIN storage_shares ss ON p.storage_id = ss.storage_id AND ss.shared_with_user_id = ?
-                 WHERE (p.user_id = ? OR ss.storage_id IS NOT NULL)
+                 WHERE (p.user_id = ? OR ss.storage_id IS NOT NULL OR s.user_id = ?)
                  AND p.storage_id = ?
-                 AND p.deleted_at IS NULL = 0
+                 AND p.deleted_at IS NOT NULL
                  ${vis.sql}
                  ORDER BY p.deleted_at DESC`,
-                [userId, userId, storageId, ...vis.params]
+                [userId, userId, userId, storageId, ...vis.params]
             );
             return rows || [];
         },
@@ -269,14 +269,15 @@ module.exports = ({ pool, pageSqlPolicy }) => {
         },
 
         async listPagesForBackupExport({ userId }) {
-            const vis = pageSqlPolicy.andVisible({ alias: "p", viewerUserId: userId });
+            const vis = pageSqlPolicy.andVisible({ alias: "p", viewerUserId: userId, storageAlias: "s" });
             const [rows] = await pool.execute(
                 `SELECT p.id, p.title, p.content, p.encryption_salt, p.encrypted_content,
                         p.e2ee_yjs_state, p.e2ee_yjs_state_updated_at,
                         p.created_at, p.updated_at, p.parent_id, p.sort_order, p.storage_id,
                         p.is_encrypted, p.share_allowed, p.icon, p.cover_image, p.cover_position
                  FROM pages p
-                 WHERE p.storage_id IN (SELECT id FROM storages WHERE user_id = ?)
+                 INNER JOIN storages s ON p.storage_id = s.id
+                 WHERE s.user_id = ?
                  AND p.deleted_at IS NULL
                  ${vis.sql}
                  ORDER BY p.storage_id ASC, p.parent_id IS NULL DESC, p.sort_order ASC`,
@@ -307,15 +308,15 @@ module.exports = ({ pool, pageSqlPolicy }) => {
                     },
 
         async getUpdateHistory({ userId, storageId, limit = 50 }) {
-            const vis = pageSqlPolicy.visiblePredicate({ alias: "p", viewerUserId: userId });
+            const vis = pageSqlPolicy.visiblePredicate({ alias: "p", viewerUserId: userId, storageAlias: "s" });
 
             const [rows] = await pool.execute(
                 `SELECT h.*, u.username, p.title as page_title
                  FROM updates_history h
                  INNER JOIN users u ON h.user_id = u.id
+                 INNER JOIN storages s ON h.storage_id = s.id
                  LEFT JOIN pages p ON h.page_id = p.id
                  LEFT JOIN storage_shares ss ON h.storage_id = ss.storage_id AND ss.shared_with_user_id = ?
-                 INNER JOIN storages s ON h.storage_id = s.id
                  WHERE h.storage_id = ? AND (s.user_id = ? OR ss.storage_id IS NOT NULL)
                    AND (
                         h.page_id IS NULL

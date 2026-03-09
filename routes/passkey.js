@@ -36,11 +36,56 @@ module.exports = (dependencies) => {
 		recordLoginAttempt,
 		checkCountryWhitelist,
 		getClientIpFromRequest,
+		redis,
 		getSession,
 		saveSession,
 		revokeSession,
 		requireRecentReauth
 	} = dependencies;
+
+	async function assertPasskeyLocked(redis, accountKey, ipKey) {
+		const uKey = `passkey-lock:user:${accountKey}`;
+		const iKey = `passkey-lock:ip:${ipKey}`;
+		const [uRaw, iRaw] = await Promise.all([redis.get(uKey), redis.get(iKey)]);
+		const now = Date.now();
+		if (uRaw) {
+			const st = JSON.parse(uRaw);
+			if (st.lockedUntil && now < st.lockedUntil) return { ok: false, retryAfterMs: st.lockedUntil - now };
+		}
+		if (iRaw) {
+			const st = JSON.parse(iRaw);
+			if (st.lockedUntil && now < st.lockedUntil) return { ok: false, retryAfterMs: st.lockedUntil - now };
+		}
+		return { ok: true };
+	}
+
+	async function recordPasskeyFailure(redis, accountKey, ipKey) {
+		const PASSKEY_MAX_FAILS_USER = Number(process.env.PASSKEY_MAX_FAILS_USER || 8);
+		const PASSKEY_MAX_FAILS_IP = Number(process.env.PASSKEY_MAX_FAILS_IP || 20);
+		const PASSKEY_LOCK_MS = Number(process.env.PASSKEY_LOCK_MS || (10 * 60 * 1000));
+		const now = Date.now();
+		const incr = async (key, max) => {
+			const raw = await redis.get(key);
+			const cur = raw ? JSON.parse(raw) : { failCount: 0, lockedUntil: 0 };
+			cur.failCount += 1;
+			if (cur.failCount >= max) {
+				cur.lockedUntil = now + PASSKEY_LOCK_MS;
+				cur.failCount = 0;
+			}
+			await redis.set(key, JSON.stringify(cur), { PX: PASSKEY_LOCK_MS * 2 });
+		};
+		await Promise.all([
+			incr(`passkey-lock:user:${accountKey}`, PASSKEY_MAX_FAILS_USER),
+			incr(`passkey-lock:ip:${ipKey}`, PASSKEY_MAX_FAILS_IP)
+		]);
+	}
+
+	async function clearPasskeyFailures(redis, accountKey, ipKey) {
+		await Promise.all([
+			redis.del(`passkey-lock:user:${accountKey}`),
+			redis.del(`passkey-lock:ip:${ipKey}`)
+		]);
+	}
 
 	const TWO_FA_COOKIE_NAME = COOKIE_SECURE ? '__Host-nteok_2fa' : 'nteok_2fa';
 	const TWO_FA_COOKIE_OPTS = {
@@ -237,14 +282,20 @@ module.exports = (dependencies) => {
 			if (passkeys.length === 0) return genericPasskeyFailure(res);
 			const passkey = passkeys[0];
 			const userId = passkey.user_id;
+			const ip = getClientIp(req);
+			const ipKey = crypto.createHash('sha256').update(ip).digest('hex');
+			const lock = await assertPasskeyLocked(redis, `uid:${userId}`, ipKey);
+			if (!lock.ok) return res.status(429).json({ error: "인증 실패가 누적되어 잠시 잠금되었습니다.", retryAfterMs: lock.retryAfterMs });
 			const publicKey = Buffer.from(passkey.public_key, 'base64');
 			const verification = await verifyAuthenticationResponse({ response: credential, expectedChallenge: expectedChallenge, expectedOrigin: expectedOrigin, expectedRPID: rpID, credential: { id: credentialIdBase64, publicKey: publicKey, counter: passkey.counter, transports: passkey.transports ? passkey.transports.split(',') : [] }, requireUserVerification: true });
 			if (!verification.verified) {
+				await recordPasskeyFailure(redis, `uid:${userId}`, ipKey);
 				const [userRows] = await pool.execute("SELECT username FROM users WHERE id = ?", [userId]);
 				const username = userRows.length > 0 ? userRows[0].username : '알 수 없음';
 				await recordLoginAttempt(pool, { userId: userId, username: username, ipAddress: getClientIp(req), port: req.connection.remotePort || 0, success: false, failureReason: '패스키 userless 로그인 인증 실패', userAgent: req.headers['user-agent'] || null });
 				return res.status(401).json({ error: "패스키 인증에 실패했습니다." });
 			}
+			await clearPasskeyFailures(redis, `uid:${userId}`, ipKey);
 			const newCounter = verification.authenticationInfo.newCounter;
 			const now = new Date();
 			const nowStr = formatDateForDb(now);
@@ -314,14 +365,20 @@ module.exports = (dependencies) => {
 			const [passkeys] = await pool.execute("SELECT id, public_key, counter, transports FROM passkeys WHERE credential_id = ? AND user_id = ?", [credentialIdBase64, userId]);
 			if (passkeys.length === 0) return genericPasskeyFailure(res);
 			const passkey = passkeys[0];
+			const ip = getClientIp(req);
+			const ipKey = crypto.createHash('sha256').update(ip).digest('hex');
+			const lock = await assertPasskeyLocked(redis, `uid:${userId}`, ipKey);
+			if (!lock.ok) return res.status(429).json({ error: "인증 실패가 누적되어 잠시 잠금되었습니다.", retryAfterMs: lock.retryAfterMs });
 			const publicKey = Buffer.from(passkey.public_key, 'base64');
 			const verification = await verifyAuthenticationResponse({ response: credential, expectedChallenge: expectedChallenge, expectedOrigin: expectedOrigin, expectedRPID: rpID, credential: { id: credentialIdBase64, publicKey: publicKey, counter: passkey.counter, transports: passkey.transports ? passkey.transports.split(',') : [] }, requireUserVerification: true });
 			if (!verification.verified) {
+				await recordPasskeyFailure(redis, `uid:${userId}`, ipKey);
 				const [userRows] = await pool.execute("SELECT username FROM users WHERE id = ?", [userId]);
 				const username = userRows.length > 0 ? userRows[0].username : '알 수 없음';
 				await recordLoginAttempt(pool, { userId: userId, username: username, ipAddress: getClientIp(req), port: req.connection.remotePort || 0, success: false, failureReason: '패스키 인증 실패', userAgent: req.headers['user-agent'] || null });
 				return res.status(401).json({ error: "패스키 인증에 실패했습니다." });
 			}
+			await clearPasskeyFailures(redis, `uid:${userId}`, ipKey);
 			const newCounter = verification.authenticationInfo.newCounter;
 			const now = new Date();
 			const nowStr = formatDateForDb(now);
