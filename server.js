@@ -1025,31 +1025,6 @@ function sanitizeHtmlContent(html, { profile = 'editor' } = {}) {
 		return `<p>${escaped}</p>`;
 	}
 }
-			if (el.hasAttribute('data-favicon')) {
-				const value = sanitizeBookmarkImageUrl(el.getAttribute('data-favicon'));
-				if (!value || !isSafeSharedLocalAssetPath(value)) el.removeAttribute('data-favicon');
-				else el.setAttribute('data-favicon', value);
-			}
-			if (el.hasAttribute('data-src')) {
-				const nodeType = String(el.getAttribute('data-type') || '').toLowerCase();
-				const raw = String(el.getAttribute('data-src') || '');
-				if (nodeType === 'youtube-block' || nodeType === 'youtube') {
-					const value = normalizeYouTubeEmbedUrl(raw);
-					if (!value || !isUrlAllowedForShared(value)) el.removeAttribute('data-src');
-					else el.setAttribute('data-src', value);
-				} else {
-					const value = sanitizeHttpHrefStrict(raw, { allowRelative: true });
-					if (!value || !(isSafeSharedLocalAssetPath(value) || isUrlAllowedForShared(value))) el.removeAttribute('data-src');
-					else el.setAttribute('data-src', value);
-				}
-			}
-		}
-		return doc.body.innerHTML;
-	} catch (err) {
-		const escaped = escapeHtmlToText(prefiltered);
-		return `<p>${escaped}</p>`;
-	}
-}
 
 function validatePasswordStrength(password) {
     if (!password || typeof password !== 'string')

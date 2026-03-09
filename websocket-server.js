@@ -674,9 +674,9 @@ function validateRealtimeYjsCandidate(candidateYDoc, sanitizeHtmlContent) {
             if (byteLenUtf8(rawContent) > (2 * 1024 * 1024))
                 return { ok: false, code: 1009, reason: 'Content too large' };
 
-            const sanitized = sanitizeHtmlContent(rawContent);
-            if (sanitized !== rawContent)
-                return { ok: false, code: 1008, reason: 'Unsafe content' };
+            if (FORBIDDEN_PROTOCOL_RE.test(rawContent)) return { ok: false, code: 1008, reason: 'Forbidden protocol in content' };
+            if (FORBIDDEN_EVENT_ATTR_RE.test(rawContent)) return { ok: false, code: 1008, reason: 'Event handler in content' };
+            if (FORBIDDEN_TAG_RE.test(rawContent)) return { ok: false, code: 1008, reason: 'Forbidden tag in content' };
         }
 
         const fragmentValidation = validateRealtimeFragment(candidateYDoc);

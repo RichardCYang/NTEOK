@@ -368,6 +368,17 @@ export async function saveCurrentPage() {
                 }
                 return true;
             }
+
+            const content = sanitizeEditorHtml(state.editor.getHTML());
+            const body = { title, content, storageId: state.currentStorageId };
+            const page = await api.put("/api/pages/" + encodeURIComponent(state.currentPageId), body);
+            if (page?.updatedAt) {
+                state.pages = state.pages.map(p =>
+                    p.id === state.currentPageId ? { ...p, title, updatedAt: page.updatedAt } : p
+                );
+                state.currentPageUpdatedAt = page.updatedAt;
+                renderPageList();
+            }
             return true;
         } catch (error) {
             console.error("Save error (force-save):", error);
