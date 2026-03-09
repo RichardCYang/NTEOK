@@ -40,8 +40,17 @@ module.exports = (dependencies) => {
 		getSession,
 		saveSession,
 		revokeSession,
+		listUserSessions,
 		requireRecentReauth
 	} = dependencies;
+
+	async function revokeOtherSessions(userId, keepSessionId, reason) {
+		const ids = await listUserSessions(userId);
+		if (ids && ids.length > 0) {
+			const otherIds = ids.filter(id => id && String(id) !== String(keepSessionId));
+			await Promise.all(otherIds.map(id => revokeSession(id, reason)));
+		}
+	}
 
 	async function assertPasskeyLocked(redis, accountKey, ipKey) {
 		const uKey = `passkey-lock:user:${accountKey}`;
@@ -244,6 +253,7 @@ module.exports = (dependencies) => {
 			await pool.execute(`INSERT INTO passkeys (user_id, credential_id, public_key, counter, device_name, created_at) VALUES (?, ?, ?, ?, ?, ?)`, [userId, credentialIdBase64, publicKeyBase64, counter, deviceName, nowStr]);
 			await pool.execute("UPDATE users SET passkey_enabled = 1, updated_at = ? WHERE id = ?", [nowStr, userId]);
 			await pool.execute("DELETE FROM webauthn_challenges WHERE user_id = ? AND session_id = ? AND operation = 'registration'", [userId, sessionId]);
+			await revokeOtherSessions(userId, sessionId, "passkey-added");
 			res.json({ success: true });
 		} catch (error) {
 			logError("POST /api/passkey/register/verify", error);
@@ -419,6 +429,7 @@ module.exports = (dependencies) => {
 				const nowStr = formatDateForDb(new Date());
 				await pool.execute("UPDATE users SET passkey_enabled = 0, updated_at = ? WHERE id = ?", [nowStr, userId]);
 			}
+			await revokeOtherSessions(userId, req.cookies[SESSION_COOKIE_NAME], "passkey-removed");
 			res.json({ success: true });
 		} catch (error) {
 			logError("DELETE /api/passkey/:id", error);

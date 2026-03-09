@@ -107,8 +107,17 @@ module.exports = (dependencies) => {
 		getSession,
 		saveSession,
 		revokeSession,
+		listUserSessions,
 		requireRecentReauth
 	} = dependencies;
+
+	async function revokeOtherSessions(userId, keepSessionId, reason) {
+		const ids = await listUserSessions(userId);
+		if (ids && ids.length > 0) {
+			const otherIds = ids.filter(id => id && String(id) !== String(keepSessionId));
+			await Promise.all(otherIds.map(id => revokeSession(id, reason)));
+		}
+	}
 
 	const TWO_FA_COOKIE_NAME = COOKIE_SECURE ? '__Host-nteok_2fa' : 'nteok_2fa';
 	const TWO_FA_COOKIE_OPTS = {
@@ -250,6 +259,7 @@ module.exports = (dependencies) => {
 			await pool.execute("UPDATE users SET totp_secret = ?, totp_enabled = 1, updated_at = ? WHERE id = ?", [encryptTotpSecret(secret), nowStr, userId]);
 			delete session.totpTempSecret;
 			await saveSession(sessionId, session, SESSION_TTL_MS);
+			await revokeOtherSessions(userId, sessionId, "mfa-enabled");
 			res.json({ success: true, backupCodes: backupCodes });
 		} catch (error) {
 			logError("POST /api/totp/verify-setup", error);
@@ -270,6 +280,7 @@ module.exports = (dependencies) => {
 			const nowStr = formatDateForDb(now);
 			await pool.execute("UPDATE users SET totp_secret = NULL, totp_enabled = 0, updated_at = ? WHERE id = ?", [nowStr, userId]);
 			await pool.execute("DELETE FROM backup_codes WHERE user_id = ?", [userId]);
+			await revokeOtherSessions(userId, req.cookies[SESSION_COOKIE_NAME], "mfa-disabled");
 			res.json({ success: true });
 		} catch (error) {
 			logError("POST /api/totp/disable", error);

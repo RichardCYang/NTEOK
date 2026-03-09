@@ -1435,6 +1435,8 @@ function initWebSocketServer(server, pool, sanitizeHtmlContent, IS_PRODUCTION, B
 		    const session = typeof getSessionFromId === 'function'
 		        ? await getSessionFromId(sessionId, {
 		            enforceUa: true,
+					enforceNetwork: true,
+					clientIp: getClientIpFromRequest(req),
 		            userAgent: req.headers["user-agent"] || ""
 		        })
 		        : null;

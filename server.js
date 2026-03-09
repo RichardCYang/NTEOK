@@ -75,6 +75,7 @@ const https = require("https");
 const http = require("http");
 const certManager = require("./cert-manager");
 const multer = require("multer");
+const { JSDOM } = require("jsdom");
 
 const MULTIPART_COMMON_LIMITS = Object.freeze({
     files: 1,
@@ -930,18 +931,6 @@ function sanitizeHtmlContent(html, { profile = 'editor' } = {}) {
 	const prefiltered = prefilterHtmlForSanitizer(html);
 	try {
 		maybeRecycleDomPurify();
-		if (profile === 'shared') {
-			DOMPurify.addHook('afterSanitizeAttributes', (node) => {
-				if (node.hasAttribute('src')) {
-					const src = node.getAttribute('src');
-					if (!isUrlAllowedForShared(src)) node.removeAttribute('src');
-				}
-				if (node.hasAttribute('href')) {
-					const href = node.getAttribute('href');
-					if (!isUrlAllowedForShared(href)) node.removeAttribute('href');
-				}
-			});
-		}
 		const config = profile === 'shared'
 			? {
 				ALLOWED_TAGS: BASE_ALLOWED_TAGS,
@@ -957,8 +946,21 @@ function sanitizeHtmlContent(html, { profile = 'editor' } = {}) {
 				ALLOWED_URI_REGEXP: /^(?:(?:(?:ht)tps?|mailto|tel):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i
 			};
 		const sanitized = DOMPurify.sanitize(prefiltered, config);
-		if (profile === 'shared') DOMPurify.removeHook('afterSanitizeAttributes');
-		return sanitized;
+		if (profile !== 'shared') return sanitized;
+		const dom = new JSDOM(sanitized);
+		const doc = dom.window.document;
+		const elements = doc.querySelectorAll('[src], [href]');
+		for (const el of elements) {
+			if (el.hasAttribute('src')) {
+				const src = el.getAttribute('src');
+				if (!isUrlAllowedForShared(src)) el.removeAttribute('src');
+			}
+			if (el.hasAttribute('href')) {
+				const href = el.getAttribute('href');
+				if (!isUrlAllowedForShared(href)) el.removeAttribute('href');
+			}
+		}
+		return doc.body.innerHTML;
 	} catch (err) {
 		const escaped = escapeHtmlToText(prefiltered);
 		return `<p>${escaped}</p>`;
@@ -1079,6 +1081,28 @@ function hashUserAgent(ua) {
 	return crypto.createHash("sha256").update(String(ua || "")).digest("hex");
 }
 
+function normalizeIpPrefix(ip) {
+	if (typeof ip !== "string") return null;
+	const raw = ip.replace(/^::ffff:/i, "");
+	if (!raw || raw === "::1" || raw === "127.0.0.1") return null;
+	if (raw.includes(".") && !raw.includes(":")) {
+		const parts = raw.split(".");
+		if (parts.length !== 4) return null;
+		return `${parts[0]}.${parts[1]}.${parts[2]}.0/24`;
+	}
+	if (raw.includes(":")) {
+		const parts = raw.split(":").slice(0, 4);
+		return `${parts.join(":")}::/56`;
+	}
+	return null;
+}
+
+function hashIpPrefix(ip) {
+	const prefix = normalizeIpPrefix(ip);
+	if (!prefix) return null;
+	return crypto.createHash("sha256").update(prefix).digest("hex");
+}
+
 async function createSession(user, ctx = {}) {
 	const sessionId = crypto.randomBytes(24).toString("hex");
 	const now = Date.now();
@@ -1090,7 +1114,17 @@ async function createSession(user, ctx = {}) {
 		wsBroadcastToUser(user.id, 'duplicate-login', { message: '다른 위치에서 로그인하여 현재 세션이 종료됩니다.', timestamp: new Date().toISOString() });
 		for (const oldSessionId of existingSessions) await revokeSession(oldSessionId, "duplicate-login");
 	}
-	const session = { type: "auth", userId: user.id, username: user.username, uaHash: hashUserAgent(ctx.userAgent || ""), expiresAt, absoluteExpiry, createdAt: now, lastStrongAuthAt: now };
+	const session = {
+		type: "auth",
+		userId: user.id,
+		username: user.username,
+		uaHash: hashUserAgent(ctx.userAgent || ""),
+		ipPrefixHash: hashIpPrefix(ctx.clientIp || ""),
+		expiresAt,
+		absoluteExpiry,
+		createdAt: now,
+		lastStrongAuthAt: now
+	};
 	await saveSession(sessionId, session, SESSION_ABSOLUTE_TTL_MS);
 	return { success: true, sessionId };
 }
@@ -1103,6 +1137,13 @@ async function getSessionFromId(sessionId, ctx = {}) {
 		const currentUaHash = hashUserAgent(ctx.userAgent || "");
 		if (session.uaHash && session.uaHash !== currentUaHash) {
 			await revokeSession(sessionId, "ua-mismatch");
+			return null;
+		}
+	}
+	if (ctx.enforceNetwork === true) {
+		const currentIpPrefixHash = hashIpPrefix(ctx.clientIp || "");
+		if (session.ipPrefixHash && currentIpPrefixHash && session.ipPrefixHash !== currentIpPrefixHash) {
+			await revokeSession(sessionId, "network-mismatch");
 			return null;
 		}
 	}
@@ -1122,7 +1163,9 @@ async function getSessionFromRequest(req) {
 	if (!sessionId) return null;
 	return await getSessionFromId(sessionId, {
 		enforceUa: true,
-		userAgent: req.headers?.["user-agent"] || ""
+		enforceNetwork: true,
+		userAgent: req.headers?.["user-agent"] || "",
+		clientIp: req.clientIp || req.socket?.remoteAddress || ""
 	});
 }
 
