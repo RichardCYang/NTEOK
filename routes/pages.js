@@ -11,21 +11,37 @@ const { assertImageFileSignature, assertSafeAttachmentFile } = require("../secur
 const { validateAndNormalizeIcon } = require("../utils/icon-utils.js");
 
 const METADATA_FETCH_TIMEOUT_MS = 5000;
-const METADATA_FETCH_MAX_BYTES = 2 * 1024 * 1024;
-const LINK_PREVIEW_ALLOWED_PORTS = (() => {
-    const raw = String(process.env.LINK_PREVIEW_ALLOWED_PORTS || '80,443').trim();
-    const out = new Set();
-    for (const part of raw.split(',')) {
-        const n = Number.parseInt(part.trim(), 10);
-        if (Number.isFinite(n) && n >= 1 && n <= 65535) out.add(n);
-    }
-    return out.size > 0 ? out : new Set([80, 443]);
-})();
+const METADATA_FETCH_MAX_BYTES = 10 * 1024 * 1024;
+const METADATA_FETCH_MAX_REDIRECTS = 5;
+const LINK_PREVIEW_ALLOWED_PORTS = new Set([443]);
 
 function makeFetchError(code, message) {
     const err = new Error(message || code);
     err.code = code;
     return err;
+}
+
+function normalizeAndValidatePreviewUrl(rawUrl, isHostnameAllowedForPreview) {
+    if (typeof rawUrl !== 'string') throw makeFetchError('INVALID_URL', '유효하지 않은 URL 형식입니다.');
+    const trimmed = rawUrl.trim();
+    if (!trimmed || trimmed.length > 2048) throw makeFetchError('INVALID_URL', '유효하지 않은 URL 형식입니다.');
+
+    let u;
+    try {
+        u = new URL(trimmed);
+    } catch {
+        throw makeFetchError('INVALID_URL', '유효하지 않은 URL 형식입니다.');
+    }
+
+    u.hash = '';
+
+    if (u.protocol !== 'https:') throw makeFetchError('HTTPS_ONLY', '링크 미리보기는 HTTPS 만 허용됩니다.');
+    if (u.username || u.password) throw makeFetchError('URL_CREDENTIALS', '인증 정보가 포함된 URL 은 허용되지 않습니다.');
+    if (net.isIP(u.hostname)) throw makeFetchError('IP_LITERAL', 'IP 직접 지정 URL 은 허용되지 않습니다.');
+    if (u.port && u.port !== '443') throw makeFetchError('DISALLOWED_PORT', '허용되지 않은 포트입니다.');
+    if (typeof isHostnameAllowedForPreview !== 'function' || !isHostnameAllowedForPreview(u.hostname)) throw makeFetchError('DISALLOWED_HOST', '허용되지 않은 호스트입니다.');
+
+    return u;
 }
 
 function normalizeResolvedAddress(entry) {
@@ -44,44 +60,51 @@ async function resolvePublicOutboundAddresses(hostname, isPrivateOrLocalIP) {
         return [host];
     }
 
-    const v4 = await dns.resolve4(host).catch(() => []);
-    const v6 = await dns.resolve6(host).catch(() => []);
-    const addresses = [...v4, ...v6]
-        .map(normalizeResolvedAddress)
-        .filter(Boolean);
+    let addresses = [];
+    try {
+        const [v4, v6] = await Promise.all([
+            dns.resolve4(host).catch(() => []),
+            dns.resolve6(host).catch(() => [])
+        ]);
+        addresses = [...v4, ...v6].map(normalizeResolvedAddress).filter(Boolean);
+    } catch (_) {}
+
+    if (addresses.length === 0) {
+        try {
+            const lookupResults = await dns.lookup(host, { all: true });
+            addresses = lookupResults.map(r => r.address).filter(Boolean);
+        } catch (_) {}
+    }
 
     if (addresses.length === 0) throw makeFetchError('HOST_NOT_FOUND', '호스트를 찾을 수 없습니다.');
 
     const uniqueAddresses = [...new Set(addresses)];
-    for (const ip of uniqueAddresses) {
-        if (isPrivateOrLocalIP(ip)) throw makeFetchError('BLOCKED_PRIVATE_IP', '차단된 내부 IP 주소입니다.');
-    }
+    const publicAddresses = uniqueAddresses.filter(ip => !isPrivateOrLocalIP(ip));
 
-    return uniqueAddresses;
+    if (publicAddresses.length === 0) throw makeFetchError('BLOCKED_PRIVATE_IP', '차단된 내부 IP 주소입니다.');
+    return publicAddresses;
 }
 
-function fetchHtmlFromPinnedAddress(targetUrl, pinnedIp, isPrivateOrLocalIP) {
+function fetchDocumentFromPinnedAddress(targetUrl, pinnedIp, isPrivateOrLocalIP) {
     return new Promise((resolve, reject) => {
-        const protocolModule = targetUrl.protocol === 'https:' ? https : http;
-        const port = Number(targetUrl.port || (targetUrl.protocol === 'https:' ? 443 : 80));
+        const family = net.isIP(pinnedIp);
+        if (!pinnedIp || family === 0) return reject(makeFetchError('INVALID_PINNED_IP', '유효하지 않은 IP 주소입니다.'));
 
-        if (!LINK_PREVIEW_ALLOWED_PORTS.has(port)) return reject(makeFetchError('DISALLOWED_PORT', '허용되지 않는 포트입니다.'));
-
-        const req = protocolModule.request({
-            protocol: targetUrl.protocol,
-            hostname: targetUrl.hostname,
-            port,
+        const req = https.request({
+            protocol: 'https:',
+            hostname: pinnedIp,
+            port: 443,
             method: 'GET',
             path: `${targetUrl.pathname || '/'}${targetUrl.search || ''}`,
-            lookup: (_hostname, _opts, cb) => cb(null, pinnedIp, net.isIP(pinnedIp)),
-            servername: net.isIP(targetUrl.hostname) ? undefined : targetUrl.hostname,
+            servername: targetUrl.hostname,
             agent: false,
             timeout: METADATA_FETCH_TIMEOUT_MS,
             headers: {
-                'User-Agent': 'NTEOK-Link-Preview/1.0',
-                'Accept': 'text/html,application/xhtml+xml;q=0.9',
+                'User-Agent': 'NTEOK-Link-Preview/1.4',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
                 'Accept-Encoding': 'identity',
-                'Host': targetUrl.host
+                'Host': targetUrl.hostname,
+                'Connection': 'close'
             }
         }, (upstreamRes) => {
             const remoteIp = upstreamRes.socket?.remoteAddress;
@@ -92,64 +115,102 @@ function fetchHtmlFromPinnedAddress(targetUrl, pinnedIp, isPrivateOrLocalIP) {
 
             const status = Number(upstreamRes.statusCode || 0);
             if (status >= 300 && status < 400) {
+                const location = String(upstreamRes.headers.location || '');
                 upstreamRes.resume();
-                return reject(makeFetchError('REDIRECT_BLOCKED', '리다이렉트가 차단되었습니다.'));
+                return resolve({ type: 'redirect', location });
             }
             if (status < 200 || status >= 400) {
                 upstreamRes.resume();
-                return reject(makeFetchError('UPSTREAM_BAD_STATUS', '대상을 불러올 수 없습니다.'));
+                return reject(makeFetchError('UPSTREAM_BAD_STATUS', `대상 서버가 상태 코드 ${status}를 반환했습니다.`));
             }
 
             const contentType = String(upstreamRes.headers['content-type'] || '').toLowerCase();
-            if (contentType && !contentType.includes('text/html') && !contentType.includes('application/xhtml+xml')) {
+            if (contentType && !contentType.includes('text/html') && !contentType.includes('application/xhtml+xml') && !contentType.includes('application/xml')) {
                 upstreamRes.resume();
                 return reject(makeFetchError('NOT_HTML', 'HTML 문서가 아닙니다.'));
             }
 
             const chunks = [];
             let total = 0;
+            let finished = false;
 
             upstreamRes.on('data', (chunk) => {
+                if (finished) return;
                 total += chunk.length;
+                chunks.push(chunk);
+
                 if (total > METADATA_FETCH_MAX_BYTES) {
+                    finished = true;
                     req.destroy(makeFetchError('TOO_LARGE', '데이터가 너무 큽니다.'));
                     return;
                 }
-                chunks.push(chunk);
+
+                const partial = Buffer.concat(chunks.slice(-2)).toString('utf8');
+                if (partial.toLowerCase().includes('</head>')) {
+                    finished = true;
+                    resolve({ type: 'html', html: Buffer.concat(chunks).toString('utf8') });
+                    req.destroy();
+                }
+            });
+
+            upstreamRes.on('error', (err) => {
+                if (!finished) reject(err);
             });
 
             upstreamRes.on('end', () => {
-                resolve(Buffer.concat(chunks).toString('utf8'));
+                if (!finished) resolve({ type: 'html', html: Buffer.concat(chunks).toString('utf8') });
             });
         });
 
         req.on('timeout', () => req.destroy(makeFetchError('ETIMEDOUT', '요청 시간이 초과되었습니다.')));
-        req.on('error', reject);
+        req.on('error', (err) => {
+            if (err?.code === 'ECONNRESET' || finished) return;
+            reject(err);
+        });
         req.end();
     });
 }
 
-async function fetchHtmlWithoutRedirects(targetUrl, resolvedIps, isPrivateOrLocalIP) {
+async function fetchDocumentWithoutRedirects(targetUrl, resolvedIps, isPrivateOrLocalIP) {
     let lastError = null;
 
     for (const ip of resolvedIps) {
         try {
-            return await fetchHtmlFromPinnedAddress(targetUrl, ip, isPrivateOrLocalIP);
+            return await fetchDocumentFromPinnedAddress(targetUrl, ip, isPrivateOrLocalIP);
         } catch (err) {
             lastError = err;
+            const code = String(err?.code || '');
             if ([
                 'BLOCKED_PRIVATE_IP',
                 'DISALLOWED_PORT',
-                'REDIRECT_BLOCKED',
                 'NOT_HTML',
-                'TOO_LARGE'
-            ].includes(String(err?.code || ''))) {
-                throw err;
-            }
+                'TOO_LARGE',
+                'ETIMEDOUT'
+            ].includes(code)) throw err;
         }
     }
 
-    throw lastError || makeFetchError('FETCH_FAILED');
+    throw lastError || makeFetchError('FETCH_FAILED', '대상 서버에 연결할 수 없습니다.');
+}
+
+async function fetchHtmlWithValidatedRedirects(startUrl, isHostnameAllowedForPreview, isPrivateOrLocalIP) {
+    let currentUrl = normalizeAndValidatePreviewUrl(startUrl.toString(), isHostnameAllowedForPreview);
+
+    for (let i = 0; i <= METADATA_FETCH_MAX_REDIRECTS; i++) {
+        const resolvedIps = await resolvePublicOutboundAddresses(currentUrl.hostname, isPrivateOrLocalIP);
+        const result = await fetchDocumentWithoutRedirects(currentUrl, resolvedIps, isPrivateOrLocalIP);
+
+        if (result?.type === 'html') return { html: result.html, finalUrl: currentUrl };
+
+        if (result?.type === 'redirect') {
+            if (!result.location) throw makeFetchError('REDIRECT_BLOCKED', '리다이렉트 위치가 비어 있습니다.');
+            const nextUrl = new URL(result.location, currentUrl);
+            currentUrl = normalizeAndValidatePreviewUrl(nextUrl.toString(), isHostnameAllowedForPreview);
+            continue;
+        }
+    }
+
+    throw makeFetchError('TOO_MANY_REDIRECTS', '리다이렉트가 너무 많습니다.');
 }
 
 const erl = require("express-rate-limit");
@@ -639,70 +700,194 @@ module.exports = (dependencies) => {
         }
     });
 
-    async function sanitizeBookmarkFaviconUrl(raw, baseUrl) {
-        if (typeof raw !== 'string') return null;
-        const v = raw.trim();
-        if (!v) return null;
-        if (/[\x00-\x1F\x7F]/.test(v)) return null;
-        if (v.startsWith('#')) return null;
-
-        let u;
-        try {
-            u = new URL(v, baseUrl);
-        } catch {
-            return null;
-        }
-
-        if (typeof isHostnameAllowedForPreview === "function" && !isHostnameAllowedForPreview(u.hostname)) return null;
-        if (!['http:', 'https:'].includes(u.protocol)) return null;
-        if (u.username || u.password) return null;
-
-        try {
-            await resolvePublicOutboundAddresses(u.hostname, isPrivateOrLocalIP);
-        } catch {
-            return null;
-        }
-
-        return u.toString();
+    function escapeSvgText(s = '') {
+        return String(s)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
     }
+
+    function buildGeneratedBookmarkFaviconUrl(hostname) {
+        return `/api/pages/bookmark-favicon/${encodeURIComponent(String(hostname).toLowerCase())}.svg`;
+    }
+
+    function generateSvgFavicon(hostname) {
+        const display = String(hostname || 'unknown').replace(/^www\./, '');
+        const letterMatch = display.match(/[a-z0-9]/i);
+        const letter = letterMatch ? letterMatch[0].toUpperCase() : '?';
+        const hue = parseInt(crypto.createHash('sha256').update(hostname).digest('hex').slice(0, 8), 16) % 360;
+        return `
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" role="img" aria-label="${escapeSvgText(display)}">
+  <rect width="64" height="64" rx="14" fill="hsl(${hue} 62% 46%)"/>
+  <text x="50%" y="54%" text-anchor="middle" dominant-baseline="middle"
+        font-family="system-ui, -apple-system, Segoe UI, Roboto, sans-serif"
+        font-size="28" font-weight="700" fill="#fff">${escapeSvgText(letter)}</text>
+</svg>`.trim();
+    }
+
+    router.get('/bookmark-favicon/:hostname.svg', (req, res) => {
+        const hostname = String(req.params.hostname || '').trim().toLowerCase();
+        if (typeof isHostnameAllowedForPreview !== 'function' || !isHostnameAllowedForPreview(hostname)) return res.status(400).end();
+        res.setHeader('Content-Type', 'image/svg+xml; charset=utf-8');
+        res.setHeader('X-Content-Type-Options', 'nosniff');
+        res.setHeader('Cache-Control', 'public, max-age=604800, immutable');
+        res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; sandbox");
+        return res.status(200).send(generateSvgFavicon(hostname));
+    });
+
+    router.get('/proxy-favicon', authMiddleware, outboundFetchLimiter, async (req, res) => {
+        const { url, defaultHost } = req.query;
+        const fallbackHost = String(defaultHost || 'unknown').toLowerCase();
+        
+        const sendFallback = () => {
+            res.setHeader('Content-Type', 'image/svg+xml; charset=utf-8');
+            res.setHeader('X-Content-Type-Options', 'nosniff');
+            res.setHeader('Cache-Control', 'public, max-age=3600');
+            return res.status(200).send(generateSvgFavicon(fallbackHost));
+        };
+
+        if (!url) return sendFallback();
+
+        try {
+            const targetUrl = normalizeAndValidatePreviewUrl(String(url), isHostnameAllowedForPreview);
+            const resolvedIps = await resolvePublicOutboundAddresses(targetUrl.hostname, isPrivateOrLocalIP);
+            
+            const pinnedIp = resolvedIps[0];
+            const family = net.isIP(pinnedIp);
+            if (!pinnedIp || family === 0) return sendFallback();
+
+            const proxyReq = https.request({
+                protocol: 'https:',
+                hostname: pinnedIp,
+                port: 443,
+                method: 'GET',
+                path: `${targetUrl.pathname || '/'}${targetUrl.search || ''}`,
+                servername: targetUrl.hostname,
+                agent: false,
+                timeout: 3000,
+                headers: {
+                    'User-Agent': 'NTEOK-Favicon-Proxy/1.0',
+                    'Accept': 'image/*,*/*;q=0.8',
+                    'Host': targetUrl.hostname,
+                    'Connection': 'close'
+                }
+            }, (upstreamRes) => {
+                const status = Number(upstreamRes.statusCode || 0);
+                if (status < 200 || status >= 300) {
+                    upstreamRes.resume();
+                    return sendFallback();
+                }
+
+                const contentType = String(upstreamRes.headers['content-type'] || '').toLowerCase();
+                const contentLength = Number(upstreamRes.headers['content-length'] || 0);
+                if (contentLength > 512 * 1024) {
+                    upstreamRes.resume();
+                    return sendFallback();
+                }
+
+                const chunks = [];
+                let total = 0;
+                let headerChecked = false;
+
+                upstreamRes.on('data', (chunk) => {
+                    total += chunk.length;
+                    if (total > 512 * 1024) {
+                        proxyReq.destroy();
+                        return;
+                    }
+                    chunks.push(chunk);
+
+                    if (!headerChecked && total >= 12) {
+                        headerChecked = true;
+                        const buffer = Buffer.concat(chunks);
+                        const isImage = /\.(ico|png|jpe?g|gif|svg|webp)$/i.test(targetUrl.pathname) || contentType.startsWith('image/');
+                        if (!isImage) {
+                            proxyReq.destroy();
+                        }
+                    }
+                });
+
+                upstreamRes.on('end', () => {
+                    if (chunks.length === 0) return sendFallback();
+                    const fullBuffer = Buffer.concat(chunks);
+                    res.setHeader('Content-Type', contentType || 'image/x-icon');
+                    res.setHeader('X-Content-Type-Options', 'nosniff');
+                    res.setHeader('Cache-Control', 'public, max-age=604800');
+                    return res.status(200).send(fullBuffer);
+                });
+            });
+
+            proxyReq.on('error', () => sendFallback());
+            proxyReq.on('timeout', () => proxyReq.destroy());
+            proxyReq.end();
+
+        } catch (e) {
+            sendFallback();
+        }
+    });
 
     router.get("/fetch-metadata", authMiddleware, outboundFetchLimiter, async (req, res) => {
         const { url } = req.query;
         if (!url) return res.status(400).json({ error: "URL 이 필요합니다." });
         try {
-            let targetUrl;
-            try { targetUrl = new URL(url); } catch (e) { return res.status(400).json({ error: "유효하지 않은 URL 형식입니다." }); }
-            if (targetUrl.protocol !== 'https:') {
-                return res.status(400).json({ error: "링크 미리보기는 HTTPS 만 허용됩니다." });
-            }
-            if (net.isIP(targetUrl.hostname)) {
-                return res.status(403).json({ error: "IP 직접 지정 URL 은 허용되지 않습니다." });
-            }
-            if (targetUrl.username || targetUrl.password) return res.status(400).json({ error: "인증 정보가 포함된 URL 은 허용되지 않습니다." });
             if (typeof isHostnameAllowedForPreview !== "function") return res.status(500).json({ error: "링크 미리보기 보안 구성이 올바르지 않습니다." });
-            if (!isHostnameAllowedForPreview(targetUrl.hostname)) return res.status(403).json({ error: "허용되지 않은 호스트입니다." });
+            const startUrl = normalizeAndValidatePreviewUrl(String(url), isHostnameAllowedForPreview);
+            console.warn(`[preview-fetch] user=${req.user.id} host=${startUrl.hostname}`);
 
-            console.warn(`[preview-fetch] user=${req.user.id} host=${targetUrl.hostname}`);
-
-            const resolvedIps = await resolvePublicOutboundAddresses(targetUrl.hostname, isPrivateOrLocalIP);
-            const html = await fetchHtmlWithoutRedirects(targetUrl, resolvedIps, isPrivateOrLocalIP);
+            const { html, finalUrl } = await fetchHtmlWithValidatedRedirects(startUrl, isHostnameAllowedForPreview, isPrivateOrLocalIP);
             const $ = cheerio.load(html);
-            const title = $('title').first().text() || $('meta[property="og:title"]').attr('content') || $('meta[name="twitter:title"]').attr('content') || targetUrl.hostname;
-            let favicon = null;
-            const faviconSelectors = ['link[rel="apple-touch-icon"]', 'link[rel="apple-touch-icon-precomposed"]', 'link[rel="icon"]', 'link[rel="shortcut icon"]', 'link[rel="alternate icon"]'];
-            for (const selector of faviconSelectors) {
-                const href = $(selector).attr('href');
-                if (href) { favicon = href; break; }
+            const title = (
+                $('meta[property="og:title"]').attr('content') ||
+                $('meta[name="twitter:title"]').attr('content') ||
+                $('title').first().text() ||
+                finalUrl.hostname
+            ).replace(/\s+/g, ' ').trim().substring(0, 200) || finalUrl.hostname;
+
+            let faviconUrl = null;
+            const selectors = [
+                'link[rel="apple-touch-icon"]',
+                'link[rel="apple-touch-icon-precomposed"]',
+                'link[rel="icon"]',
+                'link[rel="shortcut icon"]',
+                'link[rel*="icon"]'
+            ];
+            
+            for (const s of selectors) {
+                const href = $(s).attr('href');
+                if (href) {
+                    try {
+                        const absolute = new URL(href, finalUrl);
+                        if (absolute.protocol === 'https:') {
+                            faviconUrl = absolute.toString();
+                            break;
+                        }
+                    } catch (_) {}
+                }
             }
-            const faviconCandidate = favicon || '/favicon.ico';
-            const safeFavicon = await sanitizeBookmarkFaviconUrl(faviconCandidate, targetUrl);
-            res.json({ title: title.trim().substring(0, 500), favicon: safeFavicon, url: targetUrl.toString() });
+
+            const favicon = faviconUrl 
+                ? `/api/pages/proxy-favicon?url=${encodeURIComponent(faviconUrl)}&defaultHost=${encodeURIComponent(finalUrl.hostname)}`
+                : buildGeneratedBookmarkFaviconUrl(finalUrl.hostname);
+
+            res.json({
+                title,
+                favicon,
+                url: finalUrl.toString()
+            });
         } catch (error) {
             switch (String(error?.code || '')) {
+                case 'INVALID_URL': return res.status(400).json({ error: "유효하지 않은 URL 형식입니다." });
+                case 'HTTPS_ONLY': return res.status(400).json({ error: "링크 미리보기는 HTTPS 만 허용됩니다." });
+                case 'URL_CREDENTIALS': return res.status(400).json({ error: "인증 정보가 포함된 URL 은 허용되지 않습니다." });
+                case 'IP_LITERAL': return res.status(403).json({ error: "IP 직접 지정 URL 은 허용되지 않습니다." });
+                case 'DISALLOWED_HOST': return res.status(403).json({ error: "허용되지 않은 호스트입니다." });
                 case 'HOST_NOT_FOUND': return res.status(400).json({ error: "호스트를 찾을 수 없습니다." });
                 case 'BLOCKED_PRIVATE_IP': return res.status(403).json({ error: "허용되지 않은 호스트입니다." });
                 case 'DISALLOWED_PORT': return res.status(400).json({ error: "허용되지 않은 포트입니다." });
-                case 'REDIRECT_BLOCKED': return res.status(400).json({ error: "리다이렉트 URL은 허용되지 않습니다." });
+                case 'REDIRECT_BLOCKED':
+                case 'TOO_MANY_REDIRECTS': return res.status(400).json({ error: "안전하게 검증할 수 없는 리다이렉트입니다." });
                 case 'NOT_HTML': return res.status(400).json({ error: "HTML 콘텐츠가 아닙니다." });
                 case 'TOO_LARGE': return res.status(413).json({ error: "메타데이터 응답이 너무 큽니다." });
                 case 'ETIMEDOUT':

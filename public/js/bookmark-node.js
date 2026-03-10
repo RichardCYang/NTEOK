@@ -90,13 +90,9 @@ export const BookmarkBlock = Node.create({
                     button.className = 'bookmark-add-btn';
 
                     const handleAdd = async () => {
-                        const url = input.value.trim();
+                        let url = input.value.trim();
                         if (!url) return;
-
-                        if (!url.startsWith('http://') && !url.startsWith('https://')) {
-                             alert('http:// 또는 https:// 로 시작하는 올바른 URL을 입력함');
-                             return;
-                        }
+                        if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
 
                         input.disabled = true;
                         button.disabled = true;

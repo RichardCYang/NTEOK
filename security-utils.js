@@ -18,30 +18,40 @@ if (String(process.env.ENABLE_RICH_DOCUMENT_ATTACHMENTS).toLowerCase() === 'true
 	for (const ext of RICH_DOC_ATTACHMENT_EXTS) ALLOWED_ATTACHMENT_EXTS.add(ext);
 }
 
-const LINK_PREVIEW_ALLOWED_HOSTS = new Set(
-	String(process.env.LINK_PREVIEW_ALLOWED_HOSTS || '')
-		.split(',')
-		.map(v => v.trim().toLowerCase())
-		.filter(Boolean)
-);
+const PREVIEW_BLOCKED_HOSTS = new Set([
+    'localhost',
+    'localhost.localdomain',
+    'metadata.google.internal',
+    'metadata.goog',
+    'metadata.azure.com'
+]);
 
-function hostMatchesPreviewAllowlist(host) {
-	for (const rule of LINK_PREVIEW_ALLOWED_HOSTS) {
-		if (host === rule) return true;
-		if (host.endsWith(`.${rule}`)) return true;
-	}
-	return false;
-}
+const PREVIEW_BLOCKED_SUFFIXES = [
+    '.localhost',
+    '.local',
+    '.internal'
+];
 
 function isHostnameAllowedForPreview(hostname) {
-	if (typeof hostname !== 'string') return false;
-	const h = hostname.toLowerCase().trim();
-	if (!h || h.includes('..') || h.startsWith('.') || h.endsWith('.')) return false;
-	if (net.isIP(h)) return false;
-	const BLOCKED_HOSTS = new Set(['localhost', '127.0.0.1', '::1', 'metadata.google.internal', '169.254.169.254']);
-	if (BLOCKED_HOSTS.has(h)) return false;
-	if (LINK_PREVIEW_ALLOWED_HOSTS.size === 0) return false;
-	return hostMatchesPreviewAllowlist(h);
+    if (typeof hostname !== 'string') return false;
+    const h = hostname.toLowerCase().trim().replace(/\.$/, '');
+    if (!h) return false;
+    if (h.includes('..') || h.startsWith('.') || h.endsWith('.')) return false;
+    if (net.isIP(h)) return false;
+    if (!h.includes('.')) return false;
+    if (!/^[a-z0-9.-]+$/.test(h)) return false;
+
+    const labels = h.split('.');
+    for (const label of labels) {
+        if (!label || label.length > 63) return false;
+        if (!/^[a-z0-9-]+$/.test(label)) return false;
+        if (label.startsWith('-') || label.endsWith('-')) return false;
+    }
+
+    if (PREVIEW_BLOCKED_HOSTS.has(h)) return false;
+    if (PREVIEW_BLOCKED_SUFFIXES.some(suffix => h.endsWith(suffix))) return false;
+
+    return true;
 }
 
 function detectImageTypeFromMagic(buf) {
