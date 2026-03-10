@@ -269,8 +269,7 @@ export const SLASH_ITEMS = [
             input.click();
         }
     },
-    {
-        id: "youtube",
+    { id: "youtube",
         label: "YouTube",
         description: "유튜브 비디오 임베드",
         icon: "▶",
@@ -285,6 +284,7 @@ export const SLASH_ITEMS = [
             }
         }
     },
+    { id: "kanban", label: "칸반 보드", description: "작업 관리 보드", icon: "📋", command(editor) { editor.chain().focus().setBoardBlock().run(); } },
     { id: "bookmark", label: "링크 블록", description: "북마크 추출", icon: "🔗", command(editor) { editor.chain().focus().setBookmarkBlock().run(); } },
     { id: "calendar", label: "캘린더", description: "날짜 선택 캘린더", icon: "📅", command(editor) { editor.chain().focus().setCalendarBlock().run(); } },
     { id: "database", label: "데이터베이스", description: "데이터 테이블", icon: "📊", command(editor) { editor.chain().focus().setDatabaseBlock().run(); } },
