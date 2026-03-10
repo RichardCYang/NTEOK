@@ -281,6 +281,15 @@ async function init() {
         initEncryptionManager(appState);
         initSettingsManager(appState);
         initSyncManager(appState);
+        document.addEventListener('nteok:database-block-committed', async () => {
+            if (appState.currentPageId) {
+                try {
+                    await requestImmediateSave(appState.currentPageId, { includeSnapshot: true, waitForAck: false });
+                } catch (e) {
+                    console.error('[App] 데이터베이스 블록 즉시 저장 실패:', e);
+                }
+            }
+        });
         initCoverManager(appState);
         initPublishManager(appState);
         initSubpagesManager(appState);

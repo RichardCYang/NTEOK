@@ -1,7 +1,7 @@
 
 import { addIcon } from './ui-utils.js';
 import * as DOMPurifyModule from '../lib/dompurify/dompurify.js';
-import { safeJsonParse } from './safe-json.js';
+import { safeJsonClone, safeJsonParse } from './safe-json.js';
 
 function createPurifier() {
     let m = DOMPurifyModule;
@@ -21,6 +21,52 @@ const DB_CELL_PURIFY_CONFIG = {
 
 function sanitizeCellHtml(html) {
     return DOMPurify.sanitize(String(html ?? ''), DB_CELL_PURIFY_CONFIG);
+}
+
+function cloneDatabaseColumns(columns) {
+    const cloned = safeJsonClone(columns, []);
+    if (!Array.isArray(cloned) || cloned.length === 0) return [
+        { id: 'col-1', title: '이름', type: 'text', width: '200px' },
+        { id: 'col-2', title: '태그', type: 'text', width: '150px' }
+    ];
+    return cloned.map((col, index) => ({
+        id: (typeof col?.id === 'string' && col.id.trim()) ? col.id : `col-${index + 1}`,
+        title: typeof col?.title === 'string' ? col.title : '',
+        type: 'text',
+        width: (typeof col?.width === 'string' && col.width.trim()) ? col.width : '150px'
+    }));
+}
+
+function cloneDatabaseRows(rows, columns) {
+    const cloned = safeJsonClone(rows, []);
+    const safeColumns = cloneDatabaseColumns(columns);
+    if (!Array.isArray(cloned) || cloned.length === 0) {
+        const values = {};
+        safeColumns.forEach((col) => { values[col.id] = ''; });
+        return [{ id: 'row-1', values, height: 'auto' }];
+    }
+    return cloned.map((row, index) => {
+        const rawValues = (row && typeof row.values === 'object' && row.values) ? row.values : {};
+        const values = {};
+        safeColumns.forEach((col) => {
+            values[col.id] = sanitizeCellHtml(rawValues[col.id]);
+        });
+        return {
+            id: (typeof row?.id === 'string' && row.id.trim()) ? row.id : `row-${index + 1}`,
+            values,
+            height: (typeof row?.height === 'string' && row.height.trim()) ? row.height : 'auto'
+        };
+    });
+}
+
+function cloneDatabaseState(attrs = {}) {
+    const columns = cloneDatabaseColumns(attrs.columns);
+    const rows = cloneDatabaseRows(attrs.rows, columns);
+    return {
+        title: typeof attrs.title === 'string' ? attrs.title : '데이터베이스',
+        columns,
+        rows
+    };
 }
 
 export const DatabaseBlock = Node.create({
@@ -47,7 +93,7 @@ export const DatabaseBlock = Node.create({
                     const parsed = safeJsonParse(data, null);
                     return Array.isArray(parsed) ? parsed : null;
                 },
-                renderHTML: attributes => ({ 'data-columns': JSON.stringify(attributes.columns) })
+                renderHTML: attributes => ({ 'data-columns': JSON.stringify(cloneDatabaseColumns(attributes.columns)) })
             },
             rows: {
                 default: [
@@ -58,7 +104,7 @@ export const DatabaseBlock = Node.create({
                     const parsed = safeJsonParse(data, null);
                     return Array.isArray(parsed) ? parsed : null;
                 },
-                renderHTML: attributes => ({ 'data-rows': JSON.stringify(attributes.rows) })
+                renderHTML: attributes => ({ 'data-rows': JSON.stringify(safeJsonClone(attributes.rows ?? [], [])) })
             }
         };
     },
@@ -77,7 +123,7 @@ export const DatabaseBlock = Node.create({
             container.className = 'database-container';
             container.contentEditable = 'false';
 
-            let { title, columns, rows } = node.attrs;
+            let { title, columns, rows } = cloneDatabaseState(node.attrs);
             let lastIsEditable = editor.isEditable;
             let cancelActiveResize = null;
             let activeCellRefs = [];
@@ -95,11 +141,7 @@ export const DatabaseBlock = Node.create({
                 flushDirtyCells();
             };
 
-            const buildAttrsSnapshot = () => ({
-                title,
-                columns: [...columns],
-                rows: [...rows]
-            });
+            const buildAttrsSnapshot = () => cloneDatabaseState({ title, columns, rows });
 
             const commitToDocument = ({ syncDom = true } = {}) => {
                 if (syncDom) buildSnapshotFromDom();
@@ -148,7 +190,13 @@ export const DatabaseBlock = Node.create({
                     clearTimeout(commitTimer);
                     commitTimer = null;
                 }
-                return commitToDocument();
+                const changed = commitToDocument();
+                if (changed) {
+                    try {
+                        document.dispatchEvent(new CustomEvent('nteok:database-block-committed'));
+                    } catch (_) {}
+                }
+                return changed;
             };
 
             const flushDirtyCells = () => {
@@ -447,9 +495,9 @@ export const DatabaseBlock = Node.create({
                 dom: container,
                 update: (updatedNode) => {
                     if (updatedNode.type.name !== node.type.name) return false;
-                    const incoming = updatedNode.attrs;
+                    const incoming = cloneDatabaseState(updatedNode.attrs);
                     const incomingJson = JSON.stringify(incoming);
-                    const currentJson = JSON.stringify({ title, columns, rows });
+                    const currentJson = JSON.stringify(buildAttrsSnapshot());
                     if (incomingJson !== currentJson) {
                         title = incoming.title;
                         columns = incoming.columns;
