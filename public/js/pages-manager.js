@@ -8,6 +8,7 @@ import { checkPublishStatus, updatePublishButton } from './publish-manager.js';
 import { loadAndRenderSubpages, onEditModeChange } from './subpages-manager.js';
 import { sanitizeEditorHtml } from './sanitize.js';
 import { EXAMPLE_CONTENT } from './editor.js';
+import { flushEditorTransientNodeViews } from './editor-save-utils.js';
 
 let state = {
     editor: null,
@@ -350,6 +351,8 @@ export async function loadPage(id) {
 
 export async function saveCurrentPage() {
     if (!state.currentPageId || !state.editor) return true;
+
+    flushEditorTransientNodeViews(state.editor);
 
     const titleInput = document.querySelector("#page-title-input");
     const title = titleInput ? titleInput.value || "제목 없음" : "제목 없음";

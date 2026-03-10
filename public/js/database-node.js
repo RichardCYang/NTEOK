@@ -77,14 +77,79 @@ export const DatabaseBlock = Node.create({
             container.className = 'database-container';
             container.contentEditable = 'false';
 
-            const updateAttrs = (newAttrs) => {
-                if (typeof updateAttributes === 'function') updateAttributes(newAttrs);
-            };
-
             let { title, columns, rows } = node.attrs;
             let lastIsEditable = editor.isEditable;
             let cancelActiveResize = null;
             let activeCellRefs = [];
+            let commitTimer = null;
+
+            const buildSnapshotFromDom = () => {
+                const titleEl = container.querySelector('.database-title-input');
+                if (titleEl) title = titleEl.value;
+
+                const colTitleEls = Array.from(container.querySelectorAll('.database-col-title'));
+                colTitleEls.forEach((el, index) => {
+                    if (columns[index]) columns[index].title = el.value;
+                });
+
+                flushDirtyCells();
+            };
+
+            const buildAttrsSnapshot = () => ({
+                title,
+                columns: [...columns],
+                rows: [...rows]
+            });
+
+            const commitToDocument = ({ syncDom = true } = {}) => {
+                if (syncDom) buildSnapshotFromDom();
+                const nextAttrs = buildAttrsSnapshot();
+
+                try {
+                    if (typeof getPos === 'function') {
+                        const pos = getPos();
+                        const currentNode = editor.state.doc.nodeAt(pos);
+                        if (!currentNode) return false;
+
+                        const currentJson = JSON.stringify(currentNode.attrs);
+                        const nextJson = JSON.stringify(nextAttrs);
+                        if (currentJson === nextJson) return false;
+
+                        const tr = editor.view.state.tr;
+                        tr.setNodeMarkup(pos, null, {
+                            ...currentNode.attrs,
+                            ...nextAttrs
+                        });
+                        editor.view.dispatch(tr);
+                        return true;
+                    }
+
+                    if (typeof updateAttributes === 'function') {
+                        updateAttributes(nextAttrs);
+                        return true;
+                    }
+                } catch (error) {
+                    console.error('[DatabaseBlock] 데이터 저장 실패:', error);
+                }
+
+                return false;
+            };
+
+            const scheduleCommit = (delay = 120) => {
+                if (commitTimer) clearTimeout(commitTimer);
+                commitTimer = setTimeout(() => {
+                    commitTimer = null;
+                    commitToDocument();
+                }, delay);
+            };
+
+            const flushScheduledCommit = () => {
+                if (commitTimer) {
+                    clearTimeout(commitTimer);
+                    commitTimer = null;
+                }
+                return commitToDocument();
+            };
 
             const flushDirtyCells = () => {
                 let changed = false;
@@ -95,9 +160,6 @@ export const DatabaseBlock = Node.create({
                         ref.row.values[ref.colId] = newValue;
                         changed = true;
                     }
-                }
-                if (changed) {
-                    updateAttrs({ rows: [...rows] });
                 }
                 return changed;
             };
@@ -116,10 +178,11 @@ export const DatabaseBlock = Node.create({
                 titleInput.value = title;
                 titleInput.placeholder = '데이터베이스 제목';
                 titleInput.readOnly = !editor.isEditable;
-                titleInput.onchange = (e) => {
-                    title = e.target.value;
-                    updateAttrs({ title });
+                titleInput.oninput = () => {
+                    title = titleInput.value;
+                    scheduleCommit();
                 };
+                titleInput.onchange = () => flushScheduledCommit();
                 header.appendChild(titleInput);
                 container.appendChild(header);
 
@@ -178,7 +241,7 @@ export const DatabaseBlock = Node.create({
                         document.body.classList.remove('db-resizing', 'db-resizing-col', 'db-resizing-row');
                         cancelActiveResize = null;
                     };
-                    const onUp = () => { cleanup(); updateAttrs({ columns: [...columns] }); };
+                    const onUp = () => { cleanup(); flushScheduledCommit(); };
                     cancelActiveResize = cleanup;
                     window.addEventListener('pointermove', onMove, { passive: false });
                     window.addEventListener('pointerup', onUp, { once: true });
@@ -208,7 +271,7 @@ export const DatabaseBlock = Node.create({
                         document.body.classList.remove('db-resizing', 'db-resizing-col', 'db-resizing-row');
                         cancelActiveResize = null;
                     };
-                    const onUp = () => { cleanup(); updateAttrs({ rows: [...rows] }); };
+                    const onUp = () => { cleanup(); flushScheduledCommit(); };
                     cancelActiveResize = cleanup;
                     window.addEventListener('pointermove', onMove, { passive: false });
                     window.addEventListener('pointerup', onUp, { once: true });
@@ -241,10 +304,11 @@ export const DatabaseBlock = Node.create({
                     colTitle.className = 'database-col-title';
                     colTitle.value = col.title;
                     colTitle.readOnly = !editor.isEditable;
-                    colTitle.onchange = (e) => {
-                        col.title = e.target.value;
-                        updateAttrs({ columns: [...columns] });
+                    colTitle.oninput = () => {
+                        col.title = colTitle.value;
+                        scheduleCommit();
                     };
+                    colTitle.onchange = () => flushScheduledCommit();
                     
                     thContent.appendChild(colTitle);
                     
@@ -257,7 +321,7 @@ export const DatabaseBlock = Node.create({
                             if (confirm('이 열을 삭제하시겠습니까?')) {
                                 columns.splice(index, 1);
                                 rows.forEach(row => { delete row.values[col.id]; });
-                                updateAttrs({ columns: [...columns], rows: [...rows] });
+                                commitToDocument({ syncDom: false });
                                 render();
                             }
                         };
@@ -284,7 +348,7 @@ export const DatabaseBlock = Node.create({
                         const newColId = 'col-' + Date.now();
                         columns.push({ id: newColId, title: '새 열', type: 'text', width: '150px' });
                         rows.forEach(row => { row.values[newColId] = ''; });
-                        updateAttrs({ columns: [...columns], rows: [...rows] });
+                        commitToDocument({ syncDom: false });
                         render();
                     };
                     thAddCol.appendChild(addColBtn);
@@ -298,31 +362,22 @@ export const DatabaseBlock = Node.create({
                 rows.forEach((row, rowIndex) => {
                     const tr = document.createElement('tr');
                     const rowHeightPx = (row.height && row.height !== 'auto') ? row.height : null;
-                    if (rowHeightPx) {
-                        tr.style.height = rowHeightPx;
-                    }
+                    if (rowHeightPx) tr.style.height = rowHeightPx;
 
                     columns.forEach((col, colIndex) => {
                         const td = document.createElement('td');
-                        if (rowHeightPx) { td.style.height = rowHeightPx; }
+                        if (rowHeightPx) td.style.height = rowHeightPx;
                         const cell = document.createElement('div');
                         cell.className = 'database-cell';
                         cell.contentEditable = editor.isEditable ? 'true' : 'false';
                         cell.innerHTML = sanitizeCellHtml(row.values[col.id]);
-                        cell.onblur = () => {
-                            const newValue = sanitizeCellHtml(cell.innerHTML);
-                            if (row.values[col.id] !== newValue) {
-                                row.values[col.id] = newValue;
-                                updateAttrs({ rows: [...rows] });
-                            }
-                        };
+                        cell.oninput = () => scheduleCommit();
+                        cell.onblur = () => flushScheduledCommit();
                         cell.onkeydown = (e) => {
                             if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); cell.blur(); return; }
                             e.stopPropagation();
                         };
-                        if (editor.isEditable) {
-                            activeCellRefs.push({ el: cell, row, colId: col.id });
-                        }
+                        if (editor.isEditable) activeCellRefs.push({ el: cell, row, colId: col.id });
                         td.appendChild(cell);
 
                         if (editor.isEditable) {
@@ -336,7 +391,7 @@ export const DatabaseBlock = Node.create({
                     if (editor.isEditable) {
                         const tdDelRow = document.createElement('td');
                         tdDelRow.className = 'database-del-row-td';
-                        if (rowHeightPx) { tdDelRow.style.height = rowHeightPx; }
+                        if (rowHeightPx) tdDelRow.style.height = rowHeightPx;
                         const delRowBtn = document.createElement('button');
                         delRowBtn.className = 'database-del-row-btn';
                         delRowBtn.innerHTML = '<i class="fa-solid fa-xmark"></i>';
@@ -344,7 +399,7 @@ export const DatabaseBlock = Node.create({
                             e.stopPropagation();
                             if (rows.length > 1) {
                                 rows.splice(rowIndex, 1);
-                                updateAttrs({ rows: [...rows] });
+                                commitToDocument({ syncDom: false });
                                 render();
                             }
                         };
@@ -370,7 +425,7 @@ export const DatabaseBlock = Node.create({
                         const newValues = {};
                         columns.forEach(col => { newValues[col.id] = ''; });
                         rows.push({ id: 'row-' + Date.now(), values: newValues, height: 'auto' });
-                        updateAttrs({ rows: [...rows] });
+                        commitToDocument({ syncDom: false });
                         render();
                     };
                     container.appendChild(addRowBtn);
@@ -380,9 +435,11 @@ export const DatabaseBlock = Node.create({
             const checkEditable = () => { if (editor.isEditable !== lastIsEditable) render(); };
             editor.on('transaction', checkEditable);
             const observer = new MutationObserver(() => checkEditable());
+            const handleExternalFlush = () => flushScheduledCommit();
             if (editor.view && editor.view.dom) {
                 observer.observe(editor.view.dom, { attributes: true, attributeFilter: ['contenteditable'] });
             }
+            document.addEventListener('nteok:flush-nodeviews', handleExternalFlush);
 
             render();
 
@@ -408,7 +465,8 @@ export const DatabaseBlock = Node.create({
                 },
                 ignoreMutation: () => true,
                 destroy: () => {
-                    flushDirtyCells();
+                    flushScheduledCommit();
+                    document.removeEventListener('nteok:flush-nodeviews', handleExternalFlush);
                     editor.off('transaction', checkEditable);
                     observer.disconnect();
                 }

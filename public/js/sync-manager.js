@@ -8,6 +8,7 @@ import { DOMParser } from 'prosemirror-model';
 import { escapeHtml, showErrorInEditor, syncPageUpdatedAtPadding } from './ui-utils.js';
 import { showCover, hideCover } from './cover-manager.js';
 import { renderPageList } from './pages-manager.js';
+import { flushEditorTransientNodeViews } from './editor-save-utils.js';
 
 let ws = null;
 let reconnectAttempts = 0;
@@ -520,6 +521,8 @@ function sendPageSnapshotNow(pageId) {
     if (isE2eeSync) return false;
     if (!pageId || !ws || ws.readyState !== WebSocket.OPEN) return false;
     if (!state.editor || !yMetadata) return false;
+
+    flushEditorTransientNodeViews(state.editor);
 
     const html = state.editor.getHTML();
     if (!html) return false;
