@@ -95,14 +95,20 @@ export const BoardBlock = Node.create({
                     { id: 'done', title: '완료', cards: [] }
                 ],
                 parseHTML: element => {
-                    const data = element.getAttribute('data-columns');
+                    let data = element.getAttribute('data-columns');
                     if (!data) return null;
+                    const div = document.createElement('div');
+                    div.innerHTML = data;
+                    data = div.textContent;
                     const parsed = safeJsonParse(data, null);
-                    return sanitizeBoardColumns(parsed);
+                    return parsed ? sanitizeBoardColumns(parsed) : null;
                 },
                 renderHTML: attributes => {
                     const safeColumns = sanitizeBoardColumns(safeJsonClone(attributes.columns ?? [], []));
-                    return { 'data-columns': JSON.stringify(safeColumns) };
+                    const json = JSON.stringify(safeColumns);
+                    const div = document.createElement('div');
+                    div.textContent = json;
+                    return { 'data-columns': div.innerHTML };
                 }
             }
         };
@@ -126,27 +132,168 @@ export const BoardBlock = Node.create({
             container.className = 'board-container';
             container.contentEditable = 'false';
 
-            let columns = sanitizeBoardColumns(safeJsonClone(node.attrs.columns, [])); 
+            let columns = sanitizeBoardColumns(safeJsonClone(node.attrs.columns, []));
             let draggedCardId = null;
             let draggedFromColId = null;
-            let lastIsEditable = editor.isEditable; 
+            let lastIsEditable = editor.isEditable;
+            let saveTimer = null;
+            let cardDomRefs = [];
+            let isComposing = false;
+            let pendingFlushAfterComposition = false;
+            let lastCommittedColumnsJson = JSON.stringify(columns);
+            let pendingDocumentSyncJson = null;
 
-            const saveData = () => {
-                if (typeof getPos === 'function') {
+            const buildColumnsSnapshot = (inputColumns = columns) =>
+                sanitizeBoardColumns(safeJsonClone(inputColumns ?? [], []));
+
+            const buildColumnsJson = (inputColumns = columns) =>
+                JSON.stringify(buildColumnsSnapshot(inputColumns));
+
+            const getDocumentSnapshotState = () => {
+                const docColumns = readColumnsFromDocument();
+                return {
+                    docColumns,
+                    docJson: docColumns ? JSON.stringify(docColumns) : null,
+                    localJson: buildColumnsJson(),
+                };
+            };
+
+            const hasDocumentDrift = (snapshot = getDocumentSnapshotState()) =>
+                snapshot.docJson !== null && snapshot.docJson !== snapshot.localJson;
+
+            const hasPendingLocalColumns = () => {
+                const snapshot = getDocumentSnapshotState();
+                return !!saveTimer ||
+                    pendingFlushAfterComposition ||
+                    !!pendingDocumentSyncJson ||
+                    hasDocumentDrift(snapshot);
+            };
+
+            const readColumnsFromDocument = () => {
+                if (typeof getPos !== 'function') return null;
+
+                try {
                     const pos = getPos();
-                    try {
-                        const currentAttrs = editor.state.doc.nodeAt(pos).attrs;
-                        if (JSON.stringify(currentAttrs.columns) === JSON.stringify(columns)) {
-                            return;
-                        }
-
-                        const tr = editor.view.state.tr;
-                        tr.setNodeMarkup(pos, null, { columns });
-                        editor.view.dispatch(tr);
-                    } catch (error) {
-                        console.error('[BoardBlock] 데이터 저장 실패:', error);
-                    }
+                    const currentNode = editor.state.doc.nodeAt(pos);
+                    if (!currentNode || currentNode.type.name !== node.type.name) return null;
+                    return buildColumnsSnapshot(currentNode.attrs.columns);
+                } catch (_) {
+                    return null;
                 }
+            };
+
+            const syncCardDomToState = (card, cardContent, { writeBackToDom = false } = {}) => {
+                let raw = String(cardContent?.innerHTML ?? '');
+                const tmp = document.createElement('div');
+                tmp.innerHTML = raw;
+                if (!tmp.textContent.trim() && !tmp.querySelector('br')) raw = '';
+
+                const sanitized = sanitizeBoardCardHtml(raw);
+
+                if (writeBackToDom && !isComposing && sanitized !== raw) cardContent.innerHTML = sanitized;
+
+                if (sanitized !== card.content) {
+                    card.content = sanitized;
+                    return true;
+                }
+                return false;
+            };
+
+            const findLiveCard = (refCard, refColumn) => {
+                if (!refCard) return null;
+                const col = refColumn
+                    ? columns.find(c => c.id === refColumn.id)
+                    : columns.find(c => c.cards.some(cd => cd.id === refCard.id));
+                if (!col) return null;
+                return col.cards.find(cd => cd.id === refCard.id) || null;
+            };
+
+            const syncAllCardDomToState = ({ writeBackToDom = false } = {}) => {
+                let changed = false;
+
+                cardDomRefs.forEach(({ el, card, cardEl, column }) => {
+                    if (!el || !cardEl || !cardEl.isConnected || !card) return;
+                    if (syncCardDomToState(card, el, { writeBackToDom })) changed = true;
+                    const live = findLiveCard(card, column);
+                    if (live && live !== card && live.content !== card.content) {
+                        live.content = card.content;
+                        changed = true;
+                    }
+                });
+
+                return changed;
+            };
+
+            const commitColumns = ({ syncDom = false, writeBackToDom = false } = {}) => {
+                if (typeof getPos !== 'function') return false;
+
+                if (syncDom) {
+                    if (isComposing) {
+                        pendingFlushAfterComposition = true;
+                        return false;
+                    }
+                    syncAllCardDomToState({ writeBackToDom });
+                }
+
+                const normalizedColumns = buildColumnsSnapshot();
+                const normalizedJson = JSON.stringify(normalizedColumns);
+                const pos = getPos();
+
+                try {
+                    const currentNode = editor.state.doc.nodeAt(pos);
+                    const currentAttrs = currentNode?.attrs || {};
+                    const currentJson = JSON.stringify(buildColumnsSnapshot(currentAttrs.columns));
+
+                    columns = normalizedColumns;
+                    lastCommittedColumnsJson = normalizedJson;
+
+                    if (currentJson === normalizedJson) {
+                        pendingDocumentSyncJson = null;
+                        return false;
+                    }
+
+                    pendingDocumentSyncJson = normalizedJson;
+
+                    const tr = editor.view.state.tr;
+                    tr.setNodeMarkup(pos, null, { ...currentAttrs, columns: normalizedColumns });
+                    editor.view.dispatch(tr);
+                    return true;
+                } catch (error) {
+                    pendingDocumentSyncJson = null;
+                    console.error('[BoardBlock] 데이터 저장 실패:', error);
+                    return false;
+                }
+            };
+
+            const scheduleSaveData = () => {
+                if (isComposing) {
+                    pendingFlushAfterComposition = true;
+                    return;
+                }
+                if (saveTimer) clearTimeout(saveTimer);
+                saveTimer = setTimeout(() => {
+                    saveTimer = null;
+                    commitColumns({ syncDom: true, writeBackToDom: false });
+                }, 150);
+            };
+
+            const flushScheduledSaveData = () => {
+                if (saveTimer) {
+                    clearTimeout(saveTimer);
+                    saveTimer = null;
+                }
+                return commitColumns({ syncDom: true, writeBackToDom: true });
+            };
+
+            const flushCardDomRefs = ({ writeBackToDom = true } = {}) => {
+                if (isComposing) {
+                    pendingFlushAfterComposition = true;
+                    return false;
+                }
+
+                const changed = syncAllCardDomToState({ writeBackToDom });
+                if (changed || saveTimer) return flushScheduledSaveData();
+                return false;
             };
 
             const showIconPickerPopup = (targetEl, onSelect) => {
@@ -197,11 +344,8 @@ export const BoardBlock = Node.create({
                         const btn = document.createElement('button');
                         btn.style.cssText = 'padding: 6px; border: 1px solid var(--border-color); background: var(--primary-color); cursor: pointer; border-radius: 4px; font-size: 14px; display: flex; align-items: center; justify-content: center; color: var(--font-color);';
 
-                        if (tab === 'theme') {
-                            addIcon(btn, iconValue);
-                        } else {
-                            btn.textContent = iconValue;
-                        }
+                        if (tab === 'theme') addIcon(btn, iconValue);
+                        else btn.textContent = iconValue;
 
                         btn.onclick = (e) => {
                             e.preventDefault();
@@ -307,8 +451,12 @@ export const BoardBlock = Node.create({
                 document.addEventListener('mousedown', closePopup);
             };
 
-            const render = () => {
-                lastIsEditable = editor.isEditable; 
+            const render = ({ flushDom = true } = {}) => {
+                if (flushDom && cardDomRefs.length > 0) {
+                    flushCardDomRefs();
+                }
+                lastIsEditable = editor.isEditable;
+                cardDomRefs = [];
                 container.innerHTML = '';
 
                 const columnsWrapper = document.createElement('div');
@@ -330,7 +478,7 @@ export const BoardBlock = Node.create({
                     if (editor.isEditable) {
                         titleInput.onchange = (e) => {
                             column.title = e.target.value;
-                            saveData();
+                            flushScheduledSaveData();
                         };
                     } else {
                         titleInput.readOnly = true;
@@ -344,8 +492,8 @@ export const BoardBlock = Node.create({
                         deleteColBtn.onclick = () => {
                             if (confirm('이 컬럼과 포함된 모든 카드를 삭제하시겠습니까?')) {
                                 columns = columns.filter(c => c.id !== column.id);
-                                saveData();
-                                render(); 
+                                flushScheduledSaveData();
+                                render();
                             }
                         };
                     } else {
@@ -374,7 +522,6 @@ export const BoardBlock = Node.create({
                             if (!draggedCardId || !draggedFromColId) return;
 
                             const toColId = column.id;
-
                             const fromCol = columns.find(c => c.id === draggedFromColId);
                             const cardIndex = fromCol.cards.findIndex(c => c.id === draggedCardId);
                             if (cardIndex === -1) return;
@@ -385,7 +532,7 @@ export const BoardBlock = Node.create({
 
                             draggedCardId = null;
                             draggedFromColId = null;
-                            saveData();
+                            flushScheduledSaveData();
                             render();
                         };
                     }
@@ -394,7 +541,6 @@ export const BoardBlock = Node.create({
                         const cardEl = document.createElement('div');
                         cardEl.className = `board-card ${card.color ? 'color-' + card.color : ''}`;
                         cardEl.dataset.cardId = card.id;
-
                         cardEl.draggable = false;
 
                         if (editor.isEditable) {
@@ -420,11 +566,8 @@ export const BoardBlock = Node.create({
                         cardHeader.className = 'board-card-header';
 
                         const hasIcon = !!card.icon;
-                        if (!editor.isEditable && !hasIcon) {
-                            cardHeader.style.display = 'none';
-                        } else {
-                            cardHeader.style.display = 'flex';
-                        }
+                        if (!editor.isEditable && !hasIcon) cardHeader.style.display = 'none';
+                        else cardHeader.style.display = 'flex';
 
                         if (editor.isEditable) {
                             cardHeader.onmouseenter = () => { cardEl.draggable = true; };
@@ -456,12 +599,8 @@ export const BoardBlock = Node.create({
                                     const i = document.createElement('i');
                                     i.className = card.icon;
                                     iconBtn.appendChild(i);
-                                } else {
-                                    iconBtn.textContent = card.icon;
-                                }
-                            } else if (editor.isEditable) {
-                                iconBtn.innerHTML = '<i class="fa-regular fa-face-smile" style="opacity: 0.3;"></i>';
-                            }
+                                } else iconBtn.textContent = card.icon;
+                            } else if (editor.isEditable) iconBtn.innerHTML = '<i class="fa-regular fa-face-smile" style="opacity: 0.3;"></i>';
                         };
                         renderIcon();
 
@@ -471,7 +610,7 @@ export const BoardBlock = Node.create({
                                 showIconPickerPopup(iconBtn, (newIcon) => {
                                     card.icon = newIcon;
                                     renderIcon();
-                                    saveData();
+                                    flushScheduledSaveData();
                                 });
                             };
                         }
@@ -492,8 +631,8 @@ export const BoardBlock = Node.create({
                                 e.stopPropagation();
                                 showColorPickerPopup(colorBtn, (newColor) => {
                                     card.color = newColor;
-                                    saveData();
-                                    render(); 
+                                    flushScheduledSaveData();
+                                    render();
                                 });
                             };
                         }
@@ -507,29 +646,25 @@ export const BoardBlock = Node.create({
                         deleteCardBtn.innerHTML = '×';
                         if (editor.isEditable) {
                             deleteCardBtn.onclick = (e) => {
-                                e.stopPropagation(); 
+                                e.stopPropagation();
                                 if (confirm('이 카드를 삭제하시겠습니까?')) {
                                     column.cards = column.cards.filter(c => c.id !== card.id);
-                                    saveData();
+                                    flushScheduledSaveData();
                                     render();
                                 }
                             };
-                        } else {
-                            deleteCardBtn.style.display = 'none';
-                        }
+                        } else deleteCardBtn.style.display = 'none';
 
                         cardHeader.appendChild(deleteCardBtn);
                         cardEl.appendChild(cardHeader);
 
                         const cardContent = document.createElement('div');
                         cardContent.className = 'board-card-content';
-                        cardContent.contentEditable = editor.isEditable ? 'true' : 'false'; 
+                        cardContent.contentEditable = editor.isEditable ? 'true' : 'false';
 
                         const safeInitial = sanitizeBoardCardHtml(card.content);
-						if (safeInitial !== card.content)
-							card.content = safeInitial;
-
-						cardContent.innerHTML = safeInitial;
+                        if (safeInitial !== card.content) card.content = safeInitial;
+                        cardContent.innerHTML = safeInitial;
 
                         if (editor.isEditable) {
                             cardContent.onfocus = () => {
@@ -537,24 +672,52 @@ export const BoardBlock = Node.create({
                                 if (toolbar) toolbar.classList.add('visible');
                             };
 
-                            cardContent.onblur = () => {
-								const sanitized = sanitizeBoardCardHtml(cardContent.innerHTML);
-								if (sanitized !== cardContent.innerHTML) cardContent.innerHTML = sanitized;
-								if (sanitized !== card.content) {
-									card.content = sanitized;
-									saveData();
-								}
+                            cardContent.oncompositionstart = () => {
+                                isComposing = true;
                             };
-                            cardContent.onkeydown = (e) => {
-                                if (e.ctrlKey || e.metaKey) {
-                                    if (['b', 'i', 'u', 's'].includes(e.key.toLowerCase())) {
+
+                            cardContent.oncompositionend = () => {
+                                isComposing = false;
+                                queueMicrotask(() => {
+                                    const changed = syncCardDomToState(card, cardContent, { writeBackToDom: true });
+                                    if (pendingFlushAfterComposition) {
+                                        pendingFlushAfterComposition = false;
+                                        flushScheduledSaveData();
+                                    } else if (changed) scheduleSaveData();
+                                });
+                            };
+
+                            cardContent.oninput = (e) => {
+                                if (e?.isComposing || isComposing) {
+                                    pendingFlushAfterComposition = true;
+                                    return;
+                                }
+                                if (syncCardDomToState(card, cardContent, { writeBackToDom: false })) scheduleSaveData();
+                            };
+
+                            cardContent.onblur = () => {
+                                queueMicrotask(() => {
+                                    const changed = syncCardDomToState(card, cardContent, { writeBackToDom: true });
+                                    if (isComposing) {
+                                        pendingFlushAfterComposition = true;
                                         return;
                                     }
+                                    if (changed || pendingFlushAfterComposition || saveTimer) {
+                                        pendingFlushAfterComposition = false;
+                                        flushScheduledSaveData();
+                                    }
+                                });
+                            };
+
+                            cardContent.onkeydown = (e) => {
+                                if (e.ctrlKey || e.metaKey) {
+                                    if (['b', 'i', 'u', 's'].includes(e.key.toLowerCase())) return;
                                 }
-                                e.stopPropagation(); 
+                                e.stopPropagation();
                             };
                         }
 
+                        cardDomRefs.push({ el: cardContent, cardEl, card, column });
                         cardEl.appendChild(cardContent);
                         cardList.appendChild(cardEl);
                     });
@@ -573,7 +736,7 @@ export const BoardBlock = Node.create({
                                 color: 'default'
                             };
                             column.cards.push(newCard);
-                            saveData();
+                            flushScheduledSaveData();
                             render();
                         };
                         colEl.appendChild(addCardBtn);
@@ -593,7 +756,7 @@ export const BoardBlock = Node.create({
                             cards: []
                         };
                         columns.push(newCol);
-                        saveData();
+                        flushScheduledSaveData();
                         render();
                     };
                     columnsWrapper.appendChild(addColBtn);
@@ -602,12 +765,37 @@ export const BoardBlock = Node.create({
                 container.appendChild(columnsWrapper);
             };
 
-            render();
+            render({ flushDom: false });
 
             const checkEditable = () => {
-                if (editor.isEditable !== lastIsEditable) {
-                    render();
+                const nextIsEditable = editor.isEditable;
+                if (nextIsEditable === lastIsEditable) return;
+
+                const wasEditable = lastIsEditable;
+                lastIsEditable = nextIsEditable;
+
+                if (wasEditable) {
+                    if (isComposing) isComposing = false;
+                    pendingFlushAfterComposition = false;
+                    flushCardDomRefs({ writeBackToDom: true });
                 }
+
+                const { docColumns, docJson, localJson } = getDocumentSnapshotState();
+                const canAdoptDocumentSnapshot =
+                    !!docColumns &&
+                    (
+                        !hasPendingLocalColumns() ||
+                        docJson === localJson ||
+                        (!!pendingDocumentSyncJson && docJson === pendingDocumentSyncJson)
+                    );
+
+                if (canAdoptDocumentSnapshot && docJson !== localJson) columns = docColumns;
+                if (canAdoptDocumentSnapshot && docJson) {
+                    lastCommittedColumnsJson = docJson;
+                    if (pendingDocumentSyncJson === docJson) pendingDocumentSyncJson = null;
+                }
+
+                render({ flushDom: false });
             };
 
             editor.on('transaction', checkEditable);
@@ -616,6 +804,12 @@ export const BoardBlock = Node.create({
                 checkEditable();
             });
 
+            const handleExternalFlush = () => {
+                if (isComposing) isComposing = false;
+                pendingFlushAfterComposition = false;
+                flushCardDomRefs();
+            };
+
             if (editor.view && editor.view.dom) {
                 observer.observe(editor.view.dom, {
                     attributes: true,
@@ -623,33 +817,72 @@ export const BoardBlock = Node.create({
                 });
             }
 
+            document.addEventListener('nteok:flush-nodeviews', handleExternalFlush);
+
             return {
                 dom: container,
                 update: (updatedNode) => {
                     if (updatedNode.type.name !== node.type.name) return false;
 
-                    const isEditableChanged = editor.isEditable !== lastIsEditable;
-                    const isDataChanged = JSON.stringify(updatedNode.attrs.columns) !== JSON.stringify(columns);
+                    if (!isComposing) syncAllCardDomToState({ writeBackToDom: false });
 
-                    if (isDataChanged || isEditableChanged) {
-                        if (isDataChanged) {
-                            columns = JSON.parse(JSON.stringify(updatedNode.attrs.columns));
-                        }
-                        render();
+                    const isEditableChanged = editor.isEditable !== lastIsEditable;
+                    const nextColumns = buildColumnsSnapshot(updatedNode.attrs.columns);
+                    const nextJson = JSON.stringify(nextColumns);
+                    const snapshotState = getDocumentSnapshotState();
+                    const { docJson, localJson } = snapshotState;
+                    const hasPendingLocalChanges =
+                        !!saveTimer ||
+                        pendingFlushAfterComposition ||
+                        !!pendingDocumentSyncJson ||
+                        hasDocumentDrift(snapshotState);
+                    const isIncomingCommittedEcho = !!pendingDocumentSyncJson && nextJson === pendingDocumentSyncJson;
+                    const isIncomingStaleComparedToLocal = nextJson !== localJson;
+                    const isIncomingStaleComparedToDocument = docJson !== null && nextJson !== docJson;
+                    const shouldIgnoreIncoming =
+                        (!!pendingDocumentSyncJson &&
+                            localJson === pendingDocumentSyncJson &&
+                            nextJson !== pendingDocumentSyncJson) ||
+                        (hasPendingLocalChanges && isIncomingStaleComparedToLocal && isIncomingStaleComparedToDocument);
+
+                    if (isIncomingCommittedEcho) pendingDocumentSyncJson = null;
+
+                    if (shouldIgnoreIncoming) {
+                        if (isEditableChanged) render({ flushDom: false });
+                        return true;
                     }
+
+                    if (!hasPendingLocalChanges || nextJson === localJson || isIncomingCommittedEcho || nextJson === lastCommittedColumnsJson) {
+                        if (nextJson !== localJson) columns = nextColumns;
+                        if (nextJson !== localJson || isEditableChanged) render({ flushDom: false });
+                    } else if (isEditableChanged) render({ flushDom: false });
+
                     return true;
                 },
                 stopEvent: (event) => {
                     const target = event.target;
-                    if (target.classList.contains('board-card-content') || target.tagName === 'INPUT' || target.tagName === 'BUTTON' || target.closest('.board-icon-picker-popup')) {
-                        return true;
-                    }
+                    if (!(target instanceof HTMLElement)) return false;
+                    if (
+                        target.classList.contains('board-card-content') ||
+                        target.tagName === 'INPUT' ||
+                        target.tagName === 'BUTTON' ||
+                        target.closest('.board-icon-picker-popup') ||
+                        target.closest('.board-color-picker-popup')
+                    ) return true;
                     return false;
                 },
-                ignoreMutation: (mutation) => {
-                    return !container.contains(mutation.target) || mutation.target === container;
-                },
+                ignoreMutation: () => true,
                 destroy: () => {
+                    if (isComposing) {
+                        isComposing = false;
+                        syncAllCardDomToState({ writeBackToDom: false });
+                    }
+                    flushCardDomRefs();
+                    document.removeEventListener('nteok:flush-nodeviews', handleExternalFlush);
+                    if (saveTimer) {
+                        clearTimeout(saveTimer);
+                        saveTimer = null;
+                    }
                     editor.off('transaction', checkEditable);
                     observer.disconnect();
                 }

@@ -69,6 +69,13 @@ if (!hooksInstalled) {
             return;
         }
 
+        if (name === 'data-columns') {
+            data.attrValue = raw;
+            data.keepAttr = true;
+            data.forceKeepAttr = true;
+            return;
+        }
+
         if (name === 'data-url' || name === 'data-thumbnail') {
             const safe = sanitizeNavHref(raw, { allowRelative: false });
             if (!safe) {

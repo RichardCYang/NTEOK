@@ -1250,7 +1250,9 @@ async function loadOrCreateYjsDoc(pool, sanitizeHtmlContent, pageId) {
             ownerUserId: Number(page.user_id),
             storageId: String(page.storage_id),
             isEncrypted: page.is_encrypted === 1,
-            shareAllowed: page.share_allowed === 1
+            shareAllowed: page.share_allowed === 1,
+            preferSnapshotOnNextSave: false,
+            lastSnapshotAt: 0
         });
         return ydoc;
 	}
@@ -1262,7 +1264,9 @@ async function loadOrCreateYjsDoc(pool, sanitizeHtmlContent, pageId) {
         ownerUserId: null,
         storageId: null,
         isEncrypted: false,
-        shareAllowed: true
+        shareAllowed: true,
+        preferSnapshotOnNextSave: false,
+        lastSnapshotAt: 0
     });
     return ydoc;
 }
@@ -1454,39 +1458,42 @@ function initWebSocketServer(server, pool, sanitizeHtmlContent, IS_PRODUCTION, B
 
             initWsMessageRateState(ws);
 
-			ws.on('message', async (msg, isBinary) => {
-		        try {
-                    if (isBinary) {
-                        if (!consumeWsMessageBudget(ws, "bad-json")) { try { ws.close(1008, 'Rate limit exceeded'); } catch (_) {} }
-                        else { try { ws.close(1003, 'Binary not supported'); } catch (_) {} }
-                        return;
-                    }
+            ws._messageChain = Promise.resolve();
+            ws.on('message', (msg, isBinary) => {
+                ws._messageChain = ws._messageChain
+                    .then(async () => {
+                        if (isBinary) {
+                            if (!consumeWsMessageBudget(ws, "bad-json")) { try { ws.close(1008, 'Rate limit exceeded'); } catch (_) {} }
+                            else { try { ws.close(1003, 'Binary not supported'); } catch (_) {} }
+                            return;
+                        }
 
-                    const text = (typeof msg === 'string') ? msg : (Buffer.isBuffer(msg) ? msg.toString('utf8') : String(msg));
-                    if (text.length > (WS_MAX_MESSAGE_BYTES + 1024)) { try { ws.close(1009, 'Message too big'); } catch (_) {} return; }
+                        const text = (typeof msg === 'string') ? msg : (Buffer.isBuffer(msg) ? msg.toString('utf8') : String(msg));
+                        if (text.length > (WS_MAX_MESSAGE_BYTES + 1024)) { try { ws.close(1009, 'Message too big'); } catch (_) {} return; }
 
-                    let data;
-                    try { data = JSON.parse(text); }
-                    catch (_) {
-                        if (!consumeWsMessageBudget(ws, "bad-json")) { try { ws.close(1008, 'Rate limit exceeded'); } catch (_) {} }
-                        else { try { ws.send(JSON.stringify({ event: 'error', data: { message: 'Invalid message' } })); } catch (_) {} }
-                        return;
-                    }
+                        let data;
+                        try { data = JSON.parse(text); }
+                        catch (_) {
+                            if (!consumeWsMessageBudget(ws, "bad-json")) { try { ws.close(1008, 'Rate limit exceeded'); } catch (_) {} }
+                            else { try { ws.send(JSON.stringify({ event: 'error', data: { message: 'Invalid message' } })); } catch (_) {} }
+                            return;
+                        }
 
-                    data = stripDangerousKeysDeep(data);
-                    if (!data || typeof data !== "object") {
-                        try { ws.send(JSON.stringify({ event: 'error', data: { message: 'Invalid message' } })); } catch (_) {}
-                        return;
-                    }
+                        data = stripDangerousKeysDeep(data);
+                        if (!data || typeof data !== "object") {
+                            try { ws.send(JSON.stringify({ event: 'error', data: { message: 'Invalid message' } })); } catch (_) {}
+                            return;
+                        }
 
-                    const kind = (data && typeof data.type === 'string') ? data.type : 'unknown';
-                    if (!consumeWsMessageBudget(ws, kind)) { try { ws.close(1008, 'Rate limit exceeded'); } catch (_) {} return; }
+                        const kind = (data && typeof data.type === 'string') ? data.type : 'unknown';
+                        if (!consumeWsMessageBudget(ws, kind)) { try { ws.close(1008, 'Rate limit exceeded'); } catch (_) {} return; }
 
-                    await handleWebSocketMessage(ws, data, pool, sanitizeHtmlContent, getSessionFromId, pageSqlPolicy);
-                } catch (_) {
-                    try { ws.send(JSON.stringify({ event: 'error', data: { message: 'Failed' } })); } catch (_) {}
-                }
-		    });
+                        await handleWebSocketMessage(ws, data, pool, sanitizeHtmlContent, getSessionFromId, pageSqlPolicy);
+                    })
+                    .catch(() => {
+                        try { ws.send(JSON.stringify({ event: 'error', data: { message: 'Failed' } })); } catch (_) {}
+                    });
+            });
 		    ws.send(JSON.stringify({ event: 'connected', data: { userId: session.userId, username: session.username } }));
       	} catch (err) { try { ws.close(1011, 'Error'); } catch (_) {} }
     });
@@ -1953,6 +1960,9 @@ async function handlePageSnapshot(ws, payload, pool, sanitizeHtmlContent, pageSq
             }
         }, 'snapshot');
 
+        docMeta.preferSnapshotOnNextSave = true;
+        docMeta.lastSnapshotAt = Date.now();
+
         if (docMeta.saveTimeout) clearTimeout(docMeta.saveTimeout);
 
         if (emergencyPersistState.has(pageId)) return;
@@ -1974,8 +1984,19 @@ async function handlePageSnapshot(ws, payload, pool, sanitizeHtmlContent, pageSq
         }
 
         const epoch = getYjsSaveEpoch(pageId);
+        const forceClearYjsState = docMeta.preferSnapshotOnNextSave === true;
         docMeta.saveTimeout = setTimeout(() => {
-            enqueueYjsDbSave(pageId, () => saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, docMeta.ydoc, { epoch }))
+            enqueueYjsDbSave(pageId, () =>
+                saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, docMeta.ydoc, {
+                    epoch,
+                    forceClearYjsState,
+                    actorUserId: ws.userId
+                })
+            )
+                .then(() => {
+                    const current = yjsDocuments.get(String(pageId));
+                    if (current && forceClearYjsState) current.preferSnapshotOnNextSave = false;
+                })
                 .catch(e => { console.error('[YJS] snapshot best-effort save failed:', String(pageId), e?.message || e); });
         }, 1000);
     }
@@ -2003,9 +2024,21 @@ async function handleForceSave(ws, payload, pool, sanitizeHtmlContent, pageSqlPo
     if (Number(access.page?.is_encrypted) === 1) return;
 
     try {
+        const docMeta = yjsDocuments.get(String(pageId));
         const ydoc = await loadOrCreateYjsDoc(pool, sanitizeHtmlContent, pageId);
         const epoch = bumpYjsSaveEpoch(pageId);
-        await enqueueYjsDbSave(pageId, () => saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc, { epoch, actorUserId: ws.userId }));
+        const forceClearYjsState = docMeta?.preferSnapshotOnNextSave === true;
+
+        await enqueueYjsDbSave(pageId, () =>
+            saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc, {
+                epoch,
+                forceClearYjsState,
+                actorUserId: ws.userId
+            })
+        );
+
+        if (docMeta && forceClearYjsState) docMeta.preferSnapshotOnNextSave = false;
+
         ws.send(JSON.stringify({
             event: 'page-saved',
             data: { pageId: String(pageId), updatedAt: new Date().toISOString() }
@@ -2333,6 +2366,7 @@ async function handleYjsState(ws, payload, pool, sanitizeHtmlContent, pageSqlPol
 		if (doc) {
 			const cur = Number.isFinite(doc.approxBytes) ? doc.approxBytes : 0;
 			doc.approxBytes = Math.max(cur, stateBuf.length); 
+            doc.preferSnapshotOnNextSave = false;
 		}
 
         try {

@@ -204,14 +204,11 @@ export function renderPageList() {
         li.appendChild(row);
         fragment.appendChild(li);
 
-        if (hasChildren && isExpanded) {
-            node.children.forEach(child => renderNode(child, depth + 1));
-        }
+    if (hasChildren && isExpanded) node.children.forEach(child => renderNode(child, depth + 1));
     }
 
     tree.forEach(node => renderNode(node, 0));
     listEl.appendChild(fragment);
-
 }
 
 export async function clearCurrentPage() {
@@ -298,7 +295,7 @@ export async function loadPage(id) {
                         isDecrypted = true;
                     }
                 } catch (e) {
-                    console.error("Auto-decryption failed:", e);
+                    console.error("자동 복호화 실패:", e);
                     content = "<p style='color:red;'>[복호화 실패] 올바르지 않은 키입니다.</p>";
                 }
             } else {
@@ -344,7 +341,7 @@ export async function loadPage(id) {
 
         if (window.innerWidth <= 768) closeSidebar();
     } catch (error) {
-        console.error("Page load error:", error);
+        console.error("페이지 로드 오류:", error);
         showErrorInEditor("페이지 로드 실패: " + error.message, state.editor);
     }
 }
@@ -352,7 +349,10 @@ export async function loadPage(id) {
 export async function saveCurrentPage() {
     if (!state.currentPageId || !state.editor) return true;
 
+    await new Promise(resolve => requestAnimationFrame(() => resolve()));
     flushEditorTransientNodeViews(state.editor);
+    await new Promise(resolve => requestAnimationFrame(() => resolve()));
+    await Promise.resolve();
 
     const titleInput = document.querySelector("#page-title-input");
     const title = titleInput ? titleInput.value || "제목 없음" : "제목 없음";
@@ -384,7 +384,7 @@ export async function saveCurrentPage() {
             }
             return true;
         } catch (error) {
-            console.error("Save error (force-save):", error);
+            console.error("저장 오류 (강제 저장):", error);
             return false;
         }
     }
@@ -400,7 +400,7 @@ export async function saveCurrentPage() {
             try {
                 await api.put("/api/pages/" + encodeURIComponent(state.currentPageId), { title });
             } catch (e) {
-                console.error("Save meta error:", e);
+                console.error("메타데이터 저장 오류:", e);
             }
 
             const result = await requestImmediateSave(state.currentPageId, { includeSnapshot: true, waitForAck: true });
@@ -440,7 +440,7 @@ export async function saveCurrentPage() {
         renderPageList();
         return true;
     } catch (error) {
-        console.error("Save error:", error);
+        console.error("저장 오류:", error);
         alert("저장 실패: " + error.message);
         return false;
     }
@@ -458,6 +458,11 @@ export async function toggleEditMode() {
 
     if (state.isWriteMode) {
         await saveCurrentPage();
+
+        flushEditorTransientNodeViews(state.editor);
+        await new Promise(resolve => requestAnimationFrame(() => resolve()));
+        await Promise.resolve();
+
         state.isWriteMode = false;
         state.editor.setEditable(false);
         btn.classList.remove("write-mode");
@@ -526,7 +531,7 @@ export function bindNewPageButton() {
             renderPageList();
             await loadPage(page.id);
         } catch (error) {
-            console.error("Page create error:", error);
+            console.error("페이지 생성 오류:", error);
             alert("페이지 생성 실패: " + error.message);
         }
     });
