@@ -21,6 +21,17 @@ echo ""
 read -p "[6/10] 데이터베이스 이름 (기본: nteok): " DB_NAME
 DB_NAME=${DB_NAME:-nteok}
 
+echo ""
+echo "[레디스 (Redis) 설정]"
+read -p "   - 레디스 호스트 (기본: 127.0.0.1): " REDIS_HOST
+REDIS_HOST=${REDIS_HOST:-127.0.0.1}
+
+read -p "   - 레디스 포트 (기본: 6379): " REDIS_PORT
+REDIS_PORT=${REDIS_PORT:-6379}
+
+read -p "   - 레디스 비밀번호 (없을 시 엔터): " REDIS_PASSWORD
+echo ""
+
 read -p "[7/10] 관리자 계정 아이디 (기본: admin): " ADMIN_USERNAME
 ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
 
@@ -67,11 +78,11 @@ else
     CSRF_KEY=$(cat /dev/urandom | tr -dc 'a-f0-9' | fold -w 64 | head -n 1)
 fi
 
-# CSRF HMAC 키 생성 (CSPRNG)
+# 공유 댓글 CSRF SECRET 생성
 if command -v openssl >/dev/null 2>&1; then
-    CSRF_KEY=$(openssl rand -hex 32)
+    SHARED_CSRF_KEY=$(openssl rand -hex 32)
 else
-    CSRF_KEY=$(cat /dev/urandom | tr -dc 'a-f0-9' | fold -w 64 | head -n 1)
+    SHARED_CSRF_KEY=$(cat /dev/urandom | tr -dc 'a-f0-9' | fold -w 64 | head -n 1)
 fi
 
 echo ""
@@ -82,11 +93,17 @@ cat <<EOF > .env
 NODE_ENV=$NODE_ENV
 PORT=$PORT
 
+# 데이터베이스
 DB_HOST=$DB_HOST
 DB_PORT=$DB_PORT
 DB_USER=$DB_USER
 DB_PASSWORD=$DB_PASSWORD
 DB_NAME=$DB_NAME
+
+# 레디스 (Redis)
+REDIS_HOST=$REDIS_HOST
+REDIS_PORT=$REDIS_PORT
+REDIS_PASSWORD=$REDIS_PASSWORD
 
 ADMIN_USERNAME=$ADMIN_USERNAME
 ADMIN_PASSWORD=$ADMIN_PASSWORD
@@ -106,6 +123,9 @@ TOTP_SECRET_ENC_KEY=$TOTP_KEY
 
 # CSRF 토큰 서명용 HMAC 키
 CSRF_HMAC_KEY=$CSRF_KEY
+
+# 공유 페이지 댓글 CSRF 서명용 키
+SHARED_COMMENT_CSRF_SECRET=$SHARED_CSRF_KEY
 EOF
 
 echo ""

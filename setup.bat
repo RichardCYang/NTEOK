@@ -25,6 +25,17 @@ set /p DB_PASSWORD="[5/10] 데이터베이스 비밀번호: "
 set /p DB_NAME="[6/10] 데이터베이스 이름 (기본: nteok): "
 if "!DB_NAME!"=="" set DB_NAME=nteok
 
+echo.
+echo [레디스 (Redis) 설정]
+set /p REDIS_HOST="   - 레디스 호스트 (기본: 127.0.0.1): "
+if "!REDIS_HOST!"=="" set REDIS_HOST=127.0.0.1
+
+set /p REDIS_PORT="   - 레디스 포트 (기본: 6379): "
+if "!REDIS_PORT!"=="" set REDIS_PORT=6379
+
+set /p REDIS_PASSWORD="   - 레디스 비밀번호 (없을 시 엔터): "
+echo.
+
 set /p ADMIN_USERNAME="[7/10] 관리자 계정 아이디 (기본: admin): "
 if "!ADMIN_USERNAME!"=="" set ADMIN_USERNAME=admin
 
@@ -57,6 +68,9 @@ for /f "delims=" %%a in ('powershell -NoProfile -Command "$bytes = New-Object By
 :: CSRF HMAC 키 생성 (CSPRNG 사용)
 for /f "delims=" %%a in ('powershell -NoProfile -Command "$bytes = New-Object Byte[] 32; (New-Object System.Security.Cryptography.RNGCryptoServiceProvider).GetBytes($bytes); [System.BitConverter]::ToString($bytes).Replace('-','').ToLowerInvariant()"') do set "CSRF_KEY=%%a"
 
+:: 공유 댓글 CSRF SECRET 생성
+for /f "delims=" %%a in ('powershell -NoProfile -Command "$bytes = New-Object Byte[] 32; (New-Object System.Security.Cryptography.RNGCryptoServiceProvider).GetBytes($bytes); [System.BitConverter]::ToString($bytes).Replace('-','').ToLowerInvariant()"') do set "SHARED_CSRF_KEY=%%a"
+
 echo.
 echo .env 파일을 생성 중입니다...
 
@@ -65,11 +79,17 @@ echo # 자동 생성된 환경 설정 > .env
 echo NODE_ENV=!NODE_ENV! >> .env
 echo PORT=!PORT! >> .env
 echo. >> .env
+echo # 데이터베이스 >> .env
 echo DB_HOST=!DB_HOST! >> .env
 echo DB_PORT=!DB_PORT! >> .env
 echo DB_USER=!DB_USER! >> .env
 echo DB_PASSWORD=!DB_PASSWORD! >> .env
 echo DB_NAME=!DB_NAME! >> .env
+echo. >> .env
+echo # 레디스 (Redis) >> .env
+echo REDIS_HOST=!REDIS_HOST! >> .env
+echo REDIS_PORT=!REDIS_PORT! >> .env
+echo REDIS_PASSWORD=!REDIS_PASSWORD! >> .env
 echo. >> .env
 echo ADMIN_USERNAME=!ADMIN_USERNAME! >> .env
 echo ADMIN_PASSWORD=!ADMIN_PASSWORD! >> .env
@@ -91,6 +111,9 @@ echo TOTP_SECRET_ENC_KEY=!TOTP_KEY! >> .env
 echo. >> .env
 echo # CSRF 토큰 서명용 HMAC 키 >> .env
 echo CSRF_HMAC_KEY=!CSRF_KEY! >> .env
+echo. >> .env
+echo # 공유 페이지 댓글 CSRF 서명용 키 >> .env
+echo SHARED_COMMENT_CSRF_SECRET=!SHARED_CSRF_KEY! >> .env
 
 echo.
 echo [성공] .env 파일이 생성되었습니다! (모드: !NODE_ENV!, 포트: !PORT!)
