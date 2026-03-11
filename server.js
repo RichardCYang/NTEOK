@@ -1332,7 +1332,7 @@ async function initDb() {
               AND (encryption_salt IS NOT NULL OR encrypted_content IS NOT NULL)
         `);
     } catch (e) {
-        console.error("[Security Cleanup] Failed to clean up stale encryption data:", e.message);
+        console.error("[보안 정리] 오래된 암호화 데이터 정리 실패:", e.message);
     }
 
     await pool.execute(`
@@ -2389,7 +2389,7 @@ function installGracefulShutdownHandlers(httpServer, pool, sanitizeHtmlContent) 
             console.log('Graceful shutdown completed successfully.');
             process.exit(0);
         } catch (error) {
-            console.error('Error during graceful shutdown:', error);
+            console.error('정상 종료 중 오류 발생:', error);
             process.exit(1);
         }
     };

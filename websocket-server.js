@@ -833,7 +833,7 @@ function cleanupInactiveConnections(pool, sanitizeHtmlContent) {
             })
             .catch((e) => {
                 try {
-                    console.error('[YJS] inactivity cleanup save failed:', String(pageId), e?.message || e);
+                    console.error('[YJS] 무활동 정리 저장 실패:', String(pageId), e?.message || e);
                 } catch (_) {}
                 doc.lastAccess = now; 
             });
@@ -912,6 +912,68 @@ function extractFilesFromContent(content, pageOwnerUserId = null) {
     }
 
     return files;
+}
+
+function sameOwnerAssetSet(beforeFiles, afterFiles) {
+    const a = new Set((beforeFiles || []).map(f => `${f.type}:${f.ref}`));
+    const b = new Set((afterFiles || []).map(f => `${f.type}:${f.ref}`));
+    if (a.size !== b.size) return false;
+    for (const v of a) if (!b.has(v)) return false;
+    return true;
+}
+
+function getMetadataContentFromDoc(ydoc) {
+    try {
+        const yMeta = ydoc.getMap('metadata');
+        const value = yMeta.get('content');
+        return (typeof value === 'string' && value.length) ? value : '<p></p>';
+    } catch (_) {
+        return '<p></p>';
+    }
+}
+
+function canonicalizeAppliedRealtimeDoc(ydoc, sanitizeHtmlContent) {
+    const yMeta = ydoc.getMap('metadata');
+    const raw = getMetadataContentFromDoc(ydoc);
+    const safe = sanitizeHtmlContent(raw);
+
+    if (safe === raw) {
+        return {
+            changed: false,
+            content: safe,
+            updateB64: null,
+            stateB64: null
+        };
+    }
+
+    let capturedUpdate = null;
+    const onUpdate = (u) => { capturedUpdate = u; };
+    ydoc.once('update', onUpdate);
+    ydoc.transact(() => {
+        yMeta.set('content', safe);
+    }, 'server-canonicalize');
+    ydoc.off('update', onUpdate);
+
+    return {
+        changed: true,
+        content: safe,
+        updateB64: capturedUpdate ? Buffer.from(capturedUpdate).toString('base64') : null,
+        stateB64: Buffer.from(Y.encodeStateAsUpdate(ydoc)).toString('base64')
+    };
+}
+
+const pageMutationQueues = new Map();
+function enqueuePageMutation(pageId, task) {
+    const key = String(pageId);
+    const prev = pageMutationQueues.get(key) || Promise.resolve();
+    const next = prev.catch(() => {}).then(task);
+    pageMutationQueues.set(key, next);
+    next.finally(() => {
+        if (pageMutationQueues.get(key) === next) {
+            pageMutationQueues.delete(key);
+        }
+    });
+    return next;
 }
 
 
@@ -1646,7 +1708,7 @@ function handleUnsubscribePage(ws, payload, pool, sanitizeHtmlContent) {
         if (doc) {
             const epoch = getYjsSaveEpoch(pid);
             enqueueYjsDbSave(pid, () => saveYjsDocToDatabase(pool, sanitizeHtmlContent, pid, doc.ydoc, { epoch }))
-                .catch(e => { console.error('[YJS] unsubscribe save failed:', String(pid), e?.message || e); });
+                .catch(e => { console.error('[YJS] 구독 해제 저장 실패:', String(pid), e?.message || e); });
         }
     }
     wsBroadcastToPage(pid, 'user-left', { userId: ws.userId }, ws.userId);
@@ -1790,31 +1852,32 @@ async function handleYjsUpdateE2EE(ws, payload, pool, pageSqlPolicy) {
         }
         if (!['EDIT', 'ADMIN'].includes(freshPerm)) return;
 
-        ensureE2eeLeaderForActiveEditor(pageId, myConn);
+        await enqueuePageMutation(pageId, async () => {
+            ensureE2eeLeaderForActiveEditor(pageId, myConn);
 
-        if (update.length > WS_MAX_YJS_UPDATE_B64_CHARS) return;
-        const updateBuf = Buffer.from(update, 'base64');
-        if (updateBuf.length > WS_MAX_YJS_UPDATE_BYTES) return;
+            if (update.length > WS_MAX_YJS_UPDATE_B64_CHARS) return;
+            const updateBuf = Buffer.from(update, 'base64');
+            if (updateBuf.length > WS_MAX_YJS_UPDATE_BYTES) return;
 
-        wsBroadcastToPage(pageId, 'yjs-update-e2ee', { update }, ws.userId);
+            wsBroadcastToPage(pageId, 'yjs-update-e2ee', { update }, ws.userId);
+            bufferE2eeUpdateLog(pool, pageId, updateBuf);
 
-        bufferE2eeUpdateLog(pool, pageId, updateBuf);
+            const pid = String(pageId);
+            const now = Date.now();
+            e2eeLastUpdateAt.set(pid, now);
 
-        const pid = String(pageId);
-        const now = Date.now();
-        e2eeLastUpdateAt.set(pid, now);
-
-        if (!e2eeSnapshotRequestTimers.has(pid)) {
-            const timer = setTimeout(() => {
-                try {
-                    e2eeSnapshotRequestTimers.delete(pid);
-                    const lu = e2eeLastUpdateAt.get(pid) || 0;
-                    const ls = e2eeLastSnapshotAt.get(pid) || 0;
-                    if (lu > ls) wsRequestE2eeSnapshot(pid);
-                } catch (_) {}
-            }, E2EE_SNAPSHOT_EXPECT_MS);
-            e2eeSnapshotRequestTimers.set(pid, timer);
-        }
+            if (!e2eeSnapshotRequestTimers.has(pid)) {
+                const timer = setTimeout(() => {
+                    try {
+                        e2eeSnapshotRequestTimers.delete(pid);
+                        const lu = e2eeLastUpdateAt.get(pid) || 0;
+                        const ls = e2eeLastSnapshotAt.get(pid) || 0;
+                        if (lu > ls) wsRequestE2eeSnapshot(pid);
+                    } catch (_) {}
+                }, E2EE_SNAPSHOT_EXPECT_MS);
+                e2eeSnapshotRequestTimers.set(pid, timer);
+            }
+        });
     } catch (e) {}
 }
 
@@ -1827,39 +1890,56 @@ async function handleYjsStateE2EE(ws, payload, pool, pageSqlPolicy) {
         const myConn = Array.from(conns).find(c => c.ws === ws);
         if (!myConn || !myConn.isE2ee) return;
 
-        const freshPerm = await refreshConnPermission(pool, myConn); 
+        const access = await ensureActivePageAccess(pool, pageSqlPolicy, pageId, myConn, {
+            forcePermissionRefresh: true
+        });
+        if (!access.ok) {
+            revokePageSubscription(ws, pageId, conns, myConn, access.reason);
+            return;
+        }
+        const freshPerm = access.permission;
         if (!['EDIT', 'ADMIN'].includes(freshPerm)) return;
 
-        const leader = ensureE2eeLeaderForActiveEditor(pageId, myConn);
-        if (leader && String(leader.sessionId) !== String(myConn.sessionId)) return;
+        await enqueuePageMutation(pageId, async () => {
+            const leader = ensureE2eeLeaderForActiveEditor(pageId, myConn);
+            if (leader && String(leader.sessionId) !== String(myConn.sessionId)) return;
 
-        const maxStateB64Chars = Math.ceil(WS_MAX_YJS_STATE_BYTES / 3) * 4 + 8;
-        if (encryptedState.length > maxStateB64Chars) return;
-        if (!/^[A-Za-z0-9+/=]+$/.test(encryptedState)) return;
-        try {
-            const buf = Buffer.from(encryptedState, 'base64');
-            if (!buf || buf.length < 28) return;
-        } catch (_) { return; }
-
-        yjsE2EEStates.set(String(pageId), { encryptedState, storedAt: Date.now() });
-
-        const pid = String(pageId);
-        e2eeLastSnapshotAt.set(pid, Date.now());
-        clearE2eeSnapshotRequestTimer(pid);
-
-        touchE2eeLeader(pageId, myConn);
-
-        scheduleE2EESave(pool, pageId, encryptedState, encryptedHtml, Date.now());
-
-        if (Array.isArray(refs)) {
+            const maxStateB64Chars = Math.ceil(WS_MAX_YJS_STATE_BYTES / 3) * 4 + 8;
+            if (encryptedState.length > maxStateB64Chars) return;
+            if (!/^[A-Za-z0-9+/=]+$/.test(encryptedState)) return;
             try {
-                const [pRows] = await pool.execute("SELECT user_id FROM pages WHERE id = ?", [pageId]);
-                if (pRows.length > 0) {
-                    const pageOwnerUserId = Number(pRows[0].user_id);
+                const buf = Buffer.from(encryptedState, 'base64');
+                if (!buf || buf.length < 28) return;
+            } catch (_) { return; }
+
+            if (Array.isArray(refs)) {
+                try {
+                    const pageOwnerUserId = Number(access.page?.user_id);
+                    if (Number.isFinite(pageOwnerUserId) && Number(ws.userId) !== pageOwnerUserId) {
+                        const [beforeRows] = await pool.execute(
+                            "SELECT owner_user_id, stored_filename, file_type FROM page_file_refs WHERE page_id = ? AND owner_user_id = ?",
+                            [pageId, pageOwnerUserId]
+                        );
+                        const beforeOwnerRefs = beforeRows.map(r => ({ type: r.file_type, ref: `${r.owner_user_id}/${r.stored_filename}` }));
+                        const normalizedAfter = refs
+                            .map(file => {
+                                if (!file || typeof file !== 'object') return null;
+                                const normalized = normalizePaperclipRefForOwner(file.ref, pageOwnerUserId);
+                                if (!normalized) return null;
+                                return { type: file.type || 'paperclip', ref: normalized };
+                            })
+                            .filter(Boolean);
+
+                        if (!sameOwnerAssetSet(beforeOwnerRefs, normalizedAfter)) {
+                            try { ws.close(1008, 'Owner asset refs can only be changed by page owner'); } catch (_) {}
+                            return;
+                        }
+                    }
+
                     await pool.execute("DELETE FROM page_file_refs WHERE page_id = ?", [pageId]);
                     for (const file of refs) {
                         if (!file || typeof file !== 'object') continue;
-                        const normalized = normalizePaperclipRefForOwner(file.ref, pageOwnerUserId);
+                        const normalized = normalizePaperclipRef(file.ref);
                         if (normalized) {
                             const [ownerId, filename] = normalized.split('/');
                             await pool.execute(
@@ -1869,10 +1949,19 @@ async function handleYjsStateE2EE(ws, payload, pool, pageSqlPolicy) {
                             );
                         }
                     }
-                }
-            } catch (regErr) { console.error('E2EE 보안 레지스트리 동기화 실패:', regErr); }
-        }
+                } catch (regErr) { console.error('E2EE 보안 레지스트리 동기화 실패:', regErr); }
+            }
 
+            yjsE2EEStates.set(String(pageId), { encryptedState, storedAt: Date.now() });
+
+            const pid = String(pageId);
+            e2eeLastSnapshotAt.set(pid, Date.now());
+            clearE2eeSnapshotRequestTimer(pid);
+
+            touchE2eeLeader(pageId, myConn);
+
+            scheduleE2EESave(pool, pageId, encryptedState, encryptedHtml, Date.now());
+        });
     } catch (e) {}
 }
 
@@ -2059,31 +2148,54 @@ async function handleForceSaveE2EE(ws, payload, pool, pageSqlPolicy) {
         access = await ensureActivePageAccess(pool, pageSqlPolicy, pageId, myConn, { forcePermissionRefresh: true });
         if (!access.ok || !['EDIT', 'ADMIN'].includes(access.permission)) return;
 
-        await flushPendingE2eeSaveForPage(pool, pageId);
+        await enqueuePageMutation(pageId, async () => {
+            await flushPendingE2eeSaveForPage(pool, pageId);
 
-        if (Array.isArray(refs)) {
-            try {
-                const pageOwnerUserId = Number(access.page.user_id);
-                await pool.execute("DELETE FROM page_file_refs WHERE page_id = ?", [pageId]);
-                for (const file of refs) {
-                    if (!file || typeof file !== 'object') continue;
-                    const normalized = normalizePaperclipRefForOwner(file.ref, pageOwnerUserId);
-                    if (normalized) {
-                        const [ownerId, filename] = normalized.split('/');
-                        await pool.execute(
-                            `INSERT IGNORE INTO page_file_refs (page_id, owner_user_id, stored_filename, file_type, created_at)
-                             VALUES (?, ?, ?, ?, NOW())`,
-                            [pageId, ownerId, filename, file.type || 'paperclip']
+            if (Array.isArray(refs)) {
+                try {
+                    const pageOwnerUserId = Number(access.page.user_id);
+                    if (Number.isFinite(pageOwnerUserId) && Number(ws.userId) !== pageOwnerUserId) {
+                        const [beforeRows] = await pool.execute(
+                            "SELECT owner_user_id, stored_filename, file_type FROM page_file_refs WHERE page_id = ? AND owner_user_id = ?",
+                            [pageId, pageOwnerUserId]
                         );
-                    }
-                }
-            } catch (regErr) { console.error('E2EE 보안 레지스트리 동기화(강제저장) 실패:', regErr); }
-        }
+                        const beforeOwnerRefs = beforeRows.map(r => ({ type: r.file_type, ref: `${r.owner_user_id}/${r.stored_filename}` }));
+                        const normalizedAfter = refs
+                            .map(file => {
+                                if (!file || typeof file !== 'object') return null;
+                                const normalized = normalizePaperclipRefForOwner(file.ref, pageOwnerUserId);
+                                if (!normalized) return null;
+                                return { type: file.type || 'paperclip', ref: normalized };
+                            })
+                            .filter(Boolean);
 
-        ws.send(JSON.stringify({
-            event: 'page-saved',
-            data: { pageId: String(pageId), updatedAt: new Date().toISOString() }
-        }));
+                        if (!sameOwnerAssetSet(beforeOwnerRefs, normalizedAfter)) {
+                            try { ws.close(1008, 'Owner asset refs can only be changed by page owner'); } catch (_) {}
+                            return;
+                        }
+                    }
+
+                    await pool.execute("DELETE FROM page_file_refs WHERE page_id = ?", [pageId]);
+                    for (const file of refs) {
+                        if (!file || typeof file !== 'object') continue;
+                        const normalized = normalizePaperclipRef(file.ref);
+                        if (normalized) {
+                            const [ownerId, filename] = normalized.split('/');
+                            await pool.execute(
+                                `INSERT IGNORE INTO page_file_refs (page_id, owner_user_id, stored_filename, file_type, created_at)
+                                 VALUES (?, ?, ?, ?, NOW())`,
+                                [pageId, ownerId, filename, file.type || 'paperclip']
+                            );
+                        }
+                    }
+                } catch (regErr) { console.error('E2EE 보안 레지스트리 동기화(강제저장) 실패:', regErr); }
+            }
+
+            ws.send(JSON.stringify({
+                event: 'page-saved',
+                data: { pageId: String(pageId), updatedAt: new Date().toISOString() }
+            }));
+        });
     } catch (_) {}
 }
 
@@ -2189,8 +2301,8 @@ async function validateYjsParentAssignment(pool, pageSqlPolicy, {
 }
 
 async function handleYjsUpdate(ws, payload, pool, sanitizeHtmlContent, pageSqlPolicy) {
-	const { pageId, update } = payload || {};
-	try {
+    const { pageId, update } = payload || {};
+    try {
         if (!pageId || typeof update !== 'string' || !isSubscribedToPage(ws, pageId)) return;
 
         const conns = wsConnections.pages.get(pageId);
@@ -2205,27 +2317,12 @@ async function handleYjsUpdate(ws, payload, pool, sanitizeHtmlContent, pageSqlPo
             return;
         }
         const freshPerm = access.permission;
-
         if (!['EDIT', 'ADMIN'].includes(freshPerm)) return;
 
         const ydoc = await loadOrCreateYjsDoc(pool, sanitizeHtmlContent, pageId);
         if (update.length > WS_MAX_YJS_UPDATE_B64_CHARS) throw new Error('업데이트 데이터가 너무 큽니다.');
         const updateBuf = Buffer.from(update, 'base64');
         if (updateBuf.length > WS_MAX_YJS_UPDATE_BYTES) throw new Error('업데이트 데이터가 너무 큽니다.');
-
-        const BAD = [
-            Buffer.from('javascript:', 'utf8'),
-            Buffer.from('data:', 'utf8'),
-            Buffer.from('vbscript:', 'utf8'),
-            Buffer.from('file:', 'utf8')
-        ];
-
-        for (const sig of BAD) {
-            if (updateBuf.indexOf(sig) !== -1) {
-                try { ws.close(1008, 'Blocked unsafe update'); } catch (_) {}
-                return;
-            }
-        }
 
         const doc = yjsDocuments.get(pageId);
         if (doc) {
@@ -2238,170 +2335,198 @@ async function handleYjsUpdate(ws, payload, pool, sanitizeHtmlContent, pageSqlPo
             }
         }
 
-        try {
-            const probe = cloneYDocForValidation(ydoc);
-            Y.applyUpdate(probe, updateBuf);
+        await enqueuePageMutation(pageId, async () => {
+            const beforeContent = getMetadataContentFromDoc(ydoc);
+            let candidateSafeContent = beforeContent;
 
-            const sem = validateRealtimeYjsCandidate(probe, sanitizeHtmlContent);
-            if (!sem.ok) {
-                try { ws.close(sem.code || 1008, sem.reason || 'Rejected invalid update'); } catch (_) {}
+            try {
+                const probe = cloneYDocForValidation(ydoc);
+                Y.applyUpdate(probe, updateBuf);
+
+                const sem = validateRealtimeYjsCandidate(probe, sanitizeHtmlContent);
+                if (!sem.ok) {
+                    try { ws.close(sem.code || 1008, sem.reason || 'Rejected invalid update'); } catch (_) {}
+                    return;
+                }
+
+                candidateSafeContent = sanitizeHtmlContent(getMetadataContentFromDoc(probe));
+            } catch (_) {
+                try { ws.close(1008, 'Malformed Yjs update'); } catch (_) {}
                 return;
             }
-        } catch (_) {
-            try { ws.close(1008, 'Malformed Yjs update'); } catch (_) {}
-            return;
-        }
 
-        Y.applyUpdate(ydoc, updateBuf);
-        if (doc) doc.approxBytes = (Number.isFinite(doc.approxBytes) ? doc.approxBytes : 0) + updateBuf.length;
-
-        const yMeta = ydoc.getMap('metadata');
-        const currentContent = typeof yMeta.get('content') === 'string' ? yMeta.get('content') : '<p></p>';
-        yMeta.set('content', sanitizeHtmlContent(currentContent));
-
-        try {
-            const requestedParentId = yMeta.get('parentId') ?? null;
-            const parentCheck = await validateYjsParentAssignment(pool, pageSqlPolicy, {
-                viewerUserId: ws.userId,
-                pageId,
-                pageStorageId: access.page.storage_id,
-                candidateParentId: requestedParentId
-            });
-            if (!parentCheck.ok) {
-                yMeta.set('parentId', null);
-                try { ws.close(1008, 'Invalid parent assignment'); } catch (_) {}
-                return;
+            const pageOwnerUserId = Number(access.page?.user_id);
+            if (Number.isFinite(pageOwnerUserId) && Number(ws.userId) !== pageOwnerUserId) {
+                const beforeOwnerRefs = extractFilesFromContent(beforeContent, pageOwnerUserId);
+                const afterOwnerRefs = extractFilesFromContent(candidateSafeContent, pageOwnerUserId);
+                if (!sameOwnerAssetSet(beforeOwnerRefs, afterOwnerRefs)) {
+                    try { ws.close(1008, 'Owner asset refs can only be changed by page owner'); } catch (_) {}
+                    return;
+                }
             }
-            if ((requestedParentId || null) !== (parentCheck.parentId || null))
-                yMeta.set('parentId', parentCheck.parentId);
-        } catch (_) { return; }
 
-        if (emergencyPersistState.has(pageId)) return;
+            Y.applyUpdate(ydoc, updateBuf);
+            if (doc) doc.approxBytes = (Number.isFinite(doc.approxBytes) ? doc.approxBytes : 0) + updateBuf.length;
 
-        wsBroadcastToPage(pageId, 'yjs-update', { update }, ws.userId);
-        if (doc) {
-            if (doc.saveTimeout || emergencyPersistState.has(pageId)) return;
+            const canonical = canonicalizeAppliedRealtimeDoc(ydoc, sanitizeHtmlContent);
 
-            const epoch = getYjsSaveEpoch(pageId); 
-            doc.saveTimeout = setTimeout(() => {
-                enqueueYjsDbSave(pageId, () => saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc, { epoch, actorUserId: ws.userId }))
-                    .catch(e => { console.error('[YJS] debounce save failed:', String(pageId), e?.message || e); });
-            }, 1000);
-        }
+            try {
+                const yMeta = ydoc.getMap('metadata');
+                const requestedParentId = yMeta.get('parentId') ?? null;
+                const parentCheck = await validateYjsParentAssignment(pool, pageSqlPolicy, {
+                    viewerUserId: ws.userId,
+                    pageId,
+                    pageStorageId: access.page.storage_id,
+                    candidateParentId: requestedParentId
+                });
+                if (!parentCheck.ok) {
+                    yMeta.set('parentId', null);
+                    try { ws.close(1008, 'Invalid parent assignment'); } catch (_) {}
+                    return;
+                }
+                if ((requestedParentId || null) !== (parentCheck.parentId || null)) {
+                    yMeta.set('parentId', parentCheck.parentId);
+                }
+            } catch (_) { return; }
+
+            if (emergencyPersistState.has(pageId)) return;
+
+            const outboundUpdate = canonical.updateB64 || update;
+            wsBroadcastToPage(pageId, 'yjs-update', { update: outboundUpdate }, ws.userId);
+            if (doc) {
+                if (doc.saveTimeout || emergencyPersistState.has(pageId)) return;
+
+                const epoch = getYjsSaveEpoch(pageId);
+                doc.saveTimeout = setTimeout(() => {
+                    enqueueYjsDbSave(pageId, () =>
+                        saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc, { epoch, actorUserId: ws.userId })
+                    ).catch(e => {
+                        console.error('[YJS] 지연 저장 실패:', String(pageId), e?.message || e);
+                    });
+                }, 1000);
+            }
+        });
     } catch (e) {}
 }
 
 async function handleYjsState(ws, payload, pool, sanitizeHtmlContent, pageSqlPolicy) {
-	const { pageId, state } = payload || {};
-	try {
-		if (!pageId || typeof state !== 'string' || !isSubscribedToPage(ws, pageId)) return;
+    const { pageId, state } = payload || {};
+    try {
+        if (!pageId || typeof state !== 'string' || !isSubscribedToPage(ws, pageId)) return;
 
-		const conns = wsConnections.pages.get(pageId);
-		const myConn = Array.from(conns).find(c => c.ws === ws);
-		if (!myConn) return;
+        const conns = wsConnections.pages.get(pageId);
+        const myConn = Array.from(conns).find(c => c.ws === ws);
+        if (!myConn) return;
 
-		const access = await ensureActivePageAccess(pool, pageSqlPolicy, pageId, myConn, {
-			forcePermissionRefresh: true
-		});
-		if (!access.ok) {
-			revokePageSubscription(ws, pageId, conns, myConn, access.reason);
-			return;
-		}
-		const freshPerm = access.permission;
-		if (!['EDIT', 'ADMIN'].includes(freshPerm)) return;
+        const access = await ensureActivePageAccess(pool, pageSqlPolicy, pageId, myConn, {
+            forcePermissionRefresh: true
+        });
+        if (!access.ok) {
+            revokePageSubscription(ws, pageId, conns, myConn, access.reason);
+            return;
+        }
+        const freshPerm = access.permission;
+        if (!['EDIT', 'ADMIN'].includes(freshPerm)) return;
 
-		if (state.length > WS_MAX_YJS_STATE_B64_CHARS) {
+        if (state.length > WS_MAX_YJS_STATE_B64_CHARS) {
             ws.send(JSON.stringify({ event: 'error', data: { message: 'State too large' } }));
             scheduleOversizeResyncSnapshotThenClose(pageId, 'Document state too large');
             return;
         }
-		const stateBuf = Buffer.from(state, 'base64');
-		if (stateBuf.length > WS_MAX_YJS_STATE_BYTES) {
+        const stateBuf = Buffer.from(state, 'base64');
+        if (stateBuf.length > WS_MAX_YJS_STATE_BYTES) {
             ws.send(JSON.stringify({ event: 'error', data: { message: 'State too large' } }));
             scheduleOversizeResyncSnapshotThenClose(pageId, 'Document state too large');
             return;
         }
 
-		const ydoc = await loadOrCreateYjsDoc(pool, sanitizeHtmlContent, pageId);
+        const ydoc = await loadOrCreateYjsDoc(pool, sanitizeHtmlContent, pageId);
 
-        const BAD = [
-            Buffer.from('javascript:', 'utf8'),
-            Buffer.from('data:', 'utf8'),
-            Buffer.from('vbscript:', 'utf8'),
-            Buffer.from('file:', 'utf8')
-        ];
-        for (const sig of BAD) {
-            if (stateBuf.indexOf(sig) !== -1) {
-                try { ws.close(1008, 'Blocked unsafe state'); } catch (_) {}
-                return;
-            }
+        if (stateBuf.length > WS_MAX_DOC_EST_BYTES) {
+            wsCloseConnectionsForPage(pageId, 1009, 'Document too large - collaboration reset');
+            return;
         }
 
-		if (stateBuf.length > WS_MAX_DOC_EST_BYTES) {
-			wsCloseConnectionsForPage(pageId, 1009, 'Document too large - collaboration reset');
-			return;
-		}
+        await enqueuePageMutation(pageId, async () => {
+            const beforeContent = getMetadataContentFromDoc(ydoc);
+            let candidateSafeContent = beforeContent;
 
-		try {
-			const probe = cloneYDocForValidation(ydoc);
-			Y.applyUpdate(probe, stateBuf);
+            try {
+                const probe = cloneYDocForValidation(ydoc);
+                Y.applyUpdate(probe, stateBuf);
 
-			const sem = validateRealtimeYjsCandidate(probe, sanitizeHtmlContent);
-			if (!sem.ok) {
-				try { ws.close(sem.code || 1008, sem.reason || 'Rejected invalid state'); } catch (_) {}
-				return;
-			}
-		} catch (_) {
-			try { ws.close(1008, 'Malformed Yjs state'); } catch (_) {}
-			return;
-		}
+                const sem = validateRealtimeYjsCandidate(probe, sanitizeHtmlContent);
+                if (!sem.ok) {
+                    try { ws.close(sem.code || 1008, sem.reason || 'Rejected invalid state'); } catch (_) {}
+                    return;
+                }
 
-		Y.applyUpdate(ydoc, stateBuf);
-
-		const yMeta = ydoc.getMap('metadata');
-		const currentContent = typeof yMeta.get('content') === 'string' ? yMeta.get('content') : '<p></p>';
-		yMeta.set('content', sanitizeHtmlContent(currentContent));
-
-		const doc = yjsDocuments.get(pageId);
-		if (doc) {
-			const cur = Number.isFinite(doc.approxBytes) ? doc.approxBytes : 0;
-			doc.approxBytes = Math.max(cur, stateBuf.length); 
-            doc.preferSnapshotOnNextSave = false;
-		}
-
-        try {
-            const requestedParentId = yMeta.get('parentId') ?? null;
-            const parentCheck = await validateYjsParentAssignment(pool, pageSqlPolicy, {
-                viewerUserId: ws.userId,
-                pageId,
-                pageStorageId: access.page.storage_id,
-                candidateParentId: requestedParentId
-            });
-            if (!parentCheck.ok) {
-                yMeta.set('parentId', null);
-                try { ws.close(1008, 'Invalid parent assignment'); } catch (_) {}
+                candidateSafeContent = sanitizeHtmlContent(getMetadataContentFromDoc(probe));
+            } catch (_) {
+                try { ws.close(1008, 'Malformed Yjs state'); } catch (_) {}
                 return;
             }
-            if ((requestedParentId || null) !== (parentCheck.parentId || null))
-                yMeta.set('parentId', parentCheck.parentId);
-        } catch (_) { return; }
 
-		if (emergencyPersistState.has(pageId)) return;
+            const pageOwnerUserId = Number(access.page?.user_id);
+            if (Number.isFinite(pageOwnerUserId) && Number(ws.userId) !== pageOwnerUserId) {
+                const beforeOwnerRefs = extractFilesFromContent(beforeContent, pageOwnerUserId);
+                const afterOwnerRefs = extractFilesFromContent(candidateSafeContent, pageOwnerUserId);
+                if (!sameOwnerAssetSet(beforeOwnerRefs, afterOwnerRefs)) {
+                    try { ws.close(1008, 'Owner asset refs can only be changed by page owner'); } catch (_) {}
+                    return;
+                }
+            }
 
-		wsBroadcastToPage(pageId, 'yjs-state', { state }, ws.userId);
+            Y.applyUpdate(ydoc, stateBuf);
+            const canonical = canonicalizeAppliedRealtimeDoc(ydoc, sanitizeHtmlContent);
 
-		if (doc) {
-			if (doc.saveTimeout || emergencyPersistState.has(pageId)) return;
+            const doc = yjsDocuments.get(pageId);
+            if (doc) {
+                const cur = Number.isFinite(doc.approxBytes) ? doc.approxBytes : 0;
+                doc.approxBytes = Math.max(cur, stateBuf.length);
+                doc.preferSnapshotOnNextSave = false;
+            }
 
-			const epoch = getYjsSaveEpoch(pageId); 
-			doc.saveTimeout = setTimeout(() => {
-				enqueueYjsDbSave(pageId, () => saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc, { epoch, actorUserId: ws.userId }))
-                    .catch(e => { console.error('[YJS] state save failed:', String(pageId), e?.message || e); });
-			}, 1000);
-		}
-	} catch (e) {
-		console.error('[WS] handleYjsState error:', e);
-	}
+            try {
+                const yMeta = ydoc.getMap('metadata');
+                const requestedParentId = yMeta.get('parentId') ?? null;
+                const parentCheck = await validateYjsParentAssignment(pool, pageSqlPolicy, {
+                    viewerUserId: ws.userId,
+                    pageId,
+                    pageStorageId: access.page.storage_id,
+                    candidateParentId: requestedParentId
+                });
+                if (!parentCheck.ok) {
+                    yMeta.set('parentId', null);
+                    try { ws.close(1008, 'Invalid parent assignment'); } catch (_) {}
+                    return;
+                }
+                if ((requestedParentId || null) !== (parentCheck.parentId || null)) {
+                    yMeta.set('parentId', parentCheck.parentId);
+                }
+            } catch (_) { return; }
+
+            if (emergencyPersistState.has(pageId)) return;
+
+            const outboundState = canonical.stateB64 || state;
+            wsBroadcastToPage(pageId, 'yjs-state', { state: outboundState }, ws.userId);
+
+            if (doc) {
+                if (doc.saveTimeout || emergencyPersistState.has(pageId)) return;
+
+                const epoch = getYjsSaveEpoch(pageId);
+                doc.saveTimeout = setTimeout(() => {
+                    enqueueYjsDbSave(pageId, () =>
+                        saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc, { epoch, actorUserId: ws.userId })
+                    ).catch(e => {
+                        console.error('[YJS] 상태 저장 실패:', String(pageId), e?.message || e);
+                    });
+                }, 1000);
+            }
+        });
+    } catch (e) {
+        console.error('[WS] handleYjsState error:', e);
+    }
 }
 
 function isSubscribedToPage(ws, pageId) {
@@ -2467,7 +2592,7 @@ function cleanupWebSocketConnection(ws, pool, sanitizeHtmlContent) {
             if (doc) {
                 const epoch = getYjsSaveEpoch(pid);
                 enqueueYjsDbSave(pid, () => saveYjsDocToDatabase(pool, sanitizeHtmlContent, pid, doc.ydoc, { epoch }))
-                    .catch(e => { console.error('[YJS] connection cleanup save failed:', String(pid), e?.message || e); });
+                    .catch(e => { console.error('[YJS] 연결 정리 저장 실패:', String(pid), e?.message || e); });
             }
         }
     });

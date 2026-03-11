@@ -85,6 +85,13 @@ else
     SHARED_CSRF_KEY=$(cat /dev/urandom | tr -dc 'a-f0-9' | fold -w 64 | head -n 1)
 fi
 
+# PROXY SECRET 생성
+if command -v openssl >/dev/null 2>&1; then
+    PROXY_SECRET_KEY=$(openssl rand -hex 32)
+else
+    PROXY_SECRET_KEY=$(cat /dev/urandom | tr -dc 'a-f0-9' | fold -w 64 | head -n 1)
+fi
+
 echo ""
 echo ".env 파일을 생성 중입니다..."
 
@@ -126,6 +133,9 @@ CSRF_HMAC_KEY=$CSRF_KEY
 
 # 공유 페이지 댓글 CSRF 서명용 키
 SHARED_COMMENT_CSRF_SECRET=$SHARED_CSRF_KEY
+
+# 링크 미리보기 및 파비콘 프록시를 위한 HMAC 비밀키
+PROXY_SECRET=$PROXY_SECRET_KEY
 EOF
 
 echo ""

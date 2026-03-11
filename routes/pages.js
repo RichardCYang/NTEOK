@@ -7,13 +7,21 @@ const https = require("node:https");
 const net = require("node:net");
 const ipaddr = require("ipaddr.js");
 const cheerio = require("cheerio");
-const { assertImageFileSignature, assertSafeAttachmentFile } = require("../security-utils.js");
+const { detectImageTypeFromMagic, assertImageFileSignature, assertSafeAttachmentFile } = require("../security-utils.js");
 const { validateAndNormalizeIcon } = require("../utils/icon-utils.js");
 
 const METADATA_FETCH_TIMEOUT_MS = 5000;
 const METADATA_FETCH_MAX_BYTES = 10 * 1024 * 1024;
 const METADATA_FETCH_MAX_REDIRECTS = 5;
 const LINK_PREVIEW_ALLOWED_PORTS = new Set([443]);
+
+const PROXY_SECRET = (process.env.PROXY_SECRET && process.env.PROXY_SECRET.length >= 32)
+    ? process.env.PROXY_SECRET
+    : 'dev-only-insecure-secret-placeholder-for-testing';
+
+function generateProxyHmac(url) {
+    return crypto.createHmac('sha256', PROXY_SECRET).update(url).digest('hex').slice(0, 16);
+}
 
 function makeFetchError(code, message) {
     const err = new Error(message || code);
@@ -738,7 +746,7 @@ module.exports = (dependencies) => {
     });
 
     router.get('/proxy-favicon', authMiddleware, outboundFetchLimiter, async (req, res) => {
-        const { url, defaultHost } = req.query;
+        const { url, defaultHost, hmac } = req.query;
         const fallbackHost = String(defaultHost || 'unknown').toLowerCase();
         
         const sendFallback = () => {
@@ -748,7 +756,10 @@ module.exports = (dependencies) => {
             return res.status(200).send(generateSvgFavicon(fallbackHost));
         };
 
-        if (!url) return sendFallback();
+        if (!url || !hmac) return sendFallback();
+
+        const expectedHmac = generateProxyHmac(String(url));
+        if (hmac !== expectedHmac) return sendFallback();
 
         try {
             const targetUrl = normalizeAndValidatePreviewUrl(String(url), isHostnameAllowedForPreview);
@@ -787,6 +798,11 @@ module.exports = (dependencies) => {
                     return sendFallback();
                 }
 
+                if (contentType.includes('svg')) {
+                    upstreamRes.resume();
+                    return sendFallback();
+                }
+
                 const chunks = [];
                 let total = 0;
                 let headerChecked = false;
@@ -801,9 +817,11 @@ module.exports = (dependencies) => {
 
                     if (!headerChecked && total >= 12) {
                         headerChecked = true;
-                        const buffer = Buffer.concat(chunks);
-                        const isImage = /\.(ico|png|jpe?g|gif|svg|webp)$/i.test(targetUrl.pathname) || contentType.startsWith('image/');
-                        if (!isImage) {
+                        const head = Buffer.concat(chunks).slice(0, 12);
+                        try {
+                            const detected = detectImageTypeFromMagic(head);
+                            if (!detected || detected.ext === 'svg') proxyReq.destroy();
+                        } catch (_) {
                             proxyReq.destroy();
                         }
                     }
@@ -868,7 +886,7 @@ module.exports = (dependencies) => {
             }
 
             const favicon = faviconUrl 
-                ? `/api/pages/proxy-favicon?url=${encodeURIComponent(faviconUrl)}&defaultHost=${encodeURIComponent(finalUrl.hostname)}`
+                ? `/api/pages/proxy-favicon?url=${encodeURIComponent(faviconUrl)}&defaultHost=${encodeURIComponent(finalUrl.hostname)}&hmac=${generateProxyHmac(faviconUrl)}`
                 : buildGeneratedBookmarkFaviconUrl(finalUrl.hostname);
 
             res.json({

@@ -20,7 +20,7 @@ module.exports = function(dependencies) {
         const themesDirectory = path.join(__dirname, '..', 'themes');
         fs.readdir(themesDirectory, { withFileTypes: true }, (err, files) => {
             if (err) {
-                console.error("Could not list the directory.", err);
+                console.error("디렉토리를 나열할 수 없습니다.", err);
                 return res.status(500).json({ error: 'Internal server error' });
             }
 
