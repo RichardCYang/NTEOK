@@ -37,8 +37,22 @@ function safeEqualHex(a, b) {
     return crypto.timingSafeEqual(ab, bb);
 }
 
+const ALLOW_LEGACY_SHARE_TOKEN_IN_PATH = String(process.env.ALLOW_LEGACY_SHARE_TOKEN_IN_PATH || "").toLowerCase() === "true";
+
 function extractShareToken(req) {
-    return String(req.get('X-Share-Token') || req.params.token || '').trim();
+    const headerToken = String(req.get("X-Share-Token") || "").trim();
+    if (headerToken) return headerToken;
+    if (ALLOW_LEGACY_SHARE_TOKEN_IN_PATH) return String(req.params.token || "").trim();
+    return "";
+}
+
+function rejectTokenInUrlPath(req, res, next) {
+    if (req.params?.token && !ALLOW_LEGACY_SHARE_TOKEN_IN_PATH) {
+        res.setHeader("Cache-Control", "no-store");
+        res.setHeader("Referrer-Policy", "no-referrer");
+        return res.status(400).json({ error: "공유 토큰은 URL 경로가 아니라 X-Share-Token 헤더로 전달해야 합니다." });
+    }
+    next();
 }
 
 module.exports = (dependencies) => {
@@ -167,7 +181,7 @@ module.exports = (dependencies) => {
         return '회원';
     }
 
-    router.get(['/shared', '/shared/:token'], async (req, res) => {
+    router.get(["/shared", "/shared/:token"], rejectTokenInUrlPath, async (req, res) => {
         const token = extractShareToken(req);
         if (typeof token !== 'string' || token.length !== 64 || !/^[a-f0-9]{64}$/i.test(token)) return res.status(404).json({ error: "페이지를 찾을 수 없습니다." });
         const tokenHash = dependencies.hashToken(token);
@@ -215,7 +229,7 @@ module.exports = (dependencies) => {
         }
     });
 
-    router.post(['/shared', '/shared/:token'], sharedCommentWriteLimiter, requireSameOriginForAuth, async (req, res) => {
+    router.post(["/shared", "/shared/:token"], rejectTokenInUrlPath, sharedCommentWriteLimiter, requireSameOriginForAuth, async (req, res) => {
         const token = extractShareToken(req);
         if (typeof token !== 'string' || token.length !== 64 || !/^[a-f0-9]{64}$/i.test(token)) return res.status(404).json({ error: "페이지를 찾을 수 없습니다." });
         const tokenHash = dependencies.hashToken(token);

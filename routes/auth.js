@@ -113,17 +113,19 @@ module.exports = (dependencies) => {
 	}
 
 	router.get("/csrf", (req, res) => {
-		const token = generatePreAuthCsrfToken();
-		res.cookie(PREAUTH_CSRF_COOKIE_NAME, token, {
-			httpOnly: false,
-			sameSite: "strict",
-			secure: COOKIE_SECURE,
-			path: "/",
-			maxAge: 30 * 60 * 1000
-		});
-		res.json({ ok: true, token });
+	    const token = generatePreAuthCsrfToken();
+	    res.cookie(PREAUTH_CSRF_COOKIE_NAME, token, {
+	        httpOnly: false,
+	        sameSite: "strict",
+	        secure: COOKIE_SECURE,
+	        path: "/",
+	        maxAge: 30 * 60 * 1000
+	    });
+	    res.setHeader("Cache-Control", "private, no-store, max-age=0, must-revalidate");
+	    res.setHeader("Pragma", "no-cache");
+	    res.setHeader("Expires", "0");
+	    res.json({ ok: true, token });
 	});
-
 	router.post("/login", authLimiter, requireSameOriginForAuth, async (req, res) => {
 		if (!verifyPreAuthCsrfToken(req)) return res.status(403).json({ error: "유효하지 않은 요청입니다." });
 		const { username, password } = req.body || {};
@@ -218,23 +220,19 @@ module.exports = (dependencies) => {
 		}
 	});
 
-	router.post("/logout", async (req, res) => {
+	router.post("/logout", requireSameOriginForAuth, csrfMiddleware, async (req, res) => {
 		const { getSessionFromRequest, wsCloseConnectionsForSession } = dependencies;
 		const session = await getSessionFromRequest(req);
 		if (session) {
-			const tokenFromHeader = req.headers['x-csrf-token'];
-			const tokenFromCookie = req.cookies?.[CSRF_COOKIE_NAME];
-			if (typeof tokenFromHeader === 'string' && typeof tokenFromCookie === 'string' && tokenFromHeader === tokenFromCookie && verifyCsrfTokenForSession(session.id, tokenFromHeader, 'api')) {
-				try { wsCloseConnectionsForSession(session.id, 1008, 'Logout'); } catch (e) {}
-				await revokeSession(session.id, 'logout');
-			}
+			try { wsCloseConnectionsForSession(session.id, 1008, "Logout"); } catch (e) {}
+			await revokeSession(session.id, "logout");
 		}
 
-		res.setHeader('Clear-Site-Data', '"cookies", "storage"');
-		res.clearCookie(SESSION_COOKIE_NAME, { httpOnly: true, sameSite: 'strict', path: '/', secure: COOKIE_SECURE });
-		res.clearCookie(CSRF_COOKIE_NAME, { httpOnly: false, sameSite: 'strict', path: '/', secure: COOKIE_SECURE });
-		res.clearCookie(TWO_FA_COOKIE_NAME, { httpOnly: true, sameSite: 'strict', path: '/', secure: COOKIE_SECURE });
-		res.clearCookie(PREAUTH_CSRF_COOKIE_NAME, { path: '/', secure: COOKIE_SECURE });
+		res.setHeader("Clear-Site-Data", '"cookies", "storage"');
+		res.clearCookie(SESSION_COOKIE_NAME, { httpOnly: true, sameSite: "strict", path: "/", secure: COOKIE_SECURE });
+		res.clearCookie(CSRF_COOKIE_NAME, { httpOnly: false, sameSite: "strict", path: "/", secure: COOKIE_SECURE });
+		res.clearCookie(TWO_FA_COOKIE_NAME, { httpOnly: true, sameSite: "strict", path: "/", secure: COOKIE_SECURE });
+		res.clearCookie(PREAUTH_CSRF_COOKIE_NAME, { path: "/", secure: COOKIE_SECURE });
 
 		res.json({ ok: true });
 	});

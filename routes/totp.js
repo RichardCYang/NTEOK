@@ -262,8 +262,10 @@ module.exports = (dependencies) => {
 			delete session.totpTempSecret;
 			await saveSession(sessionId, session, SESSION_TTL_MS);
 			await revokeOtherSessions(userId, sessionId, "mfa-enabled");
-			res.json({ success: true, backupCodes: backupCodes });
-		} catch (error) {
+			res.setHeader("Cache-Control", "private, no-store, max-age=0, must-revalidate");
+			res.setHeader("Pragma", "no-cache");
+			res.setHeader("Expires", "0");
+			res.json({ success: true, backupCodes: backupCodes });		} catch (error) {
 			logError("POST /api/totp/verify-setup", error);
 			res.status(500).json({ error: "TOTP 활성화 중 오류가 발생했습니다." });
 		}

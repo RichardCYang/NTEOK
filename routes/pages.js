@@ -2136,8 +2136,11 @@ module.exports = (dependencies) => {
                 [tokenHash, id, existing.user_id, allowComments ? 1 : 0, expiresAt, nowStr, nowStr]
             );
 
-            const sharedBase = (process.env.SHARED_BASE_URL || process.env.BASE_URL || '').replace(/\/$/, '');
+            const sharedBase = (process.env.SHARED_BASE_URL || process.env.BASE_URL || "").replace(/\/$/, "");
             const url = sharedBase ? `${sharedBase}/shared-page.html#${token}` : `/shared-page.html#${token}`;
+            res.setHeader("Cache-Control", "private, no-store, max-age=0, must-revalidate");
+            res.setHeader("Pragma", "no-cache");
+            res.setHeader("Expires", "0");
             res.json({ published: true, token, url, allowComments, expiresAt: expiresAt ? toIsoString(new Date(expiresAt)) : null });
         } catch (e) {
             logError("POST /api/pages/:id/publish", e);
