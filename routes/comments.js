@@ -37,17 +37,12 @@ function safeEqualHex(a, b) {
     return crypto.timingSafeEqual(ab, bb);
 }
 
-const ALLOW_LEGACY_SHARE_TOKEN_IN_PATH = String(process.env.ALLOW_LEGACY_SHARE_TOKEN_IN_PATH || "").toLowerCase() === "true";
-
 function extractShareToken(req) {
-    const headerToken = String(req.get("X-Share-Token") || "").trim();
-    if (headerToken) return headerToken;
-    if (ALLOW_LEGACY_SHARE_TOKEN_IN_PATH) return String(req.params.token || "").trim();
-    return "";
+    return String(req.get("X-Share-Token") || "").trim();
 }
 
 function rejectTokenInUrlPath(req, res, next) {
-    if (req.params?.token && !ALLOW_LEGACY_SHARE_TOKEN_IN_PATH) {
+    if (req.params?.token) {
         res.setHeader("Cache-Control", "no-store");
         res.setHeader("Referrer-Policy", "no-referrer");
         return res.status(400).json({ error: "공유 토큰은 URL 경로가 아니라 X-Share-Token 헤더로 전달해야 합니다." });

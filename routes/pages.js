@@ -2130,7 +2130,8 @@ module.exports = (dependencies) => {
                 [tokenHash, id, existing.user_id, allowComments ? 1 : 0, expiresAt, nowStr, nowStr]
             );
 
-            const sharedBase = (process.env.SHARED_BASE_URL || process.env.BASE_URL || "").replace(/\/$/, "");
+            const sharedBase = String(process.env.SHARED_BASE_URL || "").replace(/\/$/, "");
+            if (process.env.NODE_ENV === "production" && !sharedBase) return res.status(503).json({ error: "공유 전용 도메인이 설정되지 않았습니다." });
             const url = sharedBase ? `${sharedBase}/shared-page.html#${token}` : `/shared-page.html#${token}`;
             res.setHeader("Cache-Control", "private, no-store, max-age=0, must-revalidate");
             res.setHeader("Pragma", "no-cache");

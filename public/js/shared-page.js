@@ -222,7 +222,7 @@ function renderBookmarks(container) {
         if (!token) throw new Error('토큰이 없습니다.');
 
         const response = await secureFetch('/api/shared/page', {
-            method: 'POST',
+            method: 'GET',
             headers: {
                 'X-Share-Token': token
             }

@@ -172,6 +172,46 @@ module.exports = (dependencies) => {
 		return s;
 	}
 
+	const USERLESS_PASSKEY_TTL_MS = 5 * 60 * 1000;
+
+	async function createUserlessPasskeyTempSession(req) {
+		const tempSessionId = crypto.randomBytes(32).toString("hex");
+		const now = Date.now();
+		const tempSession = {
+			type: "userless-passkey",
+			createdAt: now,
+			expiresAt: now + USERLESS_PASSKEY_TTL_MS,
+			lastAccessedAt: now,
+			ipKey: getClientIp(req),
+			uaHash: crypto.createHash("sha256").update(req.headers["user-agent"] || "").digest("hex")
+		};
+		await saveSession(tempSessionId, tempSession, USERLESS_PASSKEY_TTL_MS);
+		return tempSessionId;
+	}
+
+	async function getValidUserlessPasskeySession(req, tempSessionId) {
+		const s = await getSession(tempSessionId);
+		if (!s || s.type !== "userless-passkey") return null;
+		const now = Date.now();
+		if (s.expiresAt && s.expiresAt <= now) {
+			await revokeSession(tempSessionId, "userless-passkey-expired");
+			return null;
+		}
+		const ipNow = getClientIp(req);
+		if (s.ipKey && ipNow && s.ipKey !== ipNow) {
+			await revokeSession(tempSessionId, "userless-passkey-ip-mismatch");
+			return null;
+		}
+		const uaHashNow = crypto.createHash("sha256").update(req.headers["user-agent"] || "").digest("hex");
+		if (s.uaHash && s.uaHash !== uaHashNow) {
+			await revokeSession(tempSessionId, "userless-passkey-ua-mismatch");
+			return null;
+		}
+		s.lastAccessedAt = now;
+		await saveSession(tempSessionId, s, USERLESS_PASSKEY_TTL_MS);
+		return s;
+	}
+
 	const {
 		generateRegistrationOptions,
 		verifyRegistrationResponse,
@@ -321,7 +361,7 @@ module.exports = (dependencies) => {
 			const options = await generateAuthenticationOptions({ rpID: rpID, timeout: 60000, userVerification: 'required' });
 			const now = new Date();
 			const expiresAt = new Date(now.getTime() + 5 * 60 * 1000);
-			const tempSessionId = crypto.randomBytes(32).toString('hex');
+			const tempSessionId = await createUserlessPasskeyTempSession(req);
 			await pool.execute(`INSERT INTO webauthn_challenges (session_id, challenge, operation, created_at, expires_at) VALUES (?, ?, 'userless_login', ?, ?)`, [tempSessionId, options.challenge, formatDateForDb(now), formatDateForDb(expiresAt)]);
 			res.cookie(TWO_FA_COOKIE_NAME, tempSessionId, { ...TWO_FA_COOKIE_OPTS, maxAge: 5 * 60 * 1000 });
 			res.json({ ...options });
@@ -338,9 +378,10 @@ module.exports = (dependencies) => {
 			await conn.beginTransaction();
 			const { credential } = req.body;
 			const tempSessionId = get2faCookie(req);
-			if (typeof tempSessionId !== 'string' || !/^[a-f0-9]{64}$/i.test(tempSessionId)) {
+			const tempSession = await getValidUserlessPasskeySession(req, tempSessionId);
+			if (!tempSession) {
 				await conn.rollback();
-				return res.status(400).json({ error: "세션 정보가 올바르지 않습니다." });
+				return res.status(400).json({ error: "세션이 만료되었거나 유효하지 않습니다. 다시 시도해 주세요." });
 			}
 			if (typeof credential !== 'object' || credential === null || typeof credential.id !== 'string') {
 				await conn.rollback();
@@ -414,6 +455,7 @@ module.exports = (dependencies) => {
 			}
 			const sessionId = sessionResult.sessionId;
 			await conn.commit();
+			await revokeSession(tempSessionId, "userless-passkey-complete");
 			res.clearCookie(TWO_FA_COOKIE_NAME, TWO_FA_COOKIE_OPTS);
 			res.clearCookie(PREAUTH_CSRF_COOKIE_NAME, { path: "/", secure: COOKIE_SECURE });
 			res.cookie(SESSION_COOKIE_NAME, sessionId, { httpOnly: true, secure: COOKIE_SECURE, sameSite: "strict", path: "/", maxAge: SESSION_TTL_MS });

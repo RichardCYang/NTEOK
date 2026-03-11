@@ -466,10 +466,24 @@ function assertNoDefaultSecrets() {
 }
 
 const SHARED_BASE_URL = process.env.SHARED_BASE_URL || null;
+const ALLOW_LEGACY_SHARE_TOKEN_IN_PATH =
+    String(process.env.ALLOW_LEGACY_SHARE_TOKEN_IN_PATH || "").toLowerCase() === "true";
+const REQUIRE_ISOLATED_SHARED_ORIGIN =
+    String(process.env.REQUIRE_ISOLATED_SHARED_ORIGIN || (IS_PRODUCTION ? "true" : "false")).toLowerCase() === "true";
 
 if (IS_PRODUCTION) {
     const url = new URL(BASE_URL);
     if (url.protocol !== "https:" && !isLocalhostHost(url.hostname)) throw new Error("[보안] 운영 환경에서 BASE_URL은 반드시 HTTPS여야 합니다");
+
+    if (ALLOW_LEGACY_SHARE_TOKEN_IN_PATH) throw new Error("[보안] 운영 환경에서는 ALLOW_LEGACY_SHARE_TOKEN_IN_PATH=true를 허용하지 않습니다.");
+    if (!COOKIE_SECURE) throw new Error("[보안] 운영 환경에서는 Secure 쿠키가 필수입니다.");
+
+    if (REQUIRE_ISOLATED_SHARED_ORIGIN) {
+        if (!SHARED_BASE_URL) throw new Error("[보안] 운영 환경에서는 공개 공유 페이지용 SHARED_BASE_URL(별도 origin)이 필수입니다.");
+        const sharedUrl = new URL(SHARED_BASE_URL);
+        if (sharedUrl.origin === url.origin) throw new Error("[보안] 운영 환경에서는 공개 공유 페이지를 앱과 동일 origin에서 제공할 수 없습니다.");
+        if (sharedUrl.protocol !== "https:" && !isLocalhostHost(sharedUrl.hostname)) throw new Error("[보안] 운영 환경에서 SHARED_BASE_URL은 반드시 HTTPS여야 합니다.");
+    }
 }
 assertNoDefaultSecrets();
 
