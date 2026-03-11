@@ -15,9 +15,23 @@ const METADATA_FETCH_MAX_BYTES = 10 * 1024 * 1024;
 const METADATA_FETCH_MAX_REDIRECTS = 5;
 const LINK_PREVIEW_ALLOWED_PORTS = new Set([443]);
 
-const PROXY_SECRET = (process.env.PROXY_SECRET && process.env.PROXY_SECRET.length >= 32)
-    ? process.env.PROXY_SECRET
-    : 'dev-only-insecure-secret-placeholder-for-testing';
+function loadProxySecret() {
+    const raw = process.env.PROXY_SECRET;
+    if (typeof raw === 'string' && raw.length >= 32) return raw;
+    if (process.env.NODE_ENV === 'production') throw new Error('[SECURITY] 운영 환경에서는 32바이트 이상의 강력한 PROXY_SECRET 설정이 필수입니다.');
+    return crypto.randomBytes(32).toString('hex');
+}
+
+const PROXY_SECRET = loadProxySecret();
+
+function safeEqualHex(a, b) {
+    if (typeof a !== 'string' || typeof b !== 'string') return false;
+    if (!/^[a-f0-9]+$/i.test(a) || !/^[a-f0-9]+$/i.test(b)) return false;
+    const ab = Buffer.from(a, 'hex');
+    const bb = Buffer.from(b, 'hex');
+    if (ab.length !== bb.length || ab.length === 0) return false;
+    return crypto.timingSafeEqual(ab, bb);
+}
 
 function generateProxyHmac(url) {
     return crypto.createHmac('sha256', PROXY_SECRET).update(url).digest('hex').slice(0, 16);
@@ -748,8 +762,11 @@ module.exports = (dependencies) => {
     router.get('/proxy-favicon', authMiddleware, outboundFetchLimiter, async (req, res) => {
         const { url, defaultHost, hmac } = req.query;
         const fallbackHost = String(defaultHost || 'unknown').toLowerCase();
+        let responded = false;
         
         const sendFallback = () => {
+            if (responded) return;
+            responded = true;
             res.setHeader('Content-Type', 'image/svg+xml; charset=utf-8');
             res.setHeader('X-Content-Type-Options', 'nosniff');
             res.setHeader('Cache-Control', 'public, max-age=3600');
@@ -757,9 +774,7 @@ module.exports = (dependencies) => {
         };
 
         if (!url || !hmac) return sendFallback();
-
-        const expectedHmac = generateProxyHmac(String(url));
-        if (hmac !== expectedHmac) return sendFallback();
+        if (!safeEqualHex(String(hmac), generateProxyHmac(String(url)))) return sendFallback();
 
         try {
             const targetUrl = normalizeAndValidatePreviewUrl(String(url), isHostnameAllowedForPreview);
@@ -785,60 +800,57 @@ module.exports = (dependencies) => {
                     'Connection': 'close'
                 }
             }, (upstreamRes) => {
+                const remoteIp = upstreamRes.socket?.remoteAddress;
+                if (remoteIp && isPrivateOrLocalIP(remoteIp)) {
+                    upstreamRes.resume();
+                    return sendFallback();
+                }
+
                 const status = Number(upstreamRes.statusCode || 0);
                 if (status < 200 || status >= 300) {
                     upstreamRes.resume();
                     return sendFallback();
                 }
 
-                const contentType = String(upstreamRes.headers['content-type'] || '').toLowerCase();
                 const contentLength = Number(upstreamRes.headers['content-length'] || 0);
                 if (contentLength > 512 * 1024) {
                     upstreamRes.resume();
                     return sendFallback();
                 }
 
-                if (contentType.includes('svg')) {
-                    upstreamRes.resume();
-                    return sendFallback();
-                }
-
                 const chunks = [];
                 let total = 0;
-                let headerChecked = false;
 
                 upstreamRes.on('data', (chunk) => {
                     total += chunk.length;
                     if (total > 512 * 1024) {
-                        proxyReq.destroy();
-                        return;
+                        upstreamRes.resume();
+                        return sendFallback();
                     }
                     chunks.push(chunk);
-
-                    if (!headerChecked && total >= 12) {
-                        headerChecked = true;
-                        const head = Buffer.concat(chunks).slice(0, 12);
-                        try {
-                            const detected = detectImageTypeFromMagic(head);
-                            if (!detected || detected.ext === 'svg') proxyReq.destroy();
-                        } catch (_) {
-                            proxyReq.destroy();
-                        }
-                    }
                 });
 
                 upstreamRes.on('end', () => {
                     if (chunks.length === 0) return sendFallback();
                     const fullBuffer = Buffer.concat(chunks);
-                    res.setHeader('Content-Type', contentType || 'image/x-icon');
+                    const detected = detectImageTypeFromMagic(fullBuffer.slice(0, 32));
+                    if (!detected || detected.ext === 'svg') return sendFallback();
+
+                    res.setHeader('Content-Type', detected.mime);
                     res.setHeader('X-Content-Type-Options', 'nosniff');
                     res.setHeader('Cache-Control', 'public, max-age=604800');
+                    responded = true;
                     return res.status(200).send(fullBuffer);
                 });
+
+                upstreamRes.on('error', () => sendFallback());
             });
 
             proxyReq.on('error', () => sendFallback());
-            proxyReq.on('timeout', () => proxyReq.destroy());
+            proxyReq.on('timeout', () => {
+                try { proxyReq.destroy(); } catch (_) {}
+                sendFallback();
+            });
             proxyReq.end();
 
         } catch (e) {
@@ -1041,9 +1053,10 @@ module.exports = (dependencies) => {
         const id = req.params.id;
         const userId = req.user.id;
         try {
-            const existing = await loadVisiblePageWithStorageStateOr404(userId, id, res);
-            if (!existing) return;
-            if (await forbidPrivateEncryptedPageMutation(id, userId, res)) return;
+            const authResult = await pageWritePolicy.canWritePage({ viewerUserId: userId, pageId: id });
+            if (!authResult.ok) return res.status(authResult.code || 403).json({ error: authResult.error });
+            const existing = authResult.page;
+            const isPageOwner = authResult.isPageOwner;
 
             const title = sanitizeInput(String(req.body.title !== undefined ? req.body.title : (existing.title || "제목 없음")).trim()).slice(0, 200) || "제목 없음";
             const hasEncryptedContentField = Object.prototype.hasOwnProperty.call(req.body, "encryptedContent");
@@ -1054,10 +1067,6 @@ module.exports = (dependencies) => {
             const isE2eePage = Number(existing.storage_is_encrypted) === 1 && Number(existing.is_encrypted) === 1 && (existing.encryption_salt === null || existing.encryption_salt === undefined);
             if (isE2eePage && touchesCryptoState) return res.status(403).json({ error: "E2EE 페이지의 암호화 상태는 REST로 변경할 수 없습니다." });
 
-            const permission = await storagesRepo.getPermission(userId, existing.storage_id);
-            if (!permission || !['EDIT', 'ADMIN'].includes(permission)) return res.status(403).json({ error: "이 페이지를 수정할 권한이 없습니다." });
-
-            const isPageOwner = Number(existing.user_id) === Number(userId);
             if (touchesCryptoState) {
                 if (!isPageOwner) return res.status(403).json({ error: "페이지 소유자만 암호화 설정을 변경할 수 있습니다." });
                 const recentReauth = requireRecentReauth(10 * 60 * 1000);
@@ -1348,25 +1357,10 @@ module.exports = (dependencies) => {
         const id = req.params.id;
         const userId = req.user.id;
         try {
-            const existing = await loadPageForMutationOr404(userId, id, res);
-            if (!existing) return;
-            if (await forbidPrivateEncryptedPageMutation(id, userId, res)) return;
-
-            const permission = await storagesRepo.getPermission(userId, existing.storage_id);
-            if (!permission) {
-                return res.status(403).json({ error: "이 페이지를 삭제할 권한이 없습니다." });
-            }
-
-            const isOwnerOfPage = Number(existing.user_id) === Number(userId);
-            const canDelete =
-                permission === 'ADMIN' ||
-                (permission === 'EDIT' && isOwnerOfPage);
-
-            if (!canDelete) {
-                return res.status(403).json({
-                    error: "이 페이지를 삭제할 권한이 없습니다. (ADMIN 또는 본인 작성 페이지만 삭제 가능)"
-                });
-            }
+            const authResult = await pageWritePolicy.canDeletePage({ viewerUserId: userId, pageId: id });
+            if (!authResult.ok) return res.status(authResult.code || 403).json({ error: authResult.error });
+            const existing = authResult.page;
+            const permission = authResult.permission;
 
             const delResult = await pagesRepo.softDeletePageAndDescendants({
                 rootPageId: id,

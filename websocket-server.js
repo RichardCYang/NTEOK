@@ -1420,7 +1420,7 @@ const { redis, ensureRedis } = require("./lib/redis");
 	});
 })();
 
-function initWebSocketServer(server, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, SESSION_COOKIE_NAME, getSessionFromId, getClientIpFromRequest, pageSqlPolicy) {
+function initWebSocketServer(server, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, SESSION_COOKIE_NAME, getSessionFromId, getClientIpFromRequest, pageSqlPolicy, pageAccess) {
     _wsPool = pool;
     _wsSanitizeHtmlContent = sanitizeHtmlContent;
     const allowedWsOrigins = (() => {
@@ -1550,7 +1550,7 @@ function initWebSocketServer(server, pool, sanitizeHtmlContent, IS_PRODUCTION, B
                         const kind = (data && typeof data.type === 'string') ? data.type : 'unknown';
                         if (!consumeWsMessageBudget(ws, kind)) { try { ws.close(1008, 'Rate limit exceeded'); } catch (_) {} return; }
 
-                        await handleWebSocketMessage(ws, data, pool, sanitizeHtmlContent, getSessionFromId, pageSqlPolicy);
+                        await handleWebSocketMessage(ws, data, pool, sanitizeHtmlContent, getSessionFromId, pageSqlPolicy, pageAccess);
                     })
                     .catch(() => {
                         try { ws.send(JSON.stringify({ event: 'error', data: { message: 'Failed' } })); } catch (_) {}
@@ -1564,7 +1564,7 @@ function initWebSocketServer(server, pool, sanitizeHtmlContent, IS_PRODUCTION, B
     return wss;
 }
 
-async function handleWebSocketMessage(ws, data, pool, sanitizeHtmlContent, getSessionFromId, pageSqlPolicy) {
+async function handleWebSocketMessage(ws, data, pool, sanitizeHtmlContent, getSessionFromId, pageSqlPolicy, pageAccess) {
     const { type, payload } = data;
     if (ws.sessionId && typeof getSessionFromId === 'function') {
         const now = Date.now();
@@ -1587,7 +1587,7 @@ async function handleWebSocketMessage(ws, data, pool, sanitizeHtmlContent, getSe
         if (mustFullyRevalidate) ws.lastFullSessionCheckAt = now;
     }
 	switch (type) {
-        case 'subscribe-page': await handleSubscribePage(ws, payload, pool, sanitizeHtmlContent, pageSqlPolicy); break;
+        case 'subscribe-page': await handleSubscribePage(ws, payload, pool, sanitizeHtmlContent, pageSqlPolicy, pageAccess); break;
         case 'unsubscribe-page': handleUnsubscribePage(ws, payload, pool, sanitizeHtmlContent); break;
         case 'subscribe-storage': await handleSubscribeStorage(ws, payload, pool); break;
         case 'unsubscribe-storage': handleUnsubscribeStorage(ws, payload); break;
@@ -1604,41 +1604,17 @@ async function handleWebSocketMessage(ws, data, pool, sanitizeHtmlContent, getSe
     }
 }
 
-async function handleSubscribePage(ws, payload, pool, sanitizeHtmlContent, pageSqlPolicy) {
+async function handleSubscribePage(ws, payload, pool, sanitizeHtmlContent, pageSqlPolicy, pageAccess) {
     const { pageId } = payload;
     const userId = ws.userId;
     try {
-        const vis = (pageSqlPolicy && typeof pageSqlPolicy.andVisible === "function")
-            ? pageSqlPolicy.andVisible({ alias: "p", viewerUserId: userId })
-            : { sql: " AND NOT (p.is_encrypted = 1 AND p.share_allowed = 0 AND p.user_id != ?)", params: [userId] };
-
-        const [rows] = await pool.execute(
-            `SELECT p.id, p.user_id, p.is_encrypted, p.share_allowed, p.storage_id
-             FROM pages p
-             WHERE p.id = ?
-               AND p.deleted_at IS NULL
-             ${vis.sql}`,
-            [pageId, ...vis.params]
-        );
-
-        if (!rows.length) {
+        const resolved = await pageAccess.resolvePageAccess({ viewerUserId: userId, pageId });
+        if (!resolved) {
             ws.send(JSON.stringify({ event: 'error', data: { message: 'Page not found' } }));
             return;
         }
 
-        const page = rows[0];
-        const permission = await getStoragePermission(pool, userId, page.storage_id);
-
-        if (!permission) {
-            ws.send(JSON.stringify({ event: 'error', data: { message: 'Page not found' } }));
-            return;
-        }
-
-        if (page.is_encrypted === 1 && page.share_allowed === 0 && Number(page.user_id) !== Number(userId)) {
-            ws.send(JSON.stringify({ event: 'error', data: { message: 'Page not found' } }));
-            return;
-        }
-
+        const { page, permission } = resolved;
         if (page.is_encrypted === 1) {
             ws.send(JSON.stringify({ event: 'error', data: { message: 'Encrypted pages do not support real-time collaboration yet' } }));
             return;
@@ -1655,7 +1631,10 @@ async function handleSubscribePage(ws, payload, pool, sanitizeHtmlContent, pageS
         if (!wsConnections.pages.has(pageId)) wsConnections.pages.set(pageId, new Set());
         const conns = wsConnections.pages.get(pageId);
         for (const c of Array.from(conns)) {
-            if (c.userId === userId && c.ws !== ws) { conns.delete(c); try { c.ws.close(1008, 'Duplicate'); } catch (_) {} }
+            if (c.userId === userId && c.ws !== ws) {
+                conns.delete(c);
+                try { c.ws.close(1008, 'Duplicate'); } catch (_) {}
+            }
         }
         const color = getUserColor(userId);
         conns.add({ ws, userId, username: ws.username, color, permission, storageId: page.storage_id, permCheckedAt: Date.now() });
@@ -1677,7 +1656,9 @@ async function handleSubscribePage(ws, payload, pool, sanitizeHtmlContent, pageS
             data: { pageId: String(pageId), state: stateB64, userId, username: ws.username, color, permission }
         }));
         wsBroadcastToPage(pageId, 'user-joined', { userId, username: ws.username, color, permission }, userId);
-    } catch (e) { ws.send(JSON.stringify({ event: 'error', data: { message: 'Failed' } })); }
+    } catch (e) {
+        ws.send(JSON.stringify({ event: 'error', data: { message: 'Failed' } }));
+    }
 }
 
 function handleUnsubscribePage(ws, payload, pool, sanitizeHtmlContent) {

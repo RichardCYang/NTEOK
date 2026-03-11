@@ -2085,6 +2085,7 @@ app.get('/imgs/:userId/:filename', authMiddleware, async (req, res) => {
         }
 
         const imagePath = `${requestedUserId}/${sanitizedFilename}`;
+        const imageUrl = `/imgs/${imagePath}`;
         const [rows] = await pool.execute(
             `SELECT p.id
                 FROM page_file_refs pfr
@@ -2418,10 +2419,21 @@ function installGracefulShutdownHandlers(httpServer, pool, sanitizeHtmlContent) 
         const pageSqlPolicy = require('./authz/page-sql-policy');
         const repositories = require('./repositories')({ pool, pageSqlPolicy });
 
+        const pageAccess = require('./authz/page-access')({
+            pool,
+            storagesRepo: repositories.storagesRepo
+        });
+
+        const pageWritePolicy = require('./authz/page-write-policy')({
+            resolvePageAccess: pageAccess.resolvePageAccess
+        });
+
 		const routeDependencies = {
 			pool,
 			redis,
 			pageSqlPolicy,
+            pageAccess,
+            pageWritePolicy,
 			...repositories,
 			bcrypt,
 			crypto,
@@ -2584,7 +2596,7 @@ function installGracefulShutdownHandlers(httpServer, pool, sanitizeHtmlContent) 
                     console.log('='.repeat(80) + '\n');
                 });
 
-                initWebSocketServer(httpsServer, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, SESSION_COOKIE_NAME, getSessionFromId, getClientIpFromRequest, pageSqlPolicy);
+                initWebSocketServer(httpsServer, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, SESSION_COOKIE_NAME, getSessionFromId, getClientIpFromRequest, pageSqlPolicy, pageAccess);
 
                 startRateLimitCleanup();
 
@@ -2634,7 +2646,7 @@ function installGracefulShutdownHandlers(httpServer, pool, sanitizeHtmlContent) 
                     console.log(`⚠️  NTEOK 앱이 HTTP로 실행 중: http://localhost:${PORT}`);
                 });
 
-                initWebSocketServer(httpServer, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, SESSION_COOKIE_NAME, getSessionFromId, getClientIpFromRequest, pageSqlPolicy);
+                initWebSocketServer(httpServer, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, SESSION_COOKIE_NAME, getSessionFromId, getClientIpFromRequest, pageSqlPolicy, pageAccess);
 
                 startRateLimitCleanup();
 
@@ -2654,7 +2666,7 @@ function installGracefulShutdownHandlers(httpServer, pool, sanitizeHtmlContent) 
                 console.log(`NTEOK 앱이 HTTP로 실행 중: http://localhost:${PORT}`);
             });
 
-            initWebSocketServer(httpServer, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, SESSION_COOKIE_NAME, getSessionFromId, getClientIpFromRequest, pageSqlPolicy);
+            initWebSocketServer(httpServer, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, SESSION_COOKIE_NAME, getSessionFromId, getClientIpFromRequest, pageSqlPolicy, pageAccess);
 
             startRateLimitCleanup();
 
