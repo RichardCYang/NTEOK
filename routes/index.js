@@ -161,7 +161,12 @@ module.exports = (dependencies) => {
     }
 
     router.post("/api/shared/page", async (req, res) => {
-        const token = String(req.get("X-Share-Token") || req.body?.token || "").trim();
+        if (req.body && Object.prototype.hasOwnProperty.call(req.body, "token")) {
+            res.set("Cache-Control", "private, no-store");
+            res.set("Referrer-Policy", "no-referrer");
+            return res.status(400).json({ error: "공유 토큰은 요청 본문이 아니라 X-Share-Token 헤더로만 전달해야 합니다." });
+        }
+        const token = String(req.get("X-Share-Token") || "").trim();
         if (token.length !== 64 || !/^[a-f0-9]{64}$/i.test(token)) return res.status(404).json({ error: "페이지를 찾을 수 없습니다." });
         const tokenHash = dependencies.hashToken(token);
         const clientIp = getClientIp(req);
@@ -178,6 +183,7 @@ module.exports = (dependencies) => {
             const sharedHtml = sanitizeHtmlContent(page.content || "<p></p>", { profile: "shared" });
             const ownerBoundHtml = stripCrossOwnerSharedAssets(sharedHtml, { ownerUserId: page.user_id, coverImage: page.cover_image || null });
             res.set("Cache-Control", "private, no-store");
+            res.set("Referrer-Policy", "no-referrer");
             res.json({ id: page.id, title: page.title || "제목 없음", content: ownerBoundHtml, icon: page.icon || null, coverImage: page.cover_image || null, coverPosition: page.cover_position || 50 });
         } catch (error) {
             logError("POST /api/shared/page", error);

@@ -1680,13 +1680,8 @@ module.exports = (dependencies) => {
         if (typeof raw !== "string") return null;
         const s = raw.trim();
         if (!s) return null;
-
-        let pathname = s;
-        try {
-            pathname = new URL(s, "http://local").pathname;
-        } catch (_) {
-            pathname = s; 
-        }
+        if (!s.startsWith("/") || s.startsWith("//")) return null;
+        const pathname = s.split(/[?#]/, 1)[0];
 
         const m = pathname.match(PAPERCLIP_PATH_RE);
         if (!m) return null;
@@ -1945,9 +1940,8 @@ module.exports = (dependencies) => {
         if (typeof raw !== "string") return null;
         const s = raw.trim();
         if (!s) return null;
-
-        let pathname = s;
-        try { pathname = new URL(s, "http://local").pathname; } catch (_) { pathname = s; }
+        if (!s.startsWith("/") || s.startsWith("//")) return null;
+        const pathname = s.split(/[?#]/, 1)[0];
 
         const m = pathname.match(IMG_PATH_RE);
         if (!m) return null;

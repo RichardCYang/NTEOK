@@ -12,8 +12,9 @@ module.exports = ({ pool }) => {
             return rows?.[0] || null;
         },
 
-        async upsertWrappedDek({ storageId, sharedWithUserId, wrappedDek, wrappingKid, ephemeralPublicKey, createdAt }) {
-            await pool.execute(
+        async upsertWrappedDek({ storageId, sharedWithUserId, wrappedDek, wrappingKid, ephemeralPublicKey, createdAt }, conn = null) {
+            const executor = conn || pool;
+            await executor.execute(
                 `INSERT INTO storage_share_keys (storage_id, shared_with_user_id, wrapped_dek, wrapping_kid, ephemeral_public_key, created_at)
                  VALUES (?, ?, ?, ?, ?, ?)
                  ON DUPLICATE KEY UPDATE

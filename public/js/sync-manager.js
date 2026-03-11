@@ -243,8 +243,9 @@ function connectWebSocket() {
     }
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/ws`;
-
+    const csrf = window.csrfUtils?.getCsrfToken?.() || '';
+    const wsUrl = `${protocol}//${window.location.host}/ws?csrf=${encodeURIComponent(csrf)}`;
+    ws = new WebSocket(wsUrl);
     console.log('[WS] 연결 시도:', wsUrl);
 
     ws = new WebSocket(wsUrl);

@@ -388,6 +388,9 @@ module.exports = (dependencies) => {
             const now = new Date();
             const nowStr = formatDateForDb(now);
 
+            connection = await pool.getConnection();
+            await connection.beginTransaction();
+
             await storagesRepo.addCollaborator({
                 storageId,
                 ownerUserId: storage.owner_id,
@@ -395,7 +398,7 @@ module.exports = (dependencies) => {
                 permission: normalizedPermission,
                 createdAt: nowStr,
                 updatedAt: nowStr
-            });
+            }, connection);
 
             if (Number(storage.is_encrypted) === 1 && Number(storage.dek_version) === 1) {
                 await storageShareKeysRepo.upsertWrappedDek({
@@ -405,15 +408,20 @@ module.exports = (dependencies) => {
                     wrappingKid,
                     ephemeralPublicKey: ephemeralPublicKey || null,
                     createdAt: nowStr
-                });
+                }, connection);
             }
+
+            await connection.commit();
 
             try { if (typeof wsKickUserFromStorage === 'function') wsKickUserFromStorage(storageId, targetUserId, 1008, '저장소 권한이 변경되었습니다.'); } catch (e) {}
 
             res.json({ success: true });
         } catch (error) {
+            if (connection) await connection.rollback();
             logError('POST /api/storages/:id/collaborators', error);
             res.status(500).json({ error: '참여자 추가에 실패했습니다.' });
+        } finally {
+            if (connection) connection.release();
         }
     });
 

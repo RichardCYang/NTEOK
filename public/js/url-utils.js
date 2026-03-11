@@ -7,9 +7,15 @@ export function sanitizeHttpHref(raw, { allowRelative = false, addHttpsIfMissing
     if (!v) return null;
     if (v.length > maxLen) return null;
     if (CONTROL_CHARS_RE.test(v)) return null;
+    if (v.startsWith("//")) return null;
 
-    if (allowRelative && (v.startsWith("/") || v.startsWith("#")))
+    if (allowRelative && v.startsWith("#"))
         return v;
+
+    if (allowRelative && v.startsWith("/")) {
+        if (v.startsWith("//")) return null;
+        return v;
+    }
 
     const candidate = (!HAS_SCHEME_RE.test(v) && addHttpsIfMissing) ? `https://${v}` : v;
     let u;

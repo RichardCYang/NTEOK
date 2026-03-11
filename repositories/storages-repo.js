@@ -85,8 +85,9 @@ module.exports = ({ pool }) => {
             return rows;
         },
 
-        async addCollaborator({ storageId, ownerUserId, sharedWithUserId, permission, createdAt, updatedAt }) {
-            await pool.execute(
+        async addCollaborator({ storageId, ownerUserId, sharedWithUserId, permission, createdAt, updatedAt }, conn = null) {
+            const executor = conn || pool;
+            await executor.execute(
                 `INSERT INTO storage_shares (storage_id, owner_user_id, shared_with_user_id, permission, created_at, updated_at)
                  VALUES (?, ?, ?, ?, ?, ?)
                  ON DUPLICATE KEY UPDATE permission = ?, updated_at = ?`,
@@ -108,8 +109,9 @@ module.exports = ({ pool }) => {
             return storage.permission || null;
         },
 
-        async createStorage({ userId, id, name, sortOrder, createdAt, updatedAt, isEncrypted, encryptionSalt, encryptionCheck, dekVersion }) {
-            await pool.execute(
+        async createStorage({ userId, id, name, sortOrder, createdAt, updatedAt, isEncrypted, encryptionSalt, encryptionCheck, dekVersion }, conn = null) {
+            const executor = conn || pool;
+            await executor.execute(
                 `INSERT INTO storages (id, user_id, name, sort_order, created_at, updated_at, is_encrypted, encryption_salt, encryption_check, dek_version)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                 [id, userId, name, sortOrder, createdAt, updatedAt, isEncrypted || 0, encryptionSalt || null, encryptionCheck || null, dekVersion || 0]

@@ -8,11 +8,13 @@ import { sanitizeBlockAlign, sanitizeCssLength } from './node-attr-sanitizers.js
 const CONTROL_CHARS_RE = /[\u0000-\u001F\u007F]/;
 
 function sanitizeNavHref(value, { allowRelative = true } = {}) {
-    return sanitizeHttpHref(value, {
+    const safe = sanitizeHttpHref(value, {
         allowRelative,
         addHttpsIfMissing: false,
         maxLen: 2048
     });
+    if (!safe || safe.startsWith('//')) return null;
+    return safe;
 }
 
 function sanitizeLocalAssetSrc(raw) {

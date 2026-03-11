@@ -881,7 +881,7 @@ function extractFilesFromContent(content, pageOwnerUserId = null) {
         files.push(extra ? { type, ref, ...extra } : { type, ref });
     };
 
-    const paperclipUrlRegex = /\/paperclip\/(\d{1,12})\/([A-Za-z0-9][A-Za-z0-9._-]{0,199})(?=$|["'\s<>?)#&])/g;
+    const paperclipUrlRegex = /(?:^|[\s"'>(])\/paperclip\/(\d{1,12})\/([A-Za-z0-9][A-Za-z0-9._-]{0,199})(?=$|["'\s<>?)#&])/g;
     let match;
     while ((match = paperclipUrlRegex.exec(html)) !== null) {
         const candidate = `${match[1]}/${match[2]}`;
@@ -899,7 +899,7 @@ function extractFilesFromContent(content, pageOwnerUserId = null) {
         if (ref) pushUnique('paperclip', ref);
     }
 
-    const imgsUrlRegex = /\/imgs\/(\d{1,12})\/([A-Za-z0-9][A-Za-z0-9._-]{0,199})(?=$|["'\s<>?)#&])/g;
+    const imgsUrlRegex = /(?:^|[\s"'>(])\/imgs\/(\d{1,12})\/([A-Za-z0-9][A-Za-z0-9._-]{0,199})(?=$|["'\s<>?)#&])/g;
     while ((match = imgsUrlRegex.exec(html)) !== null) {
         const ownerId = parseInt(match[1], 10);
         const filename = match[2];
@@ -1420,7 +1420,7 @@ const { redis, ensureRedis } = require("./lib/redis");
 	});
 })();
 
-function initWebSocketServer(server, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, SESSION_COOKIE_NAME, getSessionFromId, getClientIpFromRequest, pageSqlPolicy, pageAccess) {
+function initWebSocketServer(server, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, SESSION_COOKIE_NAME, getSessionFromId, getClientIpFromRequest, pageSqlPolicy, pageAccess, verifyCsrfTokenForSession) {
     _wsPool = pool;
     _wsSanitizeHtmlContent = sanitizeHtmlContent;
     const allowedWsOrigins = (() => {
@@ -1455,7 +1455,29 @@ function initWebSocketServer(server, pool, sanitizeHtmlContent, IS_PRODUCTION, B
             try {
                 const origin = info?.origin || info?.req?.headers?.origin;
                 if (!isWsOriginAllowed(origin)) return done(false, 403, 'Forbidden');
-                return done(true);
+
+                const req = info.req;
+                const parsedUrl = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+                const csrfTokenFromQuery = parsedUrl.searchParams.get("csrf");
+
+                const cookies = {};
+                if (req.headers.cookie) {
+                    req.headers.cookie.split(';').forEach(c => {
+                        const p = c.split('=');
+                        cookies[p[0].trim()] = (p[1] || '').trim();
+                    });
+                }
+                const sessionId = cookies[SESSION_COOKIE_NAME];
+
+                if (!sessionId) return done(false, 401, 'Unauthorized');
+
+                if (typeof verifyCsrfTokenForSession === 'function') {
+                    if (!csrfTokenFromQuery || !verifyCsrfTokenForSession(sessionId, csrfTokenFromQuery, "api")) {
+                        return done(false, 403, 'Forbidden: CSRF token invalid');
+                    }
+                }
+
+                done(true);
             } catch (_) {
                 return done(false, 403, 'Forbidden');
             }
