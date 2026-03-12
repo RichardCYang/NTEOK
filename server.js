@@ -402,6 +402,7 @@ const {
 	wsBroadcastToUser,
     startRateLimitCleanup,
     startInactiveConnectionsCleanup,
+    startPeriodicPermissionCheck,
     wsConnections,
     yjsDocuments,
 	saveYjsDocToDatabase,
@@ -1305,7 +1306,8 @@ async function createSession(user, ctx = {}) {
         expiresAt,
         absoluteExpiry,
         createdAt: now,
-        lastStrongAuthAt: now
+        lastAuthAt: now,
+        lastStepUpAt: now
     };
     await saveSession(sessionId, session, SESSION_ABSOLUTE_TTL_MS);
     return { success: true, sessionId };
@@ -2580,6 +2582,8 @@ function installGracefulShutdownHandlers(httpServer, pool, sanitizeHtmlContent) 
 
                 startRateLimitCleanup();
 
+                startPeriodicPermissionCheck(pool, pageSqlPolicy);
+
                 startInactiveConnectionsCleanup(pool, sanitizeHtmlContent);
 
                 installGracefulShutdownHandlers(httpsServer, pool, sanitizeHtmlContent);
@@ -2630,6 +2634,8 @@ function installGracefulShutdownHandlers(httpServer, pool, sanitizeHtmlContent) 
 
                 startRateLimitCleanup();
 
+                startPeriodicPermissionCheck(pool, pageSqlPolicy);
+
                 startInactiveConnectionsCleanup(pool, sanitizeHtmlContent);
 
                 installGracefulShutdownHandlers(httpServer, pool, sanitizeHtmlContent);
@@ -2649,6 +2655,8 @@ function installGracefulShutdownHandlers(httpServer, pool, sanitizeHtmlContent) 
             initWebSocketServer(httpServer, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, SESSION_COOKIE_NAME, getSessionFromId, getClientIpFromRequest, pageSqlPolicy, pageAccess, verifyCsrfTokenForSession, consumeWsTicket);
 
             startRateLimitCleanup();
+
+            startPeriodicPermissionCheck(pool, pageSqlPolicy);
 
             startInactiveConnectionsCleanup(pool, sanitizeHtmlContent);
 

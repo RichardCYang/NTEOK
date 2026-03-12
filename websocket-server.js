@@ -942,6 +942,17 @@ function wsCloseConnectionsForPage(pageId, code = 1009, reason = 'Document too l
     scheduleEmergencyPersistThenDrop(pid, reason);
 }
 
+function wsEvictNonOwnerCollaborators(pageId, ownerUserId) {
+    const pid = String(pageId || '');
+    const conns = wsConnections.pages.get(pid);
+    if (!conns || conns.size === 0) return;
+    for (const c of Array.from(conns)) {
+        if (Number(c.userId) !== Number(ownerUserId)) {
+            revokePageSubscription(c.ws, pid, conns, c, 'page-made-private');
+        }
+    }
+}
+
 function wsHasActiveConnectionsForPage(pageId) {
     const pid = String(pageId || '').trim();
     if (!pid) return false;
@@ -1995,12 +2006,12 @@ async function handleYjsUpdateE2EE(ws, payload, pool, pageSqlPolicy) {
         const myConn = Array.from(conns).find(c => c.ws === ws);
         if (!myConn || !myConn.isE2ee) return;
 
-        const freshPerm = await refreshConnPermission(pool, myConn, { force: true });
-        if (!freshPerm) {
-            revokePageSubscription(ws, pageId, conns, myConn, 'storage-access-revoked');
+        const access = await ensureActivePageAccess(pool, pageSqlPolicy, pageId, myConn, { forcePermissionRefresh: true });
+        if (!access.ok) {
+            revokePageSubscription(ws, pageId, conns, myConn, access.reason);
             return;
         }
-        if (!['EDIT', 'ADMIN'].includes(freshPerm)) return;
+        if (!['EDIT', 'ADMIN'].includes(access.permission)) return;
 
         await enqueuePageMutation(pageId, async () => {
             ensureE2eeLeaderForActiveEditor(pageId, myConn);
@@ -2787,6 +2798,22 @@ function wsKickUserFromStorage(storageId, targetUserId, closeCode = 1008, reason
     if (userConns) for (const c of Array.from(userConns)) { try { c.ws.close(closeCode, reason); } catch (e) {} }
 }
 
+function startPeriodicPermissionCheck(pool, pageSqlPolicy) {
+    setInterval(async () => {
+        const allPages = Array.from(wsConnections.pages.entries());
+        for (const [pageId, conns] of allPages) {
+            for (const c of Array.from(conns)) {
+                try {
+                    const access = await ensureActivePageAccess(pool, pageSqlPolicy, pageId, c);
+                    if (!access.ok) {
+                        revokePageSubscription(c.ws, pageId, conns, c, access.reason);
+                    }
+                } catch (_) {}
+            }
+        }
+    }, 60 * 1000);
+}
+
 module.exports = {
     initWebSocketServer,
     wsBroadcastToPage,
@@ -2794,6 +2821,7 @@ module.exports = {
     wsBroadcastToUser,
     startRateLimitCleanup,
     startInactiveConnectionsCleanup,
+    startPeriodicPermissionCheck,
     wsConnections,
     yjsDocuments,
     yjsE2EEStates,
@@ -2805,6 +2833,7 @@ module.exports = {
     flushAllPendingE2eeUpdateLogs,
     wsCloseConnectionsForSession,
     wsCloseConnectionsForPage,
+    wsEvictNonOwnerCollaborators,
     wsHasActiveConnectionsForPage,
     wsKickUserFromStorage,
     extractFilesFromContent,

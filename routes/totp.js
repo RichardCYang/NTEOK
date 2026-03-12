@@ -260,6 +260,7 @@ module.exports = (dependencies) => {
 			}
 			await pool.execute("UPDATE users SET totp_secret = ?, totp_enabled = 1, updated_at = ? WHERE id = ?", [encryptTotpSecret(secret), nowStr, userId]);
 			delete session.totpTempSecret;
+			session.lastStepUpAt = Date.now();
 			await saveSession(sessionId, session, SESSION_TTL_MS);
 			await revokeOtherSessions(userId, sessionId, "mfa-enabled");
 			res.setHeader("Cache-Control", "private, no-store, max-age=0, must-revalidate");

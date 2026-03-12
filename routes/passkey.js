@@ -344,6 +344,13 @@ module.exports = (dependencies) => {
 			const publicKeyBase64 = Buffer.from(credentialPublicKey).toString('base64');
 			await conn.execute(`INSERT INTO passkeys (user_id, credential_id, public_key, counter, device_name, created_at) VALUES (?, ?, ?, ?, ?, ?)`, [userId, credentialIdBase64, publicKeyBase64, counter, deviceName, nowStr]);
 			await conn.execute("UPDATE users SET passkey_enabled = 1, updated_at = ? WHERE id = ?", [nowStr, userId]);
+			
+			const session = await getSession(sessionId);
+			if (session) {
+				session.lastStepUpAt = now.getTime();
+				await saveSession(sessionId, session, SESSION_TTL_MS);
+			}
+
 			await conn.commit();
 			await revokeOtherSessions(userId, sessionId, "passkey-added");
 			res.json({ success: true });

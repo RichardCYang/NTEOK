@@ -3,7 +3,7 @@ module.exports = ({ getSessionFromRequest }) => {
         return async (req, res, next) => {
             const session = await getSessionFromRequest(req);
             if (!session) return res.status(401).json({ error: "인증이 필요합니다." });
-            if (!session.lastStrongAuthAt || (Date.now() - session.lastStrongAuthAt) > maxAgeMs) {
+            if (!session.lastStepUpAt || (Date.now() - session.lastStepUpAt) > maxAgeMs) {
                 return res.status(403).json({
                     error: "민감한 작업 전 최근 재인증이 필요합니다.",
                     code: "RECENT_REAUTH_REQUIRED"

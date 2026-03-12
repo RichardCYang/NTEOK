@@ -26,6 +26,44 @@ function loadProxySecret() {
 
 const PROXY_SECRET = loadProxySecret();
 
+const PREVIEW_TICKET_TTL_MS = 60 * 1000;
+const previewNonceStore = new Map();
+
+function cleanupPreviewNonceStore() {
+    const now = Date.now();
+    for (const [nonce, exp] of previewNonceStore.entries()) {
+        if (exp <= now) previewNonceStore.delete(nonce);
+    }
+}
+
+function normalizeIpLiteral(ip) {
+    if (typeof ip !== 'string') return null;
+    const v = ip.trim();
+    if (!v) return null;
+    if (v.startsWith('::ffff:')) return v.slice(7);
+    return v;
+}
+
+function signPreviewTicket(payload) {
+    const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
+    const sig = crypto.createHmac('sha256', PROXY_SECRET).update(body).digest('base64url');
+    return `${body}.${sig}`;
+}
+
+function verifyAndConsumePreviewTicket(token, expectedUserId) {
+    if (typeof token !== 'string' || !token.includes('.')) throw new Error('BAD_TICKET');
+    const [body, sig] = token.split('.', 2);
+    const expectedSig = crypto.createHmac('sha256', PROXY_SECRET).update(body).digest('base64url');
+    if (!crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expectedSig))) throw new Error('BAD_TICKET_SIG');
+    const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
+    if (Number(payload.uid) !== Number(expectedUserId)) throw new Error('BAD_TICKET_UID');
+    if (!payload.exp || Date.now() > Number(payload.exp)) throw new Error('TICKET_EXPIRED');
+    if (!payload.nonce || previewNonceStore.has(payload.nonce)) throw new Error('TICKET_REPLAY');
+    previewNonceStore.set(payload.nonce, Number(payload.exp));
+    cleanupPreviewNonceStore();
+    return payload;
+}
+
 function safeEqualHex(a, b) {
     if (typeof a !== 'string' || typeof b !== 'string') return false;
     if (!/^[a-f0-9]+$/i.test(a) || !/^[a-f0-9]+$/i.test(b)) return false;
@@ -33,10 +71,6 @@ function safeEqualHex(a, b) {
     const bb = Buffer.from(b, 'hex');
     if (ab.length !== bb.length || ab.length === 0) return false;
     return crypto.timingSafeEqual(ab, bb);
-}
-
-function generateProxyHmac(url) {
-    return crypto.createHmac('sha256', PROXY_SECRET).update(url).digest('hex').slice(0, 16);
 }
 
 function makeFetchError(code, message) {
@@ -762,8 +796,17 @@ module.exports = (dependencies) => {
     });
 
     router.get('/proxy-favicon', authMiddleware, outboundFetchLimiter, async (req, res) => {
-        const { url, defaultHost, hmac } = req.query;
-        const fallbackHost = String(defaultHost || 'unknown').toLowerCase();
+        const { ticket } = req.query;
+        let verified = null;
+        try {
+            verified = verifyAndConsumePreviewTicket(String(ticket || ''), Number(req.user.id));
+        } catch (_) {
+            verified = null;
+        }
+
+        const url = verified?.url || null;
+        const fallbackHost = String(verified?.defaultHost || 'unknown').toLowerCase();
+        const allowedIps = Array.isArray(verified?.allowedIps) ? verified.allowedIps.map(normalizeIpLiteral).filter(Boolean) : [];
         let responded = false;
         
         const sendFallback = () => {
@@ -771,18 +814,20 @@ module.exports = (dependencies) => {
             responded = true;
             res.setHeader('Content-Type', 'image/svg+xml; charset=utf-8');
             res.setHeader('X-Content-Type-Options', 'nosniff');
-            res.setHeader('Cache-Control', 'public, max-age=3600');
+            res.setHeader('Cache-Control', 'private, no-store');
             return res.status(200).send(generateSvgFavicon(fallbackHost));
         };
 
-        if (!url || !hmac) return sendFallback();
-        if (!safeEqualHex(String(hmac), generateProxyHmac(String(url)))) return sendFallback();
+        if (!url || allowedIps.length === 0) return sendFallback();
 
         try {
             const targetUrl = normalizeAndValidatePreviewUrl(String(url), isHostnameAllowedForPreview);
             const resolvedIps = await resolvePublicOutboundAddresses(targetUrl.hostname, isPrivateOrLocalIP);
             
-            const pinnedIp = resolvedIps[0];
+            const pinnedCandidates = resolvedIps
+                .map(normalizeIpLiteral)
+                .filter(ip => allowedIps.includes(ip));
+            const pinnedIp = pinnedCandidates[0];
             const family = net.isIP(pinnedIp);
             if (!pinnedIp || family === 0) return sendFallback();
 
@@ -802,8 +847,8 @@ module.exports = (dependencies) => {
                     'Connection': 'close'
                 }
             }, (upstreamRes) => {
-                const remoteIp = upstreamRes.socket?.remoteAddress;
-                if (remoteIp && isPrivateOrLocalIP(remoteIp)) {
+                const remoteIp = normalizeIpLiteral(upstreamRes.socket?.remoteAddress);
+                if (!remoteIp || isPrivateOrLocalIP(remoteIp) || !allowedIps.includes(remoteIp)) {
                     upstreamRes.resume();
                     return sendFallback();
                 }
@@ -840,7 +885,7 @@ module.exports = (dependencies) => {
 
                     res.setHeader('Content-Type', detected.mime);
                     res.setHeader('X-Content-Type-Options', 'nosniff');
-                    res.setHeader('Cache-Control', 'public, max-age=604800');
+                    res.setHeader('Cache-Control', 'private, no-store');
                     responded = true;
                     return res.status(200).send(fullBuffer);
                 });
@@ -899,8 +944,21 @@ module.exports = (dependencies) => {
                 }
             }
 
-            const favicon = faviconUrl 
-                ? `/api/pages/proxy-favicon?url=${encodeURIComponent(faviconUrl)}&defaultHost=${encodeURIComponent(finalUrl.hostname)}&hmac=${generateProxyHmac(faviconUrl)}`
+            const faviconAllowedIps = faviconUrl
+                ? await resolvePublicOutboundAddresses(new URL(faviconUrl).hostname, isPrivateOrLocalIP)
+                : [];
+            const ticket = faviconUrl
+                ? signPreviewTicket({
+                    uid: Number(req.user.id),
+                    url: faviconUrl,
+                    defaultHost: finalUrl.hostname,
+                    allowedIps: faviconAllowedIps,
+                    exp: Date.now() + PREVIEW_TICKET_TTL_MS,
+                    nonce: crypto.randomBytes(16).toString('hex')
+                  })
+                : null;
+            const favicon = faviconUrl
+                ? `/api/pages/proxy-favicon?ticket=${encodeURIComponent(ticket)}`
                 : buildGeneratedBookmarkFaviconUrl(finalUrl.hostname);
 
             res.json({
@@ -973,12 +1031,20 @@ module.exports = (dependencies) => {
         return { ok: true, parentId: normalizedParentId };
     }
 
-    async function deriveShareAllowedForEncryptedPage({ storageId, isEncrypted, salt, requestedShareAllowed }) {
-        if (!isEncrypted || salt) return 0;
-        if (requestedShareAllowed === true) return 1;
-        if (requestedShareAllowed === false) return 0;
-        const [rows] = await pool.execute(`SELECT 1 FROM storage_shares WHERE storage_id = ? LIMIT 1`, [storageId]);
-        return rows.length > 0 ? 1 : 0;
+    async function deriveShareAllowedForEncryptedPage({
+        isEncrypted,
+        existingShareAllowed = 0,
+        requestedShareAllowed,
+        isPageOwner
+    }) {
+        if (!isEncrypted) return 0;
+        if (requestedShareAllowed == null) return Number(existingShareAllowed) === 1 ? 1 : 0;
+        if (!isPageOwner) {
+            const err = new Error("암호화 페이지 공개 범위는 페이지 소유자만 변경할 수 있습니다.");
+            err.status = 403;
+            throw err;
+        }
+        return requestedShareAllowed === true ? 1 : 0;
     }
 
     router.post("/", authMiddleware, csrfMiddleware, async (req, res) => {
@@ -1046,10 +1112,9 @@ module.exports = (dependencies) => {
                 : null;
 
             const shareAllowed = await deriveShareAllowedForEncryptedPage({
-                storageId,
                 isEncrypted: Number(isEncrypted) === 1,
-                salt,
-                requestedShareAllowed
+                requestedShareAllowed,
+                isPageOwner: true
             });
 
             await pool.execute(`INSERT INTO pages (id, user_id, parent_id, title, content, sort_order, created_at, updated_at, storage_id, is_encrypted, encryption_salt, encrypted_content, share_allowed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -1158,12 +1223,22 @@ module.exports = (dependencies) => {
                 ? (req.body.shareAllowed === true ? true : (req.body.shareAllowed === false ? false : null))
                 : null;
 
-            const shareAllowed = await deriveShareAllowedForEncryptedPage({
-                storageId: existing.storage_id,
-                isEncrypted: Number(isEncrypted) === 1,
-                salt,
-                requestedShareAllowed
-            });
+            let shareAllowed;
+            try {
+                shareAllowed = await deriveShareAllowedForEncryptedPage({
+                    isEncrypted: Number(isEncrypted) === 1,
+                    existingShareAllowed: existing.share_allowed,
+                    requestedShareAllowed,
+                    isPageOwner
+                });
+                
+                if (Number(isEncrypted) === 1 && Number(shareAllowed) === 0 && Number(existing.share_allowed) === 1) {
+                    if (typeof wsEvictNonOwnerCollaborators === 'function') wsEvictNonOwnerCollaborators(id, existing.user_id);
+                }
+            } catch (e) {
+                if (e.status === 403) return res.status(403).json({ error: e.message });
+                throw e;
+            }
 
             let sql = `UPDATE pages SET title=?, content=?, is_encrypted=?, encryption_salt=?, encrypted_content=?, icon=?, horizontal_padding=?, updated_at=?, share_allowed=?`;
             const params = [title, content, isEncrypted, salt, encContent, icon, hPadding, nowStr, shareAllowed];

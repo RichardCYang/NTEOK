@@ -207,7 +207,7 @@ module.exports = (dependencies) => {
 			if (session) {
 				const now = Date.now();
 				const newSessionId = crypto.randomBytes(24).toString("hex");
-				const rotatedSession = { ...session, lastStrongAuthAt: now, reauthenticatedAt: now };
+				const rotatedSession = { ...session, lastStepUpAt: now, reauthenticatedAt: now };
 				const remainingTtl = session.absoluteExpiry ? Math.max(1000, session.absoluteExpiry - now) : SESSION_TTL_MS;
 				await saveSession(newSessionId, rotatedSession, remainingTtl);
 				await revokeSession(oldSessionId, "reauth-rotate");
