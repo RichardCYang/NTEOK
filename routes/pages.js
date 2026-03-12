@@ -969,6 +969,14 @@ module.exports = (dependencies) => {
         return { ok: true, parentId: normalizedParentId };
     }
 
+    async function deriveShareAllowedForEncryptedPage({ storageId, isEncrypted, salt, requestedShareAllowed }) {
+        if (!isEncrypted || salt) return 0;
+        if (requestedShareAllowed === true) return 1;
+        if (requestedShareAllowed === false) return 0;
+        const [rows] = await pool.execute(`SELECT 1 FROM storage_shares WHERE storage_id = ? LIMIT 1`, [storageId]);
+        return rows.length > 0 ? 1 : 0;
+    }
+
     router.post("/", authMiddleware, csrfMiddleware, async (req, res) => {
         const title = sanitizeInput(String(req.body.title || "제목 없음").trim());
         const storageId = req.body.storageId;
@@ -1029,7 +1037,16 @@ module.exports = (dependencies) => {
                 ? ''
                 : sanitizeHtmlContent(hasContentField ? (req.body.content || '<p></p>') : '<p></p>');
 
-            const shareAllowed = (isEncrypted && !salt) ? 1 : 0;
+            const requestedShareAllowed = Object.prototype.hasOwnProperty.call(req.body, 'shareAllowed')
+                ? (req.body.shareAllowed === true ? true : (req.body.shareAllowed === false ? false : null))
+                : null;
+
+            const shareAllowed = await deriveShareAllowedForEncryptedPage({
+                storageId,
+                isEncrypted: Number(isEncrypted) === 1,
+                salt,
+                requestedShareAllowed
+            });
 
             await pool.execute(`INSERT INTO pages (id, user_id, parent_id, title, content, sort_order, created_at, updated_at, storage_id, is_encrypted, encryption_salt, encrypted_content, share_allowed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                 [id, userId, parentId, title, content, sortOrder, nowStr, nowStr, storageId, isEncrypted, salt, encContent, shareAllowed]);
@@ -1132,7 +1149,18 @@ module.exports = (dependencies) => {
                 if (req.body.icon !== undefined) patch.icon = icon;
                 if (Object.keys(patch).length > 0) syncYjsMetadataFromRest(id, patch);
             }
-            const shareAllowed = (Number(isEncrypted) === 1 && !salt) ? 1 : 0;
+
+            const requestedShareAllowed = Object.prototype.hasOwnProperty.call(req.body, 'shareAllowed')
+                ? (req.body.shareAllowed === true ? true : (req.body.shareAllowed === false ? false : null))
+                : null;
+
+            const shareAllowed = await deriveShareAllowedForEncryptedPage({
+                storageId: existing.storage_id,
+                isEncrypted: Number(isEncrypted) === 1,
+                salt,
+                requestedShareAllowed
+            });
+
             let sql = `UPDATE pages SET title=?, content=?, is_encrypted=?, encryption_salt=?, encrypted_content=?, icon=?, horizontal_padding=?, updated_at=?, share_allowed=?`;
             const params = [title, content, isEncrypted, salt, encContent, icon, hPadding, nowStr, shareAllowed];
             const shouldResetYjsState = (req.body.content !== undefined) || encryptionStateChanged || (Number(isEncrypted) === 1);

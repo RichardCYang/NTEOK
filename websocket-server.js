@@ -191,8 +191,12 @@ const E2EE_UPDATELOG_MAX_BATCH = (() => {
     return (Number.isFinite(n) && n > 0) ? n : 50;
 })();
 const E2EE_UPDATELOG_MAX_UPDATES_PER_PAGE = (() => {
-    const n = Number.parseInt(process.env.E2EE_UPDATELOG_MAX_UPDATES_PER_PAGE || '5000', 10);
-    return (Number.isFinite(n) && n > 0) ? n : 5000;
+    const n = Number.parseInt(process.env.E2EE_UPDATELOG_MAX_UPDATES_PER_PAGE || '512', 10);
+    return (Number.isFinite(n) && n > 0) ? n : 512;
+})();
+const E2EE_UPDATELOG_MAX_BYTES_PER_PAGE = (() => {
+    const n = Number.parseInt(process.env.E2EE_UPDATELOG_MAX_BYTES_PER_PAGE || String(16 * 1024 * 1024), 10);
+    return (Number.isFinite(n) && n >= (256 * 1024)) ? n : (16 * 1024 * 1024);
 })();
 const E2EE_PENDING_SEND_CHUNK_MAX_B64_CHARS = (() => {
     const n = Number.parseInt(process.env.E2EE_PENDING_SEND_CHUNK_MAX_B64_CHARS || '262144', 10); 
@@ -200,6 +204,7 @@ const E2EE_PENDING_SEND_CHUNK_MAX_B64_CHARS = (() => {
 })();
 
 const e2eeUpdateLogBuffer = new Map(); 
+const e2eeUpdateLogBufferedBytes = new Map();
 let e2eeUpdateLogFlushTimer = null;
 
 function bufferE2eeUpdateLog(pool, pageId, updateBuf) {
@@ -208,9 +213,12 @@ function bufferE2eeUpdateLog(pool, pageId, updateBuf) {
     if (!e2eeUpdateLogBuffer.has(pid)) e2eeUpdateLogBuffer.set(pid, []);
     
     const queue = e2eeUpdateLogBuffer.get(pid);
+    const bufferedBytes = e2eeUpdateLogBufferedBytes.get(pid) || 0;
     if (queue.length >= E2EE_UPDATELOG_MAX_UPDATES_PER_PAGE) return;
+    if ((bufferedBytes + updateBuf.length) > E2EE_UPDATELOG_MAX_BYTES_PER_PAGE) return;
 
     queue.push({ ms: Date.now(), blob: updateBuf });
+    e2eeUpdateLogBufferedBytes.set(pid, bufferedBytes + updateBuf.length);
 
     if (!e2eeUpdateLogFlushTimer) {
         e2eeUpdateLogFlushTimer = setTimeout(() => {
@@ -228,11 +236,20 @@ async function flushAllPendingE2eeUpdateLogs(pool) {
         const queue = e2eeUpdateLogBuffer.get(pid);
         if (!queue || queue.length === 0) {
             e2eeUpdateLogBuffer.delete(pid);
+            e2eeUpdateLogBufferedBytes.delete(pid);
             continue;
         }
 
         const batch = queue.splice(0, E2EE_UPDATELOG_MAX_BATCH);
-        if (queue.length === 0) e2eeUpdateLogBuffer.delete(pid);
+        const removedBytes = batch.reduce((sum, item) => sum + (item.blob?.length || 0), 0);
+        const remainBytes = Math.max(0, (e2eeUpdateLogBufferedBytes.get(pid) || 0) - removedBytes);
+        
+        if (queue.length === 0) {
+            e2eeUpdateLogBuffer.delete(pid);
+            e2eeUpdateLogBufferedBytes.delete(pid);
+        } else {
+            e2eeUpdateLogBufferedBytes.set(pid, remainBytes);
+        }
 
         try {
             const values = [];
@@ -1901,61 +1918,82 @@ async function handleYjsStateE2EE(ws, payload, pool, pageSqlPolicy) {
             return;
         }
         const freshPerm = access.permission;
-        if (!['EDIT', 'ADMIN'].includes(freshPerm)) return;
+        if (!freshPerm || !['EDIT', 'ADMIN'].includes(freshPerm)) return;
 
         await enqueuePageMutation(pageId, async () => {
             const leader = ensureE2eeLeaderForActiveEditor(pageId, myConn);
             if (leader && String(leader.sessionId) !== String(myConn.sessionId)) return;
 
-            const maxStateB64Chars = Math.ceil(WS_MAX_YJS_STATE_BYTES / 3) * 4 + 8;
-            if (encryptedState.length > maxStateB64Chars) return;
+            if (encryptedState.length > WS_MAX_YJS_STATE_B64_CHARS) return;
             if (!/^[A-Za-z0-9+/=]+$/.test(encryptedState)) return;
             try {
                 const buf = Buffer.from(encryptedState, 'base64');
                 if (!buf || buf.length < 28) return;
             } catch (_) { return; }
 
+            if (encryptedHtml !== undefined && encryptedHtml !== null) {
+                if (typeof encryptedHtml !== 'string' || encryptedHtml.length > 2 * 1024 * 1024) return;
+                if (encryptedHtml.length > 0 && !encryptedHtml.trim().startsWith('<')) return;
+            }
+
             if (Array.isArray(refs)) {
                 try {
                     const pageOwnerUserId = Number(access.page?.user_id);
-                    if (Number.isFinite(pageOwnerUserId) && Number(ws.userId) !== pageOwnerUserId) {
-                        const [beforeRows] = await pool.execute(
-                            "SELECT owner_user_id, stored_filename, file_type FROM page_file_refs WHERE page_id = ? AND owner_user_id = ?",
-                            [pageId, pageOwnerUserId]
-                        );
-                        const beforeOwnerRefs = beforeRows.map(r => ({ type: r.file_type, ref: `${r.owner_user_id}/${r.stored_filename}` }));
-                        const normalizedAfter = refs
-                            .map(file => {
-                                if (!file || typeof file !== 'object') return null;
-                                const normalized = normalizePaperclipRefForOwner(file.ref, pageOwnerUserId);
-                                if (!normalized) return null;
-                                return { type: file.type || 'paperclip', ref: normalized };
-                            })
-                            .filter(Boolean);
+                    if (!Number.isFinite(pageOwnerUserId)) return;
+                    const actorUserId = Number(ws.userId);
 
-                        if (!sameOwnerAssetSet(beforeOwnerRefs, normalizedAfter)) {
-                            try { ws.close(1008, 'Owner asset refs can only be changed by page owner'); } catch (_) {}
-                            return;
-                        }
+                    const [currentRows] = await pool.execute(
+                        "SELECT owner_user_id, stored_filename, file_type FROM page_file_refs WHERE page_id = ?",
+                        [pageId]
+                    );
+
+                    const beforeOwnerRefs = currentRows
+                        .filter(r => Number(r.owner_user_id) === pageOwnerUserId)
+                        .map(r => ({ type: r.file_type, ref: `${r.owner_user_id}/${r.stored_filename}` }));
+
+                    const normalizedAfter = refs
+                        .map(file => {
+                            if (!file || typeof file !== 'object') return null;
+                            const normalized = normalizePaperclipRef(file.ref);
+                            if (!normalized) return null;
+                            return { type: file.type || 'paperclip', ref: normalized };
+                        })
+                        .filter(Boolean);
+
+                    const afterOwnerRefs = normalizedAfter.filter(f => {
+                        const [uid] = f.ref.split('/');
+                        return Number(uid) === pageOwnerUserId;
+                    });
+
+                    if (actorUserId !== pageOwnerUserId) {
+                        if (!sameOwnerAssetSet(beforeOwnerRefs, afterOwnerRefs)) return;
                     }
 
-                    await pool.execute("DELETE FROM page_file_refs WHERE page_id = ?", [pageId]);
-                    for (const file of refs) {
-                        if (!file || typeof file !== 'object') continue;
-                        const normalized = normalizePaperclipRef(file.ref);
-                        if (normalized) {
-                            const [ownerId, filename] = normalized.split('/');
-                            await pool.execute(
+                    const conn = await pool.getConnection();
+                    try {
+                        await conn.beginTransaction();
+                        await conn.execute("DELETE FROM page_file_refs WHERE page_id = ?", [pageId]);
+                        for (const file of normalizedAfter) {
+                            const [ownerId, filename] = file.ref.split('/');
+                            await conn.execute(
                                 `INSERT IGNORE INTO page_file_refs (page_id, owner_user_id, stored_filename, file_type, created_at)
                                  VALUES (?, ?, ?, ?, NOW())`,
                                 [pageId, ownerId, filename, file.type || 'paperclip']
                             );
                         }
+                        await conn.commit();
+                    } catch (txErr) {
+                        await conn.rollback();
+                        throw txErr;
+                    } finally {
+                        conn.release();
                     }
-                } catch (regErr) { console.error('E2EE 보안 레지스트리 동기화 실패:', regErr); }
+                } catch (regErr) {
+                    console.error('E2EE 보안 레지스트리 동기화 실패:', regErr);
+                }
             }
 
-            yjsE2EEStates.set(String(pageId), { encryptedState, storedAt: Date.now() });
+            yjsE2EEStates.set(String(pageId), { encryptedState, encryptedHtml, storedAt: Date.now() });
 
             const pid = String(pageId);
             e2eeLastSnapshotAt.set(pid, Date.now());

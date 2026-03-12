@@ -63,6 +63,12 @@ function isLoopbackIp(ip) {
     return s === '127.0.0.1' || s === '::1' || s === 'localhost' || (typeof s === 'string' && s.startsWith('127.'));
 }
 
+function isSubnetTooBroad(range, prefix) {
+    if (range.kind() === 'ipv4') return prefix <= 8;
+    if (range.kind() === 'ipv6') return prefix <= 32;
+    return false;
+}
+
 function parseTrustedProxyCidrsFromEnv() {
     const raw = (process.env.TRUST_PROXY_CIDRS || '').trim();
     if (!raw) return [];
@@ -71,8 +77,10 @@ function parseTrustedProxyCidrsFromEnv() {
     const cidrs = [];
     for (const part of parts) {
         try {
-            const parsed = ipaddr.parseCIDR(part);
-            cidrs.push(parsed);
+            const [range, prefix] = ipaddr.parseCIDR(part);
+            if (isSubnetTooBroad(range, prefix))
+                console.warn(`[보안] TRUST_PROXY_CIDRS에 너무 광범위한 서브넷이 포함되어 있습니다: "${part}" (권장되지 않음)`);
+            cidrs.push([range, prefix]);
         } catch (e) {
             console.warn(`[보안 설정] TRUST_PROXY_CIDRS 항목 파싱 실패: "${part}" (${e.message})`);
         }
@@ -88,7 +96,7 @@ function isIpInCidrs(ip, cidrs) {
     let addr;
     try {
         addr = ipaddr.parse(s);
-        if (addr.kind() === 'ipv6' && addr.isIPv4MappedAddress?.())
+        if (addr.kind() === 'ipv6' && typeof addr.isIPv4MappedAddress === 'function' && addr.isIPv4MappedAddress())
             addr = addr.toIPv4Address();
     } catch {
         return false;
@@ -303,5 +311,7 @@ module.exports = {
     formatDateForDb,
     recordLoginAttempt,
     getClientIpFromRequest,
-    normalizeIp
+    normalizeIp,
+    isSubnetTooBroad,
+    parseTrustedProxyCidrsFromEnv
 };

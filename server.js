@@ -1654,15 +1654,18 @@ async function initDb() {
     }
 
     try {
-        const [migRows] = await pool.execute(
-            `UPDATE pages SET share_allowed = 1
-             WHERE is_encrypted = 1 AND encryption_salt IS NULL AND share_allowed = 0`
+        const [legacyRows] = await pool.execute(
+            `SELECT COUNT(*) AS cnt
+               FROM pages
+              WHERE is_encrypted = 1
+                AND encryption_salt IS NULL
+                AND share_allowed = 1`
         );
-        if (migRows.affectedRows > 0) {
-            console.log(`✓ E2EE 페이지 share_allowed 마이그레이션 완료 (${migRows.affectedRows}건 업데이트)`);
+        if (Number(legacyRows?.[0]?.cnt || 0) > 0) {
+            console.warn(`[보안] 레거시 E2EE 공유 페이지 ${legacyRows[0].cnt}건 존재: 운영자가 의도된 공유인지 검토해야 합니다.`);
         }
     } catch (error) {
-        console.error('E2EE 페이지 share_allowed 마이그레이션 중 오류:', error);
+        console.error('레거시 E2EE 페이지 점검 중 오류:', error);
     }
 
     const [userRows] = await pool.execute("SELECT COUNT(*) AS cnt FROM users");
