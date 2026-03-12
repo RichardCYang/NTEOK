@@ -296,7 +296,8 @@ module.exports = (dependencies) => {
         isPrivateOrLocalIP,
         isHostnameAllowedForPreview,
         getClientIpFromRequest,
-        outboundFetchLimiter
+        outboundFetchLimiter,
+        pageWritePolicy
 	} = dependencies;
 
     function sameOwnerAssetSet(beforeFiles, afterFiles) {
