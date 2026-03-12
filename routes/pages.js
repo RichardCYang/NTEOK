@@ -743,6 +743,9 @@ module.exports = (dependencies) => {
             const storageId = typeof req.query.storageId === "string" ? req.query.storageId.trim() : null;
             if (!storageId) return res.status(400).json({ error: "storageId required" });
 
+            const permission = await storagesRepo.getPermission(userId, storageId);
+            if (!permission) return res.status(404).json({ error: "Not found" });
+
             const pages = await pagesRepo.listTrashedPagesForUser({ userId, storageId });
             res.json(pages.map(p => ({
                 id: p.id,
@@ -911,7 +914,7 @@ module.exports = (dependencies) => {
         try {
             if (typeof isHostnameAllowedForPreview !== "function") return res.status(500).json({ error: "링크 미리보기 보안 구성이 올바르지 않습니다." });
             const startUrl = normalizeAndValidatePreviewUrl(String(url), isHostnameAllowedForPreview);
-            console.warn(`[preview-fetch] user=${req.user.id} host=${startUrl.hostname}`);
+            console.warn(`[미리보기-가져오기] 사용자=${req.user.id} 호스트=${startUrl.hostname}`);
 
             const { html, finalUrl } = await fetchHtmlWithValidatedRedirects(startUrl, isHostnameAllowedForPreview, isPrivateOrLocalIP);
             const $ = cheerio.load(html);
@@ -992,8 +995,8 @@ module.exports = (dependencies) => {
         const id = req.params.id;
         const userId = req.user.id;
         try {
-            const row = await pagesRepo.getPageByIdForUser({ userId, pageId: id });
-            if (!row) return res.status(404).json({ error: "Not found" });
+            const row = await loadVisiblePageWithStorageStateOr404(userId, id, res);
+            if (!row) return;
             const isEnc = (row.is_encrypted === 1);
             res.json({
                 id: row.id, title: row.title || "제목 없음", content: isEnc ? "" : sanitizeHtmlContent(row.content || "<p></p>"),

@@ -95,11 +95,82 @@ module.exports = ({ pool }) => {
             );
         },
 
-        async removeCollaborator(storageId, userId) {
-            await pool.execute(
-                `DELETE FROM storage_shares WHERE storage_id = ? AND shared_with_user_id = ?`,
-                [storageId, userId]
+        async removeCollaborator(storageId, targetUserId) {
+            const sid = String(storageId || '').trim();
+            const uid = Number(targetUserId);
+            if (!sid || !Number.isFinite(uid)) throw new Error('Invalid arguments');
+
+            const conn = await pool.getConnection();
+            try {
+                await conn.beginTransaction();
+
+                const [stRows] = await conn.execute(
+                    `SELECT user_id FROM storages WHERE id = ? FOR UPDATE`,
+                    [sid]
+                );
+                if (stRows.length === 0) {
+                    await conn.rollback();
+                    return { ok: false, reason: 'storage-not-found' };
+                }
+                const ownerId = stRows[0].user_id;
+
+                if (ownerId === uid) {
+                    await conn.rollback();
+                    return { ok: false, reason: 'cannot-remove-owner' };
+                }
+
+                const [pageRows] = await conn.execute(
+                    `SELECT id FROM pages WHERE storage_id = ? AND user_id = ?`,
+                    [sid, uid]
+                );
+                const pageIds = (pageRows || []).map(r => String(r.id));
+
+                if (pageIds.length > 0) {
+                    await updatePagesInBatches(
+                        conn,
+                        `UPDATE pages SET user_id = ?, updated_at = NOW() WHERE id IN`,
+                        pageIds,
+                        [ownerId]
+                    );
+                    await updatePagesInBatches(
+                        conn,
+                        `UPDATE updates_history SET user_id = ? WHERE storage_id = ? AND user_id = ? AND page_id IN`,
+                        pageIds,
+                        [ownerId, sid, uid]
+                    );
+                }
+
+                await conn.execute(
+                    `DELETE FROM storage_shares WHERE storage_id = ? AND shared_with_user_id = ?`,
+                    [sid, uid]
+                );
+
+                await conn.commit();
+                return { ok: true, movedPages: pageIds.length };
+            } catch (e) {
+                try { if (conn) await conn.rollback(); } catch (_) {}
+                throw e;
+            } finally {
+                try { conn.release(); } catch (_) {}
+            }
+        },
+
+        async rekeyStorage({ userId, storageId, encryptionSalt, dekVersion, shares }, conn = null) {
+            const executor = conn || pool;
+            await executor.execute(
+                `UPDATE storages SET encryption_salt = ?, dek_version = ?, updated_at = NOW() WHERE id = ? AND user_id = ?`,
+                [encryptionSalt, dekVersion, storageId, userId]
             );
+
+            await executor.execute(`DELETE FROM storage_share_keys WHERE storage_id = ?`, [storageId]);
+
+            for (const share of shares) {
+                await executor.execute(
+                    `INSERT INTO storage_share_keys (storage_id, shared_with_user_id, wrapped_dek, wrapping_kid, ephemeral_public_key, created_at)
+                     VALUES (?, ?, ?, ?, ?, NOW())`,
+                    [storageId, share.userId, share.wrappedDek, share.wrappingKid, share.ephemeralPublicKey || null]
+                );
+            }
         },
 
         async getPermission(userId, storageId) {

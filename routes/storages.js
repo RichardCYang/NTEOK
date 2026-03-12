@@ -455,5 +455,48 @@ module.exports = (dependencies) => {
         }
     });
 
+    router.post('/:id/rekey', authMiddleware, csrfMiddleware, requireRecentReauth(5 * 60 * 1000), destructiveStorageLimiter, async (req, res) => {
+        let connection = null;
+        try {
+            const userId = req.user.id;
+            const storageId = req.params.id;
+            const { encryptionSalt, dekVersion, shares } = req.body;
+
+            const storage = await storagesRepo.getStorageByIdForUser(userId, storageId);
+            if (!requireStorageOwner(storage, res, '재암호화할')) return;
+
+            if (Number(storage.is_encrypted) !== 1) return res.status(400).json({ error: '암호화되지 않은 저장소는 재암호화할 수 없습니다.' });
+            if (Number(dekVersion) !== 1) return res.status(400).json({ error: 'DEK v1 버전으로만 재암호화가 가능합니다.' });
+            if (!isValidBase64(encryptionSalt, 64)) return res.status(400).json({ error: '유효하지 않은 encryptionSalt 입니다.' });
+
+            if (!Array.isArray(shares)) return res.status(400).json({ error: '공유 키 정보(shares)가 필요합니다.' });
+            for (const s of shares) {
+                if (!s.userId || !isValidBase64(s.wrappedDek, 4096) || !s.wrappingKid) {
+                    return res.status(400).json({ error: '유효하지 않은 공유 키 정보가 포함되어 있습니다.' });
+                }
+            }
+
+            connection = await pool.getConnection();
+            await connection.beginTransaction();
+
+            await storagesRepo.rekeyStorage({
+                userId,
+                storageId,
+                encryptionSalt,
+                dekVersion: Number(dekVersion),
+                shares
+            }, connection);
+
+            await connection.commit();
+            res.json({ success: true });
+        } catch (error) {
+            if (connection) await connection.rollback();
+            logError('POST /api/storages/:id/rekey', error);
+            res.status(500).json({ error: '저장소 재암호화에 실패했습니다.' });
+        } finally {
+            if (connection) connection.release();
+        }
+    });
+
     return router;
 };

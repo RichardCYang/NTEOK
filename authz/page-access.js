@@ -10,10 +10,10 @@ module.exports = ({ pool, storagesRepo }) => {
                 AND ss.shared_with_user_id = ?
               WHERE p.id = ?
                 ${deletedSql}
-                AND (p.user_id = ? OR s.user_id = ? OR ss.shared_with_user_id IS NOT NULL)
+                AND (s.user_id = ? OR ss.shared_with_user_id IS NOT NULL)
                 AND NOT (p.is_encrypted = 1 AND p.share_allowed = 0 AND p.user_id != ?)
               LIMIT 1`,
-            [viewerUserId, pageId, viewerUserId, viewerUserId, viewerUserId]
+            [viewerUserId, pageId, viewerUserId, viewerUserId]
         );
 
         if (!rows.length) return null;

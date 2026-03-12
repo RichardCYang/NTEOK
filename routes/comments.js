@@ -37,6 +37,13 @@ module.exports = (dependencies) => {
                 res.status(404).json({ error: "페이지를 찾을 수 없습니다." });
                 return null;
             }
+
+            const permission = await storagesRepo.getPermission(userId, page.storage_id);
+            if (!permission) {
+                res.status(404).json({ error: "페이지를 찾을 수 없습니다." });
+                return null;
+            }
+
             return page;
         } catch (e) {
             logError("loadPageForCommentsOr404", e);

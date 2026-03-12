@@ -120,14 +120,12 @@ module.exports = ({ pool, pageSqlPolicy }) => {
                  FROM pages p
                  INNER JOIN storages s ON p.storage_id = s.id
                  LEFT JOIN storage_shares ss ON p.storage_id = ss.storage_id AND ss.shared_with_user_id = ?
-                 WHERE p.id = ? AND (p.user_id = ? OR ss.storage_id IS NOT NULL OR s.user_id = ?)
+                 WHERE p.id = ? AND (ss.storage_id IS NOT NULL OR s.user_id = ?)
                  ${vis.sql}`;
 
-            if (!includeDeleted) {
-                sql += ` AND p.deleted_at IS NULL`;
-            }
+            if (!includeDeleted) sql += ` AND p.deleted_at IS NULL`;
 
-            const [rows] = await pool.execute(sql, [userId, pageId, userId, userId, ...vis.params]);
+            const [rows] = await pool.execute(sql, [userId, pageId, userId, ...vis.params]);
 
             return rows?.[0] || null;
         },
@@ -139,12 +137,12 @@ module.exports = ({ pool, pageSqlPolicy }) => {
                  FROM pages p
                  INNER JOIN storages s ON p.storage_id = s.id
                  LEFT JOIN storage_shares ss ON p.storage_id = ss.storage_id AND ss.shared_with_user_id = ?
-                 WHERE (p.user_id = ? OR ss.storage_id IS NOT NULL OR s.user_id = ?)
+                 WHERE (ss.storage_id IS NOT NULL OR s.user_id = ?)
                  AND p.storage_id = ?
                  AND p.deleted_at IS NOT NULL
                  ${vis.sql}
                  ORDER BY p.deleted_at DESC`,
-                [userId, userId, userId, storageId, ...vis.params]
+                [userId, userId, storageId, ...vis.params]
             );
             return rows || [];
         },
