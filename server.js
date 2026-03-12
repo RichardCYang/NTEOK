@@ -1013,6 +1013,59 @@ function isSafeLocalAssetPath(url) {
     return /^\/(?:imgs|covers|paperclip)\/(?:default|\d{1,12})\/[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/.test(url);
 }
 
+const STRUCTURED_JSON_ATTRS = new Set(['data-columns', 'data-rows', 'data-memos']);
+const STRUCTURED_TEXT_ATTRS = new Set(['data-content', 'data-title', 'data-caption', 'data-description']);
+
+function decodeHtmlEntities(raw) {
+    const dom = new JSDOM(`<body>${String(raw ?? '')}</body>`);
+    return dom.window.document.body.textContent || '';
+}
+
+function clampPlainText(raw, max = 4000) {
+    return String(raw ?? '').replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '').slice(0, max);
+}
+
+function sanitizeStructuredHtml(raw) {
+    return DOMPurify.sanitize(String(raw ?? ''), {
+        ALLOWED_TAGS: ['br', 'p', 'div', 'span', 'strong', 'b', 'em', 'i', 'u', 's', 'code', 'pre', 'ul', 'ol', 'li', 'blockquote', 'a'],
+        ALLOWED_ATTR: ['href', 'target', 'rel'],
+        ALLOW_DATA_ATTR: false,
+        FORBID_TAGS: ['style', 'script', 'svg', 'math', 'iframe', 'object', 'embed'],
+        ALLOWED_URI_REGEXP: /^(?:(?:(?:ht)tps?|mailto|tel):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i
+    });
+}
+
+function normalizeStructuredValue(value, key = '') {
+    if (typeof value === 'string') {
+        if (/^(content|html|description|caption)$/i.test(key)) return sanitizeStructuredHtml(value);
+        return clampPlainText(value, 2000);
+    }
+    if (Array.isArray(value)) return value.slice(0, 500).map(v => normalizeStructuredValue(v, key));
+    if (value && typeof value === 'object') {
+        const out = {};
+        for (const [k, v] of Object.entries(value).slice(0, 100)) {
+            if (k === '__proto__' || k === 'prototype' || k === 'constructor') continue;
+            out[k] = normalizeStructuredValue(v, k);
+        }
+        return out;
+    }
+    return value;
+}
+
+function normalizeStructuredAttr(attrName, raw) {
+    if (STRUCTURED_TEXT_ATTRS.has(attrName)) return clampPlainText(decodeHtmlEntities(raw), 4000);
+    if (!STRUCTURED_JSON_ATTRS.has(attrName)) return null;
+    const decoded = decodeHtmlEntities(raw);
+    if (!decoded || decoded.length > 512 * 1024) return null;
+    let parsed;
+    try {
+        parsed = JSON.parse(decoded);
+    } catch (_) {
+        return null;
+    }
+    return JSON.stringify(normalizeStructuredValue(parsed));
+}
+
 function sanitizeHtmlContent(html, { profile = 'editor' } = {}) {
 	if (typeof html !== 'string') return html;
 	const prefiltered = prefilterHtmlForSanitizer(html);
@@ -1035,7 +1088,7 @@ function sanitizeHtmlContent(html, { profile = 'editor' } = {}) {
 		const sanitized = DOMPurify.sanitize(prefiltered, config);
 		const dom = new JSDOM(sanitized);
 		const doc = dom.window.document;
-		const elements = doc.querySelectorAll('[style], [src], [href], [data-url], [data-thumbnail], [data-favicon], [data-src]');
+		const elements = doc.querySelectorAll('[style], [src], [href], [data-url], [data-thumbnail], [data-favicon], [data-src], [data-columns], [data-rows], [data-memos], [data-content], [data-title], [data-caption], [data-description]');
 		for (const el of elements) {
             if (el.hasAttribute('style')) {
                 const allowedStyles = ['text-align', 'color', 'background-color', 'font-size', 'font-family', 'font-weight', 'font-style', 'text-decoration', 'margin', 'padding', 'width', 'height', 'display', 'border', 'border-radius', 'flex', 'grid', 'vertical-align', 'line-height'];
@@ -1086,6 +1139,12 @@ function sanitizeHtmlContent(html, { profile = 'editor' } = {}) {
 					else el.setAttribute('data-src', value);
 				}
 			}
+            for (const attrName of ['data-columns', 'data-rows', 'data-memos', 'data-content', 'data-title', 'data-caption', 'data-description']) {
+                if (!el.hasAttribute(attrName)) continue;
+                const normalized = normalizeStructuredAttr(attrName, el.getAttribute(attrName));
+                if (normalized == null) el.removeAttribute(attrName);
+                else el.setAttribute(attrName, normalized);
+            }
 		}
 		return doc.body.innerHTML;
 	} catch (err) {

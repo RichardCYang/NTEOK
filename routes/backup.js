@@ -699,7 +699,8 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
                 title = iconMatch[2];
             }
 
-            const content = contentEl ? contentEl.innerHTML : '<p></p>';
+            const rawContent = contentEl ? contentEl.innerHTML : '<p></p>';
+            const content = sanitizeHtmlContent(rawContent || '<p></p>');
 
             const coverImageEl = doc.querySelector('.cover-image');
             let coverImage = null;
@@ -707,9 +708,7 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
                 const src = coverImageEl.getAttribute('src');
                 if (src) {
                     const match = src.match(/\.\.\/images\/(.+)/);
-                    if (match) {
-                        coverImage = match[1];
-                    }
+                    if (match) coverImage = match[1];
                 }
             }
 
@@ -726,8 +725,8 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
                 content,
                 icon: icon || (metadata?.icon) || null,
                 isEncrypted: metaIsEncrypted,
-                encryptionSalt: (metadata?.encryptionSalt ?? metadata?.encryption_salt) || null,
-                encryptedContent: (metadata?.encryptedContent ?? metadata?.encrypted_content) || null,
+                encryptionSalt: metaIsEncrypted ? ((metadata?.encryptionSalt ?? metadata?.encryption_salt) || null) : null,
+                encryptedContent: metaIsEncrypted ? ((metadata?.encryptedContent ?? metadata?.encrypted_content) || null) : null,
                 shareAllowed: metaShareAllowed,
                 coverImage: coverImage || metadata?.coverImage || null,
                 coverPosition: metadata?.coverPosition || 50,

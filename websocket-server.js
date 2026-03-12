@@ -31,6 +31,29 @@ function hasForbiddenRealtimeScheme(raw) {
     return /^(?:javascript|vbscript|data|file):/.test(v);
 }
 
+const REALTIME_STRUCTURED_ATTRS = new Set(['data-columns', 'data-rows', 'data-memos', 'data-content', 'data-title', 'data-caption', 'data-description']);
+
+function decodeRealtimeAttr(raw) {
+    const dom = new JSDOM(`<body>${String(raw ?? '')}</body>`);
+    return dom.window.document.body.textContent || '';
+}
+
+function validateStructuredRealtimeAttr(name, value) {
+    if (!REALTIME_STRUCTURED_ATTRS.has(name)) return true;
+    const decoded = decodeRealtimeAttr(value);
+    if (decoded.length > 512 * 1024) return false;
+    if (/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/.test(decoded)) return false;
+    if (name === 'data-columns' || name === 'data-rows' || name === 'data-memos') {
+        try {
+            const parsed = JSON.parse(decoded);
+            stripDangerousKeysDeep(parsed);
+        } catch (_) {
+            return false;
+        }
+    }
+    return true;
+}
+
 function validateRealtimeFragmentStructure(xml) {
     if (typeof xml !== "string") return { ok: true };
     if (byteLenUtf8(xml) > 512 * 1024) return { ok: false, code: 1009, reason: "Realtime fragment too large" };
@@ -57,6 +80,7 @@ function validateRealtimeFragmentStructure(xml) {
             if (name.startsWith("on") || name === "style" || name === "srcdoc" || name === "formaction") return { ok: false, code: 1008, reason: `Forbidden realtime attr: ${name}` };
             if (!REALTIME_ALLOWED_ATTR_RE.test(name)) return { ok: false, code: 1008, reason: `Unexpected realtime attr: ${name}` };
             if (REALTIME_URI_ATTRS.has(name) && hasForbiddenRealtimeScheme(value)) return { ok: false, code: 1008, reason: `Forbidden realtime URI in ${name}` };
+            if (!validateStructuredRealtimeAttr(name, value)) return { ok: false, code: 1008, reason: `Malformed realtime structured attr: ${name}` };
         }
     }
     return { ok: true };
@@ -989,9 +1013,9 @@ function normalizePaperclipRefForOwner(ref, pageOwnerUserId) {
 function extractFilesFromContent(content, pageOwnerUserId = null) {
     const files = [];
     if (!content) return files;
-
-
-    const html = String(content);
+    const safeHtml = typeof _wsSanitizeHtmlContent === 'function' ? _wsSanitizeHtmlContent(String(content)) : String(content);
+    const dom = new JSDOM(`<body>${safeHtml}</body>`);
+    const doc = dom.window.document;
     const seen = new Set();
     const pushUnique = (type, ref, extra = null) => {
         const k = `${type}:${ref}`;
@@ -999,37 +1023,37 @@ function extractFilesFromContent(content, pageOwnerUserId = null) {
         seen.add(k);
         files.push(extra ? { type, ref, ...extra } : { type, ref });
     };
-
-    const paperclipUrlRegex = /(?:^|[\s"'>(])\/paperclip\/(\d{1,12})\/([A-Za-z0-9][A-Za-z0-9._-]{0,199})(?=$|["'\s<>?)#&])/g;
-    let match;
-    while ((match = paperclipUrlRegex.exec(html)) !== null) {
-        const candidate = `${match[1]}/${match[2]}`;
-        const ref = (pageOwnerUserId !== null && pageOwnerUserId !== undefined)
-            ? normalizePaperclipRefForOwner(candidate, pageOwnerUserId)
-            : normalizePaperclipRef(candidate);
+    const hrefEls = Array.from(doc.querySelectorAll('a[href]'));
+    const srcEls = Array.from(doc.querySelectorAll('img[src], [data-type="file-block"][data-src], [data-type="image-with-caption"][data-src]'));
+    for (const el of hrefEls) {
+        const href = String(el.getAttribute('href') || '');
+        const m = href.match(/^\/paperclip\/(\d{1,12})\/([A-Za-z0-9][A-Za-z0-9._-]{0,199})$/);
+        if (!m) continue;
+        const candidate = `${m[1]}/${m[2]}`;
+        const ref = (pageOwnerUserId !== null && pageOwnerUserId !== undefined) ? normalizePaperclipRefForOwner(candidate, pageOwnerUserId) : normalizePaperclipRef(candidate);
         if (ref) pushUnique('paperclip', ref);
     }
-
-    const fileBlockRegex = /<div[^>]*data-type=["']file-block["'][^>]*data-src=["']\/paperclip\/([^"']+)["'][^>]*>/gi;
-    while ((match = fileBlockRegex.exec(html)) !== null) {
-        const ref = (pageOwnerUserId !== null && pageOwnerUserId !== undefined)
-            ? normalizePaperclipRefForOwner(match[1], pageOwnerUserId)
-            : normalizePaperclipRef(match[1]);
-        if (ref) pushUnique('paperclip', ref);
-    }
-
-    const imgsUrlRegex = /(?:^|[\s"'>(])\/imgs\/(\d{1,12})\/([A-Za-z0-9][A-Za-z0-9._-]{0,199})(?=$|["'\s<>?)#&])/g;
-    while ((match = imgsUrlRegex.exec(html)) !== null) {
-        const ownerId = parseInt(match[1], 10);
-        const filename = match[2];
-        if (!Number.isFinite(ownerId)) continue;
-        if (pageOwnerUserId === null || pageOwnerUserId === undefined || ownerId === pageOwnerUserId) {
-            if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/.test(filename)) continue;
-            if (filename.includes('..') || /[\x00-\x1F\x7F]/.test(filename)) continue;
-            pushUnique('imgs', `${ownerId}/${filename}`, { filename });
+    for (const el of srcEls) {
+        const raw = String(el.getAttribute('data-src') || el.getAttribute('src') || '');
+        let m = raw.match(/^\/paperclip\/(\d{1,12})\/([A-Za-z0-9][A-Za-z0-9._-]{0,199})$/);
+        if (m) {
+            const candidate = `${m[1]}/${m[2]}`;
+            const ref = (pageOwnerUserId !== null && pageOwnerUserId !== undefined) ? normalizePaperclipRefForOwner(candidate, pageOwnerUserId) : normalizePaperclipRef(candidate);
+            if (ref) pushUnique('paperclip', ref);
+            continue;
+        }
+        m = raw.match(/^\/imgs\/(\d{1,12})\/([A-Za-z0-9][A-Za-z0-9._-]{0,199})$/);
+        if (m) {
+            const ownerId = parseInt(m[1], 10);
+            const filename = m[2];
+            if (!Number.isFinite(ownerId)) continue;
+            if (pageOwnerUserId === null || pageOwnerUserId === undefined || ownerId === pageOwnerUserId) {
+                if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/.test(filename)) continue;
+                if (filename.includes('..') || /[\x00-\x1F\x7F]/.test(filename)) continue;
+                pushUnique('imgs', `${ownerId}/${filename}`, { filename });
+            }
         }
     }
-
     return files;
 }
 

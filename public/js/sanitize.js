@@ -32,6 +32,53 @@ function sanitizeLocalAssetSrc(raw) {
     return /^\/(?:imgs|covers|paperclip)\//.test(safe) ? safe : null;
 }
 
+const STRUCTURED_JSON_ATTRS = new Set(['data-columns', 'data-rows', 'data-memos']);
+const STRUCTURED_TEXT_ATTRS = new Set(['data-content', 'data-title', 'data-caption', 'data-description']);
+
+function clampPlainText(raw, max = 4000) {
+    return String(raw ?? '').replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '').slice(0, max);
+}
+
+function sanitizeStructuredHtml(raw) {
+    return DOMPurify.sanitize(String(raw ?? ''), {
+        ALLOWED_TAGS: ['br', 'p', 'div', 'span', 'strong', 'b', 'em', 'i', 'u', 's', 'code', 'pre', 'ul', 'ol', 'li', 'blockquote', 'a'],
+        ALLOWED_ATTR: ['href', 'target', 'rel'],
+        ALLOW_DATA_ATTR: false,
+        FORBID_TAGS: ['style', 'script', 'svg', 'math', 'iframe', 'object', 'embed'],
+        ALLOWED_URI_REGEXP: /^(?:(?:(?:ht)tps?|mailto|tel):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i
+    });
+}
+
+function normalizeStructuredValue(value, key = '') {
+    if (typeof value === 'string') {
+        if (/^(content|html|description|caption)$/i.test(key)) return sanitizeStructuredHtml(value);
+        return clampPlainText(value, 2000);
+    }
+    if (Array.isArray(value)) return value.slice(0, 500).map(v => normalizeStructuredValue(v, key));
+    if (value && typeof value === 'object') {
+        const out = {};
+        for (const [k, v] of Object.entries(value).slice(0, 100)) {
+            if (k === '__proto__' || k === 'prototype' || k === 'constructor') continue;
+            out[k] = normalizeStructuredValue(v, k);
+        }
+        return out;
+    }
+    return value;
+}
+
+function normalizeStructuredAttr(attrName, raw) {
+    if (STRUCTURED_TEXT_ATTRS.has(attrName)) return clampPlainText(raw, 4000);
+    if (!STRUCTURED_JSON_ATTRS.has(attrName)) return null;
+    if (!raw || raw.length > 512 * 1024) return null;
+    let parsed;
+    try {
+        parsed = JSON.parse(raw);
+    } catch (_) {
+        return null;
+    }
+    return JSON.stringify(normalizeStructuredValue(parsed));
+}
+
 let hooksInstalled = false;
 
 if (!hooksInstalled) {
@@ -58,6 +105,18 @@ if (!hooksInstalled) {
         }
 
         if (name.startsWith('data-')) {
+            if (STRUCTURED_JSON_ATTRS.has(name) || STRUCTURED_TEXT_ATTRS.has(name)) {
+                const normalized = normalizeStructuredAttr(name, raw);
+                if (normalized == null) {
+                    data.keepAttr = false;
+                    data.forceKeepAttr = false;
+                } else {
+                    data.attrValue = normalized;
+                    data.keepAttr = true;
+                    data.forceKeepAttr = true;
+                }
+                return;
+            }
             const allowedDataAttrs = [
                 'data-type', 'data-latex', 'data-src', 'data-alt', 'data-caption', 'data-width', 'data-align', 'data-url',
                 'data-title', 'data-description', 'data-thumbnail', 'data-id', 'data-icon', 'data-checked', 'data-callout-type',
@@ -97,13 +156,6 @@ if (!hooksInstalled) {
 
         if (name === 'data-align') {
             data.attrValue = sanitizeBlockAlign(raw, 'center');
-            return;
-        }
-
-        if (name === 'data-columns') {
-            data.attrValue = raw;
-            data.keepAttr = true;
-            data.forceKeepAttr = true;
             return;
         }
 

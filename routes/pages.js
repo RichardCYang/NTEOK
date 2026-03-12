@@ -934,14 +934,16 @@ module.exports = (dependencies) => {
         const id = req.params.id;
         const userId = req.user.id;
         try {
-           	const row = await pagesRepo.getPageByIdForUser({ userId, pageId: id });
+            const row = await pagesRepo.getPageByIdForUser({ userId, pageId: id });
             if (!row) return res.status(404).json({ error: "Not found" });
+            const isEnc = (row.is_encrypted === 1);
             res.json({
-                id: row.id, title: row.title || "제목 없음", content: sanitizeHtmlContent(row.content || "<p></p>"),
-                encryptionSalt: row.encryption_salt, encryptedContent: row.encrypted_content,
+                id: row.id, title: row.title || "제목 없음", content: isEnc ? "" : sanitizeHtmlContent(row.content || "<p></p>"),
+                encryptionSalt: isEnc ? row.encryption_salt : null,
+                encryptedContent: isEnc ? row.encrypted_content : null,
                 createdAt: toIsoString(row.created_at), updatedAt: toIsoString(row.updated_at),
                 parentId: row.parent_id, sortOrder: row.sort_order, storageId: row.storage_id,
-                isEncrypted: row.is_encrypted ? true : false, shareAllowed: row.share_allowed ? true : false,
+                isEncrypted: isEnc, shareAllowed: row.share_allowed ? true : false,
                 userId: row.user_id, icon: row.icon || null, coverImage: row.cover_image || null,
                 coverPosition: row.cover_position || 50, horizontalPadding: row.horizontal_padding || null
             });
