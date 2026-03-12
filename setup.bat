@@ -68,9 +68,6 @@ for /f "delims=" %%a in ('powershell -NoProfile -Command "$bytes = New-Object By
 :: CSRF HMAC 키 생성 (CSPRNG 사용)
 for /f "delims=" %%a in ('powershell -NoProfile -Command "$bytes = New-Object Byte[] 32; (New-Object System.Security.Cryptography.RNGCryptoServiceProvider).GetBytes($bytes); [System.BitConverter]::ToString($bytes).Replace('-','').ToLowerInvariant()"') do set "CSRF_KEY=%%a"
 
-:: 공유 댓글 CSRF SECRET 생성
-for /f "delims=" %%a in ('powershell -NoProfile -Command "$bytes = New-Object Byte[] 32; (New-Object System.Security.Cryptography.RNGCryptoServiceProvider).GetBytes($bytes); [System.BitConverter]::ToString($bytes).Replace('-','').ToLowerInvariant()"') do set "SHARED_CSRF_KEY=%%a"
-
 :: PROXY SECRET 생성
 for /f "delims=" %%a in ('powershell -NoProfile -Command "$bytes = New-Object Byte[] 32; (New-Object System.Security.Cryptography.RNGCryptoServiceProvider).GetBytes($bytes); [System.BitConverter]::ToString($bytes).Replace('-','').ToLowerInvariant()"') do set "PROXY_SECRET_KEY=%%a"
 
@@ -114,9 +111,6 @@ echo TOTP_SECRET_ENC_KEY=!TOTP_KEY! >> .env
 echo. >> .env
 echo # CSRF 토큰 서명용 HMAC 키 >> .env
 echo CSRF_HMAC_KEY=!CSRF_KEY! >> .env
-echo. >> .env
-echo # 공유 페이지 댓글 CSRF 서명용 키 >> .env
-echo SHARED_COMMENT_CSRF_SECRET=!SHARED_CSRF_KEY! >> .env
 echo. >> .env
 echo # 링크 미리보기 및 파비콘 프록시를 위한 HMAC 비밀키 >> .env
 echo PROXY_SECRET=!PROXY_SECRET_KEY! >> .env

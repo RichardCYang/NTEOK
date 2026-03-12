@@ -285,7 +285,6 @@ module.exports = (dependencies) => {
         logError,
         csrfMiddleware,
         requireRecentReauth,
-        generatePublishToken,
         coverUpload,
         editorImageUpload,
         fileUpload,
@@ -2040,129 +2039,6 @@ module.exports = (dependencies) => {
         } catch (error) {
             if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
             logError("POST /api/pages/:id/editor-image", error);
-            res.status(500).json({ error: "Failed" });
-        }
-    });
-
-    function isPageOwner(ownerUserId, currentUserId) {
-        return String(ownerUserId) === String(currentUserId);
-    }
-
-    function requirePageOwnerForPublish(existing, currentUserId, res) {
-        if (isPageOwner(existing.user_id, currentUserId)) return true;
-        console.warn(`[보안] 사용자 ${currentUserId}가 소유하지 않은 페이지(${existing.id || 'unknown'})의 공개 발행을 시도함`);
-        res.status(403).json({ error: "페이지 소유자만 공개 발행 링크를 조회/관리할 수 있습니다." });
-        return false;
-    }
-
-    router.get("/:id/publish", authMiddleware, async (req, res) => {
-        const id = req.params.id;
-        const userId = req.user.id;
-        try {
-            const existing = await loadPageForMutationOr404(userId, id, res);
-            if (!existing) return;
-            if (await forbidPrivateEncryptedPageMutation(id, userId, res)) return;
-
-            const permission = await storagesRepo.getPermission(userId, existing.storage_id);
-            if (!permission) return res.status(403).json({ error: "권한이 없습니다." });
-            if (existing.is_encrypted === 1) return res.json({ published: false });
-            if (!requirePageOwnerForPublish(existing, userId, res)) return;
-
-            const [pub] = await pool.execute(
-                `SELECT created_at, allow_comments, expires_at FROM page_publish_links WHERE page_id = ? AND owner_user_id = ? AND is_active = 1 AND (expires_at IS NULL OR expires_at > NOW()) LIMIT 1`,
-                [id, existing.user_id]
-            );
-            if (!pub.length) return res.json({ published: false });
-
-            const allowComments = pub[0].allow_comments === 1;
-            res.json({
-                published: true,
-                createdAt: toIsoString(pub[0].created_at),
-                expiresAt: pub[0].expires_at ? toIsoString(pub[0].expires_at) : null,
-                allowComments
-            });
-        } catch (e) {
-            logError("GET /api/pages/:id/publish", e);
-            res.status(500).json({ error: "Failed" });
-        }
-    });
-
-    router.post("/:id/publish", authMiddleware, csrfMiddleware, requireRecentReauth(10 * 60 * 1000), async (req, res) => {
-        const id = req.params.id;
-        const userId = req.user.id;
-        try {
-            const existing = await loadPageForMutationOr404(userId, id, res);
-            if (!existing) return;
-            if (await forbidPrivateEncryptedPageMutation(id, userId, res)) return;
-
-            const permission = await storagesRepo.getPermission(userId, existing.storage_id);
-            if (!permission) return res.status(403).json({ error: "권한이 없습니다." });
-            if (!requirePageOwnerForPublish(existing, userId, res)) return;
-            if (existing.is_encrypted === 1) return res.status(400).json({ error: "암호화된 페이지는 발행할 수 없습니다." });
-
-            const allowComments = req.body && req.body.allowComments === true;
-            const expiresDays = req.body && Number.isFinite(Number(req.body.expiresDays)) ? Number(req.body.expiresDays) : null;
-            
-            const now = new Date();
-            const nowStr = formatDateForDb(now);
-            let expiresAt = null;
-            if (expiresDays && expiresDays > 0) {
-                const exp = new Date(now.getTime() + expiresDays * 24 * 60 * 60 * 1000);
-                expiresAt = formatDateForDb(exp);
-            }
-
-            const [active] = await pool.execute(
-                `SELECT id FROM page_publish_links WHERE page_id = ? AND owner_user_id = ? AND is_active = 1 LIMIT 1`,
-                [id, existing.user_id]
-            );
-
-            if (active.length) {
-                await pool.execute(
-                    `UPDATE page_publish_links SET is_active = 0, updated_at = ? WHERE id = ?`,
-                    [nowStr, active[0].id]
-                );
-            }
-
-            const token = generatePublishToken();
-            const tokenHash = dependencies.hashToken(token);
-            await pool.execute(
-                `INSERT INTO page_publish_links (token, page_id, owner_user_id, is_active, allow_comments, expires_at, created_at, updated_at) VALUES (?, ?, ?, 1, ?, ?, ?, ?)`,
-                [tokenHash, id, existing.user_id, allowComments ? 1 : 0, expiresAt, nowStr, nowStr]
-            );
-
-            const sharedBase = String(process.env.SHARED_BASE_URL || "").replace(/\/$/, "");
-            if (process.env.NODE_ENV === "production" && !sharedBase) return res.status(503).json({ error: "공유 전용 도메인이 설정되지 않았습니다." });
-            const url = sharedBase ? `${sharedBase}/shared-page.html#${token}` : `/shared-page.html#${token}`;
-            res.setHeader("Cache-Control", "private, no-store, max-age=0, must-revalidate");
-            res.setHeader("Pragma", "no-cache");
-            res.setHeader("Expires", "0");
-            res.json({ published: true, token, url, allowComments, expiresAt: expiresAt ? toIsoString(new Date(expiresAt)) : null });
-        } catch (e) {
-            logError("POST /api/pages/:id/publish", e);
-            res.status(500).json({ error: "Failed" });
-        }
-    });
-
-    router.delete("/:id/publish", authMiddleware, csrfMiddleware, requireRecentReauth(10 * 60 * 1000), async (req, res) => {
-        const id = req.params.id;
-        const userId = req.user.id;
-        try {
-            const existing = await loadPageForMutationOr404(userId, id, res);
-            if (!existing) return;
-            if (await forbidPrivateEncryptedPageMutation(id, userId, res)) return;
-
-            const permission = await storagesRepo.getPermission(userId, existing.storage_id);
-            if (!permission) return res.status(403).json({ error: "권한이 없습니다." });
-            if (!requirePageOwnerForPublish(existing, userId, res)) return;
-
-            const nowStr = formatDateForDb(new Date());
-            await pool.execute(
-                `UPDATE page_publish_links SET is_active = 0, updated_at = ? WHERE page_id = ? AND owner_user_id = ? AND is_active = 1`,
-                [nowStr, id, existing.user_id]
-            );
-            res.json({ ok: true });
-        } catch (e) {
-            logError("DELETE /api/pages/:id/publish", e);
             res.status(500).json({ error: "Failed" });
         }
     });

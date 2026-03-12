@@ -1163,10 +1163,6 @@ body {
     background-color: var(--item-hover-bg-color);
 }
 
-.mode-toggle-btn.published {
-    color: var(--point-color);
-}
-
 .danger-button {
     border: none;
     border-radius: 3px;
@@ -3219,19 +3215,6 @@ body {
 
 .settings-controls:has(> button.settings-button) .settings-description {
     text-align: right;
-}
-
-#publish-btn {
-    transition: background-color 0.2s ease;
-}
-
-#publish-btn.published {
-    background-color: #16a34a;
-    color: white;
-}
-
-#publish-btn.published:hover {
-    background-color: #15803d;
 }
 
 #login-logs-modal table {

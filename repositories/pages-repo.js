@@ -260,11 +260,6 @@ module.exports = ({ pool, pageSqlPolicy }) => {
                 deletableIds
             );
 
-            await updateByIdInBatches(
-                `UPDATE page_publish_links SET is_active = 0, updated_at = NOW() WHERE is_active = 1 AND page_id IN`,
-                deletableIds
-            );
-
             return { deletedPageIds: deletableIds, keptPageIds: keptIds || [] };
         },
 

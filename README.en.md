@@ -79,7 +79,6 @@ Self-Hostable Web-Based Note-Taking Application
 - **Data Export**: Convert page content to HTML format
 - **Data Import**: Recover and restore previous backup data
 - **PDF Export**: Convert page content to PDF format
-- **Page Publishing**: Share pages via public links (read-only)
 
 ### Real-time Synchronization
 - **WebSocket-based Sync**: Real-time page change synchronization
@@ -308,10 +307,6 @@ If HTTPS certificate issuance fails, it automatically falls back to HTTP mode:
 - `GET /api/themes` - Get user theme
 - `PUT /api/themes` - Change theme setting
 
-### Published Pages
-- `GET /api/pages/:id/publish` - Get publish status
-- `POST /api/pages/:id/publish` - Create publish link
-
 ---
 
 ## Security Considerations
@@ -391,7 +386,6 @@ NTEOK/
 │   ├── index.html         # Main application (after login)
 │   ├── login.html         # Login page
 │   ├── register.html      # Registration page
-│   ├── shared-page.html   # Public page view
 │   ├── css/
 │   │   ├── main.css       # Main styles
 │   │   ├── login.css      # Login styles
@@ -415,9 +409,7 @@ NTEOK/
 │       ├── account-manager.js       # Account management
 │       ├── cover-manager.js         # Cover image management
 │       ├── drag-handle-extension.js # Drag handle extension
-│       ├── publish-manager.js       # Page publishing management
 │       ├── subpages-manager.js      # Page hierarchy management
-│       ├── shared-page.js           # Public page view logic
 │       ├── login-logs-manager.js    # Login logs management
 │       ├── board-node.js            # Board view block
 │       ├── callout-node.js          # Callout block

@@ -78,12 +78,6 @@ import {
     updateCoverButtonsVisibility
 } from './cover-manager.js';
 import {
-    initPublishManager,
-    bindPublishEvents,
-    checkPublishStatus,
-    updatePublishButton
-} from './publish-manager.js';
-import {
     bindLoginLogsModal
 } from './login-logs-manager.js';
 import {
@@ -291,7 +285,6 @@ async function init() {
             }
         });
         initCoverManager(appState);
-        initPublishManager(appState);
         initSubpagesManager(appState);
         initCommentsManager(appState);
         initIconPicker(appState);
@@ -334,7 +327,6 @@ async function init() {
         bindEncryptionModal();
         bindDecryptionModal();
         bindMobileSidebar();
-        bindPublishEvents();
         bindTotpModals();
         bindPasskeyModals();
         bindAccountManagementButtons();

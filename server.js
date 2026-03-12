@@ -1454,38 +1454,6 @@ async function initDb() {
     `);
 
     await pool.execute(`
-        CREATE TABLE IF NOT EXISTS page_publish_links (
-            id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
-            token VARCHAR(64) NOT NULL UNIQUE,
-            page_id VARCHAR(64) NOT NULL,
-            owner_user_id INT NOT NULL,
-            is_active TINYINT(1) NOT NULL DEFAULT 1,
-            allow_comments TINYINT(1) NOT NULL DEFAULT 0,
-            expires_at DATETIME NULL,
-            created_at DATETIME NOT NULL,
-            updated_at DATETIME NOT NULL,
-            CONSTRAINT fk_page_publish_links_page
-                FOREIGN KEY (page_id)
-                REFERENCES pages(id)
-                ON DELETE CASCADE,
-            CONSTRAINT fk_page_publish_links_owner
-                FOREIGN KEY (owner_user_id)
-                REFERENCES users(id)
-                ON DELETE CASCADE,
-            INDEX idx_token_active (token, is_active),
-            INDEX idx_page_id (page_id),
-            INDEX idx_expires_at (expires_at)
-        ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
-    `);
-
-    await pool.execute(
-        `UPDATE page_publish_links ppl
-         JOIN pages p ON p.id = ppl.page_id
-         SET ppl.is_active = 0, ppl.updated_at = NOW()
-         WHERE ppl.is_active = 1 AND p.deleted_at IS NOT NULL`
-    );
-
-    await pool.execute(`
         CREATE TABLE IF NOT EXISTS login_logs (
             id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
             user_id INT NULL,
@@ -1758,10 +1726,6 @@ function generateShareToken() {
     return crypto.randomBytes(32).toString('hex');
 }
 
-function generatePublishToken() {
-    return crypto.randomBytes(32).toString('hex');
-}
-
 function hashToken(token) {
     if (!token) return null;
     return crypto.createHash('sha256').update(String(token)).digest('hex');
@@ -1890,7 +1854,6 @@ app.use((req, res, next) => {
 
 app.use((req, res, next) => {
     const nonce = res.locals.cspNonce;
-    const isSharedPage = req.path === "/shared-page.html" || req.path.startsWith("/shared/");
     res.setHeader(
         "Content-Security-Policy",
         [
@@ -1902,12 +1865,10 @@ app.use((req, res, next) => {
             "form-action 'self'",
             `script-src 'nonce-${nonce}' 'strict-dynamic'`,
             `style-src-elem 'self' 'nonce-${nonce}' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://fonts.googleapis.com`,
-            isSharedPage ? "style-src-attr 'none'" : "style-src-attr 'self' 'unsafe-inline'",
+            "style-src-attr 'self' 'unsafe-inline'",
             "font-src 'self' https://cdnjs.cloudflare.com https://fonts.gstatic.com",
             "img-src 'self' data:",
-            "connect-src 'self'",
-            isSharedPage ? "require-trusted-types-for 'script'" : null,
-            isSharedPage ? "trusted-types shared-page" : null
+            "connect-src 'self'"
         ].filter(Boolean).join("; ") + ";"
     );
 
@@ -1945,36 +1906,6 @@ app.use("/api", generalLimiter);
 app.use("/api", (req, res, next) => {
     setNoStore(res);
     next();
-});
-
-app.get("/shared-page.html", (req, res) => {
-    const filePath = path.join(__dirname, "public", "shared-page.html");
-    fs.readFile(filePath, "utf8", (err, html) => {
-        if (err) return res.status(500).send("페이지 로드 실패");
-
-        const nonce = res.locals.cspNonce || "";
-        let out = html.replace(/__CSP_NONCE__/g, nonce);
-        out = out.replace(/<script\b(?![^>]*\bnonce=)([^>]*?)>/gi, `<script nonce="${nonce}"$1>`);
-        out = out.replace(/<style\b(?![^>]*\bnonce=)([^>]*?)>/gi, `<style nonce="${nonce}"$1>`);
-
-        if (out.includes("__IMPORTMAP_INTEGRITY__")) {
-            try {
-                const integrityPath = path.join(__dirname, "public", "importmap-integrity.json");
-                const raw = fs.readFileSync(integrityPath, "utf8").trim();
-                if (!raw) throw new Error("empty importmap integrity");
-                out = out.replace(/__IMPORTMAP_INTEGRITY__/g, raw);
-            } catch (e) {
-                console.error("무결성 맵 로드 실패:", e.message);
-                return res.status(500).send("무결성 매니페스트 누락");
-            }
-        }
-
-        res.setHeader("Content-Type", "text/html; charset=utf-8");
-        res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-        res.setHeader("Pragma", "no-cache");
-        res.setHeader("Expires", "0");
-        return res.send(out);
-    });
 });
 
 app.use(express.static(path.join(__dirname, "public"), {
@@ -2486,7 +2417,6 @@ function installGracefulShutdownHandlers(httpServer, pool, sanitizeHtmlContent) 
 			sanitizeHtmlContent,
 			generatePageId,
 			generateShareToken,
-			generatePublishToken,
 			wsConnections,
 			wsBroadcastToPage,
 			wsBroadcastToStorage,

@@ -265,7 +265,6 @@ module.exports = (dependencies) => {
         toIsoString,
         sanitizeInput,
 		sanitizeHtmlContent,
-        generatePublishToken,
         generatePageId,
         formatDateForDb,
         logError,
@@ -290,9 +289,6 @@ module.exports = (dependencies) => {
         return new Promise(resolve => setTimeout(resolve, ms));
     }
 
-    const KEEP_IMPORT_PUBLISH_TOKENS = String(process.env.KEEP_IMPORT_PUBLISH_TOKENS || '').toLowerCase() === 'true';
-    if (KEEP_IMPORT_PUBLISH_TOKENS) console.warn('[security] KEEP_IMPORT_PUBLISH_TOKENS is deprecated and ignored. Imported pages now start unpublished.');
-
     function normalizeStorageName(rawName) {
         if (typeof rawName !== 'string') rawName = '';
         let name = rawName.trim();
@@ -307,31 +303,6 @@ module.exports = (dependencies) => {
 
         if (!name) name = '가져온 저장소';
         return name;
-    }
-
-    function isValidPublishToken(token) {
-        return typeof token === 'string' && /^[a-f0-9]{64}$/i.test(token);
-    }
-
-    async function insertPublishLinkWithRetry(connection, { token, pageId, ownerUserId, createdAt, updatedAt, allowComments = 0, isActive = 0 }) {
-        let t = token;
-        for (let i = 0; i < 5; i++) {
-            try {
-                await connection.execute(
-                    `INSERT INTO page_publish_links (token, page_id, owner_user_id, is_active, created_at, updated_at, allow_comments)
-                     VALUES (?, ?, ?, ?, ?, ?, ?)` ,
-                    [t, pageId, ownerUserId, isActive ? 1 : 0, createdAt, updatedAt, allowComments]
-                );
-                return t;
-            } catch (e) {
-                if (e && (e.code === 'ER_DUP_ENTRY' || e.errno === 1062)) {
-                    t = generatePublishToken();
-                    continue;
-                }
-                throw e;
-            }
-        }
-        throw new Error('PUBLISH_TOKEN_INSERT_RETRY_EXCEEDED');
     }
 
     const DEFAULT_COVERS = [
@@ -588,7 +559,7 @@ function ensureUniqueDestPath(targetDir, filename) {
         return defaultValue;
     }
 
-    function normalizePageRowForBackupExport(pageRow, publishInfo) {
+    function normalizePageRowForBackupExport(pageRow) {
         const isEncrypted = normalizeBackupBoolean(pageRow.is_encrypted, false);
         return {
             id: pageRow.id,
@@ -607,11 +578,7 @@ function ensureUniqueDestPath(targetDir, filename) {
             shareAllowed: normalizeBackupBoolean(pageRow.share_allowed, false),
 
             createdAt: toIsoString(pageRow.created_at) || pageRow.created_at,
-            updatedAt: toIsoString(pageRow.updated_at) || pageRow.updated_at,
-
-            wasPublished: Boolean(publishInfo?.token),
-            publishedAt: publishInfo?.createdAt || null,
-            allowComments: publishInfo?.allowComments || 0
+            updatedAt: toIsoString(pageRow.updated_at) || pageRow.updated_at
         };
     }
 
@@ -626,9 +593,6 @@ function ensureUniqueDestPath(targetDir, filename) {
             shareAllowed: pageData.shareAllowed || false,
             coverImage: pageData.coverImage || null,
             coverPosition: pageData.coverPosition || 50,
-            wasPublished: pageData.wasPublished === true,
-            publishedAt: pageData.publishedAt || null,
-            allowComments: pageData.allowComments || 0,
             isCoverImage: pageData.coverImage && !DEFAULT_COVERS.includes(pageData.coverImage) ? true : false
         };
 
@@ -766,13 +730,6 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
                 coverImage: coverImage || metadata?.coverImage || null,
                 coverPosition: metadata?.coverPosition || 50,
                 sortOrder: metadata?.sortOrder || 0,
-                publishToken: metadata?.publishToken || null,
-                wasPublished: normalizeBackupBoolean(
-                    metadata?.wasPublished,
-                    Boolean(metadata?.publishToken)
-                ),
-                publishedAt: metadata?.publishedAt || null,
-                allowComments: metadata?.allowComments || 0,
                 isCoverImage: metadata?.isCoverImage || false
             };
         } catch (error) {
@@ -789,9 +746,6 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
                 coverPosition: 50,
                 parentId: null,
                 sortOrder: 0,
-                publishToken: null,
-                publishedAt: null,
-                allowComments: 0,
                 isCoverImage: false
             };
         }
@@ -866,20 +820,10 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
                 try { console.warn('[backup export] plaintext flush failed (continue):', e?.message || e); } catch (_) {}
             }
 
-			const { storages, pages, publishes } = await backupRepo.getExportRows(userId);
+            const { storages, pages } = await backupRepo.getExportRows(userId);
 
             if (!storages || storages.length === 0)
                 return res.status(404).json({ error: '내보낼 데이터가 없습니다.' });
-
-            const publishMap = new Map();
-
-			(publishes || []).forEach(pub => {
-				publishMap.set(pub.page_id, {
-					token: pub.token,
-					createdAt: toIsoString(pub.created_at),
-					allowComments: pub.allow_comments || 0
-				});
-			});
 
             const archive = archiver('zip', {
                 zlib: { level: 9 } 
@@ -985,8 +929,7 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
                     fallback: 'page'
                 });
 
-                const publishInfo = publishMap.get(page.id);
-                const pageData = normalizePageRowForBackupExport(page, publishInfo);
+                const pageData = normalizePageRowForBackupExport(page);
 
                 const html = convertPageToHTML(pageData);
                 appendTrackedBuffer(`pages/${storageFolderName}/${pageFileName}.html`, html);
@@ -1163,7 +1106,6 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
             const storageEncryptionMetaById = new Map(); 
             const oldToNewPageMap = new Map(); 
             const importedPages = []; 
-            let skippedPublishedLinks = 0;
             const imgFilenameMap = new Map();       
             const coverFilenameMap = new Map();     
             const paperclipFilenameMap = new Map(); 
@@ -1322,8 +1264,6 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
                      e2eeStateBuf, e2eeStateBuf ? nowStr : null,
                      pageData.sortOrder || 0, nowStr, nowStr, pageData.isEncrypted ? 1 : 0, pageData.shareAllowed ? 1 : 0, safeIcon, coverImage, pageData.coverPosition || 50]
                 );
-
-                if (pageData.publishToken || pageData.wasPublished) skippedPublishedLinks++;
 
                 totalPages++;
             }
@@ -1524,8 +1464,7 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
                 storagesCount: workspaceMap.size,
                 pagesCount: totalPages,
                 imagesCount: totalImages,
-                paperclipsCount: totalPaperclips,
-                skippedPublishedLinks
+                paperclipsCount: totalPaperclips
             });
         } catch (error) {
             const incidentId = crypto.randomBytes(4).toString("hex").toUpperCase();

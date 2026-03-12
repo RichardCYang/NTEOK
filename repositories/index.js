@@ -5,7 +5,6 @@ module.exports = ({ pool, pageSqlPolicy }) => {
 
     const usersRepo = require('./users-repo')({ pool });
     const storagesRepo = require('./storages-repo')({ pool });
-    const pagePublishLinksRepo = require('./page-publish-links-repo')({ pool });
     const pagesRepo = require('./pages-repo')({ pool, pageSqlPolicy });
     const userKeysRepo = require('./user-keys-repo')({ pool });
     const storageShareKeysRepo = require('./storage-share-keys-repo')({ pool });
@@ -18,14 +17,12 @@ module.exports = ({ pool, pageSqlPolicy }) => {
 
     const backupRepo = require('./backup-repo')({
         storagesRepo,
-        pagesRepo,
-        pagePublishLinksRepo
+        pagesRepo
     });
 
     return {
         usersRepo,
         storagesRepo,
-        pagePublishLinksRepo,
         pagesRepo,
         userKeysRepo,
         storageShareKeysRepo,

@@ -1,12 +1,10 @@
 
 module.exports = ({
     storagesRepo,
-    pagesRepo,
-    pagePublishLinksRepo
+    pagesRepo
 }) => {
     if (!storagesRepo) throw new Error("storagesRepo 필요");
     if (!pagesRepo) throw new Error("pagesRepo 필요");
-    if (!pagePublishLinksRepo) throw new Error("pagePublishLinksRepo 필요");
 
     return {
         async getExportRows(userId) {
@@ -18,15 +16,9 @@ module.exports = ({
                 return true;
             });
 
-            const pageIds = safePages.map(p => p.id);
-            const publishes = pageIds.length > 0 
-                ? await pagePublishLinksRepo.listActiveLinksForPageIds(pageIds)
-                : [];
-
             return {
                 storages,
-                pages: safePages,
-                publishes
+                pages: safePages
             };
         },
 

@@ -4,7 +4,6 @@ import * as api from './api-utils.js';
 import { loadAndRenderComments } from './comments-manager.js';
 import { startPageSync, stopPageSync, startStorageSync, stopStorageSync, flushPendingUpdates, syncEditorFromMetadata, onLocalEditModeChanged, updateAwarenessMode, flushE2eeState, requestImmediateSave } from './sync-manager.js';
 import { showCover, hideCover, updateCoverButtonsVisibility } from './cover-manager.js';
-import { checkPublishStatus, updatePublishButton } from './publish-manager.js';
 import { loadAndRenderSubpages, onEditModeChange } from './subpages-manager.js';
 import { sanitizeEditorHtml } from './sanitize.js';
 import { EXAMPLE_CONTENT } from './editor.js';
@@ -251,8 +250,6 @@ export async function clearCurrentPage() {
         commentsContainer.innerHTML = "";
         commentsContainer.classList.add("hidden");
     }
-
-    updatePublishButton();
 }
 
 export async function loadPage(id) {
@@ -335,7 +332,6 @@ export async function loadPage(id) {
             stopPageSync();
         }
 
-        await checkPublishStatus(page.id);
         await loadAndRenderSubpages(page.id);
         await loadAndRenderComments(page.id);
 
@@ -478,7 +474,6 @@ export async function toggleEditMode() {
     }
 
     updateCoverButtonsVisibility();
-    updatePublishButton();
 }
 
 export function bindModeToggle() {
