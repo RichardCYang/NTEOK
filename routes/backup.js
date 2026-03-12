@@ -1,3 +1,5 @@
+'use strict';
+
 const express = require('express');
 const router = express.Router();
 const archiver = require('archiver');
@@ -1039,7 +1041,7 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
         const importLockKey = `backup-import:${userId}`;
         const importLockValue = crypto.randomBytes(16).toString('hex');
 
-        let connection;
+        let connection = null;
         let extractDir;
         const stagingFiles = [];
         try {

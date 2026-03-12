@@ -1,3 +1,5 @@
+'use strict';
+
 require('dotenv').config();
 
 const express = require("express");
@@ -1121,16 +1123,11 @@ function logError(context, error) {
 }
 
 async function verifyCsrfToken(req) {
-	const guestAllowedPaths = [
-		'/comments/shared/',
-		'/auth/login',
-		'/auth/register',
-		'/passkey/login/',
-		'/passkey/authenticate/',
-		'/totp/verify-login',
-		'/totp/verify-backup-code'
-	];
-	if (guestAllowedPaths.some(p => req.path.startsWith(p))) return true;
+    const normalizedPath = req.path && req.path.length > 1 && req.path.endsWith('/') ? req.path.slice(0, -1) : req.path;
+    const exactGuestAllowedPaths = new Set(['/auth/login', '/auth/register', '/totp/verify-login', '/totp/verify-backup-code']);
+    const guestAllowedPrefixes = ['/passkey/login/', '/passkey/authenticate/'];
+    if (exactGuestAllowedPaths.has(normalizedPath)) return true;
+    if (guestAllowedPrefixes.some(p => normalizedPath.startsWith(p))) return true;
 
 	const tokenFromHeader = req.headers["x-csrf-token"];
 	const tokenFromCookie = req.cookies[CSRF_COOKIE_NAME];
@@ -2060,43 +2057,6 @@ app.get('/imgs/:userId/:filename', authMiddleware, async (req, res) => {
 
         if (rows.length > 0) return sendSafeImage(res, filePath);
 
-		for (const [pageId, connections] of wsConnections.pages) {
-			const myConn = Array.from(connections).find(c => c.userId === currentUserId);
-			if (!myConn) continue
-
-			const docInfo = yjsDocuments.get(pageId);
-			if (!docInfo) continue
-
-			if (!(await canUseLiveAssetFallback({
-				pageId,
-				viewerUserId: currentUserId,
-				ownerUserId: requestedUserId,
-				myConn,
-				docInfo
-			}))) continue
-
-			const ydoc = docInfo.ydoc;
-
-			let hasVerifiedImgRef = null;
-			const ensureVerifiedImgRef = async () => {
-				if (hasVerifiedImgRef !== null) return hasVerifiedImgRef;
-				const [refRows] = await pool.execute(
-					`SELECT id FROM page_file_refs
-					  WHERE page_id = ? AND owner_user_id = ? AND stored_filename = ? AND file_type = 'imgs'
-					  LIMIT 1`,
-					[pageId, requestedUserId, sanitizedFilename]
-				);
-				hasVerifiedImgRef = refRows.length > 0;
-				return hasVerifiedImgRef;
-			};
-
-			const content = ydoc.getMap('metadata').get('content') || '';
-			if (content.includes(imageUrl) && await ensureVerifiedImgRef()) return sendSafeImage(res, filePath);
-
-			const xmlContent = ydoc.getXmlFragment('prosemirror').toString();
-			if (xmlContent.includes(imageUrl) && await ensureVerifiedImgRef()) return sendSafeImage(res, filePath);
-		}
-
 		console.warn(`[보안] 사용자 ${currentUserId}이(가) 권한 없이 이미지 접근 시도: ${imagePath}`);
 		return res.status(403).json({ error: '접근 권한이 없습니다.' });
 
@@ -2173,48 +2133,6 @@ app.get('/paperclip/:userId/:filename', authMiddleware, async (req, res) => {
 			const downloadName = getDownloadName();
 			return sendSafeDownload(res, filePath, downloadName);
         }
-
-		for (const [pageId, connections] of wsConnections.pages) {
-			const myConn = Array.from(connections).find(c => c.userId === currentUserId);
-			if (!myConn) continue
-
-			const docInfo = yjsDocuments.get(pageId);
-			if (!docInfo) continue
-
-			if (!(await canUseLiveAssetFallback({
-				pageId,
-				viewerUserId: currentUserId,
-				ownerUserId: requestedUserId,
-				myConn,
-				docInfo
-			}))) continue
-
-			const ydoc = docInfo.ydoc;
-			let hasVerifiedFileRef = null;
-			const ensureVerifiedFileRef = async () => {
-				if (hasVerifiedFileRef !== null) return hasVerifiedFileRef;
-				const [refRows] = await pool.execute(
-					`SELECT id FROM page_file_refs
-					  WHERE page_id = ? AND owner_user_id = ? AND stored_filename = ? AND file_type = 'paperclip'
-					  LIMIT 1`,
-					[pageId, requestedUserId, sanitizedFilename]
-				);
-				hasVerifiedFileRef = refRows.length > 0;
-				return hasVerifiedFileRef;
-			};
-
-			const content = ydoc.getMap('metadata').get('content') || '';
-			if (content.includes(fileUrlPart) && await ensureVerifiedFileRef()) {
-				const downloadName = getDownloadName();
-				return sendSafeDownload(res, filePath, downloadName);
-			}
-
-			const xmlContent = ydoc.getXmlFragment('prosemirror').toString();
-			if (xmlContent.includes(fileUrlPart) && await ensureVerifiedFileRef()) {
-				const downloadName = getDownloadName();
-				return sendSafeDownload(res, filePath, downloadName);
-			}
-		}
 
         console.warn(`[보안] 사용자 ${currentUserId}이(가) 권한 없이 파일 접근 시도: ${fileUrlPart}`);
         return res.status(403).json({ error: '접근 권한이 없습니다.' });

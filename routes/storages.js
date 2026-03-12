@@ -1,3 +1,5 @@
+'use strict';
+
 const express = require('express');
 const router = express.Router();
 const crypto = require('crypto');
@@ -359,6 +361,7 @@ module.exports = (dependencies) => {
     });
 
     router.post('/:id/collaborators', authMiddleware, csrfMiddleware, requireRecentReauth(5 * 60 * 1000), collaboratorMutationLimiter, async (req, res) => {
+        let connection = null;
         try {
             const userId = req.user.id;
             const storageId = req.params.id;
@@ -417,11 +420,11 @@ module.exports = (dependencies) => {
 
             res.json({ success: true });
         } catch (error) {
-            if (connection) await connection.rollback();
+            try { if (connection) await connection.rollback(); } catch (_) {}
             logError('POST /api/storages/:id/collaborators', error);
             res.status(500).json({ error: '참여자 추가에 실패했습니다.' });
         } finally {
-            if (connection) connection.release();
+            try { if (connection) connection.release(); } catch (_) {}
         }
     });
 
