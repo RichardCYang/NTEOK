@@ -429,10 +429,12 @@ module.exports = (dependencies) => {
     });
 
     router.delete('/:id/collaborators/:targetUserId', authMiddleware, csrfMiddleware, requireRecentReauth(5 * 60 * 1000), collaboratorMutationLimiter, async (req, res) => {
+        let connection = null;
         try {
             const userId = req.user.id;
             const storageId = req.params.id;
             const targetUserId = req.params.targetUserId;
+            const { encryptionSalt, dekVersion, shares } = req.body || {};
 
             const storage = await storagesRepo.getStorageByIdForUser(userId, storageId);
             if (!requireStorageOwner(storage, res)) return;
@@ -440,18 +442,43 @@ module.exports = (dependencies) => {
             if (String(targetUserId) === String(storage.owner_id)) return res.status(400).json({ error: '저장소 소유자는 제거할 수 없습니다.' });
             if (String(targetUserId) === String(userId)) return res.status(400).json({ error: '저장소 소유자는 자기 자신을 제거할 수 없습니다.' });
 
-            await storagesRepo.removeCollaborator(storageId, targetUserId);
+            connection = await pool.getConnection();
+            await connection.beginTransaction();
+
+            await storagesRepo.removeCollaborator(storageId, targetUserId, connection);
 
             if (Number(storage.is_encrypted) === 1 && Number(storage.dek_version) === 1) {
-                try { await storageShareKeysRepo.deleteWrappedDek(storageId, targetUserId); } catch (e) { logError('wrapped DEK 삭제 실패', e); }
+                if (!isValidBase64(encryptionSalt, 64) || Number(dekVersion) !== 1 || !Array.isArray(shares) || shares.length === 0) {
+                    await connection.rollback();
+                    return res.status(409).json({ error: '암호화 저장소의 협업 해제에는 재암호화(rekey) 정보가 필요합니다.' });
+                }
+
+                const filteredShares = shares.filter(s => Number(s.userId) !== Number(targetUserId));
+                await storagesRepo.rekeyStorage({
+                    userId,
+                    storageId,
+                    encryptionSalt,
+                    dekVersion,
+                    shares: filteredShares
+                }, connection);
+            } else {
+                await connection.execute(
+                    `DELETE FROM storage_share_keys WHERE storage_id = ? AND shared_with_user_id = ?`,
+                    [storageId, targetUserId]
+                );
             }
+
+            await connection.commit();
 
             try { if (typeof wsKickUserFromStorage === 'function') wsKickUserFromStorage(storageId, targetUserId, 1008, '저장소 접근 권한이 회수되었습니다.'); } catch (e) {}
 
             res.json({ success: true });
         } catch (error) {
+            try { if (connection) await connection.rollback(); } catch (_) {}
             logError('DELETE /api/storages/:id/collaborators/:targetUserId', error);
             res.status(500).json({ error: '참여자 삭제에 실패했습니다.' });
+        } finally {
+            try { if (connection) connection.release(); } catch (_) {}
         }
     });
 

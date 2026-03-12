@@ -95,31 +95,32 @@ module.exports = ({ pool }) => {
             );
         },
 
-        async removeCollaborator(storageId, targetUserId) {
+        async removeCollaborator(storageId, targetUserId, conn = null) {
             const sid = String(storageId || '').trim();
             const uid = Number(targetUserId);
             if (!sid || !Number.isFinite(uid)) throw new Error('Invalid arguments');
 
-            const conn = await pool.getConnection();
+            const ownTx = !conn;
+            const tx = conn || await pool.getConnection();
             try {
-                await conn.beginTransaction();
+                if (ownTx) await tx.beginTransaction();
 
-                const [stRows] = await conn.execute(
+                const [stRows] = await tx.execute(
                     `SELECT user_id FROM storages WHERE id = ? FOR UPDATE`,
                     [sid]
                 );
                 if (stRows.length === 0) {
-                    await conn.rollback();
+                    if (ownTx) await tx.rollback();
                     return { ok: false, reason: 'storage-not-found' };
                 }
                 const ownerId = stRows[0].user_id;
 
                 if (ownerId === uid) {
-                    await conn.rollback();
+                    if (ownTx) await tx.rollback();
                     return { ok: false, reason: 'cannot-remove-owner' };
                 }
 
-                const [pageRows] = await conn.execute(
+                const [pageRows] = await tx.execute(
                     `SELECT id FROM pages WHERE storage_id = ? AND user_id = ?`,
                     [sid, uid]
                 );
@@ -127,31 +128,31 @@ module.exports = ({ pool }) => {
 
                 if (pageIds.length > 0) {
                     await updatePagesInBatches(
-                        conn,
+                        tx,
                         `UPDATE pages SET user_id = ?, updated_at = NOW() WHERE id IN`,
                         pageIds,
                         [ownerId]
                     );
                     await updatePagesInBatches(
-                        conn,
+                        tx,
                         `UPDATE updates_history SET user_id = ? WHERE storage_id = ? AND user_id = ? AND page_id IN`,
                         pageIds,
                         [ownerId, sid, uid]
                     );
                 }
 
-                await conn.execute(
+                await tx.execute(
                     `DELETE FROM storage_shares WHERE storage_id = ? AND shared_with_user_id = ?`,
                     [sid, uid]
                 );
 
-                await conn.commit();
-                return { ok: true, movedPages: pageIds.length };
+                if (ownTx) await tx.commit();
+                return { ok: true, movedPages: pageIds.length, ownerId, pageIds };
             } catch (e) {
-                try { if (conn) await conn.rollback(); } catch (_) {}
+                try { if (ownTx && tx) await tx.rollback(); } catch (_) {}
                 throw e;
             } finally {
-                try { conn.release(); } catch (_) {}
+                try { if (ownTx && tx) tx.release(); } catch (_) {}
             }
         },
 

@@ -2070,16 +2070,6 @@ app.get('/covers/:userId/:filename', authMiddleware, async (req, res) => {
         const ALLOWED_COVER_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp']);
         if (!ALLOWED_COVER_EXTS.has(ext)) return res.status(400).json({ error: '지원하지 않는 파일 형식입니다.' });
 
-        const filePath = path.join(__dirname, 'covers', String(requestedUserId), sanitizedFilename);
-
-        if (!fs.existsSync(filePath)) {
-            return res.status(404).json({ error: '파일을 찾을 수 없습니다.' });
-        }
-
-        if (requestedUserId === currentUserId) {
-            return sendSafeImage(res, filePath);
-        }
-
         const coverPath = `${requestedUserId}/${sanitizedFilename}`;
         const [rows] = await pool.execute(
             `SELECT p.id
@@ -2089,22 +2079,20 @@ app.get('/covers/:userId/:filename', authMiddleware, async (req, res) => {
                  ON s.id = ss_cur.storage_id AND ss_cur.shared_with_user_id = ?
               WHERE p.cover_image = ?
                 AND p.deleted_at IS NULL
-                -- 보안패치: 파일 소유자와 참조하는 페이지 소유자 일치
                 AND p.user_id = ?
-                -- 보안패치: 암호화 + 공유불가 페이지 자산은 타 사용자에게 노출 금지
                 AND NOT (p.is_encrypted = 1 AND p.share_allowed = 0 AND p.user_id != ?)
-                -- 현재 사용자가 이 storage를 소유하거나 공유받았는지
                 AND (s.user_id = ? OR ss_cur.shared_with_user_id IS NOT NULL)
               LIMIT 1`,
             [currentUserId, coverPath, requestedUserId, currentUserId, currentUserId]
         );
 
-        if (rows.length > 0) {
-            return sendSafeImage(res, filePath);
+        if (rows.length === 0) {
+            console.warn(`[보안] 사용자 ${currentUserId}이(가) 권한 없이 커버 이미지 접근 시도: ${coverPath}`);
+            return res.status(403).json({ error: '접근 권한이 없습니다.' });
         }
 
-        console.warn(`[보안] 사용자 ${currentUserId}이(가) 권한 없이 커버 이미지 접근 시도: ${coverPath}`);
-        return res.status(403).json({ error: '접근 권한이 없습니다.' });
+        if (!fs.existsSync(filePath)) return res.status(404).json({ error: '파일을 찾을 수 없습니다.' });
+        return sendSafeImage(res, filePath);
 
     } catch (error) {
         logError('GET /covers/:userId/:filename', error);
@@ -2132,16 +2120,6 @@ app.get('/imgs/:userId/:filename', authMiddleware, async (req, res) => {
         const ALLOWED_IMG_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp']);
         if (!ALLOWED_IMG_EXTS.has(ext)) return res.status(400).json({ error: '지원하지 않는 파일 형식입니다.' });
 
-        const filePath = path.join(__dirname, 'imgs', String(requestedUserId), sanitizedFilename);
-
-        if (!fs.existsSync(filePath)) {
-            return res.status(404).json({ error: '파일을 찾을 수 없습니다.' });
-        }
-
-        if (requestedUserId === currentUserId) {
-            return sendSafeImage(res, filePath);
-        }
-
         const imagePath = `${requestedUserId}/${sanitizedFilename}`;
         const imageUrl = `/imgs/${imagePath}`;
         const [rows] = await pool.execute(
@@ -2168,10 +2146,13 @@ app.get('/imgs/:userId/:filename', authMiddleware, async (req, res) => {
             ]
         );
 
-        if (rows.length > 0) return sendSafeImage(res, filePath);
+        if (rows.length === 0) {
+            console.warn(`[보안] 사용자 ${currentUserId}이(가) 권한 없이 이미지 접근 시도: ${imagePath}`);
+            return res.status(403).json({ error: '접근 권한이 없습니다.' });
+        }
 
-		console.warn(`[보안] 사용자 ${currentUserId}이(가) 권한 없이 이미지 접근 시도: ${imagePath}`);
-		return res.status(403).json({ error: '접근 권한이 없습니다.' });
+        if (!fs.existsSync(filePath)) return res.status(404).json({ error: '파일을 찾을 수 없습니다.' });
+        return sendSafeImage(res, filePath);
 
     } catch (error) {
         logError('GET /imgs/:userId/:filename', error);
@@ -2191,30 +2172,6 @@ app.get('/paperclip/:userId/:filename', authMiddleware, async (req, res) => {
         const sanitizedFilename = sanitizeFilenameComponent(req.params.filename, 200);
         if (!sanitizedFilename) {
             return res.status(400).json({ error: '잘못된 파일명입니다.' });
-        }
-
-        const filePath = path.join(__dirname, 'paperclip', String(requestedUserId), sanitizedFilename);
-
-        const getDownloadName = () => {
-            const raw = req.query?.name;
-            if (typeof raw === 'string' && raw.trim().length) {
-                let safe = sanitizeFilenameComponent(raw, 200);
-                if (safe && !path.extname(safe)) {
-                    const ext = sanitizeExtension(path.extname(sanitizedFilename));
-                    if (ext) safe += ext;
-                }
-                return safe || 'download';
-            }
-            return deriveDownloadNameFromStoredFilename(sanitizedFilename);
-        };
-
-        if (!fs.existsSync(filePath)) {
-            return res.status(404).json({ error: '파일을 찾을 수 없습니다.' });
-        }
-
-        if (requestedUserId === currentUserId) {
-			const downloadName = getDownloadName();
-			return sendSafeDownload(res, filePath, downloadName);
         }
 
         const fileUrlPart = `/paperclip/${requestedUserId}/${sanitizedFilename}`;
@@ -2242,13 +2199,14 @@ app.get('/paperclip/:userId/:filename', authMiddleware, async (req, res) => {
             ]
         );
 
-        if (rows.length > 0) {
-			const downloadName = getDownloadName();
-			return sendSafeDownload(res, filePath, downloadName);
+        if (rows.length === 0) {
+            console.warn(`[보안] 사용자 ${currentUserId}이(가) 권한 없이 파일 접근 시도: ${fileUrlPart}`);
+            return res.status(403).json({ error: '접근 권한이 없습니다.' });
         }
 
-        console.warn(`[보안] 사용자 ${currentUserId}이(가) 권한 없이 파일 접근 시도: ${fileUrlPart}`);
-        return res.status(403).json({ error: '접근 권한이 없습니다.' });
+        if (!fs.existsSync(filePath)) return res.status(404).json({ error: '파일을 찾을 수 없습니다.' });
+        const downloadName = getDownloadName();
+        return sendSafeDownload(res, filePath, downloadName);
 
     } catch (error) {
         logError('GET /paperclip/:userId/:filename', error);

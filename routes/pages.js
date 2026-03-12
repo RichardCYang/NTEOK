@@ -147,6 +147,17 @@ function fetchDocumentFromPinnedAddress(targetUrl, pinnedIp, isPrivateOrLocalIP)
     return new Promise((resolve, reject) => {
         const family = net.isIP(pinnedIp);
         if (!pinnedIp || family === 0) return reject(makeFetchError('INVALID_PINNED_IP', '유효하지 않은 IP 주소입니다.'));
+        let finished = false;
+        const settleResolve = (value) => {
+            if (finished) return;
+            finished = true;
+            resolve(value);
+        };
+        const settleReject = (err) => {
+            if (finished) return;
+            finished = true;
+            reject(err);
+        };
 
         const req = https.request({
             protocol: 'https:',
@@ -165,32 +176,32 @@ function fetchDocumentFromPinnedAddress(targetUrl, pinnedIp, isPrivateOrLocalIP)
                 'Connection': 'close'
             }
         }, (upstreamRes) => {
-            const remoteIp = upstreamRes.socket?.remoteAddress;
-            if (remoteIp && isPrivateOrLocalIP(remoteIp)) {
+            const remoteIp = normalizeIpLiteral(upstreamRes.socket?.remoteAddress);
+            const pinnedNorm = normalizeIpLiteral(pinnedIp);
+            if (!remoteIp || remoteIp !== pinnedNorm || isPrivateOrLocalIP(remoteIp)) {
                 upstreamRes.resume();
-                return reject(makeFetchError('BLOCKED_PRIVATE_IP', '차단된 내부 IP 주소입니다.'));
+                return settleReject(makeFetchError('PIN_MISMATCH', '검증된 대상 IP와 실제 연결 IP가 일치하지 않습니다.'));
             }
 
             const status = Number(upstreamRes.statusCode || 0);
             if (status >= 300 && status < 400) {
                 const location = String(upstreamRes.headers.location || '');
                 upstreamRes.resume();
-                return resolve({ type: 'redirect', location });
+                return settleResolve({ type: 'redirect', location });
             }
             if (status < 200 || status >= 400) {
                 upstreamRes.resume();
-                return reject(makeFetchError('UPSTREAM_BAD_STATUS', `대상 서버가 상태 코드 ${status}를 반환했습니다.`));
+                return settleReject(makeFetchError('UPSTREAM_BAD_STATUS', `대상 서버가 상태 코드 ${status}를 반환했습니다.`));
             }
 
             const contentType = String(upstreamRes.headers['content-type'] || '').toLowerCase();
             if (contentType && !contentType.includes('text/html') && !contentType.includes('application/xhtml+xml') && !contentType.includes('application/xml')) {
                 upstreamRes.resume();
-                return reject(makeFetchError('NOT_HTML', 'HTML 문서가 아닙니다.'));
+                return settleReject(makeFetchError('NOT_HTML', 'HTML 문서가 아닙니다.'));
             }
 
             const chunks = [];
             let total = 0;
-            let finished = false;
 
             upstreamRes.on('data', (chunk) => {
                 if (finished) return;
@@ -198,32 +209,30 @@ function fetchDocumentFromPinnedAddress(targetUrl, pinnedIp, isPrivateOrLocalIP)
                 chunks.push(chunk);
 
                 if (total > METADATA_FETCH_MAX_BYTES) {
-                    finished = true;
                     req.destroy(makeFetchError('TOO_LARGE', '데이터가 너무 큽니다.'));
                     return;
                 }
 
                 const partial = Buffer.concat(chunks.slice(-2)).toString('utf8');
                 if (partial.toLowerCase().includes('</head>')) {
-                    finished = true;
-                    resolve({ type: 'html', html: Buffer.concat(chunks).toString('utf8') });
+                    settleResolve({ type: 'html', html: Buffer.concat(chunks).toString('utf8') });
                     req.destroy();
                 }
             });
 
             upstreamRes.on('error', (err) => {
-                if (!finished) reject(err);
+                settleReject(err);
             });
 
             upstreamRes.on('end', () => {
-                if (!finished) resolve({ type: 'html', html: Buffer.concat(chunks).toString('utf8') });
+                settleResolve({ type: 'html', html: Buffer.concat(chunks).toString('utf8') });
             });
         });
 
         req.on('timeout', () => req.destroy(makeFetchError('ETIMEDOUT', '요청 시간이 초과되었습니다.')));
         req.on('error', (err) => {
-            if (err?.code === 'ECONNRESET' || finished) return;
-            reject(err);
+            if (finished && err?.code === 'ECONNRESET') return;
+            settleReject(err);
         });
         req.end();
     });
@@ -342,6 +351,12 @@ module.exports = (dependencies) => {
         if (a.size !== b.size) return false;
         for (const v of a) if (!b.has(v)) return false;
         return true;
+    }
+
+    function requirePageOwnerForVisibleAssetMutation(page, actorUserId, res) {
+        if (Number(page?.user_id) === Number(actorUserId)) return true;
+        res.status(403).json({ error: "페이지에 노출되는 자산(커버/이미지/첨부)은 페이지 소유자만 변경할 수 있습니다." });
+        return false;
     }
 
     async function syncPageFileRefs(pageId, pageOwnerUserId, actorUserId, content) {
@@ -1561,6 +1576,7 @@ module.exports = (dependencies) => {
             if (!permission || !['EDIT', 'ADMIN'].includes(permission)) {
                 return res.status(403).json({ error: "Forbidden" });
             }
+            if (!requirePageOwnerForVisibleAssetMutation(existing, userId, res)) return;
 
             let coverImage = existing.cover_image;
             if (req.body.coverImage !== undefined) {
@@ -1621,6 +1637,10 @@ module.exports = (dependencies) => {
             if (!permission || !['EDIT', 'ADMIN'].includes(permission)) {
                 if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
                 return res.status(403).json({ error: "Forbidden" });
+            }
+            if (!requirePageOwnerForVisibleAssetMutation(existing, userId, res)) {
+                if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+                return;
             }
 
             const sig = await assertImageFileSignature(req.file.path);
@@ -1709,6 +1729,10 @@ module.exports = (dependencies) => {
             if (!permission || !['EDIT', 'ADMIN'].includes(permission)) {
                 if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
                 return res.status(403).json({ error: "Forbidden" });
+            }
+            if (!requirePageOwnerForVisibleAssetMutation(existing, userId, res)) {
+                if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+                return;
             }
 
             const ext = path.extname(req.file.filename).toLowerCase();
@@ -2054,6 +2078,7 @@ module.exports = (dependencies) => {
             const permission = await storagesRepo.getPermission(userId, existing.storage_id);
             if (!permission || !['EDIT', 'ADMIN'].includes(permission))
                 return res.status(403).json({ error: "Forbidden" });
+            if (!requirePageOwnerForVisibleAssetMutation(existing, userId, res)) return;
 
             const parsedPaper = parsePaperclipPathFromUserInput(assetUrl);
             const parsedImg = parsedPaper ? null : parseImgsPathFromUserInput(assetUrl);
@@ -2100,6 +2125,10 @@ module.exports = (dependencies) => {
             if (!permission || !['EDIT', 'ADMIN'].includes(permission)) {
                 if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
                 return res.status(403).json({ error: "Forbidden" });
+            }
+            if (!requirePageOwnerForVisibleAssetMutation(existing, userId, res)) {
+                if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+                return;
             }
 
             const sig = await assertImageFileSignature(req.file.path);
