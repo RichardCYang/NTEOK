@@ -8,7 +8,9 @@ async function ensureUserKeyPair(loginPassword) {
         const existingKeys = await api.get('/api/user-keys/me');
         if (existingKeys && existingKeys.length > 0) {
             const latestKey = existingKeys[0];
-            const exported = await api.post(`/api/user-keys/${encodeURIComponent(latestKey.kid)}/export-private`, {});
+            const { ticket } = await api.post(`/api/user-keys/${encodeURIComponent(latestKey.kid)}/export-ticket`, {});
+            if (!ticket) throw new Error('티켓 발급 실패');
+            const exported = await api.post(`/api/user-keys/${encodeURIComponent(latestKey.kid)}/export-private`, { ticket });
             const privKey = await window.cryptoManager.decryptPrivateKey(
                 exported.encryptedPrivateKey,
                 exported.keyWrapSalt,
@@ -482,7 +484,9 @@ export function initStoragesManager(appState, onStorageSelected) {
                                 }
 
                                 const latestKey = keyPairs[0];
-                                const exported = await api.post(`/api/user-keys/${encodeURIComponent(latestKey.kid)}/export-private`, {});
+                                const { ticket } = await api.post(`/api/user-keys/${encodeURIComponent(latestKey.kid)}/export-ticket`, {});
+                                if (!ticket) throw new Error('티켓 발급 실패');
+                                const exported = await api.post(`/api/user-keys/${encodeURIComponent(latestKey.kid)}/export-private`, { ticket });
                                 const privKey = await window.cryptoManager.decryptPrivateKey(
                                     exported.encryptedPrivateKey,
                                     exported.keyWrapSalt,

@@ -49,11 +49,43 @@ module.exports = (dependencies) => {
         }
     });
 
-    router.post('/:kid/export-private', authMiddleware, csrfMiddleware, requireRecentReauth(5 * 60 * 1000), privateKeyExportLimiter, async (req, res) => {
+    router.post('/:kid/export-ticket', authMiddleware, csrfMiddleware, requireRecentReauth(5 * 60 * 1000), privateKeyExportLimiter, async (req, res) => {
         try {
+            const { issueActionTicket, getSessionFromRequest } = dependencies;
             const userId = req.user.id;
             const kid = req.params.kid;
             if (!UUID_REGEX.test(kid)) return res.status(400).json({ error: 'kid 은 유효한 UUID 형식이어야 합니다.' });
+
+            const keyPair = await userKeysRepo.getKeyPairByKid(kid);
+            if (!keyPair) return res.status(404).json({ error: '키 쌍을 찾을 수 없습니다.' });
+            if (Number(keyPair.user_id) !== Number(userId)) return res.status(403).json({ error: '이 키 쌍을 조회할 권한이 없습니다.' });
+
+            const session = await getSessionFromRequest(req);
+            if (!session) return res.status(401).json({ error: '세션이 만료되었습니다.' });
+
+            const ticket = await issueActionTicket(session.id, 'export-private-key', kid);
+            res.json({ ok: true, ticket });
+        } catch (error) {
+            logError('POST /api/user-keys/:kid/export-ticket', error);
+            res.status(500).json({ error: '티켓 발급에 실패했습니다.' });
+        }
+    });
+
+    router.post('/:kid/export-private', authMiddleware, csrfMiddleware, async (req, res) => {
+        try {
+            const { consumeActionTicket, getSessionFromRequest } = dependencies;
+            const userId = req.user.id;
+            const kid = req.params.kid;
+            const { ticket } = req.body;
+
+            if (!ticket) return res.status(400).json({ error: '티켓이 필요합니다.' });
+            if (!UUID_REGEX.test(kid)) return res.status(400).json({ error: 'kid 은 유효한 UUID 형식이어야 합니다.' });
+
+            const session = await getSessionFromRequest(req);
+            if (!session) return res.status(401).json({ error: '세션이 만료되었습니다.' });
+
+            const valid = await consumeActionTicket(session.id, 'export-private-key', kid, ticket);
+            if (!valid) return res.status(403).json({ error: '유효하지 않거나 만료된 티켓입니다.' });
 
             const keyPair = await userKeysRepo.getKeyPairByKid(kid);
             if (!keyPair) return res.status(404).json({ error: '키 쌍을 찾을 수 없습니다.' });

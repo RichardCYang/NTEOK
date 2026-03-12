@@ -1543,7 +1543,7 @@ const { redis, ensureRedis } = require("./lib/redis");
 	});
 })();
 
-function initWebSocketServer(server, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, SESSION_COOKIE_NAME, getSessionFromId, getClientIpFromRequest, pageSqlPolicy, pageAccess, verifyCsrfTokenForSession) {
+function initWebSocketServer(server, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, SESSION_COOKIE_NAME, getSessionFromId, getClientIpFromRequest, pageSqlPolicy, pageAccess, verifyCsrfTokenForSession, consumeWsTicket) {
     _wsPool = pool;
     _wsSanitizeHtmlContent = sanitizeHtmlContent;
     const allowedWsOrigins = (() => {
@@ -1574,14 +1574,14 @@ function initWebSocketServer(server, pool, sanitizeHtmlContent, IS_PRODUCTION, B
         server,
         path: '/ws',
         maxPayload: WS_MAX_MESSAGE_BYTES,
-        verifyClient: (info, done) => {
+        verifyClient: async (info, done) => {
             try {
                 const origin = info?.origin || info?.req?.headers?.origin;
                 if (!isWsOriginAllowed(origin)) return done(false, 403, 'Forbidden');
 
                 const req = info.req;
                 const parsedUrl = new URL(req.url, `http://${req.headers.host || "localhost"}`);
-                const csrfTokenFromQuery = parsedUrl.searchParams.get("csrf");
+                const ticketFromQuery = parsedUrl.searchParams.get("ticket");
 
                 const cookies = {};
                 if (req.headers.cookie) {
@@ -1594,9 +1594,9 @@ function initWebSocketServer(server, pool, sanitizeHtmlContent, IS_PRODUCTION, B
 
                 if (!sessionId) return done(false, 401, 'Unauthorized');
 
-                if (typeof verifyCsrfTokenForSession === 'function') {
-                    if (!csrfTokenFromQuery || !verifyCsrfTokenForSession(sessionId, csrfTokenFromQuery, "api")) {
-                        return done(false, 403, 'Forbidden: CSRF token invalid');
+                if (typeof consumeWsTicket === 'function') {
+                    if (!ticketFromQuery || !(await consumeWsTicket(sessionId, ticketFromQuery))) {
+                        return done(false, 403, 'Forbidden: WebSocket ticket invalid');
                     }
                 }
 

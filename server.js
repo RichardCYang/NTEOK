@@ -520,6 +520,47 @@ const CSRF_HMAC_KEY = Buffer.from(
 	"utf8"
 );
 
+const WS_TICKET_TTL_MS = 30 * 1000;
+const ACTION_TICKET_TTL_MS = 30 * 1000;
+
+async function issueWsTicket(sessionId) {
+    const sid = String(sessionId || '').trim();
+    if (!sid) throw new Error('invalid-session');
+    const ticket = crypto.randomBytes(32).toString('base64url');
+    await redis.set(`ws-ticket:${sid}:${ticket}`, '1', { PX: WS_TICKET_TTL_MS, NX: true });
+    return ticket;
+}
+
+async function consumeWsTicket(sessionId, ticket) {
+    const sid = String(sessionId || '').trim();
+    const tok = String(ticket || '').trim();
+    if (!sid || !tok) return false;
+    const key = `ws-ticket:${sid}:${tok}`;
+    const deleted = await redis.del(key);
+    return deleted === 1;
+}
+
+async function issueActionTicket(sessionId, action, resourceId) {
+    const sid = String(sessionId || '').trim();
+    const act = String(action || '').trim();
+    const rid = String(resourceId || '').trim();
+    if (!sid || !act || !rid) throw new Error('invalid-action-ticket');
+    const ticket = crypto.randomBytes(32).toString('base64url');
+    await redis.set(`action-ticket:${sid}:${act}:${rid}:${ticket}`, '1', { PX: ACTION_TICKET_TTL_MS, NX: true });
+    return ticket;
+}
+
+async function consumeActionTicket(sessionId, action, resourceId, ticket) {
+    const sid = String(sessionId || '').trim();
+    const act = String(action || '').trim();
+    const rid = String(resourceId || '').trim();
+    const tok = String(ticket || '').trim();
+    if (!sid || !act || !rid || !tok) return false;
+    const key = `action-ticket:${sid}:${act}:${rid}:${tok}`;
+    const deleted = await redis.del(key);
+    return deleted === 1;
+}
+
 function generateCsrfTokenForSession(sessionId, purpose = "api") {
 	const sid = String(sessionId || "");
 	const ts = String(Date.now());
@@ -981,21 +1022,32 @@ function sanitizeHtmlContent(html, { profile = 'editor' } = {}) {
 			? {
 				ALLOWED_TAGS: BASE_ALLOWED_TAGS,
 				ALLOWED_ATTR: SHARED_ALLOWED_ATTR,
-				ALLOW_DATA_ATTR: true,
+				ALLOW_DATA_ATTR: false,
 				FORBID_ATTR: ['style'],
 				ALLOWED_URI_REGEXP: /^(?:(?:(?:ht)tps?|mailto|tel):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i
 			}
 			: {
 				ALLOWED_TAGS: EDITOR_ALLOWED_TAGS,
 				ALLOWED_ATTR: EDITOR_ALLOWED_ATTR,
-				ALLOW_DATA_ATTR: true,
+				ALLOW_DATA_ATTR: false,
 				ALLOWED_URI_REGEXP: /^(?:(?:(?:ht)tps?|mailto|tel):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i
 			};
 		const sanitized = DOMPurify.sanitize(prefiltered, config);
 		const dom = new JSDOM(sanitized);
 		const doc = dom.window.document;
-		const elements = doc.querySelectorAll('[src], [href], [data-url], [data-thumbnail], [data-favicon], [data-src]');
+		const elements = doc.querySelectorAll('[style], [src], [href], [data-url], [data-thumbnail], [data-favicon], [data-src]');
 		for (const el of elements) {
+            if (el.hasAttribute('style')) {
+                const allowedStyles = ['text-align', 'color', 'background-color', 'font-size', 'font-family', 'font-weight', 'font-style', 'text-decoration', 'margin', 'padding', 'width', 'height', 'display', 'border', 'border-radius', 'flex', 'grid', 'vertical-align', 'line-height'];
+                const rawStyle = el.getAttribute('style') || '';
+                const styles = rawStyle.split(';').map(s => s.trim()).filter(Boolean);
+                const sanitizedStyle = styles.filter(s => {
+                    const [prop] = s.split(':').map(p => p.trim().toLowerCase());
+                    return allowedStyles.includes(prop);
+                }).join('; ');
+                if (!sanitizedStyle) el.removeAttribute('style');
+                else el.setAttribute('style', sanitizedStyle);
+            }
 			if (el.hasAttribute('src')) {
 				const src = el.getAttribute('src');
 				if (!isSafeLocalAssetPath(src)) el.removeAttribute('src');
@@ -2320,6 +2372,10 @@ function installGracefulShutdownHandlers(httpServer, pool, sanitizeHtmlContent) 
 			getSession,
 			revokeSession,
 			listUserSessions,
+			issueWsTicket,
+			consumeWsTicket,
+			issueActionTicket,
+			consumeActionTicket,
 			encryptTotpSecret,
 			decryptTotpSecret,
 			formatDateForDb,
@@ -2461,7 +2517,7 @@ function installGracefulShutdownHandlers(httpServer, pool, sanitizeHtmlContent) 
                     console.log('='.repeat(80) + '\n');
                 });
 
-                initWebSocketServer(httpsServer, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, SESSION_COOKIE_NAME, getSessionFromId, getClientIpFromRequest, pageSqlPolicy, pageAccess, verifyCsrfTokenForSession);
+                initWebSocketServer(httpsServer, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, SESSION_COOKIE_NAME, getSessionFromId, getClientIpFromRequest, pageSqlPolicy, pageAccess, verifyCsrfTokenForSession, consumeWsTicket);
 
                 startRateLimitCleanup();
 
@@ -2511,7 +2567,7 @@ function installGracefulShutdownHandlers(httpServer, pool, sanitizeHtmlContent) 
                     console.log(`⚠️  NTEOK 앱이 HTTP로 실행 중: http://localhost:${PORT}`);
                 });
 
-                initWebSocketServer(httpServer, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, SESSION_COOKIE_NAME, getSessionFromId, getClientIpFromRequest, pageSqlPolicy, pageAccess, verifyCsrfTokenForSession);
+                initWebSocketServer(httpServer, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, SESSION_COOKIE_NAME, getSessionFromId, getClientIpFromRequest, pageSqlPolicy, pageAccess, verifyCsrfTokenForSession, consumeWsTicket);
 
                 startRateLimitCleanup();
 
@@ -2531,7 +2587,7 @@ function installGracefulShutdownHandlers(httpServer, pool, sanitizeHtmlContent) 
                 console.log(`NTEOK 앱이 HTTP로 실행 중: http://localhost:${PORT}`);
             });
 
-            initWebSocketServer(httpServer, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, SESSION_COOKIE_NAME, getSessionFromId, getClientIpFromRequest, pageSqlPolicy, pageAccess, verifyCsrfTokenForSession);
+            initWebSocketServer(httpServer, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, SESSION_COOKIE_NAME, getSessionFromId, getClientIpFromRequest, pageSqlPolicy, pageAccess, verifyCsrfTokenForSession, consumeWsTicket);
 
             startRateLimitCleanup();
 

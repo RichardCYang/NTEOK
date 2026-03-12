@@ -237,53 +237,56 @@ export function initSyncManager(appState) {
     connectWebSocket();
 }
 
-function connectWebSocket() {
-    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
-        return;
-    }
+async function connectWebSocket() {
+    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
 
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const csrf = window.csrfUtils?.getCsrfToken?.() || '';
-    const wsUrl = `${protocol}//${window.location.host}/ws?csrf=${encodeURIComponent(csrf)}`;
-    ws = new WebSocket(wsUrl);
-    console.log('[WS] 연결 시도:', wsUrl);
+    try {
+        const ticketRes = await fetch("/api/auth/ws-ticket", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "X-CSRF-Token": window.csrfUtils?.getCsrfToken?.() || ""
+            }
+        });
+        if (!ticketRes.ok) throw new Error("ticket-fetch-failed");
+        const { ticket } = await ticketRes.json();
+        if (!ticket) throw new Error("no-ticket");
 
-    ws = new WebSocket(wsUrl);
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${protocol}//${window.location.host}/ws?ticket=${encodeURIComponent(ticket)}`;
+        ws = new WebSocket(wsUrl);
+        console.log('[WS] 연결 시도');
 
-    ws.onopen = () => {
-        console.log('[WS] 연결 성공');
-        reconnectAttempts = 0;
+        ws.onopen = () => {
+            console.log('[WS] 연결 성공');
+            reconnectAttempts = 0;
+            if (currentPageId) subscribePage(currentPageId);
+            if (currentStorageId) subscribeStorage(currentStorageId);
+            subscribeUser();
+        };
 
-        if (currentPageId) {
-            subscribePage(currentPageId);
-        }
+        ws.onmessage = (event) => {
+            try {
+                const message = JSON.parse(event.data);
+                handleWebSocketMessage(message);
+            } catch (error) {
+                console.error('[WS] 메시지 파싱 오류:', error);
+            }
+        };
 
-        if (currentStorageId) {
-            subscribeStorage(currentStorageId);
-        }
+        ws.onerror = (error) => {
+            console.error('[WS] 연결 오류:', error);
+        };
 
-        subscribeUser();
-    };
-
-    ws.onmessage = (event) => {
-        try {
-            const message = JSON.parse(event.data);
-            handleWebSocketMessage(message);
-        } catch (error) {
-            console.error('[WS] 메시지 파싱 오류:', error);
-        }
-    };
-
-    ws.onerror = (error) => {
-        console.error('[WS] 연결 오류:', error);
-    };
-
-    ws.onclose = () => {
-        console.log('[WS] 연결 종료');
-        ws = null;
-
+        ws.onclose = () => {
+            console.log('[WS] 연결 종료');
+            ws = null;
+            attemptReconnect();
+        };
+    } catch (error) {
+        console.error('[WS] 티켓 획득 실패:', error);
         attemptReconnect();
-    };
+    }
 }
 
 function attemptReconnect() {

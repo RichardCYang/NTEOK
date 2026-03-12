@@ -1238,28 +1238,15 @@ module.exports = (dependencies) => {
                     return res.status(404).json({ error: "Not found" });
             }
 
-            const vis = (pageSqlPolicy && typeof pageSqlPolicy.andVisible === "function")
-                ? pageSqlPolicy.andVisible({ alias: "p", viewerUserId: userId })
-                : { sql: "AND NOT (p.is_encrypted = 1 AND p.share_allowed = 0 AND p.user_id != ?)", params: [userId] };
-
             const placeholders = normalizedIds.map(() => "?").join(",");
-            const [visibleRows] = await pool.execute(
-                `SELECT p.id
-                   FROM pages p
-              LEFT JOIN storage_shares ss
-                     ON p.storage_id = ss.storage_id
-                    AND ss.shared_with_user_id = ?
-                  WHERE p.storage_id = ?
-                    AND p.deleted_at IS NULL
-                    AND (p.user_id = ? OR ss.storage_id IS NOT NULL)
-                    ${vis.sql}
-                    AND p.id IN (${placeholders})`,
-                [userId, storageId, userId, ...vis.params, ...normalizedIds]
+            const [rows] = await pool.execute(
+                `SELECT p.id, p.user_id FROM pages p WHERE p.id IN (${placeholders})`,
+                [...normalizedIds]
             );
 
-            const allowed = new Set((visibleRows || []).map(r => String(r.id)));
-            if (allowed.size !== normalizedIds.length) {
-                return res.status(404).json({ error: "Not found" });
+            if (rows.length !== normalizedIds.length) return res.status(404).json({ error: "일부 페이지를 찾을 수 없습니다." });
+            for (const row of rows) {
+                if (Number(row.user_id) !== Number(userId)) return res.status(403).json({ error: "본인 소유의 페이지만 순서를 변경할 수 있습니다." });
             }
 
             for (let i = 0; i < normalizedIds.length; i++) {
@@ -1314,15 +1301,7 @@ module.exports = (dependencies) => {
             }
 
             const isOwnerOfPage = Number(page.user_id) === Number(userId);
-            const canRestore =
-                permission === 'ADMIN' ||
-                (permission === 'EDIT' && isOwnerOfPage);
-
-            if (!canRestore) {
-                return res.status(403).json({
-                    error: "이 페이지를 복구할 권한이 없습니다. (ADMIN 또는 본인 작성 페이지만 복구 가능)"
-                });
-            }
+            if (!isOwnerOfPage) return res.status(403).json({ error: "페이지 소유자만 복구할 수 있습니다." });
 
             await pagesRepo.restorePageAndDescendants({
                 rootPageId: id,
@@ -1359,8 +1338,7 @@ module.exports = (dependencies) => {
             if (!permission) return res.status(403).json({ error: "권한이 없습니다." });
 
             const isOwnerOfPage = Number(page.user_id) === Number(userId);
-            const canDelete = permission === 'ADMIN' || (permission === 'EDIT' && isOwnerOfPage);
-            if (!canDelete) return res.status(403).json({ error: "이 페이지를 영구 삭제할 권한이 없습니다." });
+            if (!isOwnerOfPage) return res.status(403).json({ error: "페이지 소유자만 영구 삭제할 수 있습니다." });
 
             await pagesRepo.permanentlyDeletePageAndDescendants({
                 pageId: id,

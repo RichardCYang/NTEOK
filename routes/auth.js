@@ -41,7 +41,8 @@ module.exports = (dependencies) => {
 		saveSession,
 		getSession,
 		revokeSession,
-		listUserSessions
+		listUserSessions,
+		issueWsTicket
 	} = dependencies;
 
 	const TWO_FA_COOKIE_NAME = COOKIE_SECURE ? '__Host-nteok_2fa' : 'nteok_2fa';
@@ -579,45 +580,57 @@ module.exports = (dependencies) => {
     });
 
     router.get("/countries", authMiddleware, (req, res) => {
-        const countries = [
-            { code: 'KR', name: '대한민국' },
-            { code: 'US', name: '미국' },
-            { code: 'JP', name: '일본' },
-            { code: 'CN', name: '중국' },
-            { code: 'GB', name: '영국' },
-            { code: 'DE', name: '독일' },
-            { code: 'FR', name: '프랑스' },
-            { code: 'CA', name: '캐나다' },
-            { code: 'AU', name: '호주' },
-            { code: 'SG', name: '싱가포르' },
-            { code: 'HK', name: '홍콩' },
-            { code: 'TW', name: '대만' },
-            { code: 'IN', name: '인도' },
-            { code: 'RU', name: '러시아' },
-            { code: 'BR', name: '브라질' },
-            { code: 'MX', name: '멕시코' },
-            { code: 'IT', name: '이탈리아' },
-            { code: 'ES', name: '스페인' },
-            { code: 'NL', name: '네덜란드' },
-            { code: 'SE', name: '스웨덴' },
-            { code: 'CH', name: '스위스' },
-            { code: 'PL', name: '폴란드' },
-            { code: 'BE', name: '벨기에' },
-            { code: 'AT', name: '오스트리아' },
-            { code: 'NO', name: '노르웨이' },
-            { code: 'DK', name: '덴마크' },
-            { code: 'FI', name: '핀란드' },
-            { code: 'IE', name: '아일랜드' },
-            { code: 'NZ', name: '뉴질랜드' },
-            { code: 'TH', name: '태국' },
-            { code: 'VN', name: '베트남' },
-            { code: 'MY', name: '말레이시아' },
-            { code: 'PH', name: '필리핀' },
-            { code: 'ID', name: '인도네시아' }
-        ];
+    const countries = [
+    { code: 'KR', name: '대한민국' },
+    { code: 'US', name: '미국' },
+    { code: 'JP', name: '일본' },
+    { code: 'CN', name: '중국' },
+    { code: 'GB', name: '영국' },
+    { code: 'DE', name: '독일' },
+    { code: 'FR', name: '프랑스' },
+    { code: 'CA', name: '캐나다' },
+    { code: 'AU', name: '호주' },
+    { code: 'SG', name: '싱가포르' },
+    { code: 'HK', name: '홍콩' },
+    { code: 'TW', name: '대만' },
+    { code: 'IN', name: '인도' },
+    { code: 'RU', name: '러시아' },
+    { code: 'BR', name: '브라질' },
+    { code: 'MX', name: '멕시코' },
+    { code: 'IT', name: '이탈리아' },
+    { code: 'ES', name: '스페인' },
+    { code: 'NL', name: '네덜란드' },
+    { code: 'SE', name: '스웨덴' },
+    { code: 'CH', name: '스위스' },
+    { code: 'PL', name: '폴란드' },
+    { code: 'BE', name: '벨기에' },
+    { code: 'AT', name: '오스트리아' },
+    { code: 'NO', name: '노르웨이' },
+    { code: 'DK', name: '덴마크' },
+    { code: 'FI', name: '핀란드' },
+    { code: 'IE', name: '아일랜드' },
+    { code: 'NZ', name: '뉴질랜드' },
+    { code: 'TH', name: '태국' },
+    { code: 'VN', name: '베트남' },
+    { code: 'MY', name: '말레이시아' },
+    { code: 'PH', name: '필리핀' },
+    { code: 'ID', name: '인도네시아' }
+    ];
 
-        res.json({ countries });
+    res.json({ countries });
     });
 
-    return router;
-};
+    router.post("/ws-ticket", authMiddleware, csrfMiddleware, async (req, res) => {
+    	try {
+    		const { getSessionFromRequest } = dependencies;
+    		const session = await getSessionFromRequest(req);
+    		if (!session) return res.status(401).json({ error: "로그인이 필요합니다." });
+    		const ticket = await issueWsTicket(session.id);
+    		res.json({ ok: true, ticket });
+    	} catch (error) {
+    		logError("POST /api/auth/ws-ticket", error);
+    		res.status(500).json({ error: "티켓 발급 중 오류가 발생했습니다." });
+    	}
+    });
+
+    return router;};

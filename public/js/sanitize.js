@@ -41,6 +41,35 @@ if (!hooksInstalled) {
         const name = String(data?.attrName || '').toLowerCase();
         const raw = String(data?.attrValue || '');
 
+        if (name === 'style') {
+            const allowedStyles = ['text-align', 'color', 'background-color', 'font-size', 'font-family', 'font-weight', 'font-style', 'text-decoration', 'margin', 'padding', 'width', 'height', 'display', 'border', 'border-radius', 'flex', 'grid', 'vertical-align', 'line-height'];
+            const styles = raw.split(';').map(s => s.trim()).filter(Boolean);
+            const sanitized = styles.filter(s => {
+                const [prop] = s.split(':').map(p => p.trim().toLowerCase());
+                return allowedStyles.includes(prop);
+            }).join('; ');
+            if (!sanitized) {
+                data.keepAttr = false;
+                data.forceKeepAttr = false;
+                return;
+            }
+            data.attrValue = sanitized;
+            return;
+        }
+
+        if (name.startsWith('data-')) {
+            const allowedDataAttrs = [
+                'data-type', 'data-latex', 'data-src', 'data-alt', 'data-caption', 'data-width', 'data-align', 'data-url',
+                'data-title', 'data-description', 'data-thumbnail', 'data-id', 'data-icon', 'data-checked', 'data-callout-type',
+                'data-content', 'data-columns', 'data-rows', 'data-is-open', 'data-selected-date', 'data-memos'
+            ];
+            if (!allowedDataAttrs.includes(name)) {
+                data.keepAttr = false;
+                data.forceKeepAttr = false;
+                return;
+            }
+        }
+
         if (name === 'src') {
             const safe = sanitizeLocalAssetSrc(raw);
             if (!safe) {
@@ -141,7 +170,7 @@ export const EDITOR_PURIFY_CONFIG = {
         'data-description', 'data-thumbnail', 'data-id', 'data-icon', 'data-checked', 'type', 'checked',
         'data-callout-type', 'data-content', 'data-columns', 'data-rows', 'data-is-open', 'data-selected-date', 'data-memos'
     ],
-    ALLOW_DATA_ATTR: true,
+    ALLOW_DATA_ATTR: false,
     ALLOWED_URI_REGEXP: /^(?:(?:(?:ht)tps?|mailto|tel):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i
 };
 
