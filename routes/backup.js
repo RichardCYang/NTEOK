@@ -760,7 +760,6 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
             res.set('Pragma', 'no-cache');
 
             await flushAllPendingE2eeSaves(pool);
-            throw new Error('routes/backup.js 에 누락된 export 구현이 있습니다. 정상 소스에서 해당 블록을 복원한 뒤 다시 배포하세요.');
 
             try {
                 const [ownedRows] = await pool.execute(

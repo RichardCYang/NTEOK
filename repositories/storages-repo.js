@@ -106,53 +106,124 @@ module.exports = ({ pool }) => {
                 if (ownTx) await tx.beginTransaction();
 
                 const [stRows] = await tx.execute(
-                    `SELECT user_id FROM storages WHERE id = ? FOR UPDATE`,
+                    `SELECT id, user_id, name, is_encrypted, encryption_salt, encryption_check, dek_version
+                       FROM storages
+                      WHERE id = ?
+                      FOR UPDATE`,
                     [sid]
                 );
                 if (stRows.length === 0) {
                     if (ownTx) await tx.rollback();
                     return { ok: false, reason: 'storage-not-found' };
                 }
-                const ownerId = stRows[0].user_id;
 
+                const storage = stRows[0];
+                const ownerId = Number(storage.user_id);
                 if (ownerId === uid) {
                     if (ownTx) await tx.rollback();
                     return { ok: false, reason: 'cannot-remove-owner' };
                 }
 
                 const [pageRows] = await tx.execute(
-                    `SELECT id FROM pages WHERE storage_id = ? AND user_id = ?`,
+                    `SELECT id, parent_id
+                       FROM pages
+                      WHERE storage_id = ?
+                        AND user_id = ?`,
                     [sid, uid]
                 );
+
                 const pageIds = (pageRows || []).map(r => String(r.id));
+                let newStorageId = null;
 
                 if (pageIds.length > 0) {
-                    await updatePagesInBatches(
-                        tx,
-                        `UPDATE pages SET user_id = ?, updated_at = NOW() WHERE id IN`,
-                        pageIds,
-                        [ownerId]
+                    newStorageId = makeStorageId();
+                    const sortOrder = await getNextSortOrderTx(tx, uid);
+                    const recoveredName = `[Recovered] ${String(storage.name || 'Storage').slice(0, 110)}`;
+
+                    await tx.execute(
+                        `INSERT INTO storages (
+                            id, user_id, name, sort_order,
+                            created_at, updated_at,
+                            is_encrypted, encryption_salt, encryption_check, dek_version
+                         ) VALUES (?, ?, ?, ?, NOW(), NOW(), ?, ?, ?, ?)`,
+                        [
+                            newStorageId,
+                            uid,
+                            recoveredName,
+                            sortOrder,
+                            storage.is_encrypted,
+                            storage.encryption_salt,
+                            storage.encryption_check,
+                            storage.dek_version
+                        ]
                     );
+
+                    if (Number(storage.is_encrypted) === 1) {
+                        await tx.execute(
+                            `UPDATE storage_share_keys
+                                SET storage_id = ?
+                              WHERE storage_id = ?
+                                AND shared_with_user_id = ?`,
+                            [newStorageId, sid, uid]
+                        );
+                    }
+
+                    const ownPageIds = new Set(pageIds);
+                    const boundaryIds = [];
+                    for (const row of pageRows) {
+                        const parentId = row.parent_id ? String(row.parent_id) : null;
+                        if (parentId && !ownPageIds.has(parentId)) boundaryIds.push(String(row.id));
+                    }
+
+                    if (boundaryIds.length > 0) {
+                        await updatePagesInBatches(
+                            tx,
+                            `UPDATE pages SET parent_id = NULL, updated_at = NOW() WHERE id IN`,
+                            boundaryIds
+                        );
+                    }
+
                     await updatePagesInBatches(
                         tx,
-                        `UPDATE updates_history SET user_id = ? WHERE storage_id = ? AND user_id = ? AND page_id IN`,
+                        `UPDATE pages SET storage_id = ?, updated_at = NOW() WHERE id IN`,
                         pageIds,
-                        [ownerId, sid, uid]
+                        [newStorageId]
+                    );
+
+                    await updatePagesInBatches(
+                        tx,
+                        `UPDATE updates_history
+                            SET storage_id = ?
+                          WHERE storage_id = ?
+                            AND user_id = ?
+                            AND page_id IN`,
+                        pageIds,
+                        [newStorageId, sid, uid]
                     );
                 }
 
                 await tx.execute(
-                    `DELETE FROM storage_shares WHERE storage_id = ? AND shared_with_user_id = ?`,
+                    `DELETE FROM storage_shares
+                      WHERE storage_id = ?
+                        AND shared_with_user_id = ?`,
                     [sid, uid]
                 );
 
                 await tx.execute(
-                    `DELETE FROM storage_share_keys WHERE storage_id = ? AND shared_with_user_id = ?`,
+                    `DELETE FROM storage_share_keys
+                      WHERE storage_id = ?
+                        AND shared_with_user_id = ?`,
                     [sid, uid]
                 );
 
                 if (ownTx) await tx.commit();
-                return { ok: true, movedPages: pageIds.length, ownerId, pageIds };
+                return {
+                    ok: true,
+                    movedPages: pageIds.length,
+                    ownerId,
+                    pageIds,
+                    transferred: newStorageId ? { newStorageId } : null
+                };
             } catch (e) {
                 try { if (ownTx && tx) await tx.rollback(); } catch (_) {}
                 throw e;

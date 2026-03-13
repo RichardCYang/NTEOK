@@ -853,6 +853,25 @@ function deriveDownloadNameFromStoredFilename(stored) {
     return safeStored;
 }
 
+function resolveScopedStoredFile(rootName, userId, storedFilename) {
+    const numericUserId = Number(userId);
+    const safeStored = sanitizeFilenameComponent(storedFilename, 200);
+    if (!Number.isFinite(numericUserId) || !safeStored) return null;
+
+    const rootDir = path.resolve(__dirname, rootName);
+    const filePath = path.resolve(rootDir, String(numericUserId), safeStored);
+    const rel = path.relative(rootDir, filePath);
+    if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return null;
+    return filePath;
+}
+
+function getRequestedDownloadName(req, storedFilename) {
+    const requested = typeof req.query?.name === 'string'
+        ? sanitizeFilenameComponent(req.query.name, 200)
+        : '';
+    return requested || deriveDownloadNameFromStoredFilename(storedFilename);
+}
+
 function setNoStore(res) {
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('Pragma', 'no-cache');
@@ -2016,6 +2035,11 @@ app.get('/covers/:userId/:filename', authMiddleware, async (req, res) => {
             return res.status(400).json({ error: '잘못된 파일명입니다.' });
         }
 
+        const filePath = resolveScopedStoredFile('covers', requestedUserId, sanitizedFilename);
+        if (!filePath) {
+            return res.status(400).json({ error: '잘못된 파일 경로입니다.' });
+        }
+
         const ext = path.extname(sanitizedFilename).toLowerCase();
         const ALLOWED_COVER_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp']);
         if (!ALLOWED_COVER_EXTS.has(ext)) return res.status(400).json({ error: '지원하지 않는 파일 형식입니다.' });
@@ -2066,12 +2090,16 @@ app.get('/imgs/:userId/:filename', authMiddleware, async (req, res) => {
             return res.status(400).json({ error: '잘못된 파일명입니다.' });
         }
 
+        const filePath = resolveScopedStoredFile('imgs', requestedUserId, sanitizedFilename);
+        if (!filePath) {
+            return res.status(400).json({ error: '잘못된 파일 경로입니다.' });
+        }
+
         const ext = path.extname(sanitizedFilename).toLowerCase();
         const ALLOWED_IMG_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp']);
         if (!ALLOWED_IMG_EXTS.has(ext)) return res.status(400).json({ error: '지원하지 않는 파일 형식입니다.' });
 
         const imagePath = `${requestedUserId}/${sanitizedFilename}`;
-        const imageUrl = `/imgs/${imagePath}`;
         const [rows] = await pool.execute(
             `SELECT p.id
                 FROM page_file_refs pfr
@@ -2124,6 +2152,11 @@ app.get('/paperclip/:userId/:filename', authMiddleware, async (req, res) => {
             return res.status(400).json({ error: '잘못된 파일명입니다.' });
         }
 
+        const filePath = resolveScopedStoredFile('paperclip', requestedUserId, sanitizedFilename);
+        if (!filePath) {
+            return res.status(400).json({ error: '잘못된 파일 경로입니다.' });
+        }
+
         const fileUrlPart = `/paperclip/${requestedUserId}/${sanitizedFilename}`;
         const [rows] = await pool.execute(
             `SELECT p.id
@@ -2155,7 +2188,7 @@ app.get('/paperclip/:userId/:filename', authMiddleware, async (req, res) => {
         }
 
         if (!fs.existsSync(filePath)) return res.status(404).json({ error: '파일을 찾을 수 없습니다.' });
-        const downloadName = getDownloadName();
+        const downloadName = getRequestedDownloadName(req, sanitizedFilename);
         return sendSafeDownload(res, filePath, downloadName);
 
     } catch (error) {
