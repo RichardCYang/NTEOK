@@ -387,6 +387,7 @@ const RATE_LIMIT_IPV6_SUBNET = (() => {
 const {
     getLocationFromIP,
     isPrivateOrLocalIP,
+    isPublicRoutableIP,
     checkCountryWhitelist,
     maskIPAddress,
     formatDateForDb,

@@ -16,8 +16,8 @@ const RICH_DOC_ATTACHMENT_EXTS = new Set([
 const ALLOWED_ATTACHMENT_EXTS = new Set(SAFE_BASE_ATTACHMENT_EXTS);
 if (String(process.env.ENABLE_RICH_DOCUMENT_ATTACHMENTS).toLowerCase() === 'true') {
 	for (const ext of RICH_DOC_ATTACHMENT_EXTS) ALLOWED_ATTACHMENT_EXTS.add(ext);
+}
 const { domainToASCII } = require('node:url');
-const yauzl = require('yauzl');
 
 function isHostnameAllowedForPreview(hostname) {
     if (typeof hostname !== 'string') return false;

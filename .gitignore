@@ -168,3 +168,6 @@ dist
 # Vite logs files
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# 업로드 임시 폴더
+.upload-tmp/
