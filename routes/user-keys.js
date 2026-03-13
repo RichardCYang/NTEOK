@@ -71,7 +71,7 @@ module.exports = (dependencies) => {
         }
     });
 
-    router.post('/:kid/export-private', authMiddleware, csrfMiddleware, async (req, res) => {
+    router.post('/:kid/export-private', authMiddleware, csrfMiddleware, requireRecentReauth(5 * 60 * 1000), async (req, res) => {
         try {
             const { consumeActionTicket, getSessionFromRequest } = dependencies;
             const userId = req.user.id;

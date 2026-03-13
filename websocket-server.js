@@ -1834,13 +1834,14 @@ async function handleSubscribePage(ws, payload, pool, sanitizeHtmlContent, pageS
             const tempMeta = tempDoc.getMap('metadata');
             const pid = tempMeta.get('parentId');
             if (pid) {
-                const [pRow] = await pool.execute(
-                    `SELECT 1 FROM pages p
-                     LEFT JOIN storage_shares ss ON p.storage_id = ss.storage_id AND ss.shared_with_user_id = ?
-                     WHERE p.id = ? AND (p.user_id = ? OR ss.storage_id IS NOT NULL)`,
-                    [userId, pid, userId]
-                );
-                if (pRow.length === 0) tempMeta.set('parentId', null);
+                const parentCheck = await validateYjsParentAssignment(pool, pageSqlPolicy, {
+                    viewerUserId: userId,
+                    pageId,
+                    pageStorageId: page.storage_id,
+                    candidateParentId: pid
+                });
+                if (!parentCheck.ok) tempMeta.set('parentId', null);
+                else tempMeta.set('parentId', parentCheck.parentId);
             }
             const stateBuf = Buffer.from(Y.encodeStateAsUpdate(tempDoc));
             if (stateBuf.length > WS_MAX_DOC_EST_BYTES) {

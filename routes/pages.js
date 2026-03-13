@@ -1373,13 +1373,13 @@ module.exports = (dependencies) => {
 
             const placeholders = normalizedIds.map(() => "?").join(",");
             const [rows] = await pool.execute(
-                `SELECT p.id, p.user_id FROM pages p WHERE p.id IN (${placeholders})`,
+                `SELECT p.id, p.user_id, p.storage_id FROM pages p WHERE p.id IN (${placeholders})`,
                 [...normalizedIds]
             );
 
             if (rows.length !== normalizedIds.length) return res.status(404).json({ error: "일부 페이지를 찾을 수 없습니다." });
             for (const row of rows) {
-                if (Number(row.user_id) !== Number(userId)) return res.status(403).json({ error: "본인 소유의 페이지만 순서를 변경할 수 있습니다." });
+                if (String(row.storage_id) !== String(storageId)) return res.status(403).json({ error: "지정한 저장소에 속하지 않은 페이지가 포함되어 있습니다." });
             }
 
             for (let i = 0; i < normalizedIds.length; i++) {

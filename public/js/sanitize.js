@@ -79,6 +79,75 @@ function normalizeStructuredAttr(attrName, raw) {
     return JSON.stringify(normalizeStructuredValue(parsed));
 }
 
+const SAFE_INLINE_STYLE_PROPS = new Set([
+    'text-align', 'color', 'background-color', 'font-size', 'font-family',
+    'font-weight', 'font-style', 'text-decoration', 'margin', 'padding',
+    'width', 'height', 'display', 'border', 'border-radius', 'flex',
+    'grid', 'vertical-align', 'line-height'
+]);
+
+const DANGEROUS_INLINE_STYLE_VALUE_RE = /(?:url\s*\(|expression\s*\(|@import|behavior\s*:|-moz-binding|[\u0000-\u001F\u007F\\])/i;
+
+function isSafeCssLengthToken(v) {
+    return /^(?:0|auto|normal|none|[0-9.]+(?:px|em|rem|%|vh|vw))$/i.test(v);
+}
+
+function isSafeInlineStyleValue(prop, value) {
+    const v = String(value || '').trim();
+    if (!v || v.length > 128) return false;
+    if (DANGEROUS_INLINE_STYLE_VALUE_RE.test(v)) return false;
+    switch (prop) {
+        case 'color':
+        case 'background-color':
+            return /^(?:#[0-9a-f]{3,8}|(?:rgb|rgba|hsl|hsla)\([0-9., %]+\)|[a-z]{1,20}|var\(--[a-z0-9-]+\))$/i.test(v);
+        case 'font-size':
+        case 'width':
+        case 'height':
+        case 'border-radius':
+        case 'line-height':
+            return isSafeCssLengthToken(v);
+        case 'margin':
+        case 'padding':
+            return v.split(/\s+/).every(isSafeCssLengthToken);
+        case 'text-align':
+            return /^(?:left|right|center|justify|start|end)$/i.test(v);
+        case 'font-family':
+            return /^[a-z0-9 ,"-]{1,80}$/i.test(v);
+        case 'font-weight':
+            return /^(?:normal|bold|bolder|lighter|[1-9]00)$/i.test(v);
+        case 'font-style':
+            return /^(?:normal|italic|oblique)$/i.test(v);
+        case 'text-decoration':
+            return /^(?:none|underline|line-through|overline)(?:\s+(?:solid|double|dotted|dashed|wavy))?$/i.test(v);
+        case 'display':
+            return /^(?:inline|block|inline-block|flex|inline-flex|grid|inline-grid|table|table-cell|none)$/i.test(v);
+        case 'vertical-align':
+            return /^(?:baseline|middle|top|bottom|sub|super)$/i.test(v);
+        case 'border':
+            return /^(?:none|[0-9.]+(?:px|em|rem)\s+(?:solid|dashed|dotted|double)\s+(?:#[0-9a-f]{3,8}|[a-z]{1,20}|rgba?\([0-9., %]+\)|hsla?\([0-9., %]+\)))$/i.test(v);
+        case 'flex':
+            return /^(?:none|auto|initial|[0-9.]+\s+[0-9.]+\s+(?:auto|0|[0-9.]+(?:px|em|rem|%)))$/i.test(v);
+        case 'grid':
+            return /^(?:none|auto|subgrid|repeat\([0-9 ,.%frminax()-]+\)|[0-9 a-z.%fr/()-]+)$/i.test(v);
+        default:
+            return false;
+    }
+}
+
+function sanitizeInlineStyle(raw) {
+    const out = [];
+    for (const decl of String(raw || '').split(';')) {
+        const idx = decl.indexOf(':');
+        if (idx <= 0) continue;
+        const prop = decl.slice(0, idx).trim().toLowerCase();
+        const value = decl.slice(idx + 1).trim();
+        if (!SAFE_INLINE_STYLE_PROPS.has(prop)) continue;
+        if (!isSafeInlineStyleValue(prop, value)) continue;
+        out.push(`${prop}: ${value}`);
+    }
+    return out.join('; ');
+}
+
 let hooksInstalled = false;
 
 if (!hooksInstalled) {
@@ -89,12 +158,7 @@ if (!hooksInstalled) {
         const raw = String(data?.attrValue || '');
 
         if (name === 'style') {
-            const allowedStyles = ['text-align', 'color', 'background-color', 'font-size', 'font-family', 'font-weight', 'font-style', 'text-decoration', 'margin', 'padding', 'width', 'height', 'display', 'border', 'border-radius', 'flex', 'grid', 'vertical-align', 'line-height'];
-            const styles = raw.split(';').map(s => s.trim()).filter(Boolean);
-            const sanitized = styles.filter(s => {
-                const [prop] = s.split(':').map(p => p.trim().toLowerCase());
-                return allowedStyles.includes(prop);
-            }).join('; ');
+            const sanitized = sanitizeInlineStyle(raw);
             if (!sanitized) {
                 data.keepAttr = false;
                 data.forceKeepAttr = false;
