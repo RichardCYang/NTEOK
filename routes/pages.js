@@ -45,44 +45,6 @@ function loadProxySecret() {
 
 const PROXY_SECRET = loadProxySecret();
 
-const PREVIEW_TICKET_TTL_MS = 60 * 1000;
-const previewNonceStore = new Map();
-
-function cleanupPreviewNonceStore() {
-    const now = Date.now();
-    for (const [nonce, exp] of previewNonceStore.entries()) {
-        if (exp <= now) previewNonceStore.delete(nonce);
-    }
-}
-
-function normalizeIpLiteral(ip) {
-    if (typeof ip !== 'string') return null;
-    const v = ip.trim();
-    if (!v) return null;
-    if (v.startsWith('::ffff:')) return v.slice(7);
-    return v;
-}
-
-function signPreviewTicket(payload) {
-    const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
-    const sig = crypto.createHmac('sha256', PROXY_SECRET).update(body).digest('base64url');
-    return `${body}.${sig}`;
-}
-
-function verifyAndConsumePreviewTicket(token, expectedUserId) {
-    if (typeof token !== 'string' || !token.includes('.')) throw new Error('BAD_TICKET');
-    const [body, sig] = token.split('.', 2);
-    const expectedSig = crypto.createHmac('sha256', PROXY_SECRET).update(body).digest('base64url');
-    if (!crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expectedSig))) throw new Error('BAD_TICKET_SIG');
-    const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
-    if (Number(payload.uid) !== Number(expectedUserId)) throw new Error('BAD_TICKET_UID');
-    if (!payload.exp || Date.now() > Number(payload.exp)) throw new Error('TICKET_EXPIRED');
-    if (!payload.nonce || previewNonceStore.has(payload.nonce)) throw new Error('TICKET_REPLAY');
-    previewNonceStore.set(payload.nonce, Number(payload.exp));
-    cleanupPreviewNonceStore();
-    return payload;
-}
-
 function safeEqualHex(a, b) {
     if (typeof a !== 'string' || typeof b !== 'string') return false;
     if (!/^[a-f0-9]+$/i.test(a) || !/^[a-f0-9]+$/i.test(b)) return false;
@@ -328,6 +290,33 @@ function validateCoverImageRef(ref, currentUserId) {
     return { ok: true, value: `${scope}/${filename}` };
 }
 
+function requireSameOriginForPreview(req, res, next) {
+    try {
+        const allowedOrigins = new Set(
+            String(process.env.ALLOWED_ORIGINS || BASE_URL || '')
+                .split(',')
+                .map(v => v.trim())
+                .filter(Boolean)
+                .map(v => new URL(v).origin)
+        );
+
+        const sfs = String(req.headers['sec-fetch-site'] || '').toLowerCase();
+        if (sfs && sfs !== 'same-origin' && sfs !== 'same-site') return res.status(403).json({ error: '요청 출처가 유효하지 않습니다.' });
+
+        const origin = req.headers.origin;
+        const referer = req.headers.referer;
+        let reqOrigin = null;
+        if (typeof origin === 'string' && origin) reqOrigin = origin;
+        else if (typeof referer === 'string' && referer) reqOrigin = new URL(referer).origin;
+
+        if (!reqOrigin || !allowedOrigins.has(reqOrigin)) return res.status(403).json({ error: '요청 출처가 유효하지 않습니다.' });
+
+        return next();
+    } catch {
+        return res.status(403).json({ error: '요청 출처가 유효하지 않습니다.' });
+    }
+}
+
 module.exports = (dependencies) => {
     const {
 		pool,
@@ -345,6 +334,7 @@ module.exports = (dependencies) => {
         wsBroadcastToPage,
         wsBroadcastToStorage,
         wsCloseConnectionsForPage,
+        wsEvictNonOwnerCollaborators,
         wsHasActiveConnectionsForPage,
         saveYjsDocToDatabase,
         enqueueYjsDbSave,
@@ -364,8 +354,41 @@ module.exports = (dependencies) => {
         isHostnameAllowedForPreview,
         getClientIpFromRequest,
         outboundFetchLimiter,
-        pageWritePolicy
+        pageWritePolicy,
+        redis
 	} = dependencies;
+
+    const previewNonceStore = new Map();
+
+    function signPreviewTicket(payload) {
+        const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
+        const sig = crypto.createHmac('sha256', PROXY_SECRET).update(body).digest('base64url');
+        return `${body}.${sig}`;
+    }
+
+    async function verifyAndConsumePreviewTicket(token, expectedUserId) {
+        if (typeof token !== 'string' || !token.includes('.')) throw new Error('BAD_TICKET');
+        const [body, sig] = token.split('.', 2);
+        const expectedSig = crypto.createHmac('sha256', PROXY_SECRET).update(body).digest('base64url');
+        if (!crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expectedSig))) throw new Error('BAD_TICKET_SIG');
+        const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
+        if (Number(payload.uid) !== Number(expectedUserId)) throw new Error('BAD_TICKET_UID');
+        if (!payload.exp || Date.now() > Number(payload.exp)) throw new Error('TICKET_EXPIRED');
+        if (!payload.nonce) throw new Error('TICKET_REPLAY');
+
+        const key = `preview-nonce:${payload.nonce}`;
+        const ttl = Math.max(0, Number(payload.exp) - Date.now());
+        if (redis) {
+            const ok = await redis.set(key, '1', { NX: true, PX: ttl });
+            if (!ok) throw new Error('TICKET_REPLAY');
+        } else {
+            if (previewNonceStore.has(payload.nonce)) throw new Error('TICKET_REPLAY');
+            previewNonceStore.set(payload.nonce, Number(payload.exp));
+            const now = Date.now();
+            for (const [n, e] of previewNonceStore.entries()) if (e <= now) previewNonceStore.delete(n);
+        }
+        return payload;
+    }
 
     function sameOwnerAssetSet(beforeFiles, afterFiles) {
         const a = new Set((beforeFiles || []).map(f => `${f.type}:${f.ref}`));
@@ -960,8 +983,8 @@ module.exports = (dependencies) => {
         }
     });
 
-    router.get("/fetch-metadata", authMiddleware, outboundFetchLimiter, async (req, res) => {
-        const { url } = req.query;
+    router.post("/fetch-metadata", authMiddleware, requireSameOriginForPreview, csrfMiddleware, outboundFetchLimiter, async (req, res) => {
+        const { url } = req.body;
         if (!url) return res.status(400).json({ error: "URL 이 필요합니다." });
         try {
             if (typeof isHostnameAllowedForPreview !== "function") return res.status(500).json({ error: "링크 미리보기 보안 구성이 올바르지 않습니다." });
@@ -1038,7 +1061,7 @@ module.exports = (dependencies) => {
                 case 'ETIMEDOUT':
                 case 'ECONNABORTED': return res.status(504).json({ error: "요청 시간이 초과되었습니다." });
                 case 'UPSTREAM_BAD_STATUS': return res.status(502).json({ error: "상대 서버 응답이 유효하지 않습니다." });
-                default: logError("GET /api/pages/fetch-metadata", error); return res.status(500).json({ error: "메타데이터를 가져오는데 실패했습니다." });
+                default: logError("POST /api/pages/fetch-metadata", error); return res.status(500).json({ error: "메타데이터를 가져오는데 실패했습니다." });
             }
         }
     });

@@ -413,13 +413,14 @@ const {
 	flushAllPendingE2eeUpdateLogs,
 
 	wsCloseConnectionsForSession,
-    wsCloseConnectionsForPage,
-    wsHasActiveConnectionsForPage,
-    wsKickUserFromStorage,
-    extractFilesFromContent,
-    invalidateYjsPersistenceForPage
+	wsCloseConnectionsForPage,
+	wsCloseConnectionsForStorage,
+	wsEvictNonOwnerCollaborators,
+	wsHasActiveConnectionsForPage,
+	wsKickUserFromStorage,
+	extractFilesFromContent,
+	invalidateYjsPersistenceForPage
 } = require("./websocket-server");
-
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -2466,6 +2467,7 @@ function installGracefulShutdownHandlers(httpServer, pool, sanitizeHtmlContent) 
 			wsCloseConnectionsForSession,
 			wsCloseConnectionsForPage,
 			wsCloseConnectionsForStorage,
+			wsEvictNonOwnerCollaborators,
 			wsHasActiveConnectionsForPage,
 			wsKickUserFromStorage,
 			extractFilesFromContent,

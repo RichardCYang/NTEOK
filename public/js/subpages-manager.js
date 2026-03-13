@@ -71,28 +71,42 @@ function renderSubpages(subpages, parentId) {
 function createSubpageCard(subpage) {
     const item = document.createElement('div');
     item.className = 'subpage-card';
-    if (subpage.isEncrypted) {
-        item.classList.add('encrypted');
-    }
+    if (subpage.isEncrypted) item.classList.add('encrypted');
     item.dataset.pageId = subpage.id;
 
-    const iconHtml = renderIcon(subpage.icon, subpage.isEncrypted);
+    const iconContainer = document.createElement('div');
+    iconContainer.className = 'subpage-card-icon';
+    iconContainer.appendChild(renderIconElement(subpage.icon, subpage.isEncrypted));
+    item.appendChild(iconContainer);
 
-    const preview = generatePreview(subpage.content, subpage.isEncrypted);
+    const contentContainer = document.createElement('div');
+    contentContainer.className = 'subpage-card-content';
 
-    item.innerHTML = `
-        <div class="subpage-card-icon">${iconHtml}</div>
-        <div class="subpage-card-content">
-            <div class="subpage-card-title">${escapeHtml(subpage.title)}</div>
-            ${preview ? `<div class="subpage-card-preview">${preview}</div>` : ''}
-        </div>
-        ${subpage.isEncrypted ? `
-            <div class="subpage-card-encrypted-badge">
-                <i class="fa-solid fa-lock"></i>
-                <span>암호화됨</span>
-            </div>
-        ` : ''}
-    `;
+    const titleDiv = document.createElement('div');
+    titleDiv.className = 'subpage-card-title';
+    titleDiv.textContent = subpage.title || "제목 없음";
+    contentContainer.appendChild(titleDiv);
+
+    const previewText = generatePreviewText(subpage.content, subpage.isEncrypted);
+    if (previewText) {
+        const previewDiv = document.createElement('div');
+        previewDiv.className = 'subpage-card-preview';
+        previewDiv.textContent = previewText;
+        contentContainer.appendChild(previewDiv);
+    }
+    item.appendChild(contentContainer);
+
+    if (subpage.isEncrypted) {
+        const badge = document.createElement('div');
+        badge.className = 'subpage-card-encrypted-badge';
+        const lockIcon = document.createElement('i');
+        lockIcon.className = 'fa-solid fa-lock';
+        badge.appendChild(lockIcon);
+        const textSpan = document.createElement('span');
+        textSpan.textContent = ' 암호화됨';
+        badge.appendChild(textSpan);
+        item.appendChild(badge);
+    }
 
     item.addEventListener('click', async () => {
         if (state && state.currentPageId !== subpage.id) {
@@ -104,33 +118,29 @@ function createSubpageCard(subpage) {
     return item;
 }
 
-function renderIcon(icon, isEncrypted) {
+function renderIconElement(icon, isEncrypted) {
+    if (icon && String(icon).startsWith('fa-')) {
+        const i = document.createElement('i');
+        i.className = String(icon).replace(/[^a-zA-Z0-9 _-]/g, '').trim();
+        return i;
+    }
     if (icon) {
-        if (icon.startsWith('fa-')) {
-            return `<i class="${escapeHtmlAttr(icon)}"></i>`;
-        }
-        return escapeHtml(icon);
+        const span = document.createElement('span');
+        span.textContent = String(icon);
+        return span;
     }
-
-    if (isEncrypted) {
-        return '<i class="fa-solid fa-lock"></i>';
-    }
-    return '<i class="fa-solid fa-file-lines"></i>';
+    const i = document.createElement('i');
+    i.className = isEncrypted ? 'fa-solid fa-lock' : 'fa-solid fa-file-lines';
+    return i;
 }
 
-function generatePreview(htmlContent, isEncrypted) {
-    if (isEncrypted) {
-        return '';
-    }
-
-    if (!htmlContent || htmlContent === '<p></p>') {
-        return '';
-    }
+function generatePreviewText(htmlContent, isEncrypted) {
+    if (isEncrypted) return '';
+    if (!htmlContent || htmlContent === '<p></p>') return '';
 
     const textContent = htmlToPlainText(htmlContent, { maxLength: 5000 });
-
     const preview = textContent.trim().substring(0, 80);
-    return preview ? escapeHtml(preview) + (textContent.length > 80 ? '...' : '') : '';
+    return preview ? preview + (textContent.length > 80 ? '...' : '') : '';
 }
 
 function showSubpagesSection() {

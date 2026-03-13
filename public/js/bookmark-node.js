@@ -1,4 +1,5 @@
 import { sanitizeHttpHref } from "./url-utils.js";
+import { secureFetch } from "./ui-utils.js";
 
 const Node = Tiptap.Core.Node;
 
@@ -99,13 +100,9 @@ export const BookmarkBlock = Node.create({
                         button.textContent = '가져오는 중...';
 
                         try {
-                            const headers = {};
-                            if (window.csrfUtils) {
-                                headers['X-CSRF-Token'] = window.csrfUtils.getCsrfToken();
-                            }
-
-                            const response = await fetch(`/api/pages/fetch-metadata?url=${encodeURIComponent(url)}`, {
-                                headers: headers
+                            const response = await secureFetch('/api/pages/fetch-metadata', {
+                                method: 'POST',
+                                body: JSON.stringify({ url })
                             });
                             
                             if (!response.ok) {
