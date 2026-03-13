@@ -146,6 +146,11 @@ module.exports = ({ pool }) => {
                     [sid, uid]
                 );
 
+                await tx.execute(
+                    `DELETE FROM storage_share_keys WHERE storage_id = ? AND shared_with_user_id = ?`,
+                    [sid, uid]
+                );
+
                 if (ownTx) await tx.commit();
                 return { ok: true, movedPages: pageIds.length, ownerId, pageIds };
             } catch (e) {
@@ -259,14 +264,28 @@ module.exports = ({ pool }) => {
 
                     await conn.execute(
                         `INSERT INTO storages (id, user_id, name, sort_order, created_at, updated_at, is_encrypted, encryption_salt, encryption_check, dek_version)
-                         VALUES (?, ?, ?, ?, NOW(), NOW(), 0, NULL, NULL, 0)`,
+                         VALUES (?, ?, ?, ?, NOW(), NOW(), ?, ?, ?, ?)`,
                         [
                             newStorageId,
                             uid,
                             newName,
-                            sortOrder
+                            sortOrder,
+                            storage.is_encrypted,
+                            storage.encryption_salt,
+                            storage.encryption_check,
+                            storage.dek_version
                         ]
                     );
+
+                    if (Number(storage.is_encrypted) === 1) {
+                        await conn.execute(
+                            `UPDATE storage_share_keys
+                               SET storage_id = ?
+                             WHERE storage_id = ?
+                               AND shared_with_user_id = ?`,
+                            [newStorageId, sid, uid]
+                        );
+                    }
 
                     const boundaryIds = [];
                     for (const row of info.rows) {

@@ -51,8 +51,8 @@ const publicPurifyPath = path.join(__dirname, "public", "lib", "dompurify", "dom
 try {
     const publicPurifyBundle = fs.readFileSync(publicPurifyPath, "utf8");
     const expected = String(domPurifyPkg.version);
-    const bundleLooksMatched = publicPurifyBundle.includes(`o.version="${expected}"`) || 
-                               publicPurifyBundle.includes(`version="${expected}"`) || 
+    const bundleLooksMatched = publicPurifyBundle.includes(`o.version="${expected}"`) ||
+                               publicPurifyBundle.includes(`version="${expected}"`) ||
                                publicPurifyBundle.includes(`version='${expected}'`) ||
                                publicPurifyBundle.includes(`DOMPurify.version = '${expected}'`) ||
                                publicPurifyBundle.includes(`DOMPurify.version = "${expected}"`);
@@ -1665,7 +1665,8 @@ async function initDb() {
             device_label           VARCHAR(100) NULL,
             created_at             DATETIME     NOT NULL,
             CONSTRAINT fk_ukp_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-            INDEX idx_ukp_user (user_id)
+            INDEX idx_ukp_user (user_id),
+            UNIQUE KEY uk_ukp_kid_user (kid, user_id)
         ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
     `);
 
@@ -1681,7 +1682,7 @@ async function initDb() {
             UNIQUE KEY uk_ssk (storage_id, shared_with_user_id),
             CONSTRAINT fk_ssk_storage FOREIGN KEY (storage_id) REFERENCES storages(id) ON DELETE CASCADE,
             CONSTRAINT fk_ssk_user    FOREIGN KEY (shared_with_user_id) REFERENCES users(id) ON DELETE CASCADE,
-            CONSTRAINT fk_ssk_kid     FOREIGN KEY (wrapping_kid) REFERENCES user_key_pairs(kid)
+            CONSTRAINT fk_ssk_kid_user FOREIGN KEY (wrapping_kid, shared_with_user_id) REFERENCES user_key_pairs(kid, user_id)
         ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
     `);
 

@@ -1686,9 +1686,8 @@ module.exports = (dependencies) => {
             if (await forbidPrivateEncryptedPageMutation(id, userId, res)) return;
 
             const permission = await storagesRepo.getPermission(userId, existing.storage_id);
-            if (!permission || !['EDIT', 'ADMIN'].includes(permission)) {
-                return res.status(403).json({ error: "Forbidden" });
-            }
+            if (!permission || !['EDIT', 'ADMIN'].includes(permission)) return res.status(403).json({ error: "Forbidden" });
+            if (!requirePageOwnerForVisibleAssetMutation(existing, userId, res)) return;
 
             await pool.execute(`UPDATE pages SET cover_image=NULL, updated_at=NOW() WHERE id=?`, [id]);
 
@@ -1911,6 +1910,7 @@ module.exports = (dependencies) => {
         const { fileUrl } = req.body;
 
         if (!fileUrl) return res.status(400).json({ error: "fileUrl required" });
+        if (typeof fileUrl !== "string" || fileUrl.length > 512) return res.status(400).json({ error: "Invalid fileUrl" });
 
         try {
             const existing = await loadPageForMutationOr404(userId, id, res);
@@ -1918,9 +1918,8 @@ module.exports = (dependencies) => {
             if (await forbidPrivateEncryptedPageMutation(id, userId, res)) return;
 
             const permission = await storagesRepo.getPermission(userId, existing.storage_id);
-            if (!permission || !['EDIT', 'ADMIN'].includes(permission)) {
-                return res.status(403).json({ error: "Forbidden" });
-            }
+            if (!permission || !['EDIT', 'ADMIN'].includes(permission)) return res.status(403).json({ error: "Forbidden" });
+            if (!requirePageOwnerForVisibleAssetMutation(existing, userId, res)) return;
 
             const parsed = parsePaperclipPathFromUserInput(fileUrl);
             if (!parsed) {
