@@ -451,8 +451,19 @@ function isLocalhostHost(host) {
 const IS_PRODUCTION = process.env.NODE_ENV === "production";
 const BASE_URL = process.env.BASE_URL || (IS_PRODUCTION ? "https://localhost:3000" : "http://localhost:3000");
 
+function isInternetExposedBaseUrl(raw) {
+    try {
+        const u = new URL(raw);
+        return !isLocalhostHost(u.hostname);
+    } catch {
+        return false;
+    }
+}
+
+const IS_INTERNET_EXPOSED = isInternetExposedBaseUrl(BASE_URL);
+
 function assertNoDefaultSecrets() {
-    if (!IS_PRODUCTION) return;
+    if (!IS_INTERNET_EXPOSED) return;
     const banned = new Set([
         '',
         'admin',
@@ -472,9 +483,12 @@ const SHARED_BASE_URL = process.env.SHARED_BASE_URL || null;
 const ALLOW_LEGACY_SHARE_TOKEN_IN_PATH =
     String(process.env.ALLOW_LEGACY_SHARE_TOKEN_IN_PATH || "").toLowerCase() === "true";
 const REQUIRE_ISOLATED_SHARED_ORIGIN =
-    String(process.env.REQUIRE_ISOLATED_SHARED_ORIGIN || (IS_PRODUCTION ? "true" : "false")).toLowerCase() === "true";
+    String(
+        process.env.REQUIRE_ISOLATED_SHARED_ORIGIN ||
+        (IS_INTERNET_EXPOSED ? "true" : "false")
+    ).toLowerCase() === "true";
 
-if (IS_PRODUCTION) {
+if (IS_INTERNET_EXPOSED) {
     const url = new URL(BASE_URL);
     if (url.protocol !== "https:" && !isLocalhostHost(url.hostname)) throw new Error("[보안] 운영 환경에서 BASE_URL은 반드시 HTTPS여야 합니다");
 
@@ -502,19 +516,19 @@ const FORCE_SECURE_COOKIES = (() => {
     const raw = String(process.env.FORCE_SECURE_COOKIES || '').toLowerCase();
     if (raw === 'true') return true;
     if (raw === 'false') return false;
-    return IS_PRODUCTION;
+    return IS_INTERNET_EXPOSED;
 })();
 
-const COOKIE_SECURE = IS_PRODUCTION ? true : ((!ALLOW_INSECURE_COOKIES) && (FORCE_SECURE_COOKIES || IS_HTTPS_BASE_URL || REQUIRE_HTTPS));
+const COOKIE_SECURE = IS_INTERNET_EXPOSED ? true : ((!ALLOW_INSECURE_COOKIES) && (FORCE_SECURE_COOKIES || IS_HTTPS_BASE_URL || REQUIRE_HTTPS));
 
-if (IS_PRODUCTION && !COOKIE_SECURE) throw new Error("[security] COOKIE_SECURE must be true in production");
+if (IS_INTERNET_EXPOSED && !COOKIE_SECURE) throw new Error("[보안] 인터넷 노출 환경에서는 COOKIE_SECURE가 필수입니다");
 
 const SESSION_COOKIE_NAME = COOKIE_SECURE ? `__Host-${SESSION_COOKIE_NAME_RAW}` : SESSION_COOKIE_NAME_RAW;
 const CSRF_COOKIE_NAME = COOKIE_SECURE ? `__Host-${CSRF_COOKIE_NAME_RAW}` : CSRF_COOKIE_NAME_RAW;
 const PREAUTH_CSRF_COOKIE_NAME_RAW = "nteok_preauth_csrf";
 const PREAUTH_CSRF_COOKIE_NAME = COOKIE_SECURE ? `__Host-${PREAUTH_CSRF_COOKIE_NAME_RAW}` : PREAUTH_CSRF_COOKIE_NAME_RAW;
 
-if (IS_PRODUCTION && !process.env.CSRF_HMAC_KEY) throw new Error("[보안] 운영 환경에서 CSRF_HMAC_KEY 설정이 필수입니다");
+if (IS_INTERNET_EXPOSED && !process.env.CSRF_HMAC_KEY) throw new Error("[보안] 인터넷 노출 환경에서는 CSRF_HMAC_KEY 설정이 필수입니다");
 
 const CSRF_HMAC_KEY = Buffer.from(
 	process.env.CSRF_HMAC_KEY || crypto.randomBytes(32).toString("hex"),
@@ -1001,9 +1015,8 @@ function isUrlAllowedForShared(url) {
     try {
         const u = new URL(url);
         if (!['https:', 'mailto:', 'tel:'].includes(u.protocol)) return false;
-        const allowed = (process.env.SHARED_PAGE_ALLOWED_DOMAINS || "").split(",").map(s => s.trim()).filter(Boolean);
-        if (allowed.some(d => u.hostname === d || u.hostname.endsWith('.' + d))) return true;
-        return false;
+        if (u.username || u.password) return false;
+        return true;
     } catch (_) {
         return false;
     }
@@ -2450,6 +2463,7 @@ function installGracefulShutdownHandlers(httpServer, pool, sanitizeHtmlContent) 
 			getLocationFromIP,
 			maskIPAddress,
 			isPrivateOrLocalIP,
+			isPublicRoutableIP,
 			checkCountryWhitelist,
 			getClientIpFromRequest,
 			isHostnameAllowedForPreview,

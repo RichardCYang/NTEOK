@@ -12,6 +12,23 @@ const cheerio = require("cheerio");
 const { detectImageTypeFromMagic, assertImageFileSignature, assertSafeAttachmentFile } = require("../security-utils.js");
 const { validateAndNormalizeIcon } = require("../utils/icon-utils.js");
 
+function isLocalhostHost(host) {
+    return host === "localhost" || host === "127.0.0.1" || host === "::1";
+}
+
+function isInternetExposedBaseUrl(raw) {
+    try {
+        const u = new URL(raw);
+        return !isLocalhostHost(u.hostname);
+    } catch {
+        return false;
+    }
+}
+
+const IS_PRODUCTION = process.env.NODE_ENV === "production";
+const BASE_URL = process.env.BASE_URL || (IS_PRODUCTION ? "https://localhost:3000" : "http://localhost:3000");
+const IS_INTERNET_EXPOSED = isInternetExposedBaseUrl(BASE_URL);
+
 const METADATA_FETCH_TIMEOUT_MS = 5000;
 const METADATA_FETCH_MAX_BYTES = 10 * 1024 * 1024;
 const METADATA_FETCH_MAX_REDIRECTS = 5;
@@ -20,7 +37,9 @@ const LINK_PREVIEW_ALLOWED_PORTS = new Set([443]);
 function loadProxySecret() {
     const raw = process.env.PROXY_SECRET;
     if (typeof raw === 'string' && raw.length >= 32) return raw;
-    if (process.env.NODE_ENV === 'production') throw new Error('[SECURITY] 운영 환경에서는 32바이트 이상의 강력한 PROXY_SECRET 설정이 필수입니다.');
+    if (IS_INTERNET_EXPOSED) {
+        throw new Error('[보안] 인터넷 노출 환경에서는 32바이트 이상의 강력한 PROXY_SECRET 설정이 필수입니다.');
+    }
     return crypto.randomBytes(32).toString('hex');
 }
 
@@ -109,12 +128,12 @@ function normalizeResolvedAddress(entry) {
     return null;
 }
 
-async function resolvePublicOutboundAddresses(hostname, isPrivateOrLocalIP) {
+async function resolvePublicOutboundAddresses(hostname, isPublicRoutableIP) {
     const host = String(hostname || '').trim().replace(/^\[/, '').replace(/\]$/, '');
     if (!host) throw makeFetchError('HOST_REQUIRED', '호스트 주소가 필요합니다.');
 
     if (net.isIP(host)) {
-        if (isPrivateOrLocalIP(host)) throw makeFetchError('BLOCKED_PRIVATE_IP', '차단된 내부 IP 주소입니다.');
+        if (!isPublicRoutableIP(host)) throw makeFetchError('BLOCKED_PRIVATE_IP', '차단된 내부 IP 주소입니다.');
         return [host];
     }
 
@@ -137,13 +156,13 @@ async function resolvePublicOutboundAddresses(hostname, isPrivateOrLocalIP) {
     if (addresses.length === 0) throw makeFetchError('HOST_NOT_FOUND', '호스트를 찾을 수 없습니다.');
 
     const uniqueAddresses = [...new Set(addresses)];
-    const publicAddresses = uniqueAddresses.filter(ip => !isPrivateOrLocalIP(ip));
+    const publicAddresses = uniqueAddresses.filter(ip => isPublicRoutableIP(ip));
 
     if (publicAddresses.length === 0) throw makeFetchError('BLOCKED_PRIVATE_IP', '차단된 내부 IP 주소입니다.');
     return publicAddresses;
 }
 
-function fetchDocumentFromPinnedAddress(targetUrl, pinnedIp, isPrivateOrLocalIP) {
+function fetchDocumentFromPinnedAddress(targetUrl, pinnedIp, isPublicRoutableIP) {
     return new Promise((resolve, reject) => {
         const family = net.isIP(pinnedIp);
         if (!pinnedIp || family === 0) return reject(makeFetchError('INVALID_PINNED_IP', '유효하지 않은 IP 주소입니다.'));
@@ -178,7 +197,7 @@ function fetchDocumentFromPinnedAddress(targetUrl, pinnedIp, isPrivateOrLocalIP)
         }, (upstreamRes) => {
             const remoteIp = normalizeIpLiteral(upstreamRes.socket?.remoteAddress);
             const pinnedNorm = normalizeIpLiteral(pinnedIp);
-            if (!remoteIp || remoteIp !== pinnedNorm || isPrivateOrLocalIP(remoteIp)) {
+            if (!remoteIp || remoteIp !== pinnedNorm || !isPublicRoutableIP(remoteIp)) {
                 upstreamRes.resume();
                 return settleReject(makeFetchError('PIN_MISMATCH', '검증된 대상 IP와 실제 연결 IP가 일치하지 않습니다.'));
             }
@@ -238,12 +257,12 @@ function fetchDocumentFromPinnedAddress(targetUrl, pinnedIp, isPrivateOrLocalIP)
     });
 }
 
-async function fetchDocumentWithoutRedirects(targetUrl, resolvedIps, isPrivateOrLocalIP) {
+async function fetchDocumentWithoutRedirects(targetUrl, resolvedIps, isPublicRoutableIP) {
     let lastError = null;
 
     for (const ip of resolvedIps) {
         try {
-            return await fetchDocumentFromPinnedAddress(targetUrl, ip, isPrivateOrLocalIP);
+            return await fetchDocumentFromPinnedAddress(targetUrl, ip, isPublicRoutableIP);
         } catch (err) {
             lastError = err;
             const code = String(err?.code || '');
@@ -260,12 +279,12 @@ async function fetchDocumentWithoutRedirects(targetUrl, resolvedIps, isPrivateOr
     throw lastError || makeFetchError('FETCH_FAILED', '대상 서버에 연결할 수 없습니다.');
 }
 
-async function fetchHtmlWithValidatedRedirects(startUrl, isHostnameAllowedForPreview, isPrivateOrLocalIP) {
+async function fetchHtmlWithValidatedRedirects(startUrl, isHostnameAllowedForPreview, isPublicRoutableIP) {
     let currentUrl = normalizeAndValidatePreviewUrl(startUrl.toString(), isHostnameAllowedForPreview);
 
     for (let i = 0; i <= METADATA_FETCH_MAX_REDIRECTS; i++) {
-        const resolvedIps = await resolvePublicOutboundAddresses(currentUrl.hostname, isPrivateOrLocalIP);
-        const result = await fetchDocumentWithoutRedirects(currentUrl, resolvedIps, isPrivateOrLocalIP);
+        const resolvedIps = await resolvePublicOutboundAddresses(currentUrl.hostname, isPublicRoutableIP);
+        const result = await fetchDocumentWithoutRedirects(currentUrl, resolvedIps, isPublicRoutableIP);
 
         if (result?.type === 'html') return { html: result.html, finalUrl: currentUrl };
 
@@ -279,7 +298,6 @@ async function fetchHtmlWithValidatedRedirects(startUrl, isHostnameAllowedForPre
 
     throw makeFetchError('TOO_MANY_REDIRECTS', '리다이렉트가 너무 많습니다.');
 }
-
 const erl = require("express-rate-limit");
 const rateLimit = erl.rateLimit || erl;
 const { ipKeyGenerator } = erl;
@@ -339,6 +357,7 @@ module.exports = (dependencies) => {
         extractFilesFromContent,
         invalidateYjsPersistenceForPage,
         isPrivateOrLocalIP,
+        isPublicRoutableIP,
         isHostnameAllowedForPreview,
         getClientIpFromRequest,
         outboundFetchLimiter,
@@ -840,7 +859,7 @@ module.exports = (dependencies) => {
 
         try {
             const targetUrl = normalizeAndValidatePreviewUrl(String(url), isHostnameAllowedForPreview);
-            const resolvedIps = await resolvePublicOutboundAddresses(targetUrl.hostname, isPrivateOrLocalIP);
+            const resolvedIps = await resolvePublicOutboundAddresses(targetUrl.hostname, isPublicRoutableIP);
             
             const pinnedCandidates = resolvedIps
                 .map(normalizeIpLiteral)
@@ -866,7 +885,7 @@ module.exports = (dependencies) => {
                 }
             }, (upstreamRes) => {
                 const remoteIp = normalizeIpLiteral(upstreamRes.socket?.remoteAddress);
-                if (!remoteIp || isPrivateOrLocalIP(remoteIp) || !allowedIps.includes(remoteIp)) {
+                if (!remoteIp || !isPublicRoutableIP(remoteIp) || !allowedIps.includes(remoteIp)) {
                     upstreamRes.resume();
                     return sendFallback();
                 }
@@ -931,7 +950,7 @@ module.exports = (dependencies) => {
             const startUrl = normalizeAndValidatePreviewUrl(String(url), isHostnameAllowedForPreview);
             console.warn(`[미리보기-가져오기] 사용자=${req.user.id} 호스트=${startUrl.hostname}`);
 
-            const { html, finalUrl } = await fetchHtmlWithValidatedRedirects(startUrl, isHostnameAllowedForPreview, isPrivateOrLocalIP);
+            const { html, finalUrl } = await fetchHtmlWithValidatedRedirects(startUrl, isHostnameAllowedForPreview, isPublicRoutableIP);
             const $ = cheerio.load(html);
             const title = (
                 $('meta[property="og:title"]').attr('content') ||
@@ -963,7 +982,7 @@ module.exports = (dependencies) => {
             }
 
             const faviconAllowedIps = faviconUrl
-                ? await resolvePublicOutboundAddresses(new URL(faviconUrl).hostname, isPrivateOrLocalIP)
+                ? await resolvePublicOutboundAddresses(new URL(faviconUrl).hostname, isPublicRoutableIP)
                 : [];
             const ticket = faviconUrl
                 ? signPreviewTicket({

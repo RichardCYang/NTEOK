@@ -1877,12 +1877,10 @@ function handleUnsubscribePage(ws, payload, pool, sanitizeHtmlContent) {
 
 
 async function handleSubscribePageE2EE(ws, payload, pool, pageSqlPolicy) {
-    const { pageId } = payload;
-    const userId = ws.userId;
+    const { pageId } = payload || {};
+    const userId = Number(ws.userId);
     try {
-        const vis = (pageSqlPolicy && typeof pageSqlPolicy.andVisible === 'function')
-            ? pageSqlPolicy.andVisible({ alias: 'p', viewerUserId: userId })
-            : { sql: ' AND NOT (p.is_encrypted = 1 AND p.share_allowed = 0 AND p.user_id != ?)', params: [userId] };
+        if (!pageId) return;
 
         const [rows] = await pool.execute(
             `SELECT p.id, p.user_id, p.is_encrypted, p.share_allowed, p.storage_id,
@@ -1893,10 +1891,13 @@ async function handleSubscribePageE2EE(ws, payload, pool, pageSqlPolicy) {
                     s.is_encrypted AS storage_is_encrypted
              FROM pages p
              JOIN storages s ON p.storage_id = s.id
+             LEFT JOIN storage_shares ss ON s.id = ss.storage_id AND ss.shared_with_user_id = ?
              WHERE p.id = ?
                AND p.deleted_at IS NULL
-             ${vis.sql}`,
-            [pageId, ...vis.params]
+               AND (s.user_id = ? OR ss.storage_id IS NOT NULL)
+               AND s.is_encrypted = 1
+               AND p.is_encrypted = 1`,
+            [userId, pageId, userId]
         );
 
         if (!rows.length) {
@@ -1906,12 +1907,7 @@ async function handleSubscribePageE2EE(ws, payload, pool, pageSqlPolicy) {
 
         const page = rows[0];
 
-        if (page.is_encrypted !== 1 || page.storage_is_encrypted !== 1) {
-            ws.send(JSON.stringify({ event: 'error', data: { message: 'Page is not E2EE encrypted' } }));
-            return;
-        }
-
-        const permission = await getStoragePermission(pool, userId, page.storage_id);
+        const permission = (Number(page.user_id) === userId) ? 'ADMIN' : await getStoragePermission(pool, userId, page.storage_id);
         if (!permission) {
             ws.send(JSON.stringify({ event: 'error', data: { message: 'Page not found' } }));
             return;

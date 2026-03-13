@@ -16,26 +16,15 @@ const RICH_DOC_ATTACHMENT_EXTS = new Set([
 const ALLOWED_ATTACHMENT_EXTS = new Set(SAFE_BASE_ATTACHMENT_EXTS);
 if (String(process.env.ENABLE_RICH_DOCUMENT_ATTACHMENTS).toLowerCase() === 'true') {
 	for (const ext of RICH_DOC_ATTACHMENT_EXTS) ALLOWED_ATTACHMENT_EXTS.add(ext);
-}
-
-const PREVIEW_BLOCKED_HOSTS = new Set([
-    'localhost',
-    'localhost.localdomain',
-    'metadata.google.internal',
-    'metadata.goog',
-    'metadata.azure.com'
-]);
-
-const PREVIEW_BLOCKED_SUFFIXES = [
-    '.localhost',
-    '.local',
-    '.internal'
-];
+const { domainToASCII } = require('node:url');
+const yauzl = require('yauzl');
 
 function isHostnameAllowedForPreview(hostname) {
     if (typeof hostname !== 'string') return false;
-    const h = hostname.toLowerCase().trim().replace(/\.$/, '');
+    const ascii = domainToASCII(String(hostname).trim());
+    const h = String(ascii || '').toLowerCase().replace(/\.$/, '');
     if (!h) return false;
+    if (h.length > 253) return false;
     if (h.includes('..') || h.startsWith('.') || h.endsWith('.')) return false;
     if (net.isIP(h)) return false;
     if (!h.includes('.')) return false;
@@ -47,6 +36,19 @@ function isHostnameAllowedForPreview(hostname) {
         if (!/^[a-z0-9-]+$/.test(label)) return false;
         if (label.startsWith('-') || label.endsWith('-')) return false;
     }
+
+    const PREVIEW_BLOCKED_HOSTS = new Set([
+        'localhost',
+        'localhost.localdomain',
+        'metadata.google.internal',
+        'metadata.goog',
+        'metadata.azure.com'
+    ]);
+    const PREVIEW_BLOCKED_SUFFIXES = [
+        '.localhost',
+        '.local',
+        '.internal'
+    ];
 
     if (PREVIEW_BLOCKED_HOSTS.has(h)) return false;
     if (PREVIEW_BLOCKED_SUFFIXES.some(suffix => h.endsWith(suffix))) return false;
