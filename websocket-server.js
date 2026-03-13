@@ -571,7 +571,7 @@ function computeE2eeRetryDelayMs(attempt) {
     return Math.min(E2EE_SAVE_RETRY_MAX_MS, Math.floor(base));
 }
 
-function scheduleE2EESave(pool, pageId, encryptedState, encryptedHtml, snapshotAtMs = null) {
+function scheduleE2EESave(pool, pageId, encryptedState, encryptedHtml, snapshotAtMs = null, actorUserId = null) {
     const pid = String(pageId || '');
     if (!pid || !encryptedState) return;
 
@@ -583,6 +583,7 @@ function scheduleE2EESave(pool, pageId, encryptedState, encryptedHtml, snapshotA
     const next = {
         ...prev,
         encryptedState,
+        actorUserId,
         ...(encryptedHtml !== undefined ? { encryptedHtml } : {}),
         storedAt: Date.now(),
         snapshotAtMs: Number.isFinite(snapshotAtMs) ? snapshotAtMs : (prev.snapshotAtMs || Date.now()),
@@ -596,7 +597,7 @@ function scheduleE2EESave(pool, pageId, encryptedState, encryptedHtml, snapshotA
         if (cur.encryptedState !== encryptedState) return;
 
         try {
-            await saveE2EEStateToDatabase(pool, pid, cur.encryptedState, cur.encryptedHtml, cur.snapshotAtMs);
+            await saveE2EEStateToDatabase(pool, pid, cur.encryptedState, cur.encryptedHtml, cur.snapshotAtMs, cur.actorUserId || null);
             yjsE2EEStates.delete(pid);
         } catch (error) {
             const attempt = (cur.retryCount || 0) + 1;
@@ -628,7 +629,7 @@ async function flushPendingE2eeSaveForPage(pool, pageId) {
     }
 
     try {
-        await saveE2EEStateToDatabase(pool, pid, state.encryptedState, state.encryptedHtml, state.snapshotAtMs);
+        await saveE2EEStateToDatabase(pool, pid, state.encryptedState, state.encryptedHtml, state.snapshotAtMs, state.actorUserId || null);
     } catch (e) {
         console.error(`[E2EE] flushPendingE2eeSaveForPage(${pid}) 실패:`, e);
     } finally {
@@ -638,16 +639,39 @@ async function flushPendingE2eeSaveForPage(pool, pageId) {
 
 async function flushAllPendingE2eeSaves(pool) {
     const pageIds = Array.from(yjsE2EEStates.keys());
-    console.log(`[E2EE] Graceful shutdown: flushing ${pageIds.length} pending E2EE saves...`);
+    console.log(`[E2EE] 안전 종료: ${pageIds.length}개의 대기 중인 E2EE 저장 항목을 처리 중입니다...`);
     for (const pageId of pageIds) {
         await flushPendingE2eeSaveForPage(pool, pageId);
     }
 }
 
-async function saveE2EEStateToDatabase(pool, pageId, encryptedState, encryptedHtml, snapshotAtMs = null) {
+async function saveE2EEStateToDatabase(pool, pageId, encryptedState, encryptedHtml, snapshotAtMs = null, actorUserId = null) {
     if (!encryptedState) return;
 
     try {
+        if (actorUserId != null) {
+            const [authRows] = await pool.execute(
+                `SELECT p.id, p.storage_id, p.user_id, p.is_encrypted, p.share_allowed
+                   FROM pages p
+                   JOIN storages s ON p.storage_id = s.id
+              LEFT JOIN storage_shares ss
+                     ON s.id = ss.storage_id
+                    AND ss.shared_with_user_id = ?
+                  WHERE p.id = ?
+                    AND p.deleted_at IS NULL
+                    AND s.is_encrypted = 1
+                    AND p.is_encrypted = 1
+                    AND (s.user_id = ? OR ss.shared_with_user_id IS NOT NULL)
+                    AND NOT (p.share_allowed = 0 AND p.user_id != ?)
+                  LIMIT 1`,
+                [actorUserId, pageId, actorUserId, actorUserId]
+            );
+            if (!authRows.length) return;
+
+            const freshPerm = await getStoragePermission(pool, actorUserId, authRows[0].storage_id);
+            if (!freshPerm || !['EDIT', 'ADMIN'].includes(freshPerm)) return;
+        }
+
         const baseMs = Number.isFinite(snapshotAtMs) ? snapshotAtMs : Date.now();
         const updateTime = formatDateForDb(new Date(baseMs));
 
@@ -863,9 +887,8 @@ function consumeWsMessageBudget(ws, kind) {
 }
 
 const WS_PERMISSION_REFRESH_MS = (() => {
-    const n = Number.parseInt(process.env.WS_PERMISSION_REFRESH_MS || '5000', 10);
-    if (!Number.isFinite(n)) return 5000;
-    return Math.max(500, Math.min(60_000, n));
+    const v = parseInt(process.env.WS_PERMISSION_REFRESH_MS || "1000", 10);
+    return Number.isFinite(v) ? Math.max(0, Math.min(60000, v)) : 5000;
 })();
 
 const WS_MAX_ACTIVE_CONNECTIONS_PER_IP = Number.parseInt(process.env.WS_MAX_ACTIVE_CONNECTIONS_PER_IP || '25', 10);
@@ -928,6 +951,31 @@ function wsCloseConnectionsForSession(sessionId, code = 1008, reason = 'Session 
         try { if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) ws.close(code, reason); } catch (err) {}
     }
     wsConnections.sessions.delete(sessionId);
+}
+
+function wsCloseConnectionsForStorage(storageId, closeCode = 1008, reason = 'Storage access revoked') {
+    const sid = String(storageId || '').trim();
+    if (!sid) return;
+
+    const storConns = wsConnections.storages.get(sid);
+    if (storConns) {
+        for (const c of Array.from(storConns)) {
+            try { c.ws.send(JSON.stringify({ event: 'access-revoked', data: { storageId: sid } })); } catch (_) {}
+            try { c.ws.close(closeCode, reason); } catch (_) {}
+            storConns.delete(c);
+        }
+        if (storConns.size === 0) wsConnections.storages.delete(sid);
+    }
+
+    for (const [pageId, pageConns] of Array.from(wsConnections.pages.entries())) {
+        for (const c of Array.from(pageConns)) {
+            if (String(c.storageId) !== sid) continue;
+            try { c.ws.send(JSON.stringify({ event: 'access-revoked', data: { storageId: sid, pageId } })); } catch (_) {}
+            try { c.ws.close(closeCode, reason); } catch (_) {}
+            pageConns.delete(c);
+        }
+        if (pageConns.size === 0) wsConnections.pages.delete(pageId);
+    }
 }
 
 function wsCloseConnectionsForPage(pageId, code = 1009, reason = 'Document too large') {
@@ -1302,7 +1350,7 @@ async function cleanupOrphanedFiles(pool, filePaths, excludePageId, pageOwnerUse
 
             const fullPath = path.resolve(__dirname, 'paperclip', normalized);
             if (!fullPath.startsWith(baseDir)) {
-                console.warn(`[보안] orphan cleanup traversal blocked: ${normalized}`);
+                console.warn(`[보안] 고립된 파일 정리 중 경로 탐색 차단됨: ${normalized}`);
                 continue;
             }
 
@@ -1321,6 +1369,27 @@ async function saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc, opt
     try {
         const { epoch, allowDeleted = false, forceClearYjsState = false, preserveDbMetadata = false, actorUserId = null } = opts;
         if (epoch !== undefined && getYjsSaveEpoch(pageId) > epoch) return { status: 'skipped-epoch' };
+
+        if (actorUserId != null) {
+            const [authRows] = await pool.execute(
+                `SELECT p.id, p.storage_id, p.user_id, p.is_encrypted, p.share_allowed
+                   FROM pages p
+                   JOIN storages s ON p.storage_id = s.id
+              LEFT JOIN storage_shares ss
+                     ON s.id = ss.storage_id
+                    AND ss.shared_with_user_id = ?
+                  WHERE p.id = ?
+                    AND p.deleted_at IS NULL
+                    AND (s.user_id = ? OR ss.shared_with_user_id IS NOT NULL)
+                    AND NOT (p.is_encrypted = 1 AND p.share_allowed = 0 AND p.user_id != ?)
+                  LIMIT 1`,
+                [actorUserId, pageId, actorUserId, actorUserId]
+            );
+            if (!authRows.length) return { status: 'aborted-auth' };
+
+            const freshPerm = await getStoragePermission(pool, actorUserId, authRows[0].storage_id);
+            if (!freshPerm || !['EDIT', 'ADMIN'].includes(freshPerm)) return { status: 'aborted-auth' };
+        }
 
         const [existingRows] = await pool.execute(
             'SELECT title, content, icon, sort_order, parent_id, is_encrypted, user_id, deleted_at FROM pages WHERE id = ?',
@@ -2136,7 +2205,7 @@ async function handleYjsStateE2EE(ws, payload, pool, pageSqlPolicy) {
             }
 
 
-            yjsE2EEStates.set(String(pageId), { encryptedState, encryptedHtml, storedAt: Date.now() });
+            yjsE2EEStates.set(String(pageId), { encryptedState, encryptedHtml, storedAt: Date.now(), actorUserId: ws.userId });
 
             const pid = String(pageId);
             e2eeLastSnapshotAt.set(pid, Date.now());
@@ -2144,7 +2213,7 @@ async function handleYjsStateE2EE(ws, payload, pool, pageSqlPolicy) {
 
             touchE2eeLeader(pageId, myConn);
 
-            scheduleE2EESave(pool, pageId, encryptedState, encryptedHtml, Date.now());
+            scheduleE2EESave(pool, pageId, encryptedState, encryptedHtml, Date.now(), ws.userId);
         });
     } catch (e) {}
 }
@@ -2249,7 +2318,7 @@ async function handlePageSnapshot(ws, payload, pool, sanitizeHtmlContent, pageSq
                     saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, docMeta.ydoc, { epoch, forceClearYjsState: true, actorUserId: ws.userId })
                 );
             } catch (e) {
-                console.error('[YJS] snapshot resync-save failed:', String(pageId), e?.message || e);
+                console.error('[YJS] 스냅샷 재동기화 저장 실패:', String(pageId), e?.message || e);
             }
             try { clearOversizeResyncTimer(pageId); } catch (_) {}
             try { wsCloseConnectionsForPage(pageId, 1012, 'Resync required - reload'); } catch (_) {}
@@ -2704,7 +2773,7 @@ async function handleYjsState(ws, payload, pool, sanitizeHtmlContent, pageSqlPol
             }
         });
     } catch (e) {
-        console.error('[WS] handleYjsState error:', e);
+        console.error('[WS] handleYjsState 오류:', e);
     }
 }
 
@@ -2829,6 +2898,23 @@ function wsKickUserFromStorage(storageId, targetUserId, closeCode = 1008, reason
 
 function startPeriodicPermissionCheck(pool, pageSqlPolicy) {
     setInterval(async () => {
+        const allStorages = Array.from(wsConnections.storages.entries());
+        for (const [storageId, conns] of allStorages) {
+            for (const c of Array.from(conns)) {
+                try {
+                    const fresh = await getStoragePermission(pool, c.userId, storageId);
+                    c.permCheckedAt = Date.now();
+                    c.permission = fresh;
+                    if (!fresh) {
+                        try { c.ws.send(JSON.stringify({ event: 'access-revoked', data: { storageId } })); } catch (_) {}
+                        try { c.ws.close(1008, 'Storage access revoked'); } catch (_) {}
+                        conns.delete(c);
+                    }
+                } catch (_) {}
+            }
+            if (conns.size === 0) wsConnections.storages.delete(storageId);
+        }
+
         const allPages = Array.from(wsConnections.pages.entries());
         for (const [pageId, conns] of allPages) {
             for (const c of Array.from(conns)) {
@@ -2840,7 +2926,7 @@ function startPeriodicPermissionCheck(pool, pageSqlPolicy) {
                 } catch (_) {}
             }
         }
-    }, 60 * 1000);
+    }, 10 * 1000);
 }
 
 module.exports = {
@@ -2862,6 +2948,7 @@ module.exports = {
     flushAllPendingE2eeUpdateLogs,
     wsCloseConnectionsForSession,
     wsCloseConnectionsForPage,
+    wsCloseConnectionsForStorage,
     wsEvictNonOwnerCollaborators,
     wsHasActiveConnectionsForPage,
     wsKickUserFromStorage,

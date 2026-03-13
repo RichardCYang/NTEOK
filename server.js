@@ -2465,6 +2465,7 @@ function installGracefulShutdownHandlers(httpServer, pool, sanitizeHtmlContent) 
 			wsBroadcastToUser,
 			wsCloseConnectionsForSession,
 			wsCloseConnectionsForPage,
+			wsCloseConnectionsForStorage,
 			wsHasActiveConnectionsForPage,
 			wsKickUserFromStorage,
 			extractFilesFromContent,

@@ -26,7 +26,7 @@ module.exports = (dependencies) => {
         toIsoString,
         logError,
         formatDateForDb,
-        wsKickUserFromStorage,
+        wsCloseConnectionsForStorage,
         getClientIpFromRequest,
         requireRecentReauth
     } = dependencies;
@@ -311,10 +311,16 @@ module.exports = (dependencies) => {
 
             if (storageToDelete && !storageToDelete.is_owner) {
                 await storagesRepo.removeCollaborator(storageId, userId);
+                try {
+                    if (typeof wsCloseConnectionsForStorage === 'function') wsCloseConnectionsForStorage(storageId, 1008, '저장소 접근 권한이 회수되었습니다.');
+                } catch (_) {}
                 res.json({ success: true });
             } else {
                 const result = await storagesRepo.safeDeleteStoragePreservingCollaborators(userId, storageId);
                 if (!result?.ok) return res.status(404).json({ error: '저장소를 찾을 수 없거나 권한이 없습니다.' });
+                try {
+                    if (typeof wsCloseConnectionsForStorage === 'function') wsCloseConnectionsForStorage(storageId, 1008, '저장소가 삭제되었습니다.');
+                } catch (_) {}
                 res.json({ success: true, transferred: result.transferred });
             }
         } catch (error) {
@@ -444,7 +450,7 @@ module.exports = (dependencies) => {
 
             await connection.commit();
 
-            try { if (typeof wsKickUserFromStorage === 'function') wsKickUserFromStorage(storageId, targetUserId, 1008, '저장소 권한이 변경되었습니다.'); } catch (e) {}
+            try { if (typeof wsCloseConnectionsForStorage === 'function') wsCloseConnectionsForStorage(storageId, 1008, 'Storage access updated'); } catch (e) {}
 
             res.json({ success: true });
         } catch (error) {
@@ -504,7 +510,7 @@ module.exports = (dependencies) => {
 
             await connection.commit();
 
-            try { if (typeof wsKickUserFromStorage === 'function') wsKickUserFromStorage(storageId, targetUserId, 1008, '저장소 접근 권한이 회수되었습니다.'); } catch (e) {}
+            try { if (typeof wsCloseConnectionsForStorage === 'function') wsCloseConnectionsForStorage(storageId, 1008, 'Storage collaborator removed'); } catch (e) {}
 
             res.json({ success: true });
         } catch (error) {

@@ -1372,9 +1372,20 @@ module.exports = (dependencies) => {
             }
 
             const placeholders = normalizedIds.map(() => "?").join(",");
+            const vis = pageSqlPolicy.andVisible({ alias: "p", viewerUserId: userId });
             const [rows] = await pool.execute(
-                `SELECT p.id, p.user_id, p.storage_id FROM pages p WHERE p.id IN (${placeholders})`,
-                [...normalizedIds]
+                `SELECT p.id, p.user_id, p.storage_id, p.is_encrypted, p.share_allowed
+                   FROM pages p
+                   JOIN storages s
+                     ON p.storage_id = s.id
+              LEFT JOIN storage_shares ss
+                     ON s.id = ss.storage_id
+                    AND ss.shared_with_user_id = ?
+                  WHERE p.id IN (${placeholders})
+                    AND p.deleted_at IS NULL
+                    AND (s.user_id = ? OR ss.shared_with_user_id IS NOT NULL)
+                    ${vis.sql}`,
+                [userId, ...normalizedIds, userId, ...vis.params]
             );
 
             if (rows.length !== normalizedIds.length) return res.status(404).json({ error: "일부 페이지를 찾을 수 없습니다." });
