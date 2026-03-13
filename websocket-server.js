@@ -5,8 +5,13 @@ const { URL } = require("url");
 const { JSDOM } = require("jsdom");
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 const { formatDateForDb } = require("./network-utils");
 const { validateAndNormalizeIcon } = require("./utils/icon-utils");
+
+function mintE2eeLeaderToken() {
+    return crypto.randomBytes(32).toString('hex');
+}
 
 const REALTIME_URI_ATTRS = new Set([
     "href", "src", "data-src", "data-url", "data-thumbnail", "data-favicon"
@@ -497,7 +502,7 @@ function ensureE2eeLeaderForActiveEditor(pageId, myConn) {
     let leader = getActiveE2eeLeader(pid);
     const now = Date.now();
     if (!leader) {
-        leader = { sessionId: myConn.sessionId, userId: myConn.userId, lastSeenAt: now };
+        leader = { sessionId: myConn.sessionId, userId: myConn.userId, lastSeenAt: now, leaderToken: mintE2eeLeaderToken() };
         e2eeSnapshotLeaders.set(pid, leader);
         return leader;
     }
@@ -506,7 +511,7 @@ function ensureE2eeLeaderForActiveEditor(pageId, myConn) {
         return leader;
     }
     if (now - (leader.lastSeenAt || 0) > E2EE_LEADER_IDLE_HANDOFF_MS) {
-        leader = { sessionId: myConn.sessionId, userId: myConn.userId, lastSeenAt: now };
+        leader = { sessionId: myConn.sessionId, userId: myConn.userId, lastSeenAt: now, leaderToken: mintE2eeLeaderToken() };
         e2eeSnapshotLeaders.set(pid, leader);
         return leader;
     }
@@ -532,7 +537,7 @@ function maybeElectE2eeLeader(pageId, myConn) {
     const pid = String(pageId);
     let leader = getActiveE2eeLeader(pid);
     if (!leader) {
-        leader = { sessionId: myConn.sessionId, userId: myConn.userId, lastSeenAt: Date.now() };
+        leader = { sessionId: myConn.sessionId, userId: myConn.userId, lastSeenAt: Date.now(), leaderToken: mintE2eeLeaderToken() };
         e2eeSnapshotLeaders.set(pid, leader);
     }
     return leader;
@@ -2000,7 +2005,7 @@ async function handleSubscribePageE2EE(ws, payload, pool, pageSqlPolicy) {
         if (['EDIT', 'ADMIN'].includes(permission)) {
             const leader = maybeElectE2eeLeader(pageId, myConn);
             const isLeader = (leader.sessionId === myConn.sessionId);
-            ws.send(JSON.stringify({ event: 'e2ee-leader-status', data: { isLeader } }));
+            ws.send(JSON.stringify({ event: 'e2ee-leader-status', data: { isLeader, leaderToken: isLeader ? leader.leaderToken : undefined } }));
         }
 
         wsBroadcastToPage(pageId, 'user-joined', { userId, username: ws.username, color, permission }, userId);
@@ -2055,7 +2060,7 @@ async function handleYjsUpdateE2EE(ws, payload, pool, pageSqlPolicy) {
 }
 
 async function handleYjsStateE2EE(ws, payload, pool, pageSqlPolicy) {
-    const { pageId, encryptedState, encryptedHtml, refs } = payload || {};
+    const { pageId, encryptedState, encryptedHtml, refs, leaderToken } = payload || {};
     try {
         if (!pageId || typeof encryptedState !== 'string' || !isSubscribedToPage(ws, pageId)) return;
 
@@ -2075,7 +2080,11 @@ async function handleYjsStateE2EE(ws, payload, pool, pageSqlPolicy) {
 
         await enqueuePageMutation(pageId, async () => {
             const leader = ensureE2eeLeaderForActiveEditor(pageId, myConn);
-            if (leader && String(leader.sessionId) !== String(myConn.sessionId)) return;
+            if (!leader || String(leader.sessionId) !== String(myConn.sessionId)) return;
+            if (!leader.leaderToken || String(leader.leaderToken) !== String(leaderToken)) {
+                console.warn(`[E2EE] 리더 토큰 불일치 (page=${pageId}, session=${myConn.sessionId})`);
+                return;
+            }
 
             if (encryptedState.length > WS_MAX_YJS_STATE_B64_CHARS) return;
             if (!/^[A-Za-z0-9+/=]+$/.test(encryptedState)) return;
@@ -2565,8 +2574,11 @@ async function handleYjsUpdate(ws, payload, pool, sanitizeHtmlContent, pageSqlPo
             } catch (_) { return; }
 
             if (emergencyPersistState.has(pageId)) return;
-            const outboundUpdate = canonical.updateB64 || update;
-            wsBroadcastToPage(pageId, "yjs-update", { update: outboundUpdate }, ws.userId);
+            if (canonical.changed && canonical.stateB64) {
+                wsBroadcastToPage(pageId, 'yjs-state', { state: canonical.stateB64 }, null);
+            } else {
+                wsBroadcastToPage(pageId, "yjs-update", { update: canonical.updateB64 || update }, ws.userId);
+            }
             if (doc) {
                 if (doc.saveTimeout || emergencyPersistState.has(pageId)) return;
                 const epoch = getYjsSaveEpoch(pageId);
@@ -2671,7 +2683,11 @@ async function handleYjsState(ws, payload, pool, sanitizeHtmlContent, pageSqlPol
             if (emergencyPersistState.has(pageId)) return;
 
             const outboundState = canonical.stateB64 || state;
-            wsBroadcastToPage(pageId, 'yjs-state', { state: outboundState }, ws.userId);
+            if (canonical.changed && canonical.stateB64) {
+                wsBroadcastToPage(pageId, 'yjs-state', { state: canonical.stateB64 }, null);
+            } else {
+                wsBroadcastToPage(pageId, 'yjs-state', { state: outboundState }, ws.userId);
+            }
 
             if (doc) {
                 if (doc.saveTimeout || emergencyPersistState.has(pageId)) return;

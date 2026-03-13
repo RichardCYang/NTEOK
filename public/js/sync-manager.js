@@ -1,6 +1,7 @@
 
 import * as Y from 'yjs';
 import { sanitizeEditorHtml } from './sanitize.js';
+import { sanitizeHttpHref } from './url-utils.js';
 import { Awareness, encodeAwarenessUpdate, applyAwarenessUpdate, removeAwarenessStates } from 'y-protocols/awareness.js';
 import { ySyncPlugin, yCursorPlugin, yUndoPlugin, undo, redo, prosemirrorToYXmlFragment } from 'y-prosemirror';
 import { keymap } from 'prosemirror-keymap';
@@ -28,11 +29,137 @@ let resyncDebounceTimer = null;
 
 const pendingForceSaves = new Map();
 
-let isE2eeSync = false;				
-let isE2eeWalSyncing = false;       
-let e2eeWalUpdateBuffer = [];       
-let e2eeStatePushTimeout = null;	
-let e2eeStatePushPageId = null;	
+let isE2eeSync = false;
+let isE2eeWalSyncing = false;
+let e2eeWalUpdateBuffer = [];
+let e2eeStatePushTimeout = null;
+let e2eeStatePushPageId = null;
+let e2eeLeaderToken = null;
+
+const REALTIME_URI_ATTRS = new Set([
+    'href', 'src', 'data-src', 'data-url', 'data-thumbnail', 'data-favicon'
+]);
+const REALTIME_STRUCTURED_ATTRS = new Set([
+    'data-columns', 'data-rows', 'data-memos'
+]);
+const LOCAL_RESOURCE_RE = /^\/(?:imgs|covers|paperclip)\//;
+const LOCAL_PROXY_RE = /^\/api\/pages\/proxy-favicon(?:\?|$)/;
+
+function decodeLooseHtmlEntities(input) {
+    const t = document.createElement('textarea');
+    t.innerHTML = String(input ?? '');
+    return t.value;
+}
+
+function isSafeRealtimeLinkUrl(raw) {
+    const v = decodeLooseHtmlEntities(raw).trim();
+    if (!v) return true;
+    if (/[\u0000-\u001F\u007F]/.test(v)) return false;
+    if (v.startsWith('#')) return true;
+    if (v.startsWith('/')) return !v.startsWith('//');
+    if (/^(?:mailto|tel):/i.test(v)) return true;
+    return !!sanitizeHttpHref(v, { allowRelative: false, addHttpsIfMissing: false });
+}
+
+function isSafeRealtimeResourceUrl(raw) {
+    const v = decodeLooseHtmlEntities(raw).trim();
+    if (!v) return true;
+    if (/[\u0000-\u001F\u007F]/.test(v)) return false;
+    if (v.startsWith('//') || v.startsWith('#')) return false;
+    if (v.startsWith('/')) return LOCAL_RESOURCE_RE.test(v) || LOCAL_PROXY_RE.test(v);
+    try {
+        const u = new URL(v, window.location.origin);
+        if (u.origin !== window.location.origin) return false;
+        return LOCAL_RESOURCE_RE.test(u.pathname) || LOCAL_PROXY_RE.test(u.pathname);
+    } catch {
+        return false;
+    }
+}
+
+function validateStructuredRealtimeAttr(name, value) {
+    if (!REALTIME_STRUCTURED_ATTRS.has(name)) return true;
+    if (String(value).length > 512 * 1024) return false;
+    try {
+        JSON.parse(decodeLooseHtmlEntities(value));
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+function getAllowedRealtimeNodeNames() {
+    const schema = state.editor?.schema || state.editor?.view?.state?.schema;
+    const out = new Set(['doc', 'text']);
+    if (schema?.nodes) {
+        for (const k in schema.nodes) out.add(k);
+    }
+    if (schema?.marks) {
+        for (const k in schema.marks) out.add(k);
+    }
+    return out;
+}
+
+function validateRealtimeXmlAgainstSchema(xml) {
+    const parser = new window.DOMParser();
+    const doc = parser.parseFromString(`<root>${xml || ''}</root>`, 'application/xml');
+    if (doc.getElementsByTagName('parsererror').length) return { ok: false, reason: 'Malformed realtime XML' };
+
+    const allowedNames = getAllowedRealtimeNodeNames();
+    for (const el of Array.from(doc.querySelectorAll('*'))) {
+        const tag = String(el.tagName || '').toLowerCase();
+        if (tag === 'root') continue;
+        if (!allowedNames.has(tag)) return { ok: false, reason: `Unexpected realtime node: ${tag}` };
+
+        for (const attr of Array.from(el.attributes || [])) {
+            const name = String(attr.name || '').toLowerCase();
+            const value = String(attr.value || '');
+
+            if (name.startsWith('on') || name === 'style' || name === 'srcdoc' || name === 'formaction') return { ok: false, reason: `Forbidden realtime attr: ${name}` };
+
+            if (REALTIME_URI_ATTRS.has(name)) {
+                const ok = (name === 'href' || name === 'data-url')
+                    ? isSafeRealtimeLinkUrl(value)
+                    : isSafeRealtimeResourceUrl(value);
+                if (!ok) return { ok: false, reason: `Unsafe realtime URI in ${name}` };
+            }
+
+            if (!validateStructuredRealtimeAttr(name, value)) return { ok: false, reason: `Malformed realtime structured attr: ${name}` };
+        }
+    }
+
+    return { ok: true };
+}
+
+function validateIncomingRealtimeDoc(candidateDoc) {
+    try {
+        const yMeta = candidateDoc.getMap('metadata');
+        const content = yMeta.get('content');
+        if (content != null && typeof content !== 'string') return { ok: false, reason: 'Invalid metadata.content type' };
+
+        const frag = candidateDoc.getXmlFragment('prosemirror');
+        return validateRealtimeXmlAgainstSchema(frag.toString());
+    } catch {
+        return { ok: false, reason: 'Invalid realtime document' };
+    }
+}
+
+function applyValidatedRemoteUpdate(update, source = 'remote') {
+    if (!ydoc) return false;
+
+    const probe = new Y.Doc();
+    Y.applyUpdate(probe, Y.encodeStateAsUpdate(ydoc), 'probe-base');
+    Y.applyUpdate(probe, update, 'probe-remote');
+
+    const verdict = validateIncomingRealtimeDoc(probe);
+    if (!verdict.ok) {
+        console.warn('[WS] 비신뢰 실시간 데이터 차단됨:', verdict.reason);
+        try { ws?.close(1008, verdict.reason || 'Invalid realtime payload'); } catch (_) {}
+        return false;
+    }
+
+    Y.applyUpdate(ydoc, update, source);
+    return true;
+}
 
 const E2EE_STATE_PUSH_DEBOUNCE_MS = (() => {
 	const v = Number.parseInt(window?.__NTEOK_E2EE_SNAPSHOT_DEBOUNCE_MS || '800', 10);
@@ -331,6 +458,12 @@ function handleWebSocketMessage(message) {
             break;
         case 'e2ee-pending-updates':
             handleE2eePendingUpdates(data).catch(e => console.error('[E2EE] WAL 복구 오류:', e));
+            break;
+        case 'e2ee-leader-status':
+            e2eeLeaderToken = (data?.isLeader && data?.leaderToken) ? String(data.leaderToken) : null;
+            if (data?.isLeader && currentPageId && isE2eeSync) {
+                sendYjsStateE2EE(currentPageId).catch(() => {});
+            }
             break;
         case 'request-yjs-state-e2ee':
             handleRequestYjsStateE2EE(data).catch(e => console.error('[E2EE] snapshot 요청 처리 오류:', e));
@@ -634,7 +767,7 @@ function handleInit(data) {
             return;
         }
         const stateUpdate = base64ToUint8(data.state);
-		Y.applyUpdate(ydoc, stateUpdate, 'remote');
+        if (!applyValidatedRemoteUpdate(stateUpdate, 'remote-init')) throw new Error('비신뢰 초기 상태 데이터 차단됨');
 
         if (cursorState.awareness && data.userId && data.username && data.color) {
         	cursorState.localUserId = data.userId;
@@ -666,12 +799,7 @@ function handleInit(data) {
 function handleYjsUpdate(data) {
 	try {
 		const update = base64ToUint8(data.update);
-        if (looksUnsafeRealtimePayload(update)) {
-            console.warn("Blocked unsafe realtime update");
-            ws?.close();
-            return;
-        }
-        Y.applyUpdate(ydoc, update, 'remote');
+        applyValidatedRemoteUpdate(update, 'remote');
     } catch (error) {
         console.error('[WS] Yjs 업데이트 처리 오류:', error);
     }
@@ -681,12 +809,7 @@ function handleYjsState(data) {
 	try {
 		if (!data || typeof data.state !== 'string') return;
 		const stateUpdate = base64ToUint8(data.state);
-        if (looksUnsafeRealtimePayload(stateUpdate)) {
-            console.warn("Blocked unsafe realtime state");
-            ws?.close();
-            return;
-        }
-		Y.applyUpdate(ydoc, stateUpdate, 'remote');
+        applyValidatedRemoteUpdate(stateUpdate, 'remote-state');
 	} catch (error) {
 		console.error('[WS] Yjs state 처리 오류:', error);
 	}
@@ -1470,7 +1593,10 @@ async function sendYjsStateE2EE(pageId, prebuiltSnapshot = null) {
 
         ws.send(JSON.stringify({
             type: 'yjs-state-e2ee',
-            payload: snapshot
+            payload: {
+                ...snapshot,
+                leaderToken: e2eeLeaderToken || undefined
+            }
         }));
     } catch (e) {
         console.error('[E2EE] 상태 저장 전송 실패:', e);
@@ -1531,7 +1657,7 @@ async function handleInitE2EE(data) {
             } else {
                 const combined = base64ToUint8(data.encryptedState);
                 const stateUpdate = await decryptBytes(combined, storageKey);
-                Y.applyUpdate(ydoc, stateUpdate, 'remote');
+                if (!applyValidatedRemoteUpdate(stateUpdate, 'remote-init-e2ee')) throw new Error('비신뢰 E2EE 초기 스냅샷 차단됨');
                 console.log('[E2EE] 서버 스냅샷 복호화 및 적용 완료');
             }
         } else if (data.encryptedState && !shouldTrustServerSnapshot) {
@@ -1551,8 +1677,6 @@ async function handleInitE2EE(data) {
         }
 
         setupEditorBindingWithXmlFragment();
-
-        await sendYjsStateE2EE(currentPageId);
 
         console.log('[E2EE] 초기화 완료');
     } catch (error) {
@@ -1576,7 +1700,7 @@ async function handleE2eePendingUpdates(data) {
                 try {
                     const combined = base64ToUint8(b64);
                     const stateUpdate = await decryptBytes(combined, storageKey);
-                    Y.applyUpdate(ydoc, stateUpdate, 'remote');
+                    if (!applyValidatedRemoteUpdate(stateUpdate, 'remote-e2ee-wal')) throw new Error('비신뢰 E2EE WAL 업데이트 차단됨');
                 } catch (e) {
                     console.error('[E2EE] WAL 업데이트 적용 실패:', e);
                 }
@@ -1612,7 +1736,7 @@ async function handleYjsUpdateE2EEEvent(data) {
         }
         const combined = base64ToUint8(data.update);
         const stateUpdate = await decryptBytes(combined, storageKey);
-        Y.applyUpdate(ydoc, stateUpdate, 'remote');
+        applyValidatedRemoteUpdate(stateUpdate, 'remote-e2ee');
     } catch (error) {
         console.error('[E2EE] 업데이트 복호화/적용 오류:', error);
     }
