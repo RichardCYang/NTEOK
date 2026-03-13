@@ -2532,6 +2532,51 @@ body {
     color: #2d5f5d;
 }
 
+.icon-picker-search-container {
+    position: relative;
+    margin-bottom: 16px;
+    padding: 0 4px;
+}
+
+.icon-picker-search-container .search-icon {
+    position: absolute;
+    left: 16px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: #9ca3af;
+    font-size: 14px;
+}
+
+.icon-picker-search-container input {
+    width: 100%;
+    padding: 10px 12px 10px 36px;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    font-size: 14px;
+    outline: none;
+    transition: border-color 0.2s, box-shadow 0.2s;
+    background-color: #f9fafb;
+}
+
+.icon-picker-search-container input:focus {
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+    background-color: #fff;
+}
+
+.no-results {
+    grid-column: 1 / -1;
+    text-align: center;
+    padding: 40px 20px;
+    color: #9ca3af;
+    font-size: 14px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+}
+
 .icon-picker-grid {
     display: grid;
     grid-template-columns: repeat(8, 1fr);
@@ -2542,6 +2587,12 @@ body {
     overflow-y: auto;
     padding: 4px;
     flex-shrink: 1;
+}
+
+.icon-picker-grid.search-results-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
 }
 
 .icon-picker-item {
@@ -2559,6 +2610,29 @@ body {
     font-size: 20px;
     color: #2d5f5d;
     user-select: none;
+    gap: 12px;
+}
+
+.search-results-list .icon-picker-item {
+    aspect-ratio: auto;
+    justify-content: flex-start;
+    padding: 10px 16px;
+}
+
+.icon-picker-item-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.icon-picker-item-label {
+    font-size: 14px;
+    color: #4b5563;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: left;
 }
 
 .icon-picker-item:hover {

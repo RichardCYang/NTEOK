@@ -61,7 +61,7 @@ Self-Hostable Web-Based Note-Taking Application
 ### Storages and Pages
 - Group pages by storage
 - Hierarchical page structure (parent-child relationships)
-- Page icon settings (170 Font Awesome icons, 400 emoji)
+- Page icon settings (175+ Font Awesome icons, 400+ emoji)
 - **Page Cover Images**: Set default or user-uploaded cover images
 - Auto-sort by last modified time
 - Drag-and-drop sorting (planned)
