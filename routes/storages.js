@@ -112,6 +112,33 @@ module.exports = (dependencies) => {
         return true;
     }
 
+    async function validateStorageRekeyShares(storageId, ownerUserId, shares, excludedUserId = null) {
+        const collaborators = await storagesRepo.listCollaborators(storageId);
+        const activeUserIds = new Set();
+        activeUserIds.add(Number(ownerUserId));
+        for (const c of collaborators) {
+            const uid = Number(c.user_id);
+            if (excludedUserId && uid === Number(excludedUserId)) continue;
+            activeUserIds.add(uid);
+        }
+
+        const shareUserIds = new Set(shares.map(s => Number(s.userId)));
+        
+        for (const uid of activeUserIds) {
+            if (!shareUserIds.has(uid)) return { ok: false, error: `사용자 ID ${uid}에 대한 공유 키가 누락되었습니다.` };
+        }
+        
+        if (shareUserIds.size !== activeUserIds.size) return { ok: false, error: '공유 키 목록에 허용되지 않은 사용자가 포함되어 있습니다.' };
+
+        for (const s of shares) {
+            const uid = Number(s.userId);
+            const keyPair = await userKeysRepo.getKeyPairByKid(s.wrappingKid);
+            if (!keyPair || Number(keyPair.user_id) !== uid) return { ok: false, error: `사용자 ID ${uid}의 wrappingKid가 올바르지 않습니다.` };
+        }
+
+        return { ok: true };
+    }
+
     router.get('/', authMiddleware, async (req, res) => {
         try {
             const storages = await storagesRepo.listStoragesForUser(req.user.id);
@@ -454,6 +481,12 @@ module.exports = (dependencies) => {
                 }
 
                 const filteredShares = shares.filter(s => Number(s.userId) !== Number(targetUserId));
+                const v = await validateStorageRekeyShares(storageId, storage.owner_id, filteredShares, targetUserId);
+                if (!v.ok) {
+                    await connection.rollback();
+                    return res.status(400).json({ error: v.error });
+                }
+
                 await storagesRepo.rekeyStorage({
                     userId,
                     storageId,
@@ -497,6 +530,9 @@ module.exports = (dependencies) => {
             if (!isValidBase64(encryptionSalt, 64)) return res.status(400).json({ error: '유효하지 않은 encryptionSalt 입니다.' });
 
             if (!Array.isArray(shares)) return res.status(400).json({ error: '공유 키 정보(shares)가 필요합니다.' });
+            const v = await validateStorageRekeyShares(storageId, storage.owner_id, shares);
+            if (!v.ok) return res.status(400).json({ error: v.error });
+
             for (const s of shares) {
                 if (!s.userId || !isValidBase64(s.wrappedDek, 4096) || !s.wrappingKid) {
                     return res.status(400).json({ error: '유효하지 않은 공유 키 정보가 포함되어 있습니다.' });

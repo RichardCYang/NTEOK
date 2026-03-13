@@ -306,43 +306,29 @@ async function recordLoginAttempt(pool, params) {
 function isPublicRoutableIP(ip) {
     if (!ip) return false;
     const cleanIP = normalizeIp(ip);
-    if (!cleanIP || net.isIP(cleanIP) === 0) return false;
+    if (!cleanIP) return false;
+
     try {
         let addr = ipaddr.parse(cleanIP);
-        if (addr.kind() === 'ipv6' && typeof addr.isIPv4MappedAddress === 'function' && addr.isIPv4MappedAddress()) {
+
+        if (addr.kind() === 'ipv6' && typeof addr.isIPv4MappedAddress === 'function' && addr.isIPv4MappedAddress())
             addr = addr.toIPv4Address();
+
+        const range = addr.range();
+
+        if (addr.kind() === 'ipv4')
+            return range === 'unicast';
+
+        if (addr.kind() === 'ipv6') {
+            if (range !== 'global') return false;
+            if (typeof addr.isLinkLocal === 'function' && addr.isLinkLocal()) return false;
+            if (typeof addr.isLoopback === 'function' && addr.isLoopback()) return false;
+            if (typeof addr.isMulticast === 'function' && addr.isMulticast()) return false;
+            return true;
         }
-        const blocked = new Set([
-            'unspecified', 'broadcast', 'multicast', 'linkLocal', 'loopback', 'private', 'reserved', 'carrierGradeNat'
-        ]);
-        if (blocked.has(addr.range())) return false;
-        if (addr.kind() === 'ipv4') {
-            const octets = addr.toByteArray();
-            if (octets[0] === 10) return false;
-            if (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) return false;
-            if (octets[0] === 192 && octets[1] === 168) return false;
-            if (octets[0] === 169 && octets[1] === 254) return false;
-            if (octets[0] === 127) return false;
-            if (octets[0] === 0) return false;
-            if (octets[0] >= 224) return false;
-            if (octets[0] === 100 && octets[1] >= 64 && octets[1] <= 127) return false;
-            if (octets[0] === 192 && octets[1] === 0 && octets[2] === 0) return false;
-            if (octets[0] === 192 && octets[1] === 0 && octets[2] === 2) return false;
-            if (octets[0] === 198 && (octets[1] === 18 || octets[1] === 19)) return false;
-            if (octets[0] === 198 && octets[1] === 51 && octets[2] === 100) return false;
-            if (octets[0] === 203 && octets[1] === 0 && octets[2] === 113) return false;
-        } else if (addr.kind() === 'ipv6') {
-            if (addr.isIPv4MappedAddress()) return isPublicRoutableIP(addr.toIPv4Address().toString());
-            const range = addr.range();
-            if (range !== 'unicast' && range !== 'uniqueLocal' && range !== 'ipv4Mapped') {
-                if (range !== 'global') return false;
-            }
-            if (addr.isLinkLocal()) return false;
-            if (addr.isLoopback()) return false;
-            if (addr.isMulticast()) return false;
-        }
-        return true;
-    } catch (e) {
+
+        return false;
+    } catch {
         return false;
     }
 }

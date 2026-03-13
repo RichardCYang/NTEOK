@@ -284,6 +284,9 @@ async function fetchHtmlWithValidatedRedirects(startUrl, isHostnameAllowedForPre
 
     for (let i = 0; i <= METADATA_FETCH_MAX_REDIRECTS; i++) {
         const resolvedIps = await resolvePublicOutboundAddresses(currentUrl.hostname, isPublicRoutableIP);
+        if (!Array.isArray(resolvedIps) || resolvedIps.length === 0)
+            throw makeFetchError('BLOCKED_PRIVATE_IP', '차단된 내부 IP 주소입니다.');
+
         const result = await fetchDocumentWithoutRedirects(currentUrl, resolvedIps, isPublicRoutableIP);
 
         if (result?.type === 'html') return { html: result.html, finalUrl: currentUrl };
@@ -866,7 +869,13 @@ module.exports = (dependencies) => {
                 .filter(ip => allowedIps.includes(ip));
             const pinnedIp = pinnedCandidates[0];
             const family = net.isIP(pinnedIp);
-            if (!pinnedIp || family === 0) return sendFallback();
+            if (!pinnedIp || family === 0) {
+                console.warn('[proxy-favicon] 비공개 또는 변경된 IP 차단됨', {
+                    userId: req.user?.id,
+                    hostname: targetUrl.hostname
+                });
+                return sendFallback();
+            }
 
             const proxyReq = https.request({
                 protocol: 'https:',
