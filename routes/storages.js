@@ -169,12 +169,13 @@ module.exports = (dependencies) => {
             if (!storage) return res.status(404).json({ error: '저장소를 찾을 수 없거나 권한이 없습니다.' });
 
             const { pageRows } = await bootstrapRepo.getStorageData(userId, storageId);
+            const visibleIds = new Set((pageRows || []).map((r) => String(r.id)));
 
             const pages = (pageRows || []).map((row) => ({
                 id: row.id,
                 title: row.title || "제목 없음",
                 updatedAt: toIsoString(row.updated_at),
-                parentId: row.parent_id,
+                parentId: row.parent_id && visibleIds.has(String(row.parent_id)) ? row.parent_id : null,
                 sortOrder: row.sort_order,
                 storageId: row.storage_id,
                 isEncrypted: row.is_encrypted ? true : false,

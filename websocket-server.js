@@ -1504,25 +1504,28 @@ function wsBroadcastToPage(pageId, event, data, excludeUserId = null) {
 function wsBroadcastToStorage(storageId, event, data, excludeUserId = null, options = {}) {
     const connections = wsConnections.storages.get(storageId);
     if (!connections) return;
-	const pv = options?.pageVisibility;
-	const restrictToOwner = pv && pv.isEncrypted === true && pv.shareAllowed === false && Number.isFinite(pv.ownerUserId);
-	const pvs = options?.pageVisibilities;
-	const shouldFilterPageIds = Boolean(pvs && data && Array.isArray(data.pageIds));
+    const pv = options?.pageVisibility;
+    const restrictToOwner = pv && pv.isEncrypted === true && pv.shareAllowed === false && Number.isFinite(pv.ownerUserId);
+    const pvs = options?.pageVisibilities;
+    const parentVis = options?.parentVisibility;
+    const shouldFilterPageIds = Boolean(pvs && data && Array.isArray(data.pageIds));
 
     connections.forEach(conn => {
         if (excludeUserId && conn.userId === excludeUserId) return;
         if (restrictToOwner && conn.userId !== pv.ownerUserId) return;
         let payloadData = data;
-  		if (shouldFilterPageIds) {
- 			const filtered = data.pageIds.filter(id => {
-				const v = pvs[id];
-				if (!v) return true;
-				if (v.isEncrypted === true && v.shareAllowed === false) return conn.userId === v.ownerUserId;
-				return true;
- 			});
- 			if (filtered.length === 0) return;
- 			payloadData = { ...data, pageIds: filtered };
-  		}
+        const redactParent = parentVis && parentVis.isEncrypted === true && parentVis.shareAllowed === false && conn.userId !== parentVis.ownerUserId;
+        if (redactParent) payloadData = { ...payloadData, parentId: null };
+        if (shouldFilterPageIds) {
+            const filtered = payloadData.pageIds.filter(id => {
+                const v = pvs[id];
+                if (!v) return true;
+                if (v.isEncrypted === true && v.shareAllowed === false) return conn.userId === v.ownerUserId;
+                return true;
+            });
+            if (filtered.length === 0 && !redactParent) return;
+            payloadData = { ...payloadData, pageIds: filtered };
+        }
         try { if (conn.ws.readyState === WebSocket.OPEN) conn.ws.send(JSON.stringify({ event, data: payloadData })); } catch (error) {}
     });
 }
@@ -1821,7 +1824,20 @@ async function handleSubscribePage(ws, payload, pool, sanitizeHtmlContent, pageS
 
         let stateB64 = '';
         try {
-            const stateBuf = Buffer.from(Y.encodeStateAsUpdate(ydoc));
+            const tempDoc = new Y.Doc();
+            Y.applyUpdate(tempDoc, Y.encodeStateAsUpdate(ydoc));
+            const tempMeta = tempDoc.getMap('metadata');
+            const pid = tempMeta.get('parentId');
+            if (pid) {
+                const [pRow] = await pool.execute(
+                    `SELECT 1 FROM pages p
+                     LEFT JOIN storage_shares ss ON p.storage_id = ss.storage_id AND ss.shared_with_user_id = ?
+                     WHERE p.id = ? AND (p.user_id = ? OR ss.storage_id IS NOT NULL)`,
+                    [userId, pid, userId]
+                );
+                if (pRow.length === 0) tempMeta.set('parentId', null);
+            }
+            const stateBuf = Buffer.from(Y.encodeStateAsUpdate(tempDoc));
             if (stateBuf.length > WS_MAX_DOC_EST_BYTES) {
                 wsCloseConnectionsForPage(pageId, 1009, 'Document too large - collaboration reset');
                 return;

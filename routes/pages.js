@@ -722,6 +722,15 @@ module.exports = (dependencies) => {
         return true;
     }
 
+    async function resolveSafeParentIdForViewer(viewerUserId, parentId) {
+        if (!parentId) return null;
+        const parent = await pagesRepo.getPageByIdForUser({
+            userId: viewerUserId,
+            pageId: parentId
+        });
+        return parent ? parent.id : null;
+    }
+
     router.get("/covers/user", authMiddleware, csrfMiddleware, async (req, res) => {
         const userId = req.user.id;
         try {
@@ -1040,13 +1049,14 @@ module.exports = (dependencies) => {
         try {
             const row = await loadVisiblePageWithStorageStateOr404(userId, id, res);
             if (!row) return;
+            const safeParentId = await resolveSafeParentIdForViewer(userId, row.parent_id);
             const isEnc = (row.is_encrypted === 1);
             res.json({
                 id: row.id, title: row.title || "제목 없음", content: isEnc ? "" : sanitizeHtmlContent(row.content || "<p></p>"),
                 encryptionSalt: isEnc ? row.encryption_salt : null,
                 encryptedContent: isEnc ? row.encrypted_content : null,
                 createdAt: toIsoString(row.created_at), updatedAt: toIsoString(row.updated_at),
-                parentId: row.parent_id, sortOrder: row.sort_order, storageId: row.storage_id,
+                parentId: safeParentId, sortOrder: row.sort_order, storageId: row.storage_id,
                 isEncrypted: isEnc, shareAllowed: row.share_allowed ? true : false,
                 userId: row.user_id, icon: row.icon || null, coverImage: row.cover_image || null,
                 coverPosition: row.cover_position || 50, horizontalPadding: row.horizontal_padding || null
@@ -1398,10 +1408,37 @@ module.exports = (dependencies) => {
                 userId,
                 storageId,
                 action: 'REORDER_PAGES',
-                details: { parentId, count: normalizedIds.length }
+                details: { count: normalizedIds.length }
             });
 
-            wsBroadcastToStorage(storageId, 'pages-reordered', { parentId, pageIds: normalizedIds }, userId);
+            const visibilityIds = parentId ? [parentId, ...normalizedIds] : [...normalizedIds];
+            const visibilityPlaceholders = visibilityIds.map(() => '?').join(',');
+            const [visibilityRows] = await pool.execute(
+                `SELECT id, user_id, is_encrypted, share_allowed
+                   FROM pages
+                  WHERE id IN (${visibilityPlaceholders})`,
+                visibilityIds
+            );
+
+            const pageVisibilities = Object.create(null);
+            for (const row of visibilityRows) {
+                pageVisibilities[String(row.id)] = {
+                    ownerUserId: row.user_id,
+                    isEncrypted: row.is_encrypted === 1,
+                    shareAllowed: row.share_allowed === 1
+                };
+            }
+
+            wsBroadcastToStorage(
+                storageId,
+                'pages-reordered',
+                { parentId, pageIds: normalizedIds },
+                userId,
+                {
+                    pageVisibilities,
+                    parentVisibility: parentId ? pageVisibilities[String(parentId)] : null
+                }
+            );
             res.json({ ok: true });
         } catch (e) {
             logError("PATCH /api/pages/reorder", e);
