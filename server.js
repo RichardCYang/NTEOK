@@ -479,28 +479,10 @@ function assertNoDefaultSecrets() {
     if (adminUsername === 'admin' && banned.has(adminPassword)) throw new Error('[보안] 관리자 계정이 기본값이나 예제 자격 증명을 사용하고 있습니다');
 }
 
-const SHARED_BASE_URL = process.env.SHARED_BASE_URL || null;
-const ALLOW_LEGACY_SHARE_TOKEN_IN_PATH =
-    String(process.env.ALLOW_LEGACY_SHARE_TOKEN_IN_PATH || "").toLowerCase() === "true";
-const REQUIRE_ISOLATED_SHARED_ORIGIN =
-    String(
-        process.env.REQUIRE_ISOLATED_SHARED_ORIGIN ||
-        (IS_INTERNET_EXPOSED ? "true" : "false")
-    ).toLowerCase() === "true";
-
 if (IS_INTERNET_EXPOSED) {
     const url = new URL(BASE_URL);
     if (url.protocol !== "https:" && !isLocalhostHost(url.hostname)) throw new Error("[보안] 운영 환경에서 BASE_URL은 반드시 HTTPS여야 합니다");
-
-    if (ALLOW_LEGACY_SHARE_TOKEN_IN_PATH) throw new Error("[보안] 운영 환경에서는 ALLOW_LEGACY_SHARE_TOKEN_IN_PATH=true를 허용하지 않습니다.");
     if (!COOKIE_SECURE) throw new Error("[보안] 운영 환경에서는 Secure 쿠키가 필수입니다.");
-
-    if (REQUIRE_ISOLATED_SHARED_ORIGIN) {
-        if (!SHARED_BASE_URL) throw new Error("[보안] 운영 환경에서는 공개 공유 페이지용 SHARED_BASE_URL(별도 origin)이 필수입니다.");
-        const sharedUrl = new URL(SHARED_BASE_URL);
-        if (sharedUrl.origin === url.origin) throw new Error("[보안] 운영 환경에서는 공개 공유 페이지를 앱과 동일 origin에서 제공할 수 없습니다.");
-        if (sharedUrl.protocol !== "https:" && !isLocalhostHost(sharedUrl.hostname)) throw new Error("[보안] 운영 환경에서 SHARED_BASE_URL은 반드시 HTTPS여야 합니다.");
-    }
 }
 assertNoDefaultSecrets();
 
@@ -1000,27 +982,12 @@ const BASE_ALLOWED_ATTR = [
     'data-columns', 'data-rows', 'data-is-open'
 ];
 
-const SHARED_ALLOWED_ATTR = BASE_ALLOWED_ATTR.filter(attr => attr !== 'class');
-
 const EDITOR_ALLOWED_TAGS = [...BASE_ALLOWED_TAGS, 'label', 'input'];
 const EDITOR_ALLOWED_ATTR = [
     ...BASE_ALLOWED_ATTR,
     'style', 'type', 'checked',
     'data-selected-date', 'data-memos'
 ];
-
-function isUrlAllowedForShared(url) {
-    if (!url) return true;
-    if (url.startsWith('#')) return true;
-    try {
-        const u = new URL(url);
-        if (!['https:', 'mailto:', 'tel:'].includes(u.protocol)) return false;
-        if (u.username || u.password) return false;
-        return true;
-    } catch (_) {
-        return false;
-    }
-}
 
 function isSafeLocalAssetPath(url) {
     if (typeof url !== "string") return false;
@@ -1080,25 +1047,17 @@ function normalizeStructuredAttr(attrName, raw) {
     return JSON.stringify(normalizeStructuredValue(parsed));
 }
 
-function sanitizeHtmlContent(html, { profile = 'editor' } = {}) {
+function sanitizeHtmlContent(html) {
 	if (typeof html !== 'string') return html;
 	const prefiltered = prefilterHtmlForSanitizer(html);
 	try {
 		maybeRecycleDomPurify();
-		const config = profile === 'shared'
-			? {
-				ALLOWED_TAGS: BASE_ALLOWED_TAGS,
-				ALLOWED_ATTR: SHARED_ALLOWED_ATTR,
-				ALLOW_DATA_ATTR: false,
-				FORBID_ATTR: ['style'],
-				ALLOWED_URI_REGEXP: /^(?:(?:(?:ht)tps?|mailto|tel):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i
-			}
-			: {
-				ALLOWED_TAGS: EDITOR_ALLOWED_TAGS,
-				ALLOWED_ATTR: EDITOR_ALLOWED_ATTR,
-				ALLOW_DATA_ATTR: false,
-				ALLOWED_URI_REGEXP: /^(?:(?:(?:ht)tps?|mailto|tel):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i
-			};
+		const config = {
+			ALLOWED_TAGS: EDITOR_ALLOWED_TAGS,
+			ALLOWED_ATTR: EDITOR_ALLOWED_ATTR,
+			ALLOW_DATA_ATTR: false,
+			ALLOWED_URI_REGEXP: /^(?:(?:(?:ht)tps?|mailto|tel):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i
+		};
 		const sanitized = DOMPurify.sanitize(prefiltered, config);
 		const dom = new JSDOM(sanitized);
 		const doc = dom.window.document;
@@ -1122,17 +1081,17 @@ function sanitizeHtmlContent(html, { profile = 'editor' } = {}) {
 			if (el.hasAttribute('href')) {
 				const href = el.getAttribute('href');
 				const value = sanitizeHttpHrefStrict(href, { allowRelative: true });
-				if (!value || (profile === 'shared' && !(isSafeLocalAssetPath(value) || isUrlAllowedForShared(value)))) el.removeAttribute('href');
+				if (!value) el.removeAttribute('href');
 				else el.setAttribute('href', value);
 			}
 			if (el.hasAttribute('data-url')) {
 				const value = sanitizeHttpHrefStrict(el.getAttribute('data-url'), { allowRelative: false });
-				if (!value || (profile === 'shared' && !isUrlAllowedForShared(value))) el.removeAttribute('data-url');
+				if (!value) el.removeAttribute('data-url');
 				else el.setAttribute('data-url', value);
 			}
 			if (el.hasAttribute('data-thumbnail')) {
 				const value = sanitizeHttpHrefStrict(el.getAttribute('data-thumbnail'), { allowRelative: false });
-				if (!value || (profile === 'shared' && !isUrlAllowedForShared(value))) el.removeAttribute('data-thumbnail');
+				if (!value) el.removeAttribute('data-thumbnail');
 				else el.setAttribute('data-thumbnail', value);
 			}
 			if (el.hasAttribute('data-favicon')) {
@@ -1145,11 +1104,11 @@ function sanitizeHtmlContent(html, { profile = 'editor' } = {}) {
 				const raw = String(el.getAttribute('data-src') || '');
 				if (nodeType === 'youtube-block' || nodeType === 'youtube') {
 					const value = normalizeYouTubeEmbedUrl(raw);
-					if (!value || (profile === 'shared' && !isUrlAllowedForShared(value))) el.removeAttribute('data-src');
+					if (!value) el.removeAttribute('data-src');
 					else el.setAttribute('data-src', value);
 				} else {
 					const value = sanitizeHttpHrefStrict(raw, { allowRelative: true });
-					if (!value || !(isSafeLocalAssetPath(value) || (profile === 'shared' && isUrlAllowedForShared(value)))) el.removeAttribute('data-src');
+					if (!value || !isSafeLocalAssetPath(value)) el.removeAttribute('data-src');
 					else el.setAttribute('data-src', value);
 				}
 			}
@@ -1496,30 +1455,6 @@ async function initDb() {
             CONSTRAINT uc_storage_shares_unique
                 UNIQUE (storage_id, shared_with_user_id),
             INDEX idx_shared_with_user (shared_with_user_id)
-        ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
-    `);
-
-    await pool.execute(`
-        CREATE TABLE IF NOT EXISTS share_links (
-            id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
-            token VARCHAR(64) NOT NULL UNIQUE,
-            storage_id VARCHAR(64) NOT NULL,
-            owner_user_id INT NOT NULL,
-            permission VARCHAR(20) NOT NULL DEFAULT 'READ',
-            expires_at DATETIME NULL,
-            is_active TINYINT(1) NOT NULL DEFAULT 1,
-            created_at DATETIME NOT NULL,
-            updated_at DATETIME NOT NULL,
-            CONSTRAINT fk_share_links_storage
-                FOREIGN KEY (storage_id)
-                REFERENCES storages(id)
-                ON DELETE CASCADE,
-            CONSTRAINT fk_share_links_owner
-                FOREIGN KEY (owner_user_id)
-                REFERENCES users(id)
-                ON DELETE CASCADE,
-            INDEX idx_token_active (token, is_active),
-            INDEX idx_expires_at (expires_at)
         ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
     `);
 

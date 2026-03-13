@@ -2,8 +2,6 @@ import { secureFetch, escapeHtml } from './ui-utils.js';
 
 const state = {
     pageId: null,
-    shareToken: null,
-    sharedCsrfToken: null,
     comments: [],
     isVisible: true,
     currentUser: null,
@@ -14,16 +12,13 @@ export function initCommentsManager(appState) {
     state.currentUser = appState.currentUser;
 }
 
-export async function loadAndRenderComments(pageId, containerId = 'page-comments-section', shareToken = null) {
+export async function loadAndRenderComments(pageId, containerId = 'page-comments-section') {
     state.pageId = pageId;
-    state.shareToken = shareToken;
     const container = document.getElementById(containerId);
     if (!container) return;
 
     try {
-        const endpoint = shareToken ? '/api/comments/shared' : `/api/comments/${pageId}`;
-        const options = shareToken ? { headers: { 'X-Share-Token': shareToken } } : undefined;
-        const res = await secureFetch(endpoint, options);
+        const res = await secureFetch(`/api/comments/${pageId}`);
 
         if (res.status === 403 || res.status === 404) {
             container.innerHTML = '';
@@ -33,14 +28,7 @@ export async function loadAndRenderComments(pageId, containerId = 'page-comments
 
         if (!res.ok) throw new Error('댓글 로드 실패');
 
-        const payload = await res.json();
-        if (Array.isArray(payload)) {
-            state.comments = payload;
-            state.sharedCsrfToken = null;
-        } else {
-            state.comments = payload.comments || [];
-            state.sharedCsrfToken = payload.csrfToken || null;
-        }
+        state.comments = await res.json();
         container.classList.remove('hidden');
         renderComments(container);
     } catch (error) {
@@ -90,9 +78,8 @@ function renderComments(container) {
 }
 
 function renderNewCommentBlock() {
-    const showNameInput = !state.currentUser;
     let avatarContent = state.currentUser ? escapeHtml(state.currentUser.username.charAt(0).toUpperCase()) : '<i class="fa-regular fa-user"></i>';
-    const authorName = state.currentUser ? state.currentUser.username : (showNameInput ? 'Guest' : 'Anonymous');
+    const authorName = state.currentUser ? state.currentUser.username : 'Anonymous';
     return `
         <div class="comment-item new-comment-item">
             <div class="comment-avatar">${avatarContent}</div>
@@ -101,7 +88,6 @@ function renderNewCommentBlock() {
                     <span class="comment-author">${escapeHtml(authorName)}</span>
                 </div>
                 <div class="new-comment-block-wrapper">
-                    ${showNameInput ? '<input type="text" id="guest-name-input" placeholder="이름 (선택)" class="comment-guest-name-block">' : ''}
                     <div class="comment-input-row-block">
                         <textarea id="new-comment-input" placeholder="댓글을 추가해보세요..." rows="1"></textarea>
                         <button id="submit-comment-btn" class="comment-send-btn-block" disabled>
@@ -183,35 +169,25 @@ function renderCommentItem(comment) {
 
 async function submitComment() {
     const input = document.getElementById('new-comment-input');
-    const nameInput = document.getElementById('guest-name-input');
     const content = input.value.trim();
-    const guestName = nameInput ? nameInput.value.trim() : null;
     if (!content) return;
     const submitBtn = document.getElementById('submit-comment-btn');
     if (submitBtn) {
-        submitBtn.textContent = '등록 중...';
         submitBtn.disabled = true;
     }
     try {
-        const body = { content, guestName };
-        const endpoint = state.shareToken ? '/api/comments/shared' : `/api/comments/${state.pageId}`;
-        const headers = {
-            'Content-Type': 'application/json',
-            ...(state.shareToken ? { 'X-Share-Token': state.shareToken } : {})
-        };
-        if (state.shareToken && state.sharedCsrfToken) headers['X-Shared-CSRF-Token'] = state.sharedCsrfToken;
-        const res = await secureFetch(endpoint, {
+        const body = { content };
+        const res = await secureFetch(`/api/comments/${state.pageId}`, {
             method: 'POST',
-            headers,
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body)
         });
         if (!res.ok) throw new Error('댓글 작성 실패');
-        await loadAndRenderComments(state.pageId, 'page-comments-section', state.shareToken);
+        await loadAndRenderComments(state.pageId, 'page-comments-section');
     } catch (error) {
         console.error('댓글 작성 오류:', error);
         alert('댓글을 등록하지 못했습니다.');
         if (submitBtn) {
-            submitBtn.textContent = '등록';
             submitBtn.disabled = false;
         }
     }
