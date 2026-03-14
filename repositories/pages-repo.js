@@ -292,14 +292,14 @@ module.exports = ({ pool, pageSqlPolicy }) => {
             return rows || [];
         },
 
-                    async recordUpdateHistory({ userId, storageId, pageId, action, details }) {
-                        const detailsStr = details ? JSON.stringify(details) : null;
-                        await pool.execute(
-                            `INSERT INTO updates_history (user_id, storage_id, page_id, action, details, created_at)
-                             VALUES (?, ?, ?, ?, ?, NOW())`,
-                            [userId, storageId, pageId, action, detailsStr]
-                        );
-                    },
+        async recordUpdateHistory({ userId, storageId, pageId, action, details }) {
+            const detailsStr = details ? JSON.stringify(details) : null;
+            await pool.execute(
+                `INSERT INTO updates_history (user_id, storage_id, page_id, action, details, created_at)
+                 VALUES (?, ?, ?, ?, ?, NOW())`,
+                [userId, storageId, pageId, action, detailsStr]
+            );
+        },
 
         async getUpdateHistory({ userId, storageId, limit = 50 }) {
             const vis = pageSqlPolicy.visiblePredicate({ alias: "p", viewerUserId: userId });

@@ -1029,6 +1029,25 @@ function wsEvictNonOwnerCollaborators(pageId, ownerUserId) {
     }
 }
 
+function wsBroadcastPageHiddenToStorage(storageId, pageId, ownerUserId) {
+    const sid = String(storageId || '');
+    const pid = String(pageId || '');
+    const conns = wsConnections.storages.get(sid);
+    if (!conns) return;
+
+    for (const conn of Array.from(conns)) {
+        if (Number(conn.userId) === Number(ownerUserId)) continue;
+        try {
+            if (conn.ws.readyState === WebSocket.OPEN) {
+                conn.ws.send(JSON.stringify({
+                    event: 'page-hidden',
+                    data: { storageId: sid, pageId: pid }
+                }));
+            }
+        } catch (_) {}
+    }
+}
+
 function wsHasActiveConnectionsForPage(pageId) {
     const pid = String(pageId || '').trim();
     if (!pid) return false;
@@ -3052,6 +3071,7 @@ module.exports = {
     wsCloseConnectionsForPage,
     wsCloseConnectionsForStorage,
     wsEvictNonOwnerCollaborators,
+    wsBroadcastPageHiddenToStorage,
     wsHasActiveConnectionsForPage,
     wsKickUserFromStorage,
     extractFilesFromContent,

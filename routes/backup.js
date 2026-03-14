@@ -693,9 +693,6 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
                 title = iconMatch[2];
             }
 
-            const rawContent = contentEl ? contentEl.innerHTML : '<p></p>';
-            const content = sanitizeHtmlContent(rawContent || '<p></p>');
-
             const elements = doc.querySelectorAll('[src], [data-src], [data-url], [data-thumbnail], [data-favicon]');
             for (const el of elements) {
                 for (const attr of ['src', 'data-src', 'data-url', 'data-thumbnail', 'data-favicon']) {
@@ -718,6 +715,8 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
             }
             if (coverImage) coverImage = normalizeAssetRefOnImport(coverImage, currentUserId);
 
+            const finalContent = sanitizeHtmlContent(contentEl ? contentEl.innerHTML : '<p></p>');
+
             const metaParentRaw = metadata?.parentId ?? metadata?.parent_id ?? null;
             const metaParentId = (typeof metaParentRaw === 'string' && metaParentRaw.trim()) ? metaParentRaw.trim() : null;
 
@@ -728,7 +727,7 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
                 backupId: (typeof metadata?.id === 'string' && metadata.id.trim()) ? metadata.id.trim() : null,
                 parentId: metaParentId,
                 title,
-                content: doc.body.innerHTML || content,
+                content: finalContent,
                 icon: icon || (metadata?.icon) || null,
                 isEncrypted: metaIsEncrypted,
                 encryptionSalt: metaIsEncrypted ? ((metadata?.encryptionSalt ?? metadata?.encryption_salt) || null) : null,

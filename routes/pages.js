@@ -327,6 +327,7 @@ module.exports = (dependencies) => {
         formatDateForDb,
         wsBroadcastToPage,
         wsBroadcastToStorage,
+        wsBroadcastPageHiddenToStorage,
         wsCloseConnectionsForPage,
         wsEvictNonOwnerCollaborators,
         wsHasActiveConnectionsForPage,
@@ -349,10 +350,36 @@ module.exports = (dependencies) => {
         getClientIpFromRequest,
         outboundFetchLimiter,
         pageWritePolicy,
-        redis
+        redis,
+        SESSION_COOKIE_NAME
 	} = dependencies;
 
     const previewNonceStore = new Map();
+
+    function hashPreviewSessionBinding(sid) {
+        if (!sid) return 'none';
+        return crypto.createHash('sha256').update(String(sid)).digest('hex');
+    }
+
+    async function requireSameOriginForPreviewGet(req, res, next) {
+        if (req.method !== 'GET') return next();
+        const origin = req.headers['origin'] || req.headers['referer'];
+        if (origin) {
+            try {
+                const u = new URL(origin);
+                const base = new URL(BASE_URL);
+                if (u.origin !== base.origin) {
+                    console.warn(`[보안] 타 도메인(${u.origin})에서의 미리보기 접근 차단`);
+                    return res.status(403).json({ error: "접근 권한이 없습니다." });
+                }
+            } catch (_) {
+                return res.status(403).json({ error: "접근 권한이 없습니다." });
+            }
+        } else if (IS_INTERNET_EXPOSED) {
+            return res.status(403).json({ error: "접근 권한이 없습니다." });
+        }
+        next();
+    }
 
     function signPreviewTicket(payload) {
         const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
@@ -360,13 +387,14 @@ module.exports = (dependencies) => {
         return `${body}.${sig}`;
     }
 
-    async function verifyAndConsumePreviewTicket(token, expectedUserId) {
+    async function verifyAndConsumePreviewTicket(token, expectedUserId, expectedSidHash = null) {
         if (typeof token !== 'string' || !token.includes('.')) throw new Error('BAD_TICKET');
         const [body, sig] = token.split('.', 2);
         const expectedSig = crypto.createHmac('sha256', PROXY_SECRET).update(body).digest('base64url');
         if (!crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expectedSig))) throw new Error('BAD_TICKET_SIG');
         const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
         if (Number(payload.uid) !== Number(expectedUserId)) throw new Error('BAD_TICKET_UID');
+        if (expectedSidHash && payload.sidHash !== expectedSidHash) throw new Error('BAD_TICKET_SID');
         if (!payload.exp || Date.now() > Number(payload.exp)) throw new Error('TICKET_EXPIRED');
         if (!payload.nonce) throw new Error('TICKET_REPLAY');
 
@@ -791,7 +819,7 @@ module.exports = (dependencies) => {
                 pageId: h.page_id,
                 pageTitle: h.page_title,
                 action: h.action,
-                details: h.details ? JSON.parse(h.details) : null,
+                details: (typeof h.details === 'string') ? JSON.parse(h.details) : (h.details || null),
                 createdAt: toIsoString(h.created_at)
             })));
         } catch (error) {
@@ -861,11 +889,12 @@ module.exports = (dependencies) => {
         return res.status(200).send(generateSvgFavicon(hostname));
     });
 
-    router.get('/proxy-favicon', authMiddleware, outboundFetchLimiter, async (req, res) => {
+    router.get('/proxy-favicon', authMiddleware, requireSameOriginForPreviewGet, outboundFetchLimiter, async (req, res) => {
         const { ticket } = req.query;
         let verified = null;
         try {
-            verified = await verifyAndConsumePreviewTicket(String(ticket || ''), Number(req.user.id));
+            const sidHash = hashPreviewSessionBinding(req.cookies?.[SESSION_COOKIE_NAME] || '');
+            verified = await verifyAndConsumePreviewTicket(String(ticket || ''), Number(req.user.id), sidHash);
         } catch (_) {
             verified = null;
         }
@@ -1025,9 +1054,11 @@ module.exports = (dependencies) => {
             const faviconAllowedIps = faviconUrl
                 ? await resolvePublicOutboundAddresses(new URL(faviconUrl).hostname, isPublicRoutableIP)
                 : [];
+            const sidHash = hashPreviewSessionBinding(req.cookies?.[SESSION_COOKIE_NAME] || '');
             const ticket = faviconUrl
                 ? signPreviewTicket({
                     uid: Number(req.user.id),
+                    sidHash,
                     url: faviconUrl,
                     defaultHost: finalUrl.hostname,
                     allowedIps: faviconAllowedIps,
@@ -1207,7 +1238,7 @@ module.exports = (dependencies) => {
                 storageId,
                 pageId: id,
                 action: 'CREATE_PAGE',
-                details: { title }
+                details: { title, pageId: id, storageId }
             });
 
             res.status(201).json({ id, title, storageId, parentId, isEncrypted: !!isEncrypted, updatedAt: now.toISOString() });
@@ -1313,6 +1344,7 @@ module.exports = (dependencies) => {
                 
                 if (Number(isEncrypted) === 1 && Number(shareAllowed) === 0 && Number(existing.share_allowed) === 1) {
                     if (typeof wsEvictNonOwnerCollaborators === 'function') wsEvictNonOwnerCollaborators(id, existing.user_id);
+                    if (typeof wsBroadcastPageHiddenToStorage === 'function') wsBroadcastPageHiddenToStorage(existing.storage_id, id, existing.user_id);
                 }
             } catch (e) {
                 if (e.status === 403) return res.status(403).json({ error: e.message });
@@ -1348,10 +1380,10 @@ module.exports = (dependencies) => {
                 storageId: existing.storage_id,
                 pageId: id,
                 action: 'UPDATE_PAGE',
-                details: { title }
+                details: { title, pageId: id, storageId: existing.storage_id }
             });
 
-            const updatedVis = wsPageVisibilityFromRow({ ...existing, is_encrypted: Number(isEncrypted) });
+            const updatedVis = wsPageVisibilityFromRow({ ...existing, is_encrypted: Number(isEncrypted), share_allowed: Number(shareAllowed) });
             wsBroadcastToStorage(existing.storage_id, 'metadata-change', { pageId: id, field: 'title', value: title }, null, { pageVisibility: updatedVis });
             res.json({ id, title, updatedAt: new Date().toISOString() });
         } catch (e) { logError("PUT /api/pages/:id", e); res.status(500).json({ error: "Failed" }); }
@@ -1446,7 +1478,7 @@ module.exports = (dependencies) => {
                 userId,
                 storageId,
                 action: 'REORDER_PAGES',
-                details: { count: normalizedIds.length }
+                details: { count: normalizedIds.length, storageId }
             });
 
             const visibilityIds = parentId ? [parentId, ...normalizedIds] : [...normalizedIds];
@@ -1512,7 +1544,7 @@ module.exports = (dependencies) => {
                 storageId: page.storage_id,
                 pageId: id,
                 action: 'RESTORE_PAGE',
-                details: { title: page.title }
+                details: { title: page.title, pageId: id, storageId: page.storage_id }
             });
 
             res.json({ ok: true });
@@ -1549,7 +1581,7 @@ module.exports = (dependencies) => {
                 storageId: page.storage_id,
                 pageId: id,
                 action: 'PERMANENT_DELETE_PAGE',
-                details: { title: page.title }
+                details: { title: page.title, pageId: id, storageId: page.storage_id }
             });
 
             res.json({ ok: true });
@@ -1620,7 +1652,7 @@ module.exports = (dependencies) => {
                 storageId: existing.storage_id,
                 pageId: id,
                 action: 'DELETE_PAGE',
-                details: { title: existing.title }
+                details: { title: existing.title, pageId: id, storageId: existing.storage_id }
             });
 
             res.json({ ok: true });
@@ -1702,7 +1734,7 @@ module.exports = (dependencies) => {
                 storageId: existing.storage_id,
                 pageId: id,
                 action: 'UPDATE_COVER',
-                details: { coverImage, coverPosition }
+                details: { coverImage, coverPosition, pageId: id, storageId: existing.storage_id }
             });
 
             if (req.body.coverImage !== undefined) {
@@ -1798,7 +1830,7 @@ module.exports = (dependencies) => {
                 storageId: existing.storage_id,
                 pageId: id,
                 action: 'DELETE_COVER',
-                details: null
+                details: { pageId: id, storageId: existing.storage_id }
             });
 
             wsBroadcastToStorage(existing.storage_id, 'metadata-change', { pageId: id, field: 'coverImage', value: null }, null, { pageVisibility: wsPageVisibilityFromRow(existing) });
