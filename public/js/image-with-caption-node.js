@@ -1,11 +1,11 @@
 
-import { sanitizeHttpHref } from './url-utils.js';
+import { sanitizeHttpHref, appendPageScopeParam } from './url-utils.js';
 import { secureFetch } from './ui-utils.js';
 import { sanitizeBlockAlign, sanitizeCssLength } from './node-attr-sanitizers.js';
 
 const Node = Tiptap.Core.Node;
 
-const _registeredAssetRefs = new Set(); 
+const _registeredAssetRefs = new Set();
 async function registerAssetRefOnce(pageId, assetUrl) {
     if (!pageId || !assetUrl) return;
     const key = `${pageId}|${assetUrl}`;
@@ -35,7 +35,7 @@ function sanitizeImageSrc(raw) {
     });
 
     if (!safe) return null;
-    if (safe.startsWith('#')) return null; 
+    if (safe.startsWith('#')) return null;
 
     if (/^https?:/i.test(safe)) {
         try {
@@ -290,7 +290,10 @@ export const ImageWithCaption = Node.create({
             imageContainer.appendChild(alignMenu);
 
             const img = document.createElement('img');
-            img.src = sanitizeImageSrc(node.attrs.src || '') || '';
+            img.src = appendPageScopeParam(
+                sanitizeImageSrc(node.attrs.src || ''),
+                window.appState?.currentPageId
+            ) || '';
             img.alt = node.attrs.alt || '';
             img.className = 'caption-image';
 
@@ -469,7 +472,10 @@ export const ImageWithCaption = Node.create({
                     const currentSrc = normalizeUrl(img.src);
 
                     if (updatedSrc !== currentSrc) {
-                        img.src = updatedSafe;
+                        img.src = appendPageScopeParam(
+                            updatedSafe,
+                            window.appState?.currentPageId
+                        ) || updatedSafe;
                         img.alt = updatedNode.attrs.alt || '';
                     }
 

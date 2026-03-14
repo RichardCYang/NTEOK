@@ -871,7 +871,7 @@ module.exports = (dependencies) => {
         const { ticket } = req.query;
         let verified = null;
         try {
-            verified = verifyAndConsumePreviewTicket(String(ticket || ''), Number(req.user.id));
+            verified = await verifyAndConsumePreviewTicket(String(ticket || ''), Number(req.user.id));
         } catch (_) {
             verified = null;
         }
@@ -2145,20 +2145,14 @@ module.exports = (dependencies) => {
         }
     });
 
-    const IMG_PATH_RE = /^\/imgs\/(\d{1,12})\/([A-Za-z0-9][A-Za-z0-9._-]{0,199})$/;
-    function parseImgsPathFromUserInput(raw) {
-        if (typeof raw !== "string") return null;
-        const s = raw.trim();
-        if (!s) return null;
-        if (!s.startsWith("/") || s.startsWith("//")) return null;
-        const pathname = s.split(/[?#]/, 1)[0];
-
-        const m = pathname.match(IMG_PATH_RE);
-        if (!m) return null;
-        const urlUserId = m[1];
-        const filename = m[2];
-        if (filename.includes("..")) return null;
-        return { urlUserId, filename };
+    function resolveOwnedAssetPath(userId, fileType, filename) {
+        if (!['paperclip', 'imgs', 'covers'].includes(fileType)) return null;
+        const sanitized = sanitizeFilenameComponent(filename);
+        if (!sanitized) return null;
+        const baseDir = path.resolve(__dirname, '..', fileType, String(userId));
+        const absPath = path.resolve(baseDir, sanitized);
+        if (!absPath.startsWith(baseDir + path.sep)) return null;
+        return absPath;
     }
 
     router.post("/:id/register-asset-ref", authMiddleware, csrfMiddleware, async (req, res) => {
@@ -2180,21 +2174,66 @@ module.exports = (dependencies) => {
 
             const parsedPaper = parsePaperclipPathFromUserInput(assetUrl);
             const parsedImg = parsedPaper ? null : parseImgsPathFromUserInput(assetUrl);
-            if (!parsedPaper && !parsedImg) return res.status(400).json({ error: "Invalid assetUrl" });
+            const parsedCover = (parsedPaper || parsedImg) ? null : validateCoverImageRef(assetUrl, userId);
 
-            const urlUserId = parsedPaper ? parsedPaper.urlUserId : parsedImg.urlUserId;
-            const filename = parsedPaper ? parsedPaper.filename : parsedImg.filename;
-            const fileType = parsedPaper ? 'paperclip' : 'imgs';
+            if (!parsedPaper && !parsedImg && !parsedCover?.ok) return res.status(400).json({ error: "Invalid assetUrl" });
 
-            if (String(urlUserId) !== String(userId))
+            let urlUserId, filename, fileType;
+            if (parsedPaper) {
+                urlUserId = parsedPaper.urlUserId;
+                filename = parsedPaper.filename;
+                fileType = 'paperclip';
+            } else if (parsedImg) {
+                urlUserId = parsedImg.urlUserId;
+                filename = parsedImg.filename;
+                fileType = 'imgs';
+            } else {
+                const parts = parsedCover.value.split('/');
+                urlUserId = parts[0];
+                filename = parts[1];
+                fileType = 'covers';
+            }
+
+            if (String(urlUserId) !== String(userId) && urlUserId !== 'default')
                 return res.status(403).json({ error: "자신의 자산만 등록할 수 있습니다." });
 
-            await pool.execute(
-                `INSERT IGNORE INTO page_file_refs
-                    (page_id, owner_user_id, stored_filename, file_type, created_at)
-                 VALUES (?, ?, ?, ?, NOW())`,
-                [id, userId, filename, fileType]
-            );
+            if (urlUserId === 'default') return res.json({ ok: true });
+
+            const filePath = resolveOwnedAssetPath(userId, fileType, filename);
+            if (!filePath || !fs.existsSync(filePath))
+                return res.status(404).json({ error: "파일이 서버에 존재하지 않습니다." });
+
+            let isReferenced = false;
+            const needle = assetUrl.split('?')[0];
+
+            if (existing.is_encrypted === 0) {
+                if (existing.content && existing.content.includes(needle)) isReferenced = true;
+            }
+
+            if (!isReferenced && yjsDocuments && yjsDocuments.has(id)) {
+                try {
+                    const docInfo = yjsDocuments.get(id);
+                    if (docInfo?.ydoc) {
+                        const xml = docInfo.ydoc.getXmlFragment('prosemirror')?.toString?.() || '';
+                        const json = JSON.stringify(docInfo.ydoc.toJSON());
+                        if (xml.includes(needle) || json.includes(needle)) isReferenced = true;
+                    }
+                } catch (_) {}
+            }
+
+            if (!isReferenced) {
+                console.warn(`[AssetRegister] 파일 참조 확인 실패: page=${id}, asset=${needle}`);
+                return res.status(400).json({ error: "본문에 해당 파일 참조가 없습니다." });
+            }
+
+            if (fileType !== 'covers') {
+                await pool.execute(
+                    `INSERT IGNORE INTO page_file_refs
+                        (page_id, owner_user_id, stored_filename, file_type, created_at)
+                     VALUES (?, ?, ?, ?, NOW())`,
+                    [id, userId, filename, fileType]
+                );
+            }
 
             res.json({ ok: true });
         } catch (e) {

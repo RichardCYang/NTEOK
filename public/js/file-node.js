@@ -1,10 +1,10 @@
 
 import { secureFetch } from './ui-utils.js';
-import { sanitizeHttpHref } from './url-utils.js';
+import { sanitizeHttpHref, appendPageScopeParam } from './url-utils.js';
 
 const Node = Tiptap.Core.Node;
 
-const _registeredAssetRefs = new Set(); 
+const _registeredAssetRefs = new Set();
 async function registerAssetRefOnce(pageId, assetUrl) {
     if (!pageId || !assetUrl) return;
     const key = `${pageId}|${assetUrl}`;
@@ -203,7 +203,7 @@ export const FileBlock = Node.create({
 
                     const uploadBtn = document.createElement('button');
                     uploadBtn.className = 'file-upload-btn';
-                    uploadBtn.innerHTML = '&#43;'; 
+                    uploadBtn.innerHTML = '&#43;';
                     uploadBtn.title = '파일 업로드';
 
                     uploadBtn.onclick = (e) => {
@@ -311,21 +311,24 @@ export const FileBlock = Node.create({
                         if (e.target.closest('.file-delete-btn')) return;
                         e.preventDefault();
 
-						if (node.attrs.src) {
-							const safe = sanitizeHttpHref(node.attrs.src, {
-							    allowRelative: true,
-							    addHttpsIfMissing: false
-							});
+                        if (node.attrs.src) {
+                            const safe = sanitizeHttpHref(node.attrs.src, {
+                                allowRelative: true,
+                                addHttpsIfMissing: false
+                            });
 
-							if (safe && safe.startsWith('/paperclip/')) {
-								const name = (node.attrs.filename || '').trim();
-								const sep = safe.includes('?') ? '&' : '?';
-								const href = name ? `${safe}${sep}name=${encodeURIComponent(name)}` : safe;
-								window.open(href, '_blank', 'noopener,noreferrer');
-							} else {
-							    console.warn('[Blocked unsafe file src]', node.attrs.src);
-							}
-						}
+                            if (safe && safe.startsWith('/paperclip/')) {
+                                const name = (node.attrs.filename || '').trim();
+                                const href = appendPageScopeParam(
+                                    safe,
+                                    window.appState?.currentPageId,
+                                    name ? { name } : null
+                                ) || safe;
+                                window.open(href, '_blank', 'noopener,noreferrer');
+                            } else {
+                                console.warn('[Blocked unsafe file src]', node.attrs.src);
+                            }
+                        }
                     };
 
                     setupDragAndDrop(container);

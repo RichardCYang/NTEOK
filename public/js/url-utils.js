@@ -32,3 +32,34 @@ export function sanitizeHttpHref(raw, { allowRelative = false, addHttpsIfMissing
 
     return u.toString();
 }
+
+export function appendPageScopeParam(rawUrl, pageId, extraParams = null) {
+    const safe = sanitizeHttpHref(rawUrl, {
+        allowRelative: true,
+        addHttpsIfMissing: false
+    });
+    if (!safe) return null;
+    if (!pageId) return safe;
+
+    let u;
+    try {
+        u = new URL(safe, window.location.origin);
+    } catch {
+        return safe;
+    }
+
+    if (!/^\/(?:imgs|paperclip|covers)\//.test(u.pathname)) {
+        return safe;
+    }
+
+    u.searchParams.set('pageId', String(pageId));
+
+    if (extraParams && typeof extraParams === 'object') {
+        for (const [k, v] of Object.entries(extraParams)) {
+            if (v === undefined || v === null || v === '') continue;
+            u.searchParams.set(k, String(v));
+        }
+    }
+
+    return `${u.pathname}${u.search}`;
+}

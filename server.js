@@ -2083,6 +2083,74 @@ app.use('/languages', express.static(path.join(__dirname, 'languages')));
 
 app.use('/covers/default', express.static(path.join(__dirname, 'covers', 'default')));
 
+function getScopedPageIdFromReq(req) {
+    const raw = typeof req.query.pageId === 'string' ? req.query.pageId.trim() : '';
+    if (!raw) return null;
+    if (raw.length > 64) return null;
+    return raw;
+}
+
+async function canViewerReadScopedAsset({
+    currentUserId,
+    ownerUserId,
+    pageId,
+    fileType,
+    storedFilename,
+    coverPath = null
+}) {
+    if (!pageId) return false;
+
+    if (fileType === 'cover') {
+        const [rows] = await pool.execute(
+            `SELECT p.id
+               FROM pages p
+               JOIN storages s ON p.storage_id = s.id
+               LEFT JOIN storage_shares ss_cur
+                 ON s.id = ss_cur.storage_id
+                AND ss_cur.shared_with_user_id = ?
+              WHERE p.id = ?
+                AND p.user_id = ?
+                AND p.cover_image = ?
+                AND p.deleted_at IS NULL
+                AND (s.user_id = ? OR ss_cur.shared_with_user_id IS NOT NULL)
+                AND NOT (p.is_encrypted = 1 AND p.share_allowed = 0 AND p.user_id != ?)
+              LIMIT 1`,
+            [currentUserId, pageId, ownerUserId, coverPath, currentUserId, currentUserId]
+        );
+        return rows.length > 0;
+    }
+
+    const [rows] = await pool.execute(
+        `SELECT p.id
+           FROM page_file_refs pfr
+           JOIN pages p ON p.id = pfr.page_id
+           JOIN storages s ON p.storage_id = s.id
+           LEFT JOIN storage_shares ss_cur
+             ON s.id = ss_cur.storage_id
+            AND ss_cur.shared_with_user_id = ?
+          WHERE p.id = ?
+            AND p.user_id = ?
+            AND pfr.owner_user_id = ?
+            AND pfr.stored_filename = ?
+            AND pfr.file_type = ?
+            AND p.deleted_at IS NULL
+            AND (s.user_id = ? OR ss_cur.shared_with_user_id IS NOT NULL)
+            AND NOT (p.is_encrypted = 1 AND p.share_allowed = 0 AND p.user_id != ?)
+          LIMIT 1`,
+        [
+            currentUserId,
+            pageId,
+            ownerUserId,
+            ownerUserId,
+            storedFilename,
+            fileType,
+            currentUserId,
+            currentUserId
+        ]
+    );
+    return rows.length > 0;
+}
+
 app.get('/covers/:userId/:filename', authMiddleware, async (req, res) => {
     const requestedUserId = parseInt(req.params.userId, 10);
 
@@ -2109,22 +2177,19 @@ app.get('/covers/:userId/:filename', authMiddleware, async (req, res) => {
         if (!ALLOWED_COVER_EXTS.has(ext)) return res.status(400).json({ error: '지원하지 않는 파일 형식입니다.' });
 
         const coverPath = `${requestedUserId}/${sanitizedFilename}`;
-        const [rows] = await pool.execute(
-            `SELECT p.id
-               FROM pages p
-               JOIN storages s ON p.storage_id = s.id
-               LEFT JOIN storage_shares ss_cur
-                 ON s.id = ss_cur.storage_id AND ss_cur.shared_with_user_id = ?
-              WHERE p.cover_image = ?
-                AND p.deleted_at IS NULL
-                AND p.user_id = ?
-                AND NOT (p.is_encrypted = 1 AND p.share_allowed = 0 AND p.user_id != ?)
-                AND (s.user_id = ? OR ss_cur.shared_with_user_id IS NOT NULL)
-              LIMIT 1`,
-            [currentUserId, coverPath, requestedUserId, currentUserId, currentUserId]
-        );
+        const scopedPageId = getScopedPageIdFromReq(req);
+        const authorized =
+            Number(currentUserId) === Number(requestedUserId)
+            || await canViewerReadScopedAsset({
+                currentUserId,
+                ownerUserId: requestedUserId,
+                pageId: scopedPageId,
+                fileType: 'cover',
+                storedFilename: sanitizedFilename,
+                coverPath
+            });
 
-        if (rows.length === 0) {
+        if (!authorized) {
             console.warn(`[보안] 사용자 ${currentUserId}이(가) 권한 없이 커버 이미지 접근 시도: ${coverPath}`);
             return res.status(403).json({ error: '접근 권한이 없습니다.' });
         }
@@ -2139,12 +2204,12 @@ app.get('/covers/:userId/:filename', authMiddleware, async (req, res) => {
 });
 
 app.get('/imgs/:userId/:filename', authMiddleware, async (req, res) => {
-	const requestedUserId = parseInt(req.params.userId, 10);
+    const requestedUserId = parseInt(req.params.userId, 10);
 
-	if (!Number.isFinite(requestedUserId))
-		return res.status(400).json({ error: '잘못된 요청입니다.' });
+    if (!Number.isFinite(requestedUserId))
+        return res.status(400).json({ error: '잘못된 요청입니다.' });
 
-	setNoStore(res);
+    setNoStore(res);
 
     const currentUserId = req.user.id;
 
@@ -2164,31 +2229,18 @@ app.get('/imgs/:userId/:filename', authMiddleware, async (req, res) => {
         if (!ALLOWED_IMG_EXTS.has(ext)) return res.status(400).json({ error: '지원하지 않는 파일 형식입니다.' });
 
         const imagePath = `${requestedUserId}/${sanitizedFilename}`;
-        const [rows] = await pool.execute(
-            `SELECT p.id
-                FROM page_file_refs pfr
-                JOIN pages p ON p.id = pfr.page_id
-                JOIN storages s ON p.storage_id = s.id
-                LEFT JOIN storage_shares ss_cur ON s.id = ss_cur.storage_id AND ss_cur.shared_with_user_id = ?
-                WHERE pfr.owner_user_id = ?
-                AND pfr.stored_filename = ?
-                AND pfr.file_type = 'imgs'
-                AND p.deleted_at IS NULL
-                AND (s.user_id = ? OR ss_cur.shared_with_user_id IS NOT NULL)
-                AND NOT (p.is_encrypted = 1 AND p.share_allowed = 0 AND p.user_id != ?)
-                AND p.user_id = ?
-                LIMIT 1`,
-            [
+        const scopedPageId = getScopedPageIdFromReq(req);
+        const authorized =
+            Number(currentUserId) === Number(requestedUserId)
+            || await canViewerReadScopedAsset({
                 currentUserId,
-                requestedUserId,
-                sanitizedFilename,
-                currentUserId,
-                currentUserId,
-                requestedUserId
-            ]
-        );
+                ownerUserId: requestedUserId,
+                pageId: scopedPageId,
+                fileType: 'imgs',
+                storedFilename: sanitizedFilename
+            });
 
-        if (rows.length === 0) {
+        if (!authorized) {
             console.warn(`[보안] 사용자 ${currentUserId}이(가) 권한 없이 이미지 접근 시도: ${imagePath}`);
             return res.status(403).json({ error: '접근 권한이 없습니다.' });
         }
@@ -2222,31 +2274,18 @@ app.get('/paperclip/:userId/:filename', authMiddleware, async (req, res) => {
         }
 
         const fileUrlPart = `/paperclip/${requestedUserId}/${sanitizedFilename}`;
-        const [rows] = await pool.execute(
-            `SELECT p.id
-                FROM page_file_refs pfr
-                JOIN pages p ON p.id = pfr.page_id
-                JOIN storages s ON p.storage_id = s.id
-                LEFT JOIN storage_shares ss_cur ON s.id = ss_cur.storage_id AND ss_cur.shared_with_user_id = ?
-                WHERE pfr.owner_user_id = ?
-                AND pfr.stored_filename = ?
-                AND pfr.file_type = 'paperclip'
-                AND p.deleted_at IS NULL
-                AND (s.user_id = ? OR ss_cur.shared_with_user_id IS NOT NULL)
-                AND NOT (p.is_encrypted = 1 AND p.share_allowed = 0 AND p.user_id != ?)
-                AND p.user_id = ?
-                LIMIT 1`,
-            [
+        const scopedPageId = getScopedPageIdFromReq(req);
+        const authorized =
+            Number(currentUserId) === Number(requestedUserId)
+            || await canViewerReadScopedAsset({
                 currentUserId,
-                requestedUserId,
-                sanitizedFilename,
-                currentUserId,
-                currentUserId,
-                requestedUserId
-            ]
-        );
+                ownerUserId: requestedUserId,
+                pageId: scopedPageId,
+                fileType: 'paperclip',
+                storedFilename: sanitizedFilename
+            });
 
-        if (rows.length === 0) {
+        if (!authorized) {
             console.warn(`[보안] 사용자 ${currentUserId}이(가) 권한 없이 파일 접근 시도: ${fileUrlPart}`);
             return res.status(403).json({ error: '접근 권한이 없습니다.' });
         }
