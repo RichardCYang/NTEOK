@@ -9,14 +9,17 @@ async function registerAssetRefOnce(pageId, assetUrl) {
     if (!pageId || !assetUrl) return;
     const key = `${pageId}|${assetUrl}`;
     if (_registeredAssetRefs.has(key)) return;
-    _registeredAssetRefs.add(key);
     try {
-        await secureFetch(`/api/pages/${encodeURIComponent(pageId)}/register-asset-ref`, {
+        const res = await secureFetch(`/api/pages/${encodeURIComponent(pageId)}/register-asset-ref`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ assetUrl })
         });
-    } catch (_) {
+        if (!res.ok) throw new Error(`자산 참조 등록 실패: ${res.status}`);
+        _registeredAssetRefs.add(key);
+    } catch (e) {
+        _registeredAssetRefs.delete(key);
+        console.warn('[AssetRegister] 파일 노드 등록 실패:', e);
     }
 }
 

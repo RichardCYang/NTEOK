@@ -1464,8 +1464,7 @@ module.exports = (dependencies) => {
             for (const row of rows) {
                 if (String(row.storage_id) !== String(storageId)) return res.status(403).json({ error: "지정한 저장소에 속하지 않은 페이지가 포함되어 있습니다." });
                 const isPageOwner = Number(row.user_id) === Number(userId);
-                const isStorageOwner = Number(row.storage_owner_id) === Number(userId);
-                if (!isPageOwner && !isStorageOwner) return res.status(403).json({ error: "페이지 소유자 또는 저장소 소유자만 순서를 변경할 수 있습니다." });
+                if (!isPageOwner) return res.status(403).json({ error: "페이지 소유자만 순서를 변경할 수 있습니다." });
             }
 
             for (let i = 0; i < normalizedIds.length; i++) {
@@ -1545,14 +1544,13 @@ module.exports = (dependencies) => {
             if (!permission) return res.status(403).json({ error: "이 페이지를 복구할 권한이 없습니다." });
 
             const isOwnerOfPage = Number(page.user_id) === Number(userId);
-            const isStorageOwner = Number(page.storage_owner_id) === Number(userId);
-            if (!isOwnerOfPage && !isStorageOwner) return res.status(403).json({ error: "페이지 소유자 또는 저장소 소유자만 복구할 수 있습니다." });
+            if (!isOwnerOfPage) return res.status(403).json({ error: "페이지 소유자만 복구할 수 있습니다." });
 
             await pagesRepo.restorePageAndDescendants({
                 rootPageId: id,
                 storageId: page.storage_id,
                 actorUserId: userId,
-                actorCanManageForeign: isStorageOwner
+                actorCanManageForeign: false
             });
 
             await pagesRepo.recordUpdateHistory({
@@ -1583,13 +1581,12 @@ module.exports = (dependencies) => {
             if (!permission) return res.status(403).json({ error: "권한이 없습니다." });
 
             const isOwnerOfPage = Number(page.user_id) === Number(userId);
-            const isStorageOwner = Number(page.storage_owner_id) === Number(userId);
-            if (!isOwnerOfPage && !isStorageOwner) return res.status(403).json({ error: "페이지 소유자 또는 저장소 소유자만 영구 삭제할 수 있습니다." });
+            if (!isOwnerOfPage) return res.status(403).json({ error: "페이지 소유자만 영구 삭제할 수 있습니다." });
 
             await pagesRepo.permanentlyDeletePageAndDescendants({
                 pageId: id,
                 userId,
-                actorCanManageForeign: isStorageOwner
+                actorCanManageForeign: false
             });
 
             await pagesRepo.recordUpdateHistory({
@@ -1619,8 +1616,7 @@ module.exports = (dependencies) => {
                 rootPageId: id,
                 storageId: existing.storage_id,
                 rootParentId: existing.parent_id || null,
-                actorUserId: userId,
-                actorCanManageForeign: authResult.isStorageOwner
+                actorUserId: userId
             });
 
             const deletedPageIds = Array.isArray(delResult?.deletedPageIds) && delResult.deletedPageIds.length
@@ -2125,6 +2121,7 @@ module.exports = (dependencies) => {
 
             let blockedByPlaintextRefs = false;
             let blockedByActiveYjsRefs = false;
+            let blockedByEncryptedRefsUnknown = false;
             let selfHealedRegistry = false;
 
             if (remaining === 0) {
@@ -2173,12 +2170,25 @@ module.exports = (dependencies) => {
                     remaining = Number(cntRows2?.[0]?.cnt || 0);
                 }
 
-                if (!blockedByPlaintextRefs && !blockedByActiveYjsRefs) {
+                const [encRows] = await pool.execute(
+                    `SELECT COUNT(*) AS cnt
+                       FROM pages
+                      WHERE user_id = ?
+                        AND id <> ?
+                        AND is_encrypted = 1
+                        AND deleted_at IS NULL`,
+                    [userId, id]
+                );
+                const hasOtherActiveEncryptedPages = Number(encRows?.[0]?.cnt || 0) > 0;
+
+                if (!blockedByPlaintextRefs && !blockedByActiveYjsRefs && !hasOtherActiveEncryptedPages) {
                     if (fs.existsSync(targetPath) && fs.statSync(targetPath).isFile()) {
                         const moved = movePaperclipToTrash(targetPath, userId, filename);
                         if (!moved) fs.unlinkSync(targetPath);
                         deletedPhysical = true;
                     }
+                } else if (hasOtherActiveEncryptedPages) {
+                    blockedByEncryptedRefsUnknown = true;
                 }
             }
 
@@ -2188,6 +2198,7 @@ module.exports = (dependencies) => {
                 deletedPhysical,
                 blockedByPlaintextRefs,
                 blockedByActiveYjsRefs,
+                blockedByEncryptedRefsUnknown,
                 selfHealedRegistry
             });
         } catch (error) {
@@ -2254,10 +2265,11 @@ module.exports = (dependencies) => {
             if (!filePath || !fs.existsSync(filePath))
                 return res.status(404).json({ error: "파일이 서버에 존재하지 않습니다." });
 
-            let isReferenced = false;
+            const isEncryptedPage = Number(existing.is_encrypted) === 1;
+            let isReferenced = isEncryptedPage;
             const needle = assetUrl.split('?')[0];
 
-            if (existing.is_encrypted === 0) {
+            if (!isEncryptedPage) {
                 if (existing.content && existing.content.includes(needle)) isReferenced = true;
             }
 

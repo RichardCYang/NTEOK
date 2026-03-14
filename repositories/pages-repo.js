@@ -41,13 +41,13 @@ module.exports = ({ pool, pageSqlPolicy }) => {
         return order;
     }
 
-    function splitIdsByPermission(rowsById, ids, actorUserId, actorCanManageForeign = false) {
+    function splitIdsByPermission(rowsById, ids, actorUserId) {
         const allowed = [];
         const disallowed = [];
         for (const id of ids) {
             const row = rowsById.get(id);
             if (!row) continue;
-            if (actorCanManageForeign || Number(row.user_id) === Number(actorUserId)) allowed.push(id);
+            if (Number(row.user_id) === Number(actorUserId)) allowed.push(id);
             else disallowed.push(id);
         }
         return { allowed, disallowed };
@@ -155,7 +155,7 @@ module.exports = ({ pool, pageSqlPolicy }) => {
             );
         },
 
-        async restorePageAndDescendants({ rootPageId, storageId, actorUserId, actorCanManageForeign = false }) {
+        async restorePageAndDescendants({ rootPageId, storageId, actorUserId }) {
             if (!rootPageId || !storageId) return;
 
             const [allPages] = await pool.execute(
@@ -167,7 +167,7 @@ module.exports = ({ pool, pageSqlPolicy }) => {
             if (!rowsById.has(rootPageId)) return;
 
             const subtreeIds = collectSubtreeIds(allPages || [], rootPageId);
-            const { allowed: restorableIds } = splitIdsByPermission(rowsById, subtreeIds, actorUserId, actorCanManageForeign);
+            const { allowed: restorableIds } = splitIdsByPermission(rowsById, subtreeIds, actorUserId);
 
             if (!restorableIds || restorableIds.length === 0) return;
 
@@ -177,7 +177,7 @@ module.exports = ({ pool, pageSqlPolicy }) => {
             );
         },
 
-        async permanentlyDeletePageAndDescendants({ pageId, userId, actorCanManageForeign = false }) {
+        async permanentlyDeletePageAndDescendants({ pageId, userId }) {
             const [rootRows] = await pool.execute('SELECT storage_id, user_id FROM pages WHERE id = ?', [pageId]);
             if (!rootRows.length) return;
             const storageId = rootRows[0].storage_id;
@@ -190,10 +190,10 @@ module.exports = ({ pool, pageSqlPolicy }) => {
             const subtreeIds = collectSubtreeIds(allPages || [], pageId);
             const rowsById = new Map((allPages || []).map(r => [r.id, r]));
 
-            const { allowed: deletableIds, disallowed: keptIds } = splitIdsByPermission(rowsById, subtreeIds, userId, actorCanManageForeign);
+            const { allowed: deletableIds, disallowed: keptIds } = splitIdsByPermission(rowsById, subtreeIds, userId);
             if (!deletableIds || deletableIds.length === 0) return;
 
-            if (!actorCanManageForeign && keptIds.length > 0) {
+            if (keptIds.length > 0) {
                 const deletableSet = new Set(deletableIds);
                 const keptRootIds = [];
                 for (const id of keptIds) {
@@ -215,7 +215,7 @@ module.exports = ({ pool, pageSqlPolicy }) => {
             );
         },
 
-        async softDeletePageAndDescendants({ rootPageId, storageId, rootParentId = null, actorUserId, actorCanManageForeign = false }) {
+        async softDeletePageAndDescendants({ rootPageId, storageId, rootParentId = null, actorUserId }) {
             if (!rootPageId || !storageId) return;
 
             const [allPages] = await pool.execute(
@@ -229,9 +229,9 @@ module.exports = ({ pool, pageSqlPolicy }) => {
             const subtreeIds = collectSubtreeIds(allPages || [], rootPageId);
 
             const { allowed: deletableIds, disallowed: keptIds } =
-                splitIdsByPermission(rowsById, subtreeIds, actorUserId, actorCanManageForeign);
+                splitIdsByPermission(rowsById, subtreeIds, actorUserId);
 
-            if (!actorCanManageForeign && keptIds && keptIds.length > 0) {
+            if (keptIds && keptIds.length > 0) {
                 const deletableSet = new Set(deletableIds || []);
 
                 const safeParentId = (rootParentId && !deletableSet.has(rootParentId)) ? rootParentId : null;
