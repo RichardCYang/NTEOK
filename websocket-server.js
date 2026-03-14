@@ -772,6 +772,7 @@ function validateRealtimeFragment(candidateYDoc) {
 const ALLOWED_FILE_TYPES = new Set(["paperclip", "imgs"]);
 
 async function buildVerifiedIncomingRefs(connLike, refs, { pageId, actorUserId, pageOwnerUserId }) {
+    const actorIsPageOwner = Number(actorUserId) === Number(pageOwnerUserId);
     const [existingRows] = await connLike.execute(
         "SELECT owner_user_id, stored_filename, file_type FROM page_file_refs WHERE page_id = ?",
         [pageId]
@@ -794,9 +795,8 @@ async function buildVerifiedIncomingRefs(connLike, refs, { pageId, actorUserId, 
 
         const key = `${type}:${ownerIdStr}/${filename}`;
 
-        if (Number(actorUserId) !== Number(pageOwnerUserId)) {
-            if (ownerId !== Number(actorUserId) && !existing.has(key)) continue;
-        }
+        if (!actorIsPageOwner) continue;
+        if (ownerId !== Number(pageOwnerUserId)) continue;
 
         const baseDir = path.resolve(__dirname, type === "imgs" ? "imgs" : "paperclip", ownerIdStr) + path.sep;
         const fullPath = path.resolve(__dirname, type === "imgs" ? "imgs" : "paperclip", ownerIdStr, filename);
@@ -2165,7 +2165,7 @@ async function handleYjsStateE2EE(ws, payload, pool, pageSqlPolicy) {
 
             if (encryptedHtml !== undefined && encryptedHtml !== null) {
                 if (typeof encryptedHtml !== 'string' || encryptedHtml.length > 2 * 1024 * 1024) return;
-                if (encryptedHtml.length > 0 && !encryptedHtml.trim().startsWith('<')) return;
+                if (/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/.test(encryptedHtml)) return;
             }
 
             if (Array.isArray(refs)) {
@@ -2173,31 +2173,34 @@ async function handleYjsStateE2EE(ws, payload, pool, pageSqlPolicy) {
                     const pageOwnerUserId = Number(access.page?.user_id);
                     if (!Number.isFinite(pageOwnerUserId)) return;
                     const actorUserId = Number(ws.userId);
+                    const actorIsPageOwner = actorUserId === pageOwnerUserId;
 
-                    const verifiedRefs = await buildVerifiedIncomingRefs(pool, refs, {
-                        pageId,
-                        actorUserId,
-                        pageOwnerUserId
-                    });
+                    if (actorIsPageOwner) {
+                        const verifiedRefs = await buildVerifiedIncomingRefs(pool, refs, {
+                            pageId,
+                            actorUserId,
+                            pageOwnerUserId
+                        });
 
-                    const conn = await pool.getConnection();
-                    try {
-                        await conn.beginTransaction();
-                        await conn.execute("DELETE FROM page_file_refs WHERE page_id = ?", [pageId]);
-                        for (const file of verifiedRefs) {
-                            const [ownerId, filename] = file.ref.split("/");
-                            await conn.execute(
-                                `INSERT IGNORE INTO page_file_refs (page_id, owner_user_id, stored_filename, file_type, created_at)
-                                 VALUES (?, ?, ?, ?, NOW())`,
-                                [pageId, ownerId, filename, file.type]
-                            );
+                        const conn = await pool.getConnection();
+                        try {
+                            await conn.beginTransaction();
+                            await conn.execute("DELETE FROM page_file_refs WHERE page_id = ?", [pageId]);
+                            for (const file of verifiedRefs) {
+                                const [ownerId, filename] = file.ref.split("/");
+                                await conn.execute(
+                                    `INSERT IGNORE INTO page_file_refs (page_id, owner_user_id, stored_filename, file_type, created_at)
+                                     VALUES (?, ?, ?, ?, NOW())`,
+                                    [pageId, ownerId, filename, file.type]
+                                );
+                            }
+                            await conn.commit();
+                        } catch (txErr) {
+                            await conn.rollback();
+                            throw txErr;
+                        } finally {
+                            conn.release();
                         }
-                        await conn.commit();
-                    } catch (txErr) {
-                        await conn.rollback();
-                        throw txErr;
-                    } finally {
-                        conn.release();
                     }
                 } catch (regErr) {
                     console.error("E2EE 보안 레지스트리 동기화 실패:", regErr);
@@ -2408,37 +2411,39 @@ async function handleForceSaveE2EE(ws, payload, pool, pageSqlPolicy) {
                 try {
                     const actorUserId = Number(ws.userId);
                     const pageOwnerUserId = Number(access.page.user_id);
+                    const actorIsPageOwner = actorUserId === pageOwnerUserId;
 
-                    const verifiedRefs = await buildVerifiedIncomingRefs(pool, refs, {
-                        pageId,
-                        actorUserId,
-                        pageOwnerUserId
-                    });
+                    if (actorIsPageOwner) {
+                        const verifiedRefs = await buildVerifiedIncomingRefs(pool, refs, {
+                            pageId,
+                            actorUserId,
+                            pageOwnerUserId
+                        });
 
-                    const conn = await pool.getConnection();
-                    try {
-                        await conn.beginTransaction();
-                        await conn.execute("DELETE FROM page_file_refs WHERE page_id = ?", [pageId]);
-                        for (const file of verifiedRefs) {
-                            const [ownerId, filename] = file.ref.split("/");
-                            await conn.execute(
-                                `INSERT IGNORE INTO page_file_refs (page_id, owner_user_id, stored_filename, file_type, created_at)
-                                 VALUES (?, ?, ?, ?, NOW())`,
-                                [pageId, ownerId, filename, file.type]
-                            );
+                        const conn = await pool.getConnection();
+                        try {
+                            await conn.beginTransaction();
+                            await conn.execute("DELETE FROM page_file_refs WHERE page_id = ?", [pageId]);
+                            for (const file of verifiedRefs) {
+                                const [ownerId, filename] = file.ref.split("/");
+                                await conn.execute(
+                                    `INSERT IGNORE INTO page_file_refs (page_id, owner_user_id, stored_filename, file_type, created_at)
+                                     VALUES (?, ?, ?, ?, NOW())`,
+                                    [pageId, ownerId, filename, file.type]
+                                );
+                            }
+                            await conn.commit();
+                        } catch (txErr) {
+                            await conn.rollback();
+                            throw txErr;
+                        } finally {
+                            conn.release();
                         }
-                        await conn.commit();
-                    } catch (txErr) {
-                        await conn.rollback();
-                        throw txErr;
-                    } finally {
-                        conn.release();
                     }
                 } catch (regErr) {
                     console.error("E2EE 보안 레지스트리 동기화(강제저장) 실패:", regErr);
                 }
             }
-
             ws.send(JSON.stringify({
                 event: "page-saved",
                 data: { pageId: String(pageId), updatedAt: new Date().toISOString() }

@@ -30,7 +30,7 @@ const BASE_URL = process.env.BASE_URL || (IS_PRODUCTION ? "https://localhost:300
 const IS_INTERNET_EXPOSED = isInternetExposedBaseUrl(BASE_URL);
 
 const METADATA_FETCH_TIMEOUT_MS = 5000;
-const METADATA_FETCH_MAX_BYTES = 10 * 1024 * 1024;
+const METADATA_FETCH_MAX_BYTES = 1 * 1024 * 1024;
 const METADATA_FETCH_MAX_REDIRECTS = 5;
 const LINK_PREVIEW_ALLOWED_PORTS = new Set([443]);
 
@@ -107,13 +107,6 @@ async function resolvePublicOutboundAddresses(hostname, isPublicRoutableIP) {
         ]);
         addresses = [...v4, ...v6].map(normalizeResolvedAddress).filter(Boolean);
     } catch (_) {}
-
-    if (addresses.length === 0) {
-        try {
-            const lookupResults = await dns.lookup(host, { all: true });
-            addresses = lookupResults.map(r => r.address).filter(Boolean);
-        } catch (_) {}
-    }
 
     if (addresses.length === 0) throw makeFetchError('HOST_NOT_FOUND', '호스트를 찾을 수 없습니다.');
 
