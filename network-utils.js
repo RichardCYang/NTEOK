@@ -22,16 +22,17 @@ const SPECIAL_USE_IPV4_CIDRS = [
 ].map(cidr => ipaddr.parseCIDR(cidr));
 
 const SPECIAL_USE_IPV6_CIDRS = [
-    '::/128',
-    '::1/128',
-    '64:ff9b::/96',
-    '100::/64',
-    '2001::/32',
-    '2001:2::/48',
-    '2001:db8::/32',
-    'fc00::/7',
-    'fe80::/10',
-    'ff00::/8'
+	'::/128',
+	'::1/128',
+	'64:ff9b::/96',
+	'100::/64',
+	'2001::/32',
+	'2001:2::/48',
+	'2002::/16',
+	'2001:db8::/32',
+	'fc00::/7',
+	'fe80::/10',
+	'ff00::/8'
 ].map(cidr => ipaddr.parseCIDR(cidr));
 
 function parseNormalizedAddr(ip) {

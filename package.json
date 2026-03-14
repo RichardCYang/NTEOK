@@ -6,14 +6,16 @@
 	"engines": {
 		"node": "^20.19.0 || ^22.12.0 || >=24.0.0"
 	},
-	"scripts": {
-		"test": "echo \"Error: no test specified\" && exit 1",
-		"sync:dompurify": "node -e \"require('fs').copyFileSync('node_modules/dompurify/dist/purify.es.mjs', 'public/lib/dompurify/dompurify.js')\"",
-		"postinstall": "npm run sync:dompurify && node scripts/update-integrity.mjs",
-		"prestart": "node scripts/assert-security-versions.mjs && node scripts/check-public-leaks.mjs",
-		"start": "node server.js",
-		"security:pin-third-party": "node scripts/pin-third-party.mjs"
-	},
+"scripts": {
+	"test": "echo \"Error: no test specified\" && exit 1",
+	"sync:dompurify": "node -e \"require('fs').copyFileSync('node_modules/dompurify/dist/purify.es.mjs', 'public/lib/dompurify/dompurify.js')\"",
+	"sync:simplewebauthn": "node scripts/sync-simplewebauthn.mjs",
+	"sync:security-libs": "npm run sync:dompurify && npm run sync:simplewebauthn",
+	"postinstall": "npm run sync:security-libs && node scripts/update-integrity.mjs",
+	"prestart": "node scripts/assert-security-versions.mjs && node scripts/assert-local-lib-integrity.mjs && node scripts/check-public-leaks.mjs",
+	"start": "node server.js",
+	"security:pin-third-party": "node scripts/pin-third-party.mjs"
+},
 	"author": "MrDSP",
 	"license": "ISC",
 	"dependencies": {

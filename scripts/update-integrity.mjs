@@ -37,9 +37,15 @@ async function main() {
         "/lib/tiptap-extensions/table.js": "@tiptap/extension-table",
         "/lib/tiptap-extensions/table-row.js": "@tiptap/extension-table-row",
         "/lib/tiptap-extensions/table-header.js": "@tiptap/extension-table-header",
-        "/lib/tiptap-extensions/table-cell.js": "@tiptap/extension-table-cell",
-        "/lib/tiptap-extensions/prosemirror-tables.js": "@tiptap/prosemirror-tables",
-        "/lib/dompurify/dompurify.js": "dompurify"
+"/lib/tiptap-extensions/table-cell.js": "@tiptap/extension-table-cell",
+"/lib/tiptap-extensions/prosemirror-tables.js": "@tiptap/prosemirror-tables",
+"/lib/dompurify/dompurify.js": "dompurify",
+"/lib/simplewebauthn/browser.js": "simplewebauthn-browser",
+"/lib/tiptap/tiptap-for-browser.min.js": "tiptap-for-browser",
+"/lib/katex/katex.min.js": "katex",
+"/lib/html2canvas/html2canvas.min.js": "html2canvas",
+"/lib/jspdf/jspdf.umd.min.js": "jspdf",
+"/lib/sortablejs/Sortable.min.js": "sortablejs"
     };
 
     const integrity = {};

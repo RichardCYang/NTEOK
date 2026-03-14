@@ -1,12 +1,56 @@
 import fs from 'node:fs';
-import path from 'node:path';
 const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
 const lock = fs.existsSync('package-lock.json') ? JSON.parse(fs.readFileSync('package-lock.json', 'utf8')) : null;
-const CRITICAL = { 'dompurify': '3.3.2', 'isomorphic-dompurify': '3.0.0' };
+
+const CRITICAL = {
+	'dompurify': '3.3.2',
+	'isomorphic-dompurify': '3.0.0',
+	'@simplewebauthn/browser': '13.2.2',
+	'@simplewebauthn/server': '13.2.2',
+	'ws': '8.18.3',
+	'axios': '1.13.5'
+};
+
+function normalizeSemver(raw) {
+	const s = String(raw || '').trim().replace(/^[^0-9]*/, '').split(/[+-]/)[0];
+	const m = s.match(/^(\d+)\.(\d+)\.(\d+)$/);
+	if (!m) return null;
+	return [Number(m[1]), Number(m[2]), Number(m[3])];
+}
+
+function compareSemver(a, b) {
+	for (let i = 0; i < 3; i++) {
+		if (a[i] > b[i]) return 1;
+		if (a[i] < b[i]) return -1;
+	}
+	return 0;
+}
+
+function getInstalledVersion(name) {
+	if (!lock?.packages) return null;
+	const key = `node_modules/${name}`;
+	return lock.packages[key]?.version || null;
+}
+
 for (const [name, min] of Object.entries(CRITICAL)) {
-	const current = pkg.dependencies[name] || pkg.devDependencies?.[name] || pkg.overrides?.[name];
-	if (current && current.replace(/[\^~]/, '') < min) {
-		console.error(`[SECURITY] ${name} version ${current} is vulnerable. Minimum ${min} required.`);
+	const declared =
+		pkg.dependencies?.[name] ||
+		pkg.devDependencies?.[name] ||
+		pkg.overrides?.[name] ||
+		null;
+
+	const installed = getInstalledVersion(name) || declared;
+	if (!installed) continue;
+
+	const cur = normalizeSemver(installed);
+	const req = normalizeSemver(min);
+	if (!cur || !req) {
+		console.error(`[SECURITY] semver parse failed for ${name}: current=${installed}, minimum=${min}`);
+		process.exit(1);
+	}
+
+	if (compareSemver(cur, req) < 0) {
+		console.error(`[SECURITY] ${name} version ${installed} is below minimum ${min}`);
 		process.exit(1);
 	}
 }

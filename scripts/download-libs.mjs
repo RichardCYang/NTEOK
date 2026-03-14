@@ -145,8 +145,8 @@ const LIBRARIES = [
         license: "https://raw.githubusercontent.com/ueberdosis/tiptap/main/LICENSE"
     },
     {
-        name: "simplewebauthn",
-        files: [{ url: "https://cdn.jsdelivr.net/npm/@simplewebauthn/browser@10.0.0/+esm", path: "browser.js" }],
+name: "simplewebauthn",
+files: [{ url: "https://cdn.jsdelivr.net/npm/@simplewebauthn/browser@13.2.2/+esm", path: "browser.js" }],
         license: "https://raw.githubusercontent.com/MasterQ32/simplewebauthn/master/LICENSE"
     },
     {

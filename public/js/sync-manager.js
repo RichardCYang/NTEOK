@@ -379,18 +379,19 @@ async function connectWebSocket() {
         const { ticket } = await ticketRes.json();
         if (!ticket) throw new Error("no-ticket");
 
-        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const wsUrl = `${protocol}//${window.location.host}/ws?ticket=${encodeURIComponent(ticket)}`;
-        ws = new WebSocket(wsUrl);
-        console.log('[WS] 연결 시도');
+const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+const wsUrl = `${protocol}//${window.location.host}/ws`;
+ws = new WebSocket(wsUrl);
+console.log('[WS] 연결 시도');
 
-        ws.onopen = () => {
-            console.log('[WS] 연결 성공');
-            reconnectAttempts = 0;
-            if (currentPageId) subscribePage(currentPageId);
-            if (currentStorageId) subscribeStorage(currentStorageId);
-            subscribeUser();
-        };
+ws.onopen = () => {
+	console.log('[WS] 연결 성공');
+	ws.send(JSON.stringify({ type: 'auth', ticket }));
+	reconnectAttempts = 0;
+	if (currentPageId) subscribePage(currentPageId);
+	if (currentStorageId) subscribeStorage(currentStorageId);
+	subscribeUser();
+};
 
         ws.onmessage = (event) => {
             try {
