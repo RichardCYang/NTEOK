@@ -13,14 +13,17 @@ const erl = require('express-rate-limit');
 
 const BACKUP_SIGNING_KEY = process.env.BACKUP_SIGNING_KEY || null;
 
-function signBackupManifest(raw) {
+function signBackupManifest(raw, userId) {
     if (!BACKUP_SIGNING_KEY) throw new Error('BACKUP_SIGNING_KEY 미설정');
-    return crypto.createHmac('sha256', BACKUP_SIGNING_KEY).update(String(raw)).digest('hex');
+    const hmac = crypto.createHmac('sha256', BACKUP_SIGNING_KEY);
+    hmac.update(String(raw));
+    if (userId) hmac.update(`:user:${userId}`);
+    return hmac.digest('hex');
 }
 
-function verifyBackupManifest(raw, sig) {
+function verifyBackupManifest(raw, sig, userId) {
     if (!BACKUP_SIGNING_KEY) return false;
-    const expected = signBackupManifest(raw);
+    const expected = signBackupManifest(raw, userId);
     try {
         return crypto.timingSafeEqual(Buffer.from(expected, 'hex'), Buffer.from(String(sig || '').trim(), 'hex'));
     } catch (_) {
@@ -662,7 +665,7 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
         return text.replace(/[&<>"']/g, m => map[m]);
     }
 
-    function extractPageFromHTML(html) {
+    function extractPageFromHTML(html, currentUserId) {
         try {
             const dom = new JSDOM(html);
             const doc = dom.window.document;
@@ -674,18 +677,8 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
                     const metadataText = metadataScript.textContent?.trim();
                     if (metadataText && metadataText.length < 1024 * 1024) {
                         metadata = safeJsonParse(metadataText, 'nteok-metadata');
-                        console.log('[메타데이터 파싱 성공]', {
-                            coverImage: metadata?.coverImage,
-                            isCoverImage: metadata?.isCoverImage
-                        });
-                    } else if (metadataText) {
-                        console.warn('[메타데이터 파싱 거부]: 데이터가 너무 큽니다.');
                     }
-                } catch (e) {
-                    console.warn('[메타데이터 파싱 실패]:', e.message, 'Content:', metadataScript.textContent?.substring(0, 200));
-                }
-            } else {
-                console.warn('[메타데이터 스크립트 없음]');
+                } catch (e) { }
             }
 
             const titleEl = doc.querySelector('h1');
@@ -703,6 +696,17 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
             const rawContent = contentEl ? contentEl.innerHTML : '<p></p>';
             const content = sanitizeHtmlContent(rawContent || '<p></p>');
 
+            const elements = doc.querySelectorAll('[src], [data-src], [data-url], [data-thumbnail], [data-favicon]');
+            for (const el of elements) {
+                for (const attr of ['src', 'data-src', 'data-url', 'data-thumbnail', 'data-favicon']) {
+                    if (el.hasAttribute(attr)) {
+                        const val = el.getAttribute(attr);
+                        const normalized = normalizeAssetRefOnImport(val, currentUserId);
+                        if (normalized) el.setAttribute(attr, normalized);
+                    }
+                }
+            }
+
             const coverImageEl = doc.querySelector('.cover-image');
             let coverImage = null;
             if (coverImageEl) {
@@ -712,6 +716,7 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
                     if (match) coverImage = match[1];
                 }
             }
+            if (coverImage) coverImage = normalizeAssetRefOnImport(coverImage, currentUserId);
 
             const metaParentRaw = metadata?.parentId ?? metadata?.parent_id ?? null;
             const metaParentId = (typeof metaParentRaw === 'string' && metaParentRaw.trim()) ? metaParentRaw.trim() : null;
@@ -723,7 +728,7 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
                 backupId: (typeof metadata?.id === 'string' && metadata.id.trim()) ? metadata.id.trim() : null,
                 parentId: metaParentId,
                 title,
-                content,
+                content: doc.body.innerHTML || content,
                 icon: icon || (metadata?.icon) || null,
                 isEncrypted: metaIsEncrypted,
                 encryptionSalt: metaIsEncrypted ? ((metadata?.encryptionSalt ?? metadata?.encryption_salt) || null) : null,
@@ -735,7 +740,6 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
                 isCoverImage: metadata?.isCoverImage || false
             };
         } catch (error) {
-            console.error('HTML 파싱 오류:', error);
             return {
                 title: '제목 없음',
                 content: '<p></p>',
@@ -1017,7 +1021,7 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
             };
             const backupManifestRaw = JSON.stringify(backupManifest);
             archive.append(backupManifestRaw, { name: 'backup-manifest.json' });
-            archive.append(signBackupManifest(backupManifestRaw), { name: 'backup-manifest.sig' });
+            archive.append(signBackupManifest(backupManifestRaw, userId), { name: 'backup-manifest.sig' });
 
             await archive.finalize();
             console.log(`[백업 내보내기] 사용자 ${userId} 완료 (E2EE 상태: ${e2eeStatesCount})`);
@@ -1026,6 +1030,15 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
             if (!res.headersSent) res.status(500).json({ error: '백업 내보내기 실패' });
         }
     });
+
+    function normalizeAssetRefOnImport(src, currentUserId) {
+        if (!src || typeof src !== 'string') return null;
+        const m = src.match(/^\/(imgs|paperclip|covers)\/(\d+)\/([A-Za-z0-9._-]+)$/);
+        if (!m) return src;
+        const type = m[1];
+        const filename = m[3];
+        return `/${type}/${currentUserId}/${filename}`;
+    }
 
     router.post('/import', authMiddleware, csrfMiddleware, requireRecentReauth(10 * 60 * 1000), backupImportLimiter, backupUpload.single('backup'), async (req, res) => {
         const userId = req.user.id;
@@ -1060,7 +1073,7 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
 
             const manifestRaw = manifestEntry.data ? manifestEntry.data.toString('utf8') : fs.readFileSync(manifestEntry.tempFilePath, 'utf8');
             const manifestSig = manifestSigEntry.data ? manifestSigEntry.data.toString('utf8') : fs.readFileSync(manifestSigEntry.tempFilePath, 'utf8');
-            if (!verifyBackupManifest(manifestRaw, manifestSig)) throw new Error('백업 서명 검증 실패: 신뢰할 수 없는 백업입니다.');
+            if (!verifyBackupManifest(manifestRaw, manifestSig, userId)) throw new Error('백업 서명 검증 실패: 타인의 백업이거나 신뢰할 수 없는 백업입니다.');
 
             const manifest = safeJsonParse(manifestRaw, 'backup-manifest.json');
             if (!manifest || !Array.isArray(manifest.entries)) throw new Error('백업 매니페스트 형식이 올바르지 않습니다.');
@@ -1201,7 +1214,7 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
                 const html = entry.data
                     ? entry.data.toString('utf8')
                     : fs.readFileSync(entry.tempFilePath, 'utf8');
-                const pageData = extractPageFromHTML(html);
+                const pageData = extractPageFromHTML(html, userId);
                 const pageId = generatePageId(new Date());
                 const nowStr = formatDateForDb(new Date());
 
@@ -1414,24 +1427,38 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
                 if (!row.length || row[0].is_encrypted || !row[0].content) continue;
 
                 let content = row[0].content;
-                const oldUserIdPattern = /\/(imgs|paperclip|covers)\/(\d+)\//g;
-                let newContent = content.replace(oldUserIdPattern, `/$1/${userId}/`);
+                const dom = new JSDOM(content);
+                const doc = dom.window.document;
+                const elements = doc.querySelectorAll('[src], [data-src], [data-url], [data-thumbnail], [data-favicon]');
+                let modified = false;
+                for (const el of elements) {
+                    for (const attr of ['src', 'data-src', 'data-url', 'data-thumbnail', 'data-favicon']) {
+                        if (el.hasAttribute(attr)) {
+                            const val = el.getAttribute(attr);
+                            const normalized = normalizeAssetRefOnImport(val, userId);
+                            if (normalized && normalized !== val) {
+                                el.setAttribute(attr, normalized);
+                                modified = true;
+                            }
+                        }
+                    }
+                }
 
                 for (const [oldName, newName] of imgFilenameMap.entries()) {
-                    newContent = newContent.replace(new RegExp(`/imgs/${userId}/${escapeRegExp(oldName)}`, 'g'), `/imgs/${userId}/${newName}`);
+                    const oldP = `/imgs/${userId}/${escapeRegExp(oldName)}`;
+                    const newP = `/imgs/${userId}/${newName}`;
+                    const targetEls = doc.querySelectorAll(`[src^="${oldP}"], [data-src^="${oldP}"], [data-url^="${oldP}"]`);
+                    for (const el of targetEls) {
+                        for (const attr of ['src', 'data-src', 'data-url']) {
+                            if (el.getAttribute(attr) === oldP) {
+                                el.setAttribute(attr, newP);
+                                modified = true;
+                            }
+                        }
+                    }
                 }
 
-                for (const [oldName, newName] of paperclipFilenameMap.entries()) {
-                    newContent = newContent.replace(new RegExp(`/paperclip/${userId}/${escapeRegExp(oldName)}`, 'g'), `/paperclip/${userId}/${newName}`);
-                }
-
-                for (const [oldName, newName] of coverFilenameMap.entries()) {
-                    newContent = newContent.replace(new RegExp(`/covers/${userId}/${escapeRegExp(oldName)}`, 'g'), `/covers/${userId}/${newName}`);
-                }
-
-                if (newContent !== content) {
-                    await connection.execute('UPDATE pages SET content = ? WHERE id = ?', [newContent, p.newId]);
-                }
+                if (modified) await connection.execute('UPDATE pages SET content = ? WHERE id = ?', [doc.body.innerHTML, p.newId]);
 
                 try {
                     if (p.coverImage && typeof p.coverImage === 'string') {

@@ -114,10 +114,10 @@ function parseTrustedProxyCidrsFromEnv() {
     for (const part of parts) {
         try {
             const [range, prefix] = ipaddr.parseCIDR(part);
-            if (isSubnetTooBroad(range, prefix)) console.warn(`[보안] TRUST_PROXY_CIDRS에 너무 광범위한 서브넷이 포함되어 있습니다: "${part}" (권장되지 않음)`);
+            if (isSubnetTooBroad(range, prefix)) throw new Error(`[보안] TRUST_PROXY_CIDRS가 너무 광범위합니다: "${part}"`);
             cidrs.push([range, prefix]);
         } catch (e) {
-            console.warn(`[보안 설정] TRUST_PROXY_CIDRS 항목 파싱 실패: "${part}" (${e.message})`);
+            throw new Error(`[보안 설정] TRUST_PROXY_CIDRS 항목이 잘못되었습니다: "${part}" (${e.message})`);
         }
     }
     return cidrs;
@@ -157,11 +157,21 @@ function parseForwardedChain(req) {
             .split(',')
             .map(part => normalizeIp(part))
             .filter(ip => isValidIp(ip));
-        if (hops.length > 0) return hops;
+        if (hops.length > 0) return hops.slice(-8);
     }
     const xRealIp = normalizeIp(req?.headers?.['x-real-ip']);
     if (isValidIp(xRealIp)) return [xRealIp];
     return [];
+}
+
+function validateTrustedProxyConfiguration() {
+    const mode = String(process.env.TRUST_PROXY || 'auto').toLowerCase();
+    const isProduction = String(process.env.NODE_ENV || '').toLowerCase() === 'production';
+    const cidrs = parseTrustedProxyCidrsFromEnv();
+    if (!isProduction) return cidrs;
+    if (mode === 'on' || mode === 'true' || mode === '1') throw new Error('[보안] TRUST_PROXY=on/true/1 금지. TRUST_PROXY=auto + TRUST_PROXY_CIDRS만 허용합니다.');
+    if (mode !== 'off' && mode !== 'false' && mode !== '0' && cidrs.length === 0) throw new Error('[보안] 프로덕션에서 forwarded header를 신뢰하려면 TRUST_PROXY_CIDRS가 반드시 필요합니다.');
+    return cidrs;
 }
 
 function extractClientIpFromTrustedChain(remote, forwardedChain, trustedProxyCidrs) {
@@ -192,6 +202,7 @@ function getClientIpFromRequest(req) {
 }
 
 function checkCountryWhitelist(userSettings, ipAddress) {
+    if (!isValidIp(ipAddress)) return { allowed: false, reason: '클라이언트 IP를 신뢰할 수 없습니다.' };
     const allowPrivateBypass = !process.env.NODE_ENV || process.env.NODE_ENV !== 'production' || String(process.env.COUNTRY_WHITELIST_ALLOW_PRIVATE_IP || '').toLowerCase() === 'true';
     if (isPrivateOrLocalIP(ipAddress)) {
         if (allowPrivateBypass) return { allowed: true };
@@ -329,5 +340,6 @@ module.exports = {
     getClientIpFromRequest,
     normalizeIp,
     isSubnetTooBroad,
-    parseTrustedProxyCidrsFromEnv
+    parseTrustedProxyCidrsFromEnv,
+    validateTrustedProxyConfiguration
 };

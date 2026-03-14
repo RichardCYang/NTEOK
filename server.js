@@ -393,8 +393,17 @@ const {
     formatDateForDb,
     recordLoginAttempt,
     getClientIpFromRequest,
-    normalizeIp
+    normalizeIp,
+    validateTrustedProxyConfiguration
 } = require("./network-utils");
+
+validateTrustedProxyConfiguration();
+
+function hashExactIp(ip) {
+    const normalized = normalizeIp(ip);
+    if (!normalized) return null;
+    return crypto.createHash("sha256").update(normalized).digest("hex");
+}
 
 const {
     initWebSocketServer,
@@ -1360,6 +1369,7 @@ async function createSession(user, ctx = {}) {
         userId: user.id,
         username: user.username,
         uaHash: hashUserAgent(ctx.userAgent || ""),
+        ipHashExact: hashExactIp(ctx.clientIp || ""),
         ipPrefixHash: hashIpPrefix(ctx.clientIp || ""),
         expiresAt,
         absoluteExpiry,
@@ -1379,31 +1389,36 @@ function buildSessionContextFromReq(req, getClientIpFromRequest) {
 }
 
 async function getSessionFromId(sessionId, ctx = {}) {
-	if (!sessionId) return null;
-	const session = await getSession(sessionId);
-	if (!session || session.type !== 'auth' || !session.userId) return null;
-	if (ctx.enforceUa === true) {
-		const currentUaHash = hashUserAgent(ctx.userAgent || "");
-		if (session.uaHash && session.uaHash !== currentUaHash) {
-			await revokeSession(sessionId, "ua-mismatch");
-			return null;
-		}
-	}
-	if (ctx.enforceNetwork === true) {
-		const currentIpPrefixHash = hashIpPrefix(ctx.clientIp || "");
-		if (session.ipPrefixHash && currentIpPrefixHash && session.ipPrefixHash !== currentIpPrefixHash) {
-			await revokeSession(sessionId, "network-mismatch");
-			return null;
-		}
-	}
-	const now = Date.now();
-	if (session.absoluteExpiry <= now || session.expiresAt <= now) {
-		await revokeSession(sessionId, "session-expired");
-		return null;
-	}
-	session.expiresAt = now + SESSION_TTL_MS;
-	await saveSession(sessionId, session, SESSION_ABSOLUTE_TTL_MS);
-	return { id: sessionId, ...session };
+    if (!sessionId) return null;
+    const session = await getSession(sessionId);
+    if (!session || session.type !== 'auth' || !session.userId) return null;
+    if (ctx.enforceUa === true) {
+        const currentUaHash = hashUserAgent(ctx.userAgent || "");
+        if (session.uaHash && session.uaHash !== currentUaHash) {
+            await revokeSession(sessionId, "ua-mismatch");
+            return null;
+        }
+    }
+    if (ctx.enforceNetwork === true) {
+        const currentExactIpHash = hashExactIp(ctx.clientIp || "");
+        const currentIpPrefixHash = hashIpPrefix(ctx.clientIp || "");
+        const sameExact = !!(session.ipHashExact && currentExactIpHash && session.ipHashExact === currentExactIpHash);
+        const samePrefix = !!(session.ipPrefixHash && currentIpPrefixHash && session.ipPrefixHash === currentIpPrefixHash);
+        const driftGraceMs = 10 * 60 * 1000;
+        const inGrace = Number(session.createdAt || 0) + driftGraceMs > Date.now();
+        if (!sameExact && (!samePrefix || !inGrace)) {
+            await revokeSession(sessionId, "network-mismatch");
+            return null;
+        }
+    }
+    const now = Date.now();
+    if (session.absoluteExpiry <= now || session.expiresAt <= now) {
+        await revokeSession(sessionId, "session-expired");
+        return null;
+    }
+    session.expiresAt = now + SESSION_TTL_MS;
+    await saveSession(sessionId, session, SESSION_ABSOLUTE_TTL_MS);
+    return { id: sessionId, ...session };
 }
 
 async function getSessionFromRequest(req) {
