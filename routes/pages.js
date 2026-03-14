@@ -1397,7 +1397,8 @@ module.exports = (dependencies) => {
             const placeholders = normalizedIds.map(() => "?").join(",");
             const vis = pageSqlPolicy.andVisible({ alias: "p", viewerUserId: userId });
             const [rows] = await pool.execute(
-                `SELECT p.id, p.user_id, p.storage_id, p.is_encrypted, p.share_allowed
+                `SELECT p.id, p.user_id, p.storage_id, p.is_encrypted, p.share_allowed,
+                        s.user_id AS storage_owner_id
                    FROM pages p
                    JOIN storages s
                      ON p.storage_id = s.id
@@ -1414,6 +1415,9 @@ module.exports = (dependencies) => {
             if (rows.length !== normalizedIds.length) return res.status(404).json({ error: "일부 페이지를 찾을 수 없습니다." });
             for (const row of rows) {
                 if (String(row.storage_id) !== String(storageId)) return res.status(403).json({ error: "지정한 저장소에 속하지 않은 페이지가 포함되어 있습니다." });
+                const isPageOwner = Number(row.user_id) === Number(userId);
+                const isStorageOwner = Number(row.storage_owner_id) === Number(userId);
+                if (!isPageOwner && !isStorageOwner) return res.status(403).json({ error: "페이지 소유자 또는 저장소 소유자만 순서를 변경할 수 있습니다." });
             }
 
             for (let i = 0; i < normalizedIds.length; i++) {
@@ -1490,18 +1494,17 @@ module.exports = (dependencies) => {
             if (await forbidPrivateEncryptedPageMutation(id, userId, res)) return;
 
             const permission = await storagesRepo.getPermission(userId, page.storage_id);
-            if (!permission) {
-                return res.status(403).json({ error: "이 페이지를 복구할 권한이 없습니다." });
-            }
+            if (!permission) return res.status(403).json({ error: "이 페이지를 복구할 권한이 없습니다." });
 
             const isOwnerOfPage = Number(page.user_id) === Number(userId);
-            if (!isOwnerOfPage) return res.status(403).json({ error: "페이지 소유자만 복구할 수 있습니다." });
+            const isStorageOwner = Number(page.storage_owner_id) === Number(userId);
+            if (!isOwnerOfPage && !isStorageOwner) return res.status(403).json({ error: "페이지 소유자 또는 저장소 소유자만 복구할 수 있습니다." });
 
             await pagesRepo.restorePageAndDescendants({
                 rootPageId: id,
                 storageId: page.storage_id,
                 actorUserId: userId,
-                isAdmin: permission === 'ADMIN'
+                actorCanManageForeign: isStorageOwner
             });
 
             await pagesRepo.recordUpdateHistory({
@@ -1532,12 +1535,13 @@ module.exports = (dependencies) => {
             if (!permission) return res.status(403).json({ error: "권한이 없습니다." });
 
             const isOwnerOfPage = Number(page.user_id) === Number(userId);
-            if (!isOwnerOfPage) return res.status(403).json({ error: "페이지 소유자만 영구 삭제할 수 있습니다." });
+            const isStorageOwner = Number(page.storage_owner_id) === Number(userId);
+            if (!isOwnerOfPage && !isStorageOwner) return res.status(403).json({ error: "페이지 소유자 또는 저장소 소유자만 영구 삭제할 수 있습니다." });
 
             await pagesRepo.permanentlyDeletePageAndDescendants({
                 pageId: id,
                 userId,
-                isAdmin: permission === 'ADMIN'
+                actorCanManageForeign: isStorageOwner
             });
 
             await pagesRepo.recordUpdateHistory({
@@ -1562,14 +1566,13 @@ module.exports = (dependencies) => {
             const authResult = await pageWritePolicy.canDeletePage({ viewerUserId: userId, pageId: id });
             if (!authResult.ok) return res.status(authResult.code || 403).json({ error: authResult.error });
             const existing = authResult.page;
-            const permission = authResult.permission;
 
             const delResult = await pagesRepo.softDeletePageAndDescendants({
                 rootPageId: id,
                 storageId: existing.storage_id,
                 rootParentId: existing.parent_id || null,
                 actorUserId: userId,
-                isAdmin: permission === 'ADMIN'
+                actorCanManageForeign: authResult.isStorageOwner
             });
 
             const deletedPageIds = Array.isArray(delResult?.deletedPageIds) && delResult.deletedPageIds.length

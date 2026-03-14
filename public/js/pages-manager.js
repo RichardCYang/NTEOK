@@ -63,38 +63,49 @@ export function applyPagesData(data, isEncryptedStorage = false) {
 }
 
 export function buildPageTree(flatPages) {
-    const map = new Map();
-    flatPages.forEach((p) => {
-        map.set(p.id, {
-            ...p,
-            parentId: p.parentId || null,
-            children: []
-        });
-    });
+	const map = new Map();
+	flatPages.forEach((p) => {
+		map.set(p.id, {
+			...p,
+			parentId: p.parentId || null,
+			children: []
+		});
+	});
 
-    const roots = [];
-    map.forEach((node) => {
-        if (node.parentId && map.has(node.parentId)) {
-            map.get(node.parentId).children.push(node);
-        } else {
-            roots.push(node);
-        }
-    });
+	const createsCycle = (nodeId, candidateParentId) => {
+		let cur = candidateParentId;
+		const seen = new Set([nodeId]);
+		while (cur && map.has(cur)) {
+			if (seen.has(cur)) return true;
+			seen.add(cur);
+			cur = map.get(cur).parentId || null;
+		}
+		return false;
+	};
 
-    const sortFn = (a, b) => {
-        const aOrder = a.sortOrder || 0;
-        const bOrder = b.sortOrder || 0;
-        if (aOrder !== bOrder) return aOrder - bOrder;
-        return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
-    };
+	const roots = [];
+	map.forEach((node) => {
+		if (node.parentId && map.has(node.parentId) && !createsCycle(node.id, node.parentId)) {
+			map.get(node.parentId).children.push(node);
+		} else {
+			roots.push(node);
+		}
+	});
 
-    function sortNodes(nodes) {
-        nodes.sort(sortFn);
-        nodes.forEach(n => { if (n.children.length) sortNodes(n.children); });
-    }
+	const sortFn = (a, b) => {
+		const aOrder = a.sortOrder || 0;
+		const bOrder = b.sortOrder || 0;
+		if (aOrder !== bOrder) return aOrder - bOrder;
+		return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+	};
 
-    sortNodes(roots);
-    return roots;
+	function sortNodes(nodes) {
+		nodes.sort(sortFn);
+		nodes.forEach(n => { if (n.children.length) sortNodes(n.children); });
+	}
+
+	sortNodes(roots);
+	return roots;
 }
 
 export function renderPageList() {
@@ -270,12 +281,14 @@ export async function loadPage(id) {
         state.currentPageId = page.id;
         state.currentPageUpdatedAt = page.updatedAt || null;
 
-        let curr = page.parentId;
-        while (curr) {
-            state.expandedPages.add(curr);
-            const p = state.pages.find(x => x.id === curr);
-            curr = p ? p.parentId : null;
-        }
+		let curr = page.parentId;
+		const seenParents = new Set();
+		while (curr && !seenParents.has(curr)) {
+			seenParents.add(curr);
+			state.expandedPages.add(curr);
+			const p = state.pages.find(x => x.id === curr);
+			curr = p ? p.parentId : null;
+		}
 
         let title = page.title || "";
         let content = page.content || "<p></p>";

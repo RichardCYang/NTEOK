@@ -14,9 +14,10 @@ module.exports = ({ resolvePageAccess }) => {
         if (!resolved) return { ok: false, error: '페이지를 찾을 수 없거나 권한이 없습니다.', code: 404 };
         
         const { page, isPageOwner } = resolved;
-        if (!isPageOwner) return { ok: false, error: '페이지 소유자만 삭제할 수 있습니다.', code: 403 };
+        const isStorageOwner = Number(page.storage_owner_id) === Number(viewerUserId);
+        if (!isPageOwner && !isStorageOwner) return { ok: false, error: '페이지 소유자 또는 저장소 소유자만 삭제할 수 있습니다.', code: 403 };
         
-        return { ok: true, page, isPageOwner };
+        return { ok: true, page, isPageOwner, isStorageOwner, permission: resolved.permission };
     }
 
     return { canWritePage, canDeletePage };

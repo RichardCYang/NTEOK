@@ -1,5 +1,7 @@
 const express = require('express');
 const router = express.Router();
+const erl = require('express-rate-limit');
+const rateLimit = erl.rateLimit || erl;
 
 
 module.exports = (dependencies) => {
@@ -84,6 +86,14 @@ module.exports = (dependencies) => {
 			'unknown'
 		);
 	}
+
+	const reauthLimiter = rateLimit({
+		windowMs: 10 * 60 * 1000,
+		max: 5,
+		standardHeaders: true,
+		legacyHeaders: false,
+		keyGenerator: (req) => `${req.user?.id || 'anon'}:${getClientIp(req)}`
+	});
 
 	function requireSameOriginForAuth(req, res, next) {
 		try {
@@ -188,14 +198,31 @@ module.exports = (dependencies) => {
 		}
 	});
 
-	router.post("/reauth", authMiddleware, csrfMiddleware, async (req, res) => {
+	router.post("/reauth", authMiddleware, csrfMiddleware, reauthLimiter, async (req, res) => {
 		const { password } = req.body || {};
 		if (typeof password !== "string") return res.status(400).json({ error: "비밀번호를 입력해 주세요." });
 		try {
-			const [rows] = await pool.execute(`SELECT password_hash, totp_enabled, passkey_enabled FROM users WHERE id = ?`, [req.user.id]);
+			const clientIp = getClientIp(req);
+			const [rows] = await pool.execute(
+				`SELECT username, password_hash, totp_enabled, passkey_enabled
+				   FROM users
+				  WHERE id = ?`,
+				[req.user.id]
+			);
 			if (!rows.length) return res.status(404).json({ error: "사용자를 찾을 수 없습니다." });
 			const user = rows[0];
-			if (!(await bcrypt.compare(password, user.password_hash))) return res.status(401).json({ error: "비밀번호가 올바르지 않습니다." });
+			if (!(await bcrypt.compare(password, user.password_hash))) {
+				await recordLoginAttempt(pool, {
+					userId: req.user.id,
+					username: user.username,
+					ipAddress: clientIp,
+					port: req.connection.remotePort || 0,
+					success: false,
+					failureReason: "재인증 실패",
+					userAgent: req.headers["user-agent"] || null
+				});
+				return res.status(401).json({ error: "비밀번호가 올바르지 않습니다." });
+			}
 			if (Number(user.totp_enabled) === 1 || Number(user.passkey_enabled) === 1) {
 				return res.status(403).json({
 					error: "MFA가 활성화된 계정은 전체 MFA 재인증이 필요합니다.",
@@ -214,6 +241,15 @@ module.exports = (dependencies) => {
 				res.cookie(SESSION_COOKIE_NAME, newSessionId, { httpOnly: true, sameSite: "strict", secure: COOKIE_SECURE, path: "/", maxAge: Math.min(SESSION_TTL_MS, remainingTtl) });
 				res.cookie(CSRF_COOKIE_NAME, generateCsrfTokenForSession(newSessionId, "api"), { httpOnly: false, sameSite: "strict", secure: COOKIE_SECURE, path: "/", maxAge: Math.min(SESSION_TTL_MS, remainingTtl) });
 			}
+			await recordLoginAttempt(pool, {
+				userId: req.user.id,
+				username: user.username,
+				ipAddress: clientIp,
+				port: req.connection.remotePort || 0,
+				success: true,
+				failureReason: null,
+				userAgent: req.headers["user-agent"] || null
+			});
 			res.json({ ok: true });
 		} catch (error) {
 			logError("POST /api/auth/reauth", error);

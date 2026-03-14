@@ -2529,83 +2529,115 @@ function revokePageSubscription(ws, pageId, conns, myConn, reason = 'Access revo
     } catch (_) {}
 }
 
+function sameNullableId(a, b) {
+	return String(a ?? '') === String(b ?? '');
+}
+
+function canActorMutatePageStructure({ viewerUserId, pageOwnerUserId, storageOwnerUserId }) {
+	return Number(viewerUserId) === Number(pageOwnerUserId)
+		|| Number(viewerUserId) === Number(storageOwnerUserId);
+}
+
+async function wouldCreateParentCycle(pool, pageId, candidateParentId, maxDepth = 256) {
+	let cur = candidateParentId;
+	const seen = new Set();
+	for (let depth = 0; cur && depth < maxDepth; depth++) {
+		const id = String(cur);
+		if (id === String(pageId)) return true;
+		if (seen.has(id)) return true;
+		seen.add(id);
+		const [rows] = await pool.execute(
+			`SELECT parent_id FROM pages WHERE id = ? AND deleted_at IS NULL LIMIT 1`,
+			[id]
+		);
+		if (!rows.length) return false;
+		cur = rows[0].parent_id || null;
+	}
+	return Boolean(cur);
+}
+
 async function ensureActivePageAccess(pool, pageSqlPolicy, pageId, myConn, opts = {}) {
-    if (!myConn) return { ok: false, reason: 'not-subscribed' };
+	if (!myConn) return { ok: false, reason: 'not-subscribed' };
 
-    const userId = myConn.userId;
-    const vis = (pageSqlPolicy && typeof pageSqlPolicy.andVisible === 'function')
-        ? pageSqlPolicy.andVisible({ alias: 'p', viewerUserId: userId })
-        : { sql: ' AND NOT (p.is_encrypted = 1 AND p.share_allowed = 0 AND p.user_id != ?)', params: [userId] };
+	const userId = myConn.userId;
+	const vis = (pageSqlPolicy && typeof pageSqlPolicy.andVisible === 'function')
+		? pageSqlPolicy.andVisible({ alias: 'p', viewerUserId: userId })
+		: { sql: ' AND NOT (p.is_encrypted = 1 AND p.share_allowed = 0 AND p.user_id != ?)', params: [userId] };
 
-    const [rows] = await pool.execute(
-        `SELECT p.id, p.user_id, p.is_encrypted, p.share_allowed, p.storage_id
-           FROM pages p
-          WHERE p.id = ?
-            AND p.deleted_at IS NULL
-            ${vis.sql}`,
-        [pageId, ...vis.params]
-    );
+	const [rows] = await pool.execute(
+		`SELECT p.id, p.user_id, p.parent_id, p.is_encrypted, p.share_allowed, p.storage_id,
+				s.user_id AS storage_owner_id
+		   FROM pages p
+		   JOIN storages s ON p.storage_id = s.id
+		  WHERE p.id = ?
+			AND p.deleted_at IS NULL
+			${vis.sql}`,
+		[pageId, ...vis.params]
+	);
 
-    if (!rows.length)
-        return { ok: false, reason: 'page-not-visible' };
+	if (!rows.length)
+		return { ok: false, reason: 'page-not-visible' };
 
-    const page = rows[0];
+	const page = rows[0];
 
-    myConn.storageId = page.storage_id;
+	myConn.storageId = page.storage_id;
 
-    const freshPerm = await refreshConnPermission(pool, myConn, {
-        force: Boolean(opts.forcePermissionRefresh)
-    });
-    if (!freshPerm)
-        return { ok: false, reason: 'storage-access-revoked' };
+	const freshPerm = await refreshConnPermission(pool, myConn, {
+		force: Boolean(opts.forcePermissionRefresh)
+	});
+	if (!freshPerm)
+		return { ok: false, reason: 'storage-access-revoked' };
 
-    if (Number(page.is_encrypted) === 1) {
-        if (!myConn.isE2ee)
-            return { ok: false, reason: 'encrypted-page-no-realtime' };
-    }
+	if (Number(page.is_encrypted) === 1) {
+		if (!myConn.isE2ee)
+			return { ok: false, reason: 'encrypted-page-no-realtime' };
+	}
 
-    return { ok: true, permission: freshPerm, page };
+	return { ok: true, permission: freshPerm, page };
 }
 
 async function validateYjsParentAssignment(pool, pageSqlPolicy, {
-    viewerUserId,
-    pageId,
-    pageStorageId,
-    candidateParentId
+	viewerUserId,
+	pageId,
+	pageStorageId,
+	candidateParentId
 }) {
-    if (candidateParentId == null || candidateParentId === "")
-        return { ok: true, parentId: null };
+	if (candidateParentId == null || candidateParentId === "")
+		return { ok: true, parentId: null };
 
-    if (typeof candidateParentId !== "string")
-        return { ok: false, reason: "invalid-parent-type" };
+	if (typeof candidateParentId !== "string")
+		return { ok: false, reason: "invalid-parent-type" };
 
-    const parentId = candidateParentId.trim();
-    if (!parentId || parentId.length > 64)
-        return { ok: false, reason: "invalid-parent-format" };
+	const parentId = candidateParentId.trim();
+	if (!parentId || parentId.length > 64)
+		return { ok: false, reason: "invalid-parent-format" };
 
-    if (parentId === pageId)
-        return { ok: false, reason: "self-parent" };
+	if (parentId === pageId)
+		return { ok: false, reason: "self-parent" };
 
-    const vis = (pageSqlPolicy && typeof pageSqlPolicy.andVisible === 'function')
-        ? pageSqlPolicy.andVisible({ alias: 'p', viewerUserId })
-        : { sql: ' AND NOT (p.is_encrypted = 1 AND p.share_allowed = 0 AND p.user_id != ?)', params: [viewerUserId] };
+	const vis = (pageSqlPolicy && typeof pageSqlPolicy.andVisible === 'function')
+		? pageSqlPolicy.andVisible({ alias: 'p', viewerUserId })
+		: { sql: ' AND NOT (p.is_encrypted = 1 AND p.share_allowed = 0 AND p.user_id != ?)', params: [viewerUserId] };
 
-    const [rows] = await pool.execute(
-        `SELECT p.id, p.storage_id
-           FROM pages p
-           LEFT JOIN storage_shares ss ON p.storage_id = ss.storage_id AND ss.shared_with_user_id = ?
-          WHERE p.id = ?
-            AND p.deleted_at IS NULL
-            AND (p.user_id = ? OR ss.storage_id IS NOT NULL)
-            ${vis.sql}`,
-        [viewerUserId, parentId, viewerUserId, ...vis.params]
-    );
+	const [rows] = await pool.execute(
+		`SELECT p.id, p.storage_id
+		   FROM pages p
+		   LEFT JOIN storage_shares ss ON p.storage_id = ss.storage_id AND ss.shared_with_user_id = ?
+		  WHERE p.id = ?
+			AND p.deleted_at IS NULL
+			AND (p.user_id = ? OR ss.storage_id IS NOT NULL)
+			${vis.sql}`,
+		[viewerUserId, parentId, viewerUserId, ...vis.params]
+	);
 
-    if (!rows.length) return { ok: false, reason: "parent-not-visible" };
-    if (String(rows[0].storage_id) !== String(pageStorageId))
-        return { ok: false, reason: "cross-storage-parent" };
+	if (!rows.length) return { ok: false, reason: "parent-not-visible" };
+	if (String(rows[0].storage_id) !== String(pageStorageId))
+		return { ok: false, reason: "cross-storage-parent" };
 
-    return { ok: true, parentId };
+	if (await wouldCreateParentCycle(pool, pageId, parentId))
+		return { ok: false, reason: "cycle-parent" };
+
+	return { ok: true, parentId };
 }
 
 function getAllAssetsFromDoc(ydoc, pageOwnerUserId) {
@@ -2687,19 +2719,24 @@ async function handleYjsUpdate(ws, payload, pool, sanitizeHtmlContent, pageSqlPo
 
             try {
                 const yMeta = ydoc.getMap("metadata");
+                const currentParentId = access.page?.parent_id ?? null;
                 const requestedParentId = yMeta.get("parentId") ?? null;
-                const parentCheck = await validateYjsParentAssignment(pool, pageSqlPolicy, {
+                if (!sameNullableId(requestedParentId, currentParentId) && !canActorMutatePageStructure({ viewerUserId: ws.userId, pageOwnerUserId: access.page?.user_id, storageOwnerUserId: access.page?.storage_owner_id })) {
+                    yMeta.set("parentId", currentParentId);
+                    try { ws.close(1008, "페이지 소유자 또는 저장소 소유자만 페이지를 이동할 수 있습니다."); } catch (_) {}
+                    return;
+                    }
+                    const parentCheck = await validateYjsParentAssignment(pool, pageSqlPolicy, {
                     viewerUserId: ws.userId,
                     pageId,
                     pageStorageId: access.page.storage_id,
                     candidateParentId: requestedParentId
-                });
-                if (!parentCheck.ok) {
+                    });
+                    if (!parentCheck.ok) {
                     yMeta.set("parentId", null);
-                    try { ws.close(1008, "Invalid parent assignment"); } catch (_) {}
+                    try { ws.close(1008, "잘못된 상위 페이지 할당입니다."); } catch (_) {}
                     return;
-                }
-                if ((requestedParentId || null) !== (parentCheck.parentId || null)) yMeta.set("parentId", parentCheck.parentId);
+                    }                if ((requestedParentId || null) !== (parentCheck.parentId || null)) yMeta.set("parentId", parentCheck.parentId);
             } catch (_) { return; }
 
             if (emergencyPersistState.has(pageId)) return;
@@ -2792,7 +2829,13 @@ async function handleYjsState(ws, payload, pool, sanitizeHtmlContent, pageSqlPol
 
             try {
                 const yMeta = ydoc.getMap('metadata');
+                const currentParentId = access.page?.parent_id ?? null;
                 const requestedParentId = yMeta.get('parentId') ?? null;
+                if (!sameNullableId(requestedParentId, currentParentId) && !canActorMutatePageStructure({ viewerUserId: ws.userId, pageOwnerUserId: access.page?.user_id, storageOwnerUserId: access.page?.storage_owner_id })) {
+                    yMeta.set('parentId', currentParentId);
+                    try { ws.close(1008, 'Only the page owner or storage owner can move pages'); } catch (_) {}
+                    return;
+                }
                 const parentCheck = await validateYjsParentAssignment(pool, pageSqlPolicy, {
                     viewerUserId: ws.userId,
                     pageId,

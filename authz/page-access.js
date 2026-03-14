@@ -2,7 +2,8 @@ module.exports = ({ pool, storagesRepo }) => {
     async function resolvePageAccess({ viewerUserId, pageId, includeDeleted = false }) {
         const deletedSql = includeDeleted ? '' : 'AND p.deleted_at IS NULL';
         const [rows] = await pool.execute(
-            `SELECT p.*, s.is_encrypted AS storage_is_encrypted
+            `SELECT p.*, s.is_encrypted AS storage_is_encrypted,
+                    s.user_id AS storage_owner_id
                FROM pages p
                JOIN storages s ON p.storage_id = s.id
                LEFT JOIN storage_shares ss
