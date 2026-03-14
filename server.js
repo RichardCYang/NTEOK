@@ -419,7 +419,9 @@ const {
 	wsHasActiveConnectionsForPage,
 	wsKickUserFromStorage,
 	extractFilesFromContent,
-	invalidateYjsPersistenceForPage
+	invalidateYjsPersistenceForPage,
+	issuePageSnapshotToken,
+	wsRequestPageSnapshot
 } = require("./websocket-server");
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -2511,6 +2513,8 @@ function installGracefulShutdownHandlers(httpServer, pool, sanitizeHtmlContent) 
 			wsKickUserFromStorage,
 			extractFilesFromContent,
 			invalidateYjsPersistenceForPage,
+			issuePageSnapshotToken,
+			wsRequestPageSnapshot,
 			saveYjsDocToDatabase,
 			enqueueYjsDbSave,
 			flushAllPendingYjsDbSaves,

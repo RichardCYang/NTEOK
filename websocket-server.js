@@ -416,6 +416,28 @@ function clearE2eeSnapshotRequestTimer(pageId) {
     }
 }
 
+const PAGE_SNAPSHOT_TOKEN_TTL_MS = 15_000;
+
+function issuePageSnapshotToken(conn, pageId) {
+    if (!conn) return null;
+    const token = crypto.randomBytes(24).toString('base64url');
+    const now = Date.now();
+    if (!conn.pendingPageSnapshotTokens) conn.pendingPageSnapshotTokens = new Map();
+    for (const [key, exp] of conn.pendingPageSnapshotTokens.entries()) {
+        if (!exp || exp <= now) conn.pendingPageSnapshotTokens.delete(key);
+    }
+    conn.pendingPageSnapshotTokens.set(`${String(pageId)}:${token}`, now + PAGE_SNAPSHOT_TOKEN_TTL_MS);
+    return token;
+}
+
+function consumePageSnapshotToken(conn, pageId, token) {
+    if (!conn?.pendingPageSnapshotTokens || !token) return false;
+    const key = `${String(pageId)}:${String(token)}`;
+    const exp = conn.pendingPageSnapshotTokens.get(key);
+    conn.pendingPageSnapshotTokens.delete(key);
+    return Number.isFinite(exp) && exp > Date.now();
+}
+
 function wsRequestE2eeSnapshot(pageId) {
     const pid = String(pageId || '');
     if (!pid) return;
@@ -442,7 +464,8 @@ function wsRequestPageSnapshot(pageId) {
             if (!c || c.isE2ee) continue;
             if (!['EDIT','ADMIN'].includes(c.permission)) continue;
             if (c.ws && c.ws.readyState === WebSocket.OPEN) {
-                c.ws.send(JSON.stringify({ event: 'request-page-snapshot', data: { pageId: pid } }));
+                const snapshotToken = issuePageSnapshotToken(c, pid);
+                c.ws.send(JSON.stringify({ event: 'request-page-snapshot', data: { pageId: pid, snapshotToken } }));
             }
         } catch (_) {}
     }
@@ -2271,7 +2294,7 @@ function handleSubscribeUser(ws, payload) {
 }
 
 async function handlePageSnapshot(ws, payload, pool, sanitizeHtmlContent, pageSqlPolicy) {
-    const { pageId, html, title, resyncNeeded } = payload || {};
+    const { pageId, html, title, resyncNeeded, snapshotToken } = payload || {};
     if (!pageId || typeof html !== 'string') return;
     if (!isSubscribedToPage(ws, pageId)) return;
 
@@ -2290,10 +2313,41 @@ async function handlePageSnapshot(ws, payload, pool, sanitizeHtmlContent, pageSq
     }
     if (!['EDIT', 'ADMIN'].includes(access.permission)) return;
 
+    if (!consumePageSnapshotToken(myConn, pageId, snapshotToken)) {
+        try { ws.close(1008, 'Unexpected page snapshot'); } catch (_) {}
+        return;
+    }
+
     if (Number(access.page?.is_encrypted) === 1) return;
 
     if (byteLenUtf8(html) > (2 * 1024 * 1024)) return;
     const safeHtml = (typeof sanitizeHtmlContent === 'function') ? sanitizeHtmlContent(html) : html;
+
+    const ydoc = await loadOrCreateYjsDoc(pool, sanitizeHtmlContent, pageId);
+    const probe = cloneYDocForValidation(ydoc);
+    const probeMeta = probe.getMap('metadata');
+    probe.transact(() => {
+        probeMeta.set('content', safeHtml);
+        if (typeof title === 'string' && title.trim()) {
+            probeMeta.set('title', title.trim().slice(0, 255));
+        }
+    }, 'snapshot-probe');
+
+    const sem = validateRealtimeYjsCandidate(probe, sanitizeHtmlContent);
+    if (!sem.ok) {
+        try { ws.close(sem.code || 1008, sem.reason || 'Rejected invalid snapshot'); } catch (_) {}
+        return;
+    }
+
+    const pageOwnerUserId = Number(access.page?.user_id);
+    if (Number.isFinite(pageOwnerUserId) && Number(ws.userId) !== pageOwnerUserId) {
+        const beforeAssets = getAllAssetsFromDoc(ydoc, pageOwnerUserId);
+        const afterAssets = getAllAssetsFromDoc(probe, pageOwnerUserId);
+        if (!sameOwnerAssetSet(beforeAssets, afterAssets)) {
+            try { ws.close(1008, 'Owner asset refs can only be changed by page owner'); } catch (_) {}
+            return;
+        }
+    }
 
     const docMeta = yjsDocuments.get(String(pageId));
     if (docMeta?.ydoc) {
@@ -2958,5 +3012,7 @@ module.exports = {
     wsHasActiveConnectionsForPage,
     wsKickUserFromStorage,
     extractFilesFromContent,
-    invalidateYjsPersistenceForPage
+    invalidateYjsPersistenceForPage,
+    issuePageSnapshotToken,
+    wsRequestPageSnapshot
 };

@@ -654,7 +654,7 @@ function handlePageSaved(data) {
     }
 }
 
-function sendPageSnapshotNow(pageId) {
+function sendPageSnapshotNow(pageId, snapshotToken = null) {
     if (isE2eeSync) return false;
     if (!pageId || !ws || ws.readyState !== WebSocket.OPEN) return false;
     if (!state.editor || !yMetadata) return false;
@@ -673,7 +673,7 @@ function sendPageSnapshotNow(pageId) {
     try {
         ws.send(JSON.stringify({
             type: 'page-snapshot',
-            payload: { pageId, html, resyncNeeded, ...(title ? { title } : {}) }
+            payload: { pageId, html, resyncNeeded, snapshotToken, ...(title ? { title } : {}) }
         }));
         return true;
     } catch (_) {
@@ -685,9 +685,7 @@ export async function requestImmediateSave(pageId, { includeSnapshot = true, wai
     if (!pageId || !ws || ws.readyState !== WebSocket.OPEN) return null;
     try {
         if (isE2eeSync) {
-            if (includeSnapshot) {
-                await flushE2eeState();
-            }
+            if (includeSnapshot) await flushE2eeState();
             ws.send(JSON.stringify({ type: 'force-save-e2ee', payload: { pageId } }));
         } else {
             if (includeSnapshot) {
@@ -716,15 +714,12 @@ export function syncEditorFromMetadata() {
         if (content) {
             const currentContent = state.editor.getHTML();
             if (content !== currentContent) {
-				state.editor._syncIsUpdating = true;
-				try
-				{
-					state.editor.commands.setContent(sanitizeEditorHtml(content), { emitUpdate: false });
-				}
-				finally
-				{
-					state.editor._syncIsUpdating = false;
-				}
+                state.editor._syncIsUpdating = true;
+                try {
+                    state.editor.commands.setContent(sanitizeEditorHtml(content), { emitUpdate: false });
+                } finally {
+                    state.editor._syncIsUpdating = false;
+                }
             }
         }
     }
@@ -743,7 +738,7 @@ function sendYjsUpdate(pageId, update) {
         return;
     }
 
-	const base64Update = uint8ToBase64(update);
+    const base64Update = uint8ToBase64(update);
 
     try {
         ws.send(JSON.stringify({
@@ -770,15 +765,15 @@ function handleInit(data) {
         if (!applyValidatedRemoteUpdate(stateUpdate, 'remote-init')) throw new Error('비신뢰 초기 상태 데이터 차단됨');
 
         if (cursorState.awareness && data.userId && data.username && data.color) {
-        	cursorState.localUserId = data.userId;
+            cursorState.localUserId = data.userId;
 
             cursorState.awareness.setLocalStateField('user', {
                 userId: data.userId,
-				username: data.username,
+                username: data.username,
                 name: data.username,
                 color: data.color
             });
-		}
+        }
 
         setupEditorBindingWithXmlFragment();
 
@@ -797,8 +792,8 @@ function handleInit(data) {
 }
 
 function handleYjsUpdate(data) {
-	try {
-		const update = base64ToUint8(data.update);
+    try {
+        const update = base64ToUint8(data.update);
         applyValidatedRemoteUpdate(update, 'remote');
     } catch (error) {
         console.error('[WS] Yjs 업데이트 처리 오류:', error);
@@ -806,13 +801,13 @@ function handleYjsUpdate(data) {
 }
 
 function handleYjsState(data) {
-	try {
-		if (!data || typeof data.state !== 'string') return;
-		const stateUpdate = base64ToUint8(data.state);
+    try {
+        if (!data || typeof data.state !== 'string') return;
+        const stateUpdate = base64ToUint8(data.state);
         applyValidatedRemoteUpdate(stateUpdate, 'remote-state');
-	} catch (error) {
-		console.error('[WS] Yjs state 처리 오류:', error);
-	}
+    } catch (error) {
+        console.error('[WS] Yjs state 처리 오류:', error);
+    }
 }
 
 function handleUserJoined(data) {
@@ -1061,34 +1056,34 @@ function handleAccessRevoked(data) {
 }
 
 function createSafeSidebarIconElement(value) {
-	if (!value) return null;
-	const v = String(value);
+    if (!value) return null;
+    const v = String(value);
 
-	if (v.startsWith('fa-')) {
-		const safeClass = v.replace(/[^a-zA-Z0-9 _-]/g, '').trim();
-		if (!safeClass) return null;
-		const i = document.createElement('i');
-		i.className = safeClass;
-		i.style.marginRight = "6px";
-		i.style.color = "#2d5f5d";
-		return i;
-	}
+    if (v.startsWith('fa-')) {
+        const safeClass = v.replace(/[^a-zA-Z0-9 _-]/g, '').trim();
+        if (!safeClass) return null;
+        const i = document.createElement('i');
+        i.className = safeClass;
+        i.style.marginRight = "6px";
+        i.style.color = "#2d5f5d";
+        return i;
+    }
 
-	const s = document.createElement('span');
-	s.className = "page-icon";
-	s.style.marginRight = "6px";
-	s.style.fontSize = "16px";
-	s.textContent = v;
-	return s;
+    const s = document.createElement('span');
+    s.className = "page-icon";
+    s.style.marginRight = "6px";
+    s.style.fontSize = "16px";
+    s.textContent = v;
+    return s;
 }
 
 function getSidebarTitleText(titleSpan) {
-	if (!titleSpan) return '';
-	const texts = [];
-	titleSpan.childNodes.forEach(n => {
-		if (n.nodeType === Node.TEXT_NODE) texts.push(n.textContent || '');
-	});
-	return texts.join('').trim();
+    if (!titleSpan) return '';
+    const texts = [];
+    titleSpan.childNodes.forEach(n => {
+        if (n.nodeType === Node.TEXT_NODE) texts.push(n.textContent || '');
+    });
+    return texts.join('').trim();
 }
 
 function updatePageInSidebar(pageId, field, value) {
@@ -1113,7 +1108,7 @@ function updatePageInSidebar(pageId, field, value) {
     } else if (field === 'icon') {
         const titleSpan = pageElement.querySelector('.page-list-item-title');
         if (titleSpan) {
-        	const titleText = getSidebarTitleText(titleSpan);
+            const titleText = getSidebarTitleText(titleSpan);
 
             titleSpan.textContent = '';
             const iconEl = createSafeSidebarIconElement(value);
@@ -1209,125 +1204,125 @@ function handleVisibilityChange() {
 }
 
 function detachYjsProsemirrorBinding() {
-	if (!state.editor || !state.editor.view) return;
-	const view = state.editor.view;
+    if (!state.editor || !state.editor.view) return;
+    const view = state.editor.view;
 
-	if (yjsPmPluginKeys.size > 0) {
-		const plugins = view.state.plugins.filter(p => !yjsPmPluginKeys.has(p.key));
-		view.updateState(view.state.reconfigure({ plugins }));
-	} else if (yjsPmPlugins?.length) {
-		const plugins = view.state.plugins.filter(p => !yjsPmPlugins.includes(p));
-		view.updateState(view.state.reconfigure({ plugins }));
-	}
+    if (yjsPmPluginKeys.size > 0) {
+        const plugins = view.state.plugins.filter(p => !yjsPmPluginKeys.has(p.key));
+        view.updateState(view.state.reconfigure({ plugins }));
+    } else if (yjsPmPlugins?.length) {
+        const plugins = view.state.plugins.filter(p => !yjsPmPlugins.includes(p));
+        view.updateState(view.state.reconfigure({ plugins }));
+    }
 
-	yjsPmPlugins = [];
-	yjsPmPluginKeys.clear();
+    yjsPmPlugins = [];
+    yjsPmPluginKeys.clear();
 }
 
 function buildCursorDOM(user) {
-	const cursor = document.createElement('span');
-	cursor.classList.add('ProseMirror-yjs-cursor');
-	cursor.style.borderLeftColor = user?.color || '#999';
+    const cursor = document.createElement('span');
+    cursor.classList.add('ProseMirror-yjs-cursor');
+    cursor.style.borderLeftColor = user?.color || '#999';
 
-	const label = document.createElement('div');
-	label.classList.add('ProseMirror-yjs-cursor-label');
-	label.style.backgroundColor = user?.color || '#999';
-	label.textContent = user?.name || user?.username || 'User';
-	cursor.appendChild(label);
-	return cursor;
+    const label = document.createElement('div');
+    label.classList.add('ProseMirror-yjs-cursor-label');
+    label.style.backgroundColor = user?.color || '#999';
+    label.textContent = user?.name || user?.username || 'User';
+    cursor.appendChild(label);
+    return cursor;
 }
 
 function attachYjsProsemirrorBinding() {
-	if (!state.editor?.view) return;
-  	const view = state.editor.view;
+    if (!state.editor?.view) return;
+    const view = state.editor.view;
 
     const syncPlugin = ySyncPlugin(yXmlFragment);
     const cursorPlugin = yCursorPlugin(cursorState.awareness, { cursorBuilder: buildCursorDOM });
     const undoPlugin = yUndoPlugin();
     const keymapPlugin = keymap({ 'Mod-z': undo, 'Mod-y': redo, 'Mod-Shift-z': redo });
 
-	const collabPlugins = [syncPlugin, cursorPlugin, undoPlugin, keymapPlugin];
-	yjsPmPlugins = collabPlugins;
+    const collabPlugins = [syncPlugin, cursorPlugin, undoPlugin, keymapPlugin];
+    yjsPmPlugins = collabPlugins;
 
-	collabPlugins.forEach(p => {
-		if (p?.key)
-			yjsPmPluginKeys.add(p.key);
-	});
+    collabPlugins.forEach(p => {
+        if (p?.key)
+            yjsPmPluginKeys.add(p.key);
+    });
 
-	const basePlugins = view.state.plugins.filter(p => !yjsPmPluginKeys.has(p.key));
+    const basePlugins = view.state.plugins.filter(p => !yjsPmPluginKeys.has(p.key));
 
-	view.updateState(
-		view.state.reconfigure({
-		    plugins: [...collabPlugins, ...basePlugins], 
-		})
-	);
+    view.updateState(
+        view.state.reconfigure({
+            plugins: [...collabPlugins, ...basePlugins],
+        })
+    );
 }
 
 function seedYjsFromCurrentEditorHtmlIfNeeded() {
-	const alreadySeeded = yMetadata.get('seeded') === true;
-	const fragmentEmpty = (typeof yXmlFragment.length === 'number') ? (yXmlFragment.length === 0) : false;
-	if (alreadySeeded && !fragmentEmpty) return;
+    const alreadySeeded = yMetadata.get('seeded') === true;
+    const fragmentEmpty = (typeof yXmlFragment.length === 'number') ? (yXmlFragment.length === 0) : false;
+    if (alreadySeeded && !fragmentEmpty) return;
 
-	const html = state.editor.getHTML() || '<p></p>';
-	const div = document.createElement('div');
-	div.innerHTML = html;
-	const pmDoc = DOMParser.fromSchema(state.editor.schema).parse(div);
+    const html = state.editor.getHTML() || '<p></p>';
+    const div = document.createElement('div');
+    div.innerHTML = html;
+    const pmDoc = DOMParser.fromSchema(state.editor.schema).parse(div);
 
-	ydoc.transact(() => {
-		try { yXmlFragment.delete(0, yXmlFragment.length); } catch (_) {}
-		prosemirrorToYXmlFragment(pmDoc, yXmlFragment);
-		yMetadata.set('seeded', true);
-		yMetadata.set('content', html);
-	}, 'seed');
+    ydoc.transact(() => {
+        try { yXmlFragment.delete(0, yXmlFragment.length); } catch (_) {}
+        prosemirrorToYXmlFragment(pmDoc, yXmlFragment);
+        yMetadata.set('seeded', true);
+        yMetadata.set('content', html);
+    }, 'seed');
 }
 
 function setupEditorBindingWithXmlFragment() {
-	if (!state.editor || !ydoc) {
-		console.error('[WS] 에디터 바인딩 실패: editor/ydoc 없음');
-		return;
-	}
+    if (!state.editor || !ydoc) {
+        console.error('[WS] 에디터 바인딩 실패: editor/ydoc 없음');
+        return;
+    }
 
-	const editor = state.editor;
-	const view = editor.view;
-	const schema = view.state.schema;
+    const editor = state.editor;
+    const view = editor.view;
+    const schema = view.state.schema;
 
-	yXmlFragment = ydoc.getXmlFragment('prosemirror');
-	yMetadata = ydoc.getMap('metadata'); 
+    yXmlFragment = ydoc.getXmlFragment('prosemirror');
+    yMetadata = ydoc.getMap('metadata');
 
-	attachYjsProsemirrorBinding();
+    attachYjsProsemirrorBinding();
 
-	const htmlSnapshot = yMetadata.get('content');
-	const fragEmpty = (yXmlFragment.toJSON?.() ?? []).length === 0;
-	if (fragEmpty && typeof htmlSnapshot === 'string' && htmlSnapshot.trim())
-		editor.commands.setContent(sanitizeEditorHtml(htmlSnapshot), { emitUpdate: true });
+    const htmlSnapshot = yMetadata.get('content');
+    const fragEmpty = (yXmlFragment.toJSON?.() ?? []).length === 0;
+    if (fragEmpty && typeof htmlSnapshot === 'string' && htmlSnapshot.trim())
+        editor.commands.setContent(sanitizeEditorHtml(htmlSnapshot), { emitUpdate: true });
 
-	editor.off?.('update', editor._snapshotHandler);
-	editor._snapshotHandler = ({ editor, transaction }) => {
-		if (editor._syncIsUpdating || (transaction && (transaction.getMeta('y-sync$') || transaction.getMeta('y-prosemirror-sync')))) {
-			return;
-		}
+    editor.off?.('update', editor._snapshotHandler);
+    editor._snapshotHandler = ({ editor, transaction }) => {
+        if (editor._syncIsUpdating || (transaction && (transaction.getMeta('y-sync$') || transaction.getMeta('y-prosemirror-sync')))) {
+            return;
+        }
 
-		clearTimeout(updateTimeout);
-		updateTimeout = setTimeout(() => {
-		    try {
-			    const html = editor.getHTML();
-				if (yMetadata && yMetadata.get('content') !== html)
-					yMetadata.set('content', html);
-		    } catch {}
-		}, 1000);
-	};
-	editor.on('update', editor._snapshotHandler);
+        clearTimeout(updateTimeout);
+        updateTimeout = setTimeout(() => {
+            try {
+                const html = editor.getHTML();
+                if (yMetadata && yMetadata.get('content') !== html)
+                    yMetadata.set('content', html);
+            } catch {}
+        }, 1000);
+    };
+    editor.on('update', editor._snapshotHandler);
 
-	console.log('[WS] yXmlFragment 기반 동시편집 바인딩 완료');
+    console.log('[WS] yXmlFragment 기반 동시편집 바인딩 완료');
 }
 
 function handleAwarenessChange({ added, updated, removed }, origin) {
-	if (origin !== 'remote') {
-	    const update = encodeAwarenessUpdate(cursorState.awareness, [
-		    ...added, ...updated, ...removed,
-	    ]);
-	    sendAwarenessUpdate(update);
-	}
+    if (origin !== 'remote') {
+        const update = encodeAwarenessUpdate(cursorState.awareness, [
+            ...added, ...updated, ...removed,
+        ]);
+        sendAwarenessUpdate(update);
+    }
 }
 
 function sendAwarenessUpdate(update) {
@@ -1336,7 +1331,7 @@ function sendAwarenessUpdate(update) {
     if (update && (update.byteLength || update.length) && (update.byteLength || update.length) > WS_MAX_AWARENESS_UPDATE_BYTES)
         return;
 
-	const base64Update = uint8ToBase64(update);
+    const base64Update = uint8ToBase64(update);
 
     ws.send(JSON.stringify({
         type: 'awareness-update',
@@ -1370,11 +1365,11 @@ function dedupeAwarenessByUserId(userId) {
 function handleRemoteAwarenessUpdate(data) {
     if (!cursorState.awareness) return;
     try {
-		const update = base64ToUint8(data.awarenessUpdate);
+        const update = base64ToUint8(data.awarenessUpdate);
         applyAwarenessUpdate(cursorState.awareness, update, 'remote');
 
-		if (data?.fromUserId)
-		    dedupeAwarenessByUserId(data.fromUserId);
+        if (data?.fromUserId)
+            dedupeAwarenessByUserId(data.fromUserId);
     } catch (error) {
         console.error('[WS] Awareness 업데이트 처리 오류:', error);
     }
@@ -1388,17 +1383,17 @@ function renderCursor(clientId, awarenessState) {
     const { cursor, user } = awarenessState;
     if (!cursor || !user || !state.editor) return;
 
-	let cursorElement = cursorState.remoteCursors.get(clientId);
+    let cursorElement = cursorState.remoteCursors.get(clientId);
 
-	const scrollContainer = getEditorScrollContainer();
-	if (!scrollContainer) return;
+    const scrollContainer = getEditorScrollContainer();
+    if (!scrollContainer) return;
 
-	if (!cursorElement) {
+    if (!cursorElement) {
         cursorElement = createCursorElement(user);
         cursorState.remoteCursors.set(clientId, cursorElement);
-		scrollContainer.appendChild(cursorElement);
-	} else if (cursorElement.parentElement !== scrollContainer) {
-		scrollContainer.appendChild(cursorElement);
+        scrollContainer.appendChild(cursorElement);
+    } else if (cursorElement.parentElement !== scrollContainer) {
+        scrollContainer.appendChild(cursorElement);
     }
 
     try {
@@ -1431,15 +1426,15 @@ function createCursorElement(user) {
 }
 
 function updateCursorPosition(element, coords, user, scrollContainer) {
-	const container = scrollContainer || getEditorScrollContainer();
-	if (!container) return;
+    const container = scrollContainer || getEditorScrollContainer();
+    if (!container) return;
 
-	if (getComputedStyle(container).position === 'static')
-		container.style.position = 'relative';
+    if (getComputedStyle(container).position === 'static')
+        container.style.position = 'relative';
 
-	const containerRect = container.getBoundingClientRect();
-	const left = (coords.left - containerRect.left) + container.scrollLeft;
-	const top = (coords.top - containerRect.top) + container.scrollTop;
+    const containerRect = container.getBoundingClientRect();
+    const left = (coords.left - containerRect.left) + container.scrollLeft;
+    const top = (coords.top - containerRect.top) + container.scrollTop;
 
     element.style.position = 'absolute';
     element.style.left = `${left}px`;
@@ -1711,7 +1706,7 @@ async function handleE2eePendingUpdates(data) {
     if (data.done) {
         isE2eeWalSyncing = false;
         console.log('[E2EE] WAL 동기화 완료, 버퍼링된 업데이트 적용 시작');
-        
+
         const buffered = e2eeWalUpdateBuffer;
         e2eeWalUpdateBuffer = [];
         for (const update of buffered) {
@@ -1748,10 +1743,8 @@ async function handleRequestPageSnapshot(data) {
 
     console.log('[Self-heal] 서버로부터 HTML 스냅샷 업로드 요청 수신');
     try {
-        const sent = sendPageSnapshotNow(pageId);
-        if (sent) {
-            await requestImmediateSave(pageId, { includeSnapshot: false, waitForAck: false });
-        }
+        const sent = sendPageSnapshotNow(pageId, data?.snapshotToken);
+        if (sent) await requestImmediateSave(pageId, { includeSnapshot: false, waitForAck: false });
     } catch (e) {
         console.error('[Self-heal] 스냅샷 요청 응답 실패:', e);
     }

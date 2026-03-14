@@ -286,6 +286,7 @@ module.exports = (dependencies) => {
     const saveYjsDocToDatabase = dependencies.saveYjsDocToDatabase;
     const enqueueYjsDbSave = dependencies.enqueueYjsDbSave;
     const flushAllPendingYjsDbSaves = dependencies.flushAllPendingYjsDbSaves;
+    const issuePageSnapshotToken = dependencies.issuePageSnapshotToken;
 
     function sleep(ms) {
         return new Promise(resolve => setTimeout(resolve, ms));
@@ -779,9 +780,10 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
                             const perm = String(c.permission || '');
                             if (perm !== 'EDIT' && perm !== 'ADMIN') continue;
                             try {
+                                const snapshotToken = (typeof issuePageSnapshotToken === 'function') ? issuePageSnapshotToken(c, pid) : null;
                                 c.ws.send(JSON.stringify({
                                     event: 'request-page-snapshot',
-                                    data: { pageId: String(pid) }
+                                    data: { pageId: String(pid), snapshotToken }
                                 }));
                                 requested++;
                             } catch (_) {}

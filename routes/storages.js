@@ -117,12 +117,13 @@ module.exports = (dependencies) => {
         const activeUserIds = new Set();
         activeUserIds.add(Number(ownerUserId));
         for (const c of collaborators) {
-            const uid = Number(c.user_id);
+            const uid = Number(c.id);
+            if (!Number.isFinite(uid)) continue;
             if (excludedUserId && uid === Number(excludedUserId)) continue;
             activeUserIds.add(uid);
         }
 
-        const shareUserIds = new Set(shares.map(s => Number(s.userId)));
+        const shareUserIds = new Set(shares.map(s => Number(s.userId)).filter(Number.isFinite));
         
         for (const uid of activeUserIds) {
             if (!shareUserIds.has(uid)) return { ok: false, error: `사용자 ID ${uid}에 대한 공유 키가 누락되었습니다.` };

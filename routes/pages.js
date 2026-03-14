@@ -111,6 +111,7 @@ async function resolvePublicOutboundAddresses(hostname, isPublicRoutableIP) {
     if (addresses.length === 0) throw makeFetchError('HOST_NOT_FOUND', '호스트를 찾을 수 없습니다.');
 
     const uniqueAddresses = [...new Set(addresses)];
+    if (uniqueAddresses.length > 8) throw makeFetchError('DNS_FANOUT', '비정상적으로 많은 DNS 응답입니다.');
     const publicAddresses = uniqueAddresses.filter(ip => isPublicRoutableIP(ip));
 
     if (publicAddresses.length === 0) throw makeFetchError('BLOCKED_PRIVATE_IP', '차단된 내부 IP 주소입니다.');
@@ -144,7 +145,7 @@ function fetchDocumentFromPinnedAddress(targetUrl, pinnedIp, isPublicRoutableIP)
             timeout: METADATA_FETCH_TIMEOUT_MS,
             headers: {
                 'User-Agent': 'NTEOK-Link-Preview/1.4',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept': 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.1',
                 'Accept-Encoding': 'identity',
                 'Host': targetUrl.hostname,
                 'Connection': 'close'
@@ -169,7 +170,7 @@ function fetchDocumentFromPinnedAddress(targetUrl, pinnedIp, isPublicRoutableIP)
             }
 
             const contentType = String(upstreamRes.headers['content-type'] || '').toLowerCase();
-            if (contentType && !contentType.includes('text/html') && !contentType.includes('application/xhtml+xml') && !contentType.includes('application/xml')) {
+            if (contentType && !contentType.includes('text/html') && !contentType.includes('application/xhtml+xml')) {
                 upstreamRes.resume();
                 return settleReject(makeFetchError('NOT_HTML', 'HTML 문서가 아닙니다.'));
             }
@@ -926,6 +927,12 @@ module.exports = (dependencies) => {
 
                 const status = Number(upstreamRes.statusCode || 0);
                 if (status < 200 || status >= 300) {
+                    upstreamRes.resume();
+                    return sendFallback();
+                }
+
+                const contentType = String(upstreamRes.headers['content-type'] || '').toLowerCase();
+                if (contentType && !contentType.startsWith('image/')) {
                     upstreamRes.resume();
                     return sendFallback();
                 }
