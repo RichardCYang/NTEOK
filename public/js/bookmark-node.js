@@ -21,6 +21,19 @@ function sanitizeBookmarkImageUrl(value) {
     }
 }
 
+function isTransientProxyFavicon(value) {
+    return /^\/api\/pages\/proxy-favicon(?:\?|$)/i.test(String(value || '').trim());
+}
+
+function buildGeneratedBookmarkFaviconUrlFromPageUrl(rawUrl) {
+    try {
+        const u = new URL(String(rawUrl), window.location.origin);
+        return `/api/pages/bookmark-favicon/${encodeURIComponent(u.hostname.toLowerCase())}.svg`;
+    } catch {
+        return null;
+    }
+}
+
 export const BookmarkBlock = Node.create({
     name: 'bookmarkBlock',
 
@@ -73,6 +86,9 @@ export const BookmarkBlock = Node.create({
             const container = document.createElement('div');
             container.className = 'bookmark-block-container';
             container.contentEditable = 'false';
+            let transientFavicon = isTransientProxyFavicon(node.attrs.favicon)
+                ? sanitizeBookmarkImageUrl(node.attrs.favicon)
+                : null;
 
             const render = () => {
                 container.innerHTML = '';
@@ -113,10 +129,16 @@ export const BookmarkBlock = Node.create({
                             const data = await response.json();
 
                             if (typeof getPos === 'function') {
+                                const rawFavicon = sanitizeBookmarkImageUrl(data.favicon);
+                                transientFavicon = isTransientProxyFavicon(rawFavicon) ? rawFavicon : null;
+                                const persistedFavicon = transientFavicon
+                                    ? (buildGeneratedBookmarkFaviconUrlFromPageUrl(data.url) || null)
+                                    : rawFavicon;
+
                                 editor.view.dispatch(editor.view.state.tr.setNodeMarkup(getPos(), null, {
                                     url: data.url,
                                     title: data.title,
-                                    favicon: sanitizeBookmarkImageUrl(data.favicon)
+                                    favicon: persistedFavicon
                                 }));
                             }
                         } catch (error) {
@@ -165,7 +187,7 @@ export const BookmarkBlock = Node.create({
                     card.rel = 'noopener noreferrer';
                     card.className = 'bookmark-compact-link';
 
-                    const safeFavicon = sanitizeBookmarkImageUrl(node.attrs.favicon);
+                    const safeFavicon = transientFavicon || sanitizeBookmarkImageUrl(node.attrs.favicon);
                     if (safeFavicon) {
                         const icon = document.createElement('img');
                         icon.src = safeFavicon;
@@ -223,6 +245,9 @@ export const BookmarkBlock = Node.create({
                         node.attrs.url = updatedNode.attrs.url;
                         node.attrs.title = updatedNode.attrs.title;
                         node.attrs.favicon = updatedNode.attrs.favicon;
+                        if (!isTransientProxyFavicon(updatedNode.attrs.favicon)) {
+                            transientFavicon = null;
+                        }
                         render();
                     }
                     return true;

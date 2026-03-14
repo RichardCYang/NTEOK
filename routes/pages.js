@@ -54,6 +54,18 @@ function safeEqualHex(a, b) {
     return crypto.timingSafeEqual(ab, bb);
 }
 
+function safeEqualUtf8(a, b) {
+    if (typeof a !== 'string' || typeof b !== 'string') return false;
+    const ab = Buffer.from(a, 'utf8');
+    const bb = Buffer.from(b, 'utf8');
+    if (ab.length !== bb.length || ab.length === 0) return false;
+    try {
+        return crypto.timingSafeEqual(ab, bb);
+    } catch {
+        return false;
+    }
+}
+
 function makeFetchError(code, message) {
     const err = new Error(message || code);
     err.code = code;
@@ -391,7 +403,7 @@ module.exports = (dependencies) => {
         if (typeof token !== 'string' || !token.includes('.')) throw new Error('BAD_TICKET');
         const [body, sig] = token.split('.', 2);
         const expectedSig = crypto.createHmac('sha256', PROXY_SECRET).update(body).digest('base64url');
-        if (!crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expectedSig))) throw new Error('BAD_TICKET_SIG');
+        if (!safeEqualUtf8(sig, expectedSig)) throw new Error('BAD_TICKET_SIG');
         const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
         if (Number(payload.uid) !== Number(expectedUserId)) throw new Error('BAD_TICKET_UID');
         if (expectedSidHash && payload.sidHash !== expectedSidHash) throw new Error('BAD_TICKET_SID');
@@ -861,6 +873,13 @@ module.exports = (dependencies) => {
             .replace(/'/g, '&#39;');
     }
 
+    function applyStrictImageResponseHeaders(res, { cacheControl = 'private, no-store' } = {}) {
+        res.setHeader('X-Content-Type-Options', 'nosniff');
+        res.setHeader('Cache-Control', cacheControl);
+        res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+        res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
+    }
+
     function buildGeneratedBookmarkFaviconUrl(hostname) {
         return `/api/pages/bookmark-favicon/${encodeURIComponent(String(hostname).toLowerCase())}.svg`;
     }
@@ -883,8 +902,7 @@ module.exports = (dependencies) => {
         const hostname = String(req.params.hostname || '').trim().toLowerCase();
         if (typeof isHostnameAllowedForPreview !== 'function' || !isHostnameAllowedForPreview(hostname)) return res.status(400).end();
         res.setHeader('Content-Type', 'image/svg+xml; charset=utf-8');
-        res.setHeader('X-Content-Type-Options', 'nosniff');
-        res.setHeader('Cache-Control', 'public, max-age=604800, immutable');
+        applyStrictImageResponseHeaders(res, { cacheControl: 'public, max-age=604800, immutable' });
         res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; sandbox");
         return res.status(200).send(generateSvgFavicon(hostname));
     });
@@ -908,8 +926,7 @@ module.exports = (dependencies) => {
             if (responded) return;
             responded = true;
             res.setHeader('Content-Type', 'image/svg+xml; charset=utf-8');
-            res.setHeader('X-Content-Type-Options', 'nosniff');
-            res.setHeader('Cache-Control', 'private, no-store');
+            applyStrictImageResponseHeaders(res);
             return res.status(200).send(generateSvgFavicon(fallbackHost));
         };
 
@@ -991,8 +1008,7 @@ module.exports = (dependencies) => {
                     if (!detected || detected.ext === 'svg') return sendFallback();
 
                     res.setHeader('Content-Type', detected.mime);
-                    res.setHeader('X-Content-Type-Options', 'nosniff');
-                    res.setHeader('Cache-Control', 'private, no-store');
+                    applyStrictImageResponseHeaders(res);
                     responded = true;
                     return res.status(200).send(fullBuffer);
                 });

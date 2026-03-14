@@ -320,6 +320,37 @@ module.exports = (dependencies) => {
         'default/img6.png'
 	];
 
+    function normalizeImportedCoverRef(raw, currentUserId) {
+        if (raw == null) return null;
+        const s = String(raw).trim();
+        if (!s) return null;
+
+        if (DEFAULT_COVERS.includes(s)) return s;
+
+        const normalized = normalizeAssetRefOnImport(s, currentUserId) || s;
+        const re = new RegExp(`^${currentUserId}\\/([A-Za-z0-9][A-Za-z0-9._-]{0,199}\\.(?:png|jpe?g|gif|webp))$`, 'i');
+        const m = normalized.match(re);
+        if (!m) return null;
+
+        const filename = m[1];
+        if (filename.includes('..') || /["'()\\]/.test(filename)) return null;
+        return `${currentUserId}/${filename}`;
+    }
+
+    function normalizeImportInt(value, { min = Number.MIN_SAFE_INTEGER, max = Number.MAX_SAFE_INTEGER, fallback = 0 } = {}) {
+        const n = Number(value);
+        if (!Number.isFinite(n)) return fallback;
+        return Math.max(min, Math.min(max, Math.trunc(n)));
+    }
+
+    function normalizeImportedId(value, { maxLen = 64 } = {}) {
+        if (typeof value !== 'string') return null;
+        const s = value.trim();
+        if (!s || s.length > maxLen) return null;
+        if (/[\x00-\x1F\x7F]/.test(s)) return null;
+        return s;
+    }
+
     const EXPORT_ALLOWED_IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
 
     function normalizeUserImageRefForExport(raw, userId) {
@@ -713,18 +744,20 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
                     if (match) coverImage = match[1];
                 }
             }
-            if (coverImage) coverImage = normalizeAssetRefOnImport(coverImage, currentUserId);
+            if (coverImage) coverImage = normalizeImportedCoverRef(coverImage, currentUserId);
 
             const finalContent = sanitizeHtmlContent(contentEl ? contentEl.innerHTML : '<p></p>');
 
             const metaParentRaw = metadata?.parentId ?? metadata?.parent_id ?? null;
-            const metaParentId = (typeof metaParentRaw === 'string' && metaParentRaw.trim()) ? metaParentRaw.trim() : null;
+            const metaParentId = normalizeImportedId(
+                (typeof metaParentRaw === 'string' && metaParentRaw.trim()) ? metaParentRaw.trim() : null
+            );
 
             const metaIsEncrypted = normalizeBackupBoolean(metadata?.isEncrypted ?? metadata?.is_encrypted, false);
             const metaShareAllowed = normalizeBackupBoolean(metadata?.shareAllowed ?? metadata?.share_allowed, false);
 
             return {
-                backupId: (typeof metadata?.id === 'string' && metadata.id.trim()) ? metadata.id.trim() : null,
+                backupId: normalizeImportedId(metadata?.id),
                 parentId: metaParentId,
                 title,
                 content: finalContent,
@@ -733,9 +766,9 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
                 encryptionSalt: metaIsEncrypted ? ((metadata?.encryptionSalt ?? metadata?.encryption_salt) || null) : null,
                 encryptedContent: metaIsEncrypted ? ((metadata?.encryptedContent ?? metadata?.encrypted_content) || null) : null,
                 shareAllowed: metaShareAllowed,
-                coverImage: coverImage || metadata?.coverImage || null,
-                coverPosition: metadata?.coverPosition || 50,
-                sortOrder: metadata?.sortOrder || 0,
+                coverImage: normalizeImportedCoverRef(coverImage || metadata?.coverImage || null, currentUserId),
+                coverPosition: normalizeImportInt(metadata?.coverPosition, { min: 0, max: 100, fallback: 50 }),
+                sortOrder: normalizeImportInt(metadata?.sortOrder, { min: -1000000000, max: 1000000000, fallback: 0 }),
                 isCoverImage: metadata?.isCoverImage || false
             };
         } catch (error) {
