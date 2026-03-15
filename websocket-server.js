@@ -1753,13 +1753,17 @@ const { redis, ensureRedis } = require("./lib/redis");
 	});
 })();
 
-function initWebSocketServer(server, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, SESSION_COOKIE_NAME, getSessionFromId, getClientIpFromRequest, pageSqlPolicy, pageAccess, verifyCsrfTokenForSession, consumeWsTicket) {
+function initWebSocketServer(server, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, ALLOWED_ORIGINS_RAW, SESSION_COOKIE_NAME, getSessionFromId, getClientIpFromRequest, pageSqlPolicy, pageAccess, verifyCsrfTokenForSession, consumeWsTicket) {
     _wsPool = pool;
     _wsSanitizeHtmlContent = sanitizeHtmlContent;
     _wsPageSqlPolicy = pageSqlPolicy;
     const allowedWsOrigins = (() => {
         const set = new Set();
-        try { set.add(new URL(BASE_URL).origin); } catch (_) {}
+        for (const raw of String(ALLOWED_ORIGINS_RAW || BASE_URL || '').split(',')) {
+            const s = raw.trim();
+            if (!s) continue;
+            try { set.add(new URL(s).origin); } catch (_) {}
+        }
 
         if (!IS_PRODUCTION) {
             const port = process.env.PORT || 3000;

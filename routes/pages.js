@@ -27,7 +27,31 @@ function isInternetExposedBaseUrl(raw) {
 
 const IS_PRODUCTION = process.env.NODE_ENV === "production";
 const BASE_URL = process.env.BASE_URL || (IS_PRODUCTION ? "https://localhost:3000" : "http://localhost:3000");
-const IS_INTERNET_EXPOSED = isInternetExposedBaseUrl(BASE_URL);
+
+function getAllowedAppOrigins() {
+    return new Set(
+        String(process.env.ALLOWED_ORIGINS || BASE_URL || "")
+            .split(",")
+            .map(s => s.trim())
+            .filter(Boolean)
+            .map(raw => {
+                try { return new URL(raw).origin; }
+                catch { return null; }
+            })
+            .filter(Boolean)
+    );
+}
+
+function isAllowedAppOrigin(raw) {
+    try {
+        return getAllowedAppOrigins().has(new URL(String(raw)).origin);
+    } catch {
+        return false;
+    }
+}
+
+const APP_EXPOSURE = String(process.env.APP_EXPOSURE || (IS_PRODUCTION ? "public" : "local")).toLowerCase();
+const IS_INTERNET_EXPOSED = APP_EXPOSURE === "public";
 
 const METADATA_FETCH_TIMEOUT_MS = 5000;
 const METADATA_FETCH_MAX_BYTES = 1 * 1024 * 1024;
@@ -419,13 +443,18 @@ module.exports = (dependencies) => {
 
     async function requireSameOriginForPreviewGet(req, res, next) {
         if (req.method !== 'GET') return next();
+        const opaqueId = typeof req.query.id === 'string' ? req.query.id.trim() : '';
+        if (!opaqueId) return res.status(403).json({ error: "접근 권한이 없습니다." });
+
+        const sfs = req.headers['sec-fetch-site'];
+        if (typeof sfs === 'string' && sfs && sfs !== 'same-origin' && sfs !== 'same-site')
+            return res.status(403).json({ error: "접근 권한이 없습니다." });
+
         const origin = req.headers['origin'] || req.headers['referer'];
         if (origin) {
             try {
-                const u = new URL(origin);
-                const base = new URL(BASE_URL);
-                if (u.origin !== base.origin) {
-                    console.warn(`[보안] 타 도메인(${u.origin})에서의 미리보기 접근 차단`);
+                if (!isAllowedAppOrigin(origin)) {
+                    console.warn(`[보안] 타 도메인(${origin})에서의 미리보기 접근 차단`);
                     return res.status(403).json({ error: "접근 권한이 없습니다." });
                 }
             } catch (_) {

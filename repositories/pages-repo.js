@@ -149,10 +149,18 @@ module.exports = ({ pool, pageSqlPolicy }) => {
         },
 
         async restorePage(pageId, userId) {
-            await pool.execute(
-                `UPDATE pages SET deleted_at = NULL WHERE id = ? AND (user_id = ? OR storage_id IN (SELECT id FROM storages WHERE user_id = ?))`,
-                [pageId, userId, userId]
+            const [rows] = await pool.execute(
+                `SELECT id, user_id FROM pages WHERE id = ?`,
+                [pageId]
             );
+            if (!rows.length) return false;
+            if (Number(rows[0].user_id) !== Number(userId)) return false;
+
+            await pool.execute(
+                `UPDATE pages SET deleted_at = NULL WHERE id = ? AND user_id = ?`,
+                [pageId, userId]
+            );
+            return true;
         },
 
         async restorePageAndDescendants({ rootPageId, storageId, actorUserId }) {

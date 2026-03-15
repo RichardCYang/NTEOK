@@ -463,17 +463,13 @@ function isLocalhostHost(host) {
 
 const IS_PRODUCTION = process.env.NODE_ENV === "production";
 const BASE_URL = process.env.BASE_URL || (IS_PRODUCTION ? "https://localhost:3000" : "http://localhost:3000");
+const APP_EXPOSURE = String(process.env.APP_EXPOSURE || (IS_PRODUCTION ? "public" : "local")).toLowerCase();
 
-function isInternetExposedBaseUrl(raw) {
-    try {
-        const u = new URL(raw);
-        return !isLocalhostHost(u.hostname);
-    } catch {
-        return false;
-    }
+if (!["public", "private", "local"].includes(APP_EXPOSURE)) {
+    throw new Error("[보안] APP_EXPOSURE는 public|private|local 중 하나여야 합니다.");
 }
 
-const IS_INTERNET_EXPOSED = isInternetExposedBaseUrl(BASE_URL);
+const IS_INTERNET_EXPOSED = APP_EXPOSURE === "public";
 
 function assertNoDefaultSecrets() {
     if (!IS_INTERNET_EXPOSED) return;
@@ -514,7 +510,9 @@ const FORCE_SECURE_COOKIES = (() => {
     return IS_INTERNET_EXPOSED;
 })();
 
-const COOKIE_SECURE = IS_INTERNET_EXPOSED ? true : ((!ALLOW_INSECURE_COOKIES) && (FORCE_SECURE_COOKIES || IS_HTTPS_BASE_URL || REQUIRE_HTTPS));
+const COOKIE_SECURE = IS_INTERNET_EXPOSED
+    ? true
+    : ((!ALLOW_INSECURE_COOKIES) && (FORCE_SECURE_COOKIES || IS_HTTPS_BASE_URL || REQUIRE_HTTPS || IS_PRODUCTION));
 
 if (IS_INTERNET_EXPOSED && !COOKIE_SECURE) throw new Error("[보안] 인터넷 노출 환경에서는 COOKIE_SECURE가 필수입니다");
 
@@ -1444,7 +1442,9 @@ async function getSessionFromRequest(req) {
 		enforceUa: true,
 		enforceNetwork: true,
 		userAgent: req.headers?.["user-agent"] || "",
-		clientIp: req.clientIp || req.socket?.remoteAddress || ""
+		clientIp: (typeof getClientIpFromRequest === "function"
+            ? getClientIpFromRequest(req)
+            : (req.clientIp || req.socket?.remoteAddress || ""))
 	});
 }
 
@@ -2700,7 +2700,7 @@ requireStrongStepUp: buildRecentReauth({ getSessionFromRequest }).requireStrongS
                     console.log('='.repeat(80) + '\n');
                 });
 
-                initWebSocketServer(httpsServer, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, SESSION_COOKIE_NAME, getSessionFromId, getClientIpFromRequest, pageSqlPolicy, pageAccess, verifyCsrfTokenForSession, consumeWsTicket);
+                initWebSocketServer(httpsServer, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, process.env.ALLOWED_ORIGINS, SESSION_COOKIE_NAME, getSessionFromId, getClientIpFromRequest, pageSqlPolicy, pageAccess, verifyCsrfTokenForSession, consumeWsTicket);
 
                 startRateLimitCleanup();
 
@@ -2752,7 +2752,7 @@ requireStrongStepUp: buildRecentReauth({ getSessionFromRequest }).requireStrongS
                     console.log(`⚠️  NTEOK 앱이 HTTP로 실행 중: http://localhost:${PORT}`);
                 });
 
-                initWebSocketServer(httpServer, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, SESSION_COOKIE_NAME, getSessionFromId, getClientIpFromRequest, pageSqlPolicy, pageAccess, verifyCsrfTokenForSession, consumeWsTicket);
+initWebSocketServer(httpServer, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, process.env.ALLOWED_ORIGINS, SESSION_COOKIE_NAME, getSessionFromId, getClientIpFromRequest, pageSqlPolicy, pageAccess, verifyCsrfTokenForSession, consumeWsTicket);
 
                 startRateLimitCleanup();
 
@@ -2774,7 +2774,7 @@ requireStrongStepUp: buildRecentReauth({ getSessionFromRequest }).requireStrongS
                 console.log(`NTEOK 앱이 HTTP로 실행 중: http://localhost:${PORT}`);
             });
 
-            initWebSocketServer(httpServer, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, SESSION_COOKIE_NAME, getSessionFromId, getClientIpFromRequest, pageSqlPolicy, pageAccess, verifyCsrfTokenForSession, consumeWsTicket);
+            initWebSocketServer(httpServer, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, process.env.ALLOWED_ORIGINS, SESSION_COOKIE_NAME, getSessionFromId, getClientIpFromRequest, pageSqlPolicy, pageAccess, verifyCsrfTokenForSession, consumeWsTicket);
 
             startRateLimitCleanup();
 

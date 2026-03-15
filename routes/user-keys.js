@@ -4,6 +4,8 @@ const crypto = require('crypto');
 const erl = require('express-rate-limit');
 const rateLimit = erl.rateLimit || erl;
 
+const SENSITIVE_EXPORT_MAX_AGE_MS = 20 * 1000;
+
 const privateKeyExportLimiter = rateLimit({
     windowMs: 10 * 60 * 1000,
     max: 5,
@@ -50,7 +52,7 @@ module.exports = (dependencies) => {
         }
     });
 
-    router.post('/:kid/export-ticket', authMiddleware, csrfMiddleware, requireStrongStepUp({ maxAgeMs: 5 * 60 * 1000, requireMfaIfEnabled: true }), privateKeyExportLimiter, async (req, res) => {
+    router.post('/:kid/export-ticket', authMiddleware, csrfMiddleware, requireStrongStepUp({ maxAgeMs: SENSITIVE_EXPORT_MAX_AGE_MS, requireMfaIfEnabled: true }), privateKeyExportLimiter, async (req, res) => {
         try {
             const { issueActionTicket, getSessionFromRequest } = dependencies;
             const userId = req.user.id;
@@ -72,7 +74,7 @@ module.exports = (dependencies) => {
         }
     });
 
-    router.post('/:kid/export-private', authMiddleware, csrfMiddleware, requireStrongStepUp({ maxAgeMs: 5 * 60 * 1000, requireMfaIfEnabled: true }), async (req, res) => {
+    router.post('/:kid/export-private', authMiddleware, csrfMiddleware, requireStrongStepUp({ maxAgeMs: SENSITIVE_EXPORT_MAX_AGE_MS, requireMfaIfEnabled: true }), async (req, res) => {
         try {
             const { consumeActionTicket, getSessionFromRequest } = dependencies;
             const userId = req.user.id;

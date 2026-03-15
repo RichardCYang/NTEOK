@@ -7,6 +7,8 @@ const erl = require('express-rate-limit');
 const rateLimit = erl.rateLimit || erl;
 const { ipKeyGenerator } = erl;
 
+const SENSITIVE_EXPORT_MAX_AGE_MS = 20 * 1000;
+
 const wrappedDekExportLimiter = rateLimit({
     windowMs: 10 * 60 * 1000,
     max: 10,
@@ -379,7 +381,7 @@ const collaboratorUserSearchLimiter = rateLimit({
     router.post('/:id/my-wrapped-dek-ticket',
         authMiddleware,
         csrfMiddleware,
-        requireStrongStepUp({ maxAgeMs: 5 * 60 * 1000, requireMfaIfEnabled: true }),
+        requireStrongStepUp({ maxAgeMs: SENSITIVE_EXPORT_MAX_AGE_MS, requireMfaIfEnabled: true }),
         wrappedDekExportLimiter,
         async (req, res) => {
             try {
@@ -397,7 +399,7 @@ const collaboratorUserSearchLimiter = rateLimit({
     router.post('/:id/my-wrapped-dek',
         authMiddleware,
         csrfMiddleware,
-        requireStrongStepUp({ maxAgeMs: 5 * 60 * 1000, requireMfaIfEnabled: true }),
+        requireStrongStepUp({ maxAgeMs: SENSITIVE_EXPORT_MAX_AGE_MS, requireMfaIfEnabled: true }),
         wrappedDekExportLimiter,
         async (req, res) => {
         try {

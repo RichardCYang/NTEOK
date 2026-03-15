@@ -1,6 +1,8 @@
 import * as api from './api-utils.js';
 import { showLoadingOverlay, hideLoadingOverlay, escapeHtml, escapeHtmlAttr } from './ui-utils.js';
 
+const keyState = { myKid: null };
+
 // Ensure user has ECDH key pair for DEK v1 sharing
 async function ensureUserKeyPair(loginPassword) {
     try {
@@ -17,13 +19,13 @@ async function ensureUserKeyPair(loginPassword) {
                 loginPassword
             );
             window.cryptoManager.setMyEcdhPrivateKey(privKey);
-            window._myKid = latestKey.kid;
+            keyState.myKid = latestKey.kid;
             return;
         }
 
         // Generate new ECDH key pair
         const keyPair = await window.cryptoManager.generateEcdhKeyPair();
-        const kid = `kid-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        const kid = crypto.randomUUID();
 
         // Export public key to Base64
         const publicKeySpki = await window.cryptoManager.exportPublicKeyToBase64(keyPair.publicKey);
@@ -45,7 +47,7 @@ async function ensureUserKeyPair(loginPassword) {
 
         // Set in memory
         window.cryptoManager.setMyEcdhPrivateKey(keyPair.privateKey);
-        window._myKid = kid;
+        keyState.myKid = kid;
     } catch (error) {
         console.error('ensureUserKeyPair failed:', error);
         throw error;
@@ -318,7 +320,7 @@ export function initStoragesManager(appState, onStorageSelected) {
 
         searchTimeout = setTimeout(async () => {
             try {
-                const users = await api.get(`/api/storages/users/search?q=${encodeURIComponent(query)}`);
+                const users = await api.get(`/api/storages/${currentManagingStorage.id}/users/search?q=${encodeURIComponent(query)}`);
                 renderSearchResults(users);
             } catch (error) {
                 console.error('사용자 검색 실패:', error);
@@ -365,13 +367,13 @@ export function initStoragesManager(appState, onStorageSelected) {
             // For DEK v1 encrypted storage, wrap DEK for collaborator
             if (Number(currentManagingStorage.is_encrypted) === 1 && Number(currentManagingStorage.dek_version) === 1) {
                 // Check if we have the extractable DEK in memory
-                if (!window.cryptoManager._extractableDek) {
+                if (!window.cryptoManager.hasUnlockedShareKey()) {
                     alert('저장소 잠금을 해제해야 협업자를 추가할 수 있습니다.');
                     return;
                 }
 
                 // Get target user's public keys
-                const publicKeys = await api.get(`/api/user-keys/public/${selectedUser.id}`);
+                const publicKeys = await api.get(`/api/user-keys/public/${selectedUser.id}?storageId=${encodeURIComponent(currentManagingStorage.id)}`);
                 if (!publicKeys || publicKeys.length === 0) {
                     alert('대상 사용자가 아직 암호화 키를 등록하지 않았습니다. 사용자에게 먼저 로그인하도록 안내해주세요.');
                     return;
@@ -381,10 +383,13 @@ export function initStoragesManager(appState, onStorageSelected) {
                 const latestPubKey = publicKeys[0];
 
                 // Wrap DEK for collaborator
-                const { wrappedDek, ephemeralPublicKey } = await window.cryptoManager.wrapDekForCollaborator(
-                    window.cryptoManager._extractableDek,
-                    latestPubKey.public_key_spki
-                );
+                const { wrappedDek, ephemeralPublicKey } =
+                    await window.cryptoManager.withUnlockedShareKey((dek) =>
+                        window.cryptoManager.wrapDekForCollaborator(
+                            dek,
+                            latestPubKey.publicKeySpki || latestPubKey.public_key_spki
+                        )
+                    );
 
                 body.wrappedDek = wrappedDek;
                 body.wrappingKid = latestPubKey.kid;
@@ -513,9 +518,14 @@ export function initStoragesManager(appState, onStorageSelected) {
                                 );
 
                                 // Get wrapped DEK from server
-                                const wrappedDekRecord = await api.post(`/api/storages/${storage.id}/my-wrapped-dek`, {
-                                    purpose: 'unlock-storage'
-                                });
+                                const { ticket: wrappedDekTicket } =
+                                    await api.post(`/api/storages/${storage.id}/my-wrapped-dek-ticket`, {});
+
+                                const wrappedDekRecord =
+                                    await api.post(`/api/storages/${storage.id}/my-wrapped-dek`, {
+                                        purpose: 'unlock-storage',
+                                        ticket: wrappedDekTicket
+                                    });
 
                                 // Unlock with ECDH
                                 success = await window.cryptoManager.unlockStorageWithEcdh(
@@ -647,7 +657,7 @@ export function initStoragesManager(appState, onStorageSelected) {
 
                 encryptionSalt = kekSalt;
                 dekVersion = 1;
-                wrappingKid = window._myKid;
+                wrappingKid = keyState.myKid;
             } catch (err) {
                 console.error("Crypto generation failed", err);
                 createError.style.color = '#ef4444';

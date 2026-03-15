@@ -1,4 +1,17 @@
 
+const _privateState = new WeakMap();
+function getPrivateState(self) {
+    let s = _privateState.get(self);
+    if (!s) {
+        s = {
+            extractableDek: null,
+            myEcdhPrivateKey: null
+        };
+        _privateState.set(self, s);
+    }
+    return s;
+}
+
 class CryptoManager {
     constructor() {
         this.encryptionKey = null;
@@ -10,8 +23,7 @@ class CryptoManager {
         this.inactivityTimer = null;
         this.INACTIVITY_TIMEOUT = 15 * 60 * 1000;
 
-        this._extractableDek = null;
-        this._myEcdhPrivateKey = null;
+        getPrivateState(this);
     }
 
     async verifyAndSetStorageKey(password, saltBase64, checkBase64) {
@@ -49,7 +61,7 @@ class CryptoManager {
     clearStorageKey() {
         this.storageKey = null;
         this.storageSalt = null;
-        this._extractableDek = null;
+        getPrivateState(this).extractableDek = null;
         this.clearEcdhPrivateKey();
     }
 
@@ -375,13 +387,8 @@ class CryptoManager {
 
         this.storageKey = dek;
 
-        const extractableDek = await crypto.subtle.generateKey(
-            { name: 'AES-GCM', length: 256 },
-            true,
-            ['encrypt', 'decrypt']
-        );
         const rawDek = await crypto.subtle.exportKey('raw', dek);
-        this._extractableDek = await crypto.subtle.importKey(
+        getPrivateState(this).extractableDek = await crypto.subtle.importKey(
             'raw',
             rawDek,
             { name: 'AES-GCM', length: 256 },
@@ -539,15 +546,17 @@ class CryptoManager {
     // ===== ECDH Private Key Management =====
 
     setMyEcdhPrivateKey(key) {
-        this._myEcdhPrivateKey = key;
+        getPrivateState(this).myEcdhPrivateKey = key;
     }
 
-    getMyEcdhPrivateKey() {
-        return this._myEcdhPrivateKey;
+    async withMyEcdhPrivateKey(fn) {
+        const key = getPrivateState(this).myEcdhPrivateKey;
+        if (!key) throw new Error('ECDH 개인키가 메모리에 없습니다.');
+        return await fn(key);
     }
 
     clearEcdhPrivateKey() {
-        this._myEcdhPrivateKey = null;
+        getPrivateState(this).myEcdhPrivateKey = null;
     }
 
     // ===== Master Key Methods (existing) =====
@@ -573,6 +582,16 @@ class CryptoManager {
             console.error('마스터 키 복구 실패:', error);
             return false;
         }
+    }
+
+    hasUnlockedShareKey() {
+        return !!getPrivateState(this).extractableDek;
+    }
+
+    async withUnlockedShareKey(fn) {
+        const dek = getPrivateState(this).extractableDek;
+        if (!dek) throw new Error('저장소 잠금 해제가 필요합니다.');
+        return await fn(dek);
     }
 }
 
