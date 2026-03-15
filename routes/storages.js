@@ -32,6 +32,7 @@ module.exports = (dependencies) => {
         wsCloseConnectionsForStorage,
         getClientIpFromRequest,
         requireRecentReauth,
+        requireSensitiveStepUp,
         requireStrongStepUp,
         issueActionTicket,
         consumeActionTicket,
@@ -306,7 +307,7 @@ const collaboratorUserSearchLimiter = rateLimit({
         }
     });
 
-    router.delete('/:id', authMiddleware, csrfMiddleware, requireRecentReauth(10 * 60 * 1000), destructiveStorageLimiter, async (req, res) => {
+    router.delete('/:id', authMiddleware, csrfMiddleware, requireSensitiveStepUp({ maxAgeMs: 5 * 60 * 1000, requireMfaIfEnabled: true }), destructiveStorageLimiter, async (req, res) => {
         try {
             const userId = req.user.id;
             const storageId = req.params.id;

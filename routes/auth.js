@@ -39,7 +39,8 @@ module.exports = (dependencies) => {
 		recordLoginFailure,
 		clearLoginFailures,
 		requireRecentReauth,
-		requireStrongStepUp,
+        requireSensitiveStepUp,
+        requireStrongStepUp,
 		csrfMiddleware,
 		saveSession,
 		getSession,
@@ -286,7 +287,7 @@ module.exports = (dependencies) => {
 		res.json({ ok: true });
 	});
 
-	router.delete("/account", authMiddleware, csrfMiddleware, requireRecentReauth(10 * 60 * 1000), async (req, res) => {
+	router.delete("/account", authMiddleware, csrfMiddleware, requireSensitiveStepUp({ maxAgeMs: 5 * 60 * 1000, requireMfaIfEnabled: true }), async (req, res) => {
 		const { password, confirmText } = req.body || {};
 
 		if (typeof password !== "string" || !password.trim()) return res.status(400).json({ error: "비밀번호를 입력해 주세요." });
@@ -579,7 +580,7 @@ module.exports = (dependencies) => {
         }
     });
 
-    router.get("/login-logs", authMiddleware, async (req, res) => {
+    router.get("/login-logs", authMiddleware, requireSensitiveStepUp({ maxAgeMs: 5 * 60 * 1000, requireMfaIfEnabled: true }), async (req, res) => {
         try {
             const limit = Math.min(parseInt(req.query.limit) || 100, 500);
             const offset = parseInt(req.query.offset) || 0;
@@ -622,7 +623,7 @@ module.exports = (dependencies) => {
         }
     });
 
-    router.get("/login-logs/stats", authMiddleware, async (req, res) => {
+    router.get("/login-logs/stats", authMiddleware, requireSensitiveStepUp({ maxAgeMs: 5 * 60 * 1000, requireMfaIfEnabled: true }), async (req, res) => {
         try {
             const thirtyDaysAgo = new Date();
             thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);

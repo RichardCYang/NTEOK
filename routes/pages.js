@@ -411,6 +411,7 @@ module.exports = (dependencies) => {
         logError,
         csrfMiddleware,
         requireRecentReauth,
+        requireSensitiveStepUp,
         coverUpload,
         editorImageUpload,
         fileUpload,
@@ -1406,9 +1407,9 @@ module.exports = (dependencies) => {
 
             if (touchesCryptoState) {
                 if (!isPageOwner) return res.status(403).json({ error: "페이지 소유자만 암호화 설정을 변경할 수 있습니다." });
-                const recentReauth = requireRecentReauth(10 * 60 * 1000);
+                const sensitiveReauth = requireSensitiveStepUp({ maxAgeMs: 5 * 60 * 1000, requireMfaIfEnabled: true });
                 let passed = false;
-                await recentReauth(req, res, () => { passed = true });
+                await sensitiveReauth(req, res, () => { passed = true });
                 if (!passed) return;
             }
 
@@ -1700,7 +1701,7 @@ module.exports = (dependencies) => {
         }
     });
 
-    router.delete("/:id/permanent", authMiddleware, csrfMiddleware, requireRecentReauth(10 * 60 * 1000), async (req, res) => {
+    router.delete("/:id/permanent", authMiddleware, csrfMiddleware, requireSensitiveStepUp({ maxAgeMs: 5 * 60 * 1000, requireMfaIfEnabled: true }), async (req, res) => {
         try {
             const userId = req.user.id;
             const { id } = req.params;

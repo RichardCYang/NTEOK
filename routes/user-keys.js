@@ -22,6 +22,7 @@ module.exports = (dependencies) => {
         formatDateForDb,
         logError,
         requireRecentReauth,
+        requireSensitiveStepUp,
         requireStrongStepUp
     } = dependencies;
 
@@ -112,7 +113,7 @@ module.exports = (dependencies) => {
         }
     });
 
-    router.get('/public/:userId', authMiddleware, requireRecentReauth(10 * 60 * 1000), async (req, res) => {
+    router.get('/public/:userId', authMiddleware, requireSensitiveStepUp({ maxAgeMs: 5 * 60 * 1000, requireMfaIfEnabled: true }), async (req, res) => {
         try {
             const targetUserId = req.params.userId;
             const storageId = req.query.storageId;
@@ -138,7 +139,7 @@ module.exports = (dependencies) => {
         }
     });
 
-    router.post('/', authMiddleware, csrfMiddleware, async (req, res) => {
+    router.post('/', authMiddleware, csrfMiddleware, requireSensitiveStepUp({ maxAgeMs: 5 * 60 * 1000, requireMfaIfEnabled: true }), async (req, res) => {
         try {
             const userId = req.user.id;
             const { kid, publicKeySpki, encryptedPrivateKey, keyWrapSalt, deviceLabel } = req.body;
@@ -173,7 +174,7 @@ module.exports = (dependencies) => {
         }
     });
 
-    router.delete('/:kid', authMiddleware, csrfMiddleware, requireRecentReauth(10 * 60 * 1000), async (req, res) => {
+    router.delete('/:kid', authMiddleware, csrfMiddleware, requireSensitiveStepUp({ maxAgeMs: 5 * 60 * 1000, requireMfaIfEnabled: true }), async (req, res) => {
         try {
             const userId = req.user.id;
             const kid = req.params.kid;

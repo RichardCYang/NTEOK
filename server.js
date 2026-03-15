@@ -1411,39 +1411,65 @@ function hashIpPrefix(ip) {
 	return crypto.createHash("sha256").update(prefix).digest("hex");
 }
 
+async function withUserSessionLock(userId, fn) {
+    if (!redis || typeof redis.set !== 'function') return await fn();
+
+    const lockKey = `lock:user-session:${userId}`;
+    const token = crypto.randomBytes(16).toString('hex');
+    const acquired = await redis.set(lockKey, token, { NX: true, PX: 5000 });
+    if (!acquired) throw new Error('SESSION_LOCK_BUSY');
+
+    try {
+        return await fn();
+    } finally {
+        try {
+            await redis.eval(
+                `if redis.call("GET", KEYS[1]) == ARGV[1]
+                  then return redis.call("DEL", KEYS[1])
+                  else return 0
+                 end`,
+                { keys: [lockKey], arguments: [token] }
+            );
+        } catch (_) {}
+    }
+}
+
 async function createSession(user, ctx = {}, options = {}) {
     if (IS_PRODUCTION && !ctx.clientIp) throw new Error("세션 생성: 운영 환경에서는 clientIp가 필수입니다.");
-    const sessionId = crypto.randomBytes(24).toString("hex");
-    const now = Date.now();
-    const expiresAt = now + SESSION_TTL_MS;
-    const absoluteExpiry = now + SESSION_ABSOLUTE_TTL_MS;
-    const existingSessions = await listUserSessions(user.id);
-    if (existingSessions && existingSessions.length > 0) {
-        if (user.blockDuplicateLogin) return { success: false, error: '이미 다른 위치에서 로그인 중입니다.' };
-        wsBroadcastToUser(user.id, 'duplicate-login', { message: '다른 위치에서 로그인하여 현재 세션이 종료됩니다.', timestamp: new Date().toISOString() });
-        for (const oldSessionId of existingSessions) await revokeSession(oldSessionId, "duplicate-login");
-    }
-    const markStepUp = options.markStepUp === true;
-    const stepUpAt = markStepUp ? now : null;
-    const accountHasMfa = options.accountHasMfa === true;
-    const session = {
-        type: "auth",
-        userId: user.id,
-        username: user.username,
-        uaHash: hashUserAgent(ctx.userAgent || ""),
-        ipHashExact: hashExactIp(ctx.clientIp || ""),
-        ipPrefixHash: hashIpPrefix(ctx.clientIp || ""),
-        expiresAt,
-        absoluteExpiry,
-        createdAt: now,
-        lastAuthAt: now,
-        lastStepUpAt: stepUpAt,
-        lastSensitiveStepUpAt: stepUpAt,
-        lastStepUpMethod: stepUpAt ? (options.stepUpMethod || "password") : null,
-        accountHasMfa
-    };
-    await saveSession(sessionId, session, SESSION_ABSOLUTE_TTL_MS);
-    return { success: true, sessionId };
+    return await withUserSessionLock(user.id, async () => {
+        const sessionId = crypto.randomBytes(24).toString("hex");
+        const now = Date.now();
+        const expiresAt = now + SESSION_TTL_MS;
+        const absoluteExpiry = now + SESSION_ABSOLUTE_TTL_MS;
+        const existingSessions = await listUserSessions(user.id);
+        if (existingSessions && existingSessions.length > 0) {
+            if (user.blockDuplicateLogin) return { success: false, error: '이미 다른 위치에서 로그인 중입니다.' };
+            wsBroadcastToUser(user.id, 'duplicate-login', { message: '다른 위치에서 로그인하여 현재 세션이 종료됩니다.', timestamp: new Date().toISOString() });
+            for (const oldSessionId of existingSessions) await revokeSession(oldSessionId, "duplicate-login");
+        }
+        const markStepUp = options.markStepUp === true;
+        const markSensitiveStepUp = options.markSensitiveStepUp === true;
+        const stepUpAt = markStepUp ? now : null;
+        const accountHasMfa = options.accountHasMfa === true;
+        const session = {
+            type: "auth",
+            userId: user.id,
+            username: user.username,
+            uaHash: hashUserAgent(ctx.userAgent || ""),
+            ipHashExact: hashExactIp(ctx.clientIp || ""),
+            ipPrefixHash: hashIpPrefix(ctx.clientIp || ""),
+            expiresAt,
+            absoluteExpiry,
+            createdAt: now,
+            lastAuthAt: now,
+            lastStepUpAt: stepUpAt,
+            lastSensitiveStepUpAt: markSensitiveStepUp ? stepUpAt : null,
+            lastStepUpMethod: stepUpAt ? (options.stepUpMethod || "password") : null,
+            accountHasMfa
+        };
+        await saveSession(sessionId, session, SESSION_ABSOLUTE_TTL_MS);
+        return { success: true, sessionId };
+    });
 }
 
 function buildSessionContextFromReq(req, getClientIpFromRequest) {

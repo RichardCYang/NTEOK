@@ -15,6 +15,30 @@ module.exports = ({ getSessionFromRequest }) => {
         };
     }
 
+    function requireSensitiveStepUp({ maxAgeMs = 5 * 60 * 1000, requireMfaIfEnabled = true } = {}) {
+        return async (req, res, next) => {
+            const session = await getSessionFromRequest(req);
+            if (!session) return res.status(401).json({ error: "인증이 필요합니다." });
+
+            const sensitiveStepUpAt = session.lastSensitiveStepUpAt || 0;
+            const tooOld = !sensitiveStepUpAt || (Date.now() - sensitiveStepUpAt) > maxAgeMs;
+            const weakForMfaAccount =
+                requireMfaIfEnabled &&
+                session.accountHasMfa === true &&
+                session.lastStepUpMethod !== 'mfa';
+
+            if (tooOld || weakForMfaAccount) {
+                return res.status(403).json({
+                    error: "민감한 작업 전 명시적 재인증이 필요합니다.",
+                    code: "SENSITIVE_STEP_UP_REQUIRED"
+                });
+            }
+
+            req.currentSession = session;
+            next();
+        };
+    }
+
     function requireStrongStepUp({ maxAgeMs = 10 * 60 * 1000, requireMfaIfEnabled = true } = {}) {
         return async (req, res, next) => {
             const session = await getSessionFromRequest(req);
@@ -36,5 +60,5 @@ module.exports = ({ getSessionFromRequest }) => {
             next();
         };
     }
-    return { requireRecentReauth, requireStrongStepUp };
+    return { requireRecentReauth, requireSensitiveStepUp, requireStrongStepUp };
 };
