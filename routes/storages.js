@@ -17,6 +17,7 @@ const wrappedDekExportLimiter = rateLimit({
 module.exports = (dependencies) => {
     const {
         pool,
+        redis,
         storagesRepo,
         bootstrapRepo,
         userKeysRepo,
@@ -451,6 +452,12 @@ module.exports = (dependencies) => {
 
             await connection.commit();
 
+            if (redis) {
+                await redis.publish('storage-access-revoke', JSON.stringify({
+                    storageId,
+                    reason: 'Storage access updated'
+                })).catch(() => {});
+            }
             try { if (typeof wsCloseConnectionsForStorage === 'function') wsCloseConnectionsForStorage(storageId, 1008, 'Storage access updated'); } catch (e) {}
 
             res.json({ success: true });
@@ -511,6 +518,12 @@ module.exports = (dependencies) => {
 
             await connection.commit();
 
+            if (redis) {
+                await redis.publish('storage-access-revoke', JSON.stringify({
+                    storageId,
+                    reason: 'Storage collaborator removed'
+                })).catch(() => {});
+            }
             try { if (typeof wsCloseConnectionsForStorage === 'function') wsCloseConnectionsForStorage(storageId, 1008, 'Storage collaborator removed'); } catch (e) {}
 
             res.json({ success: true });

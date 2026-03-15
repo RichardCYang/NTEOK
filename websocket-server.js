@@ -123,6 +123,7 @@ const yjsDocuments = new Map();
 
 let _wsPool = null;
 let _wsSanitizeHtmlContent = null;
+let _wsPageSqlPolicy = null;
 
 const emergencyPersistState = new Map(); 
 
@@ -1449,7 +1450,19 @@ async function saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc, opt
         const title = preserveDbMetadata ? existing.title : (metaHasString('title') ? yMetadata.get('title') : (existing.title || '제목 없음'));
         const icon = validateAndNormalizeIcon(preserveDbMetadata ? existing.icon : (metaHasString('icon') ? yMetadata.get('icon') : (existing.icon || null)));
         const sortOrder = preserveDbMetadata ? (Number(existing.sort_order) || 0) : (metaHasAny('sortOrder') ? (Number(yMetadata.get('sortOrder')) || 0) : (Number(existing.sort_order) || 0));
-        const parentId = preserveDbMetadata ? (existing.parent_id || null) : (metaHasAny('parentId') ? (yMetadata.get('parentId') || null) : (existing.parent_id || null));
+        let parentId = preserveDbMetadata
+            ? (existing.parent_id || null)
+            : (metaHasAny('parentId') ? (yMetadata.get('parentId') || null) : (existing.parent_id || null));
+
+        if (!preserveDbMetadata) {
+            const parentCheck = await validateYjsParentAssignment(pool, _wsPageSqlPolicy, {
+                viewerUserId: Number(actorUserId || existing.user_id),
+                pageId,
+                pageStorageId: existing.storage_id,
+                candidateParentId: parentId
+            });
+            parentId = parentCheck.ok ? parentCheck.parentId : null;
+        }
 
         const isEncrypted = (existing.is_encrypted === 1);
         const metaContent = metaHasAny('content') ? yMetadata.get('content') : undefined;
@@ -1613,7 +1626,12 @@ function wsBroadcastToPage(pageId, event, data, excludeUserId = null) {
     const message = JSON.stringify({ event, data });
     connections.forEach(conn => {
         if (excludeUserId && conn.userId === excludeUserId) return;
-        try { if (conn.ws.readyState === WebSocket.OPEN) conn.ws.send(message); } catch (error) {}
+        void maybeAuthorizePageRecipient(pageId, conn).then((ok) => {
+            if (!ok) return;
+            try {
+                if (conn.ws.readyState === WebSocket.OPEN) conn.ws.send(message);
+            } catch (_) {}
+        }).catch(() => {});
     });
 }
 
@@ -1642,7 +1660,14 @@ function wsBroadcastToStorage(storageId, event, data, excludeUserId = null, opti
             if (filtered.length === 0 && !redactParent) return;
             payloadData = { ...payloadData, pageIds: filtered };
         }
-        try { if (conn.ws.readyState === WebSocket.OPEN) conn.ws.send(JSON.stringify({ event, data: payloadData })); } catch (error) {}
+        void maybeAuthorizeStorageRecipient(storageId, conn).then((ok) => {
+            if (!ok) return;
+            try {
+                if (conn.ws.readyState === WebSocket.OPEN) {
+                    conn.ws.send(JSON.stringify({ event, data: payloadData }));
+                }
+            } catch (_) {}
+        }).catch(() => {});
     });
 }
 
@@ -1695,11 +1720,25 @@ const { redis, ensureRedis } = require("./lib/redis");
 			wsCloseConnectionsForSession(sessionId, 1008, reason || "Session revoked");
 		} catch (_) {}
 	});
+	await sub.subscribe("storage-access-revoke", (message) => {
+		try {
+			const { storageId, reason } = JSON.parse(message);
+			wsCloseConnectionsForStorage(storageId, 1008, reason || "Storage access revoked");
+		} catch (_) {}
+	});
+	await sub.subscribe("page-owner-only", (message) => {
+		try {
+			const { pageId, ownerUserId, storageId } = JSON.parse(message);
+			wsEvictNonOwnerCollaborators(pageId, ownerUserId);
+			wsBroadcastPageHiddenToStorage(storageId, pageId, ownerUserId);
+		} catch (_) {}
+	});
 })();
 
 function initWebSocketServer(server, pool, sanitizeHtmlContent, IS_PRODUCTION, BASE_URL, SESSION_COOKIE_NAME, getSessionFromId, getClientIpFromRequest, pageSqlPolicy, pageAccess, verifyCsrfTokenForSession, consumeWsTicket) {
     _wsPool = pool;
     _wsSanitizeHtmlContent = sanitizeHtmlContent;
+    _wsPageSqlPolicy = pageSqlPolicy;
     const allowedWsOrigins = (() => {
         const set = new Set();
         try { set.add(new URL(BASE_URL).origin); } catch (_) {}
@@ -2591,6 +2630,59 @@ async function wouldCreateParentCycle(pool, pageId, candidateParentId, maxDepth 
 	return Boolean(cur);
 }
 
+const WS_PAGE_SEND_AUTH_TTL_MS = (() => {
+	const v = parseInt(process.env.WS_PAGE_SEND_AUTH_TTL_MS || '2000', 10);
+	return Number.isFinite(v) && v >= 250 && v <= 10000 ? v : 2000;
+})();
+
+const WS_STORAGE_SEND_AUTH_TTL_MS = (() => {
+	const v = parseInt(process.env.WS_STORAGE_SEND_AUTH_TTL_MS || '2000', 10);
+	return Number.isFinite(v) && v >= 250 && v <= 10000 ? v : 2000;
+})();
+
+async function maybeAuthorizePageRecipient(pageId, conn) {
+	if (!conn) return false;
+	const now = Date.now();
+	if (conn.lastPageSendAuthAt &&
+		(now - conn.lastPageSendAuthAt) < WS_PAGE_SEND_AUTH_TTL_MS &&
+		conn.lastPageSendAuthOk === true)
+		return true;
+
+	const access = await ensureActivePageAccess(_wsPool, _wsPageSqlPolicy, pageId, conn, {
+		forcePermissionRefresh: true
+	});
+	conn.lastPageSendAuthAt = now;
+	conn.lastPageSendAuthOk = !!access.ok;
+
+	if (!access.ok) {
+		const conns = wsConnections.pages.get(pageId);
+		revokePageSubscription(conn.ws, pageId, conns, conn, access.reason);
+		return false;
+	}
+	return true;
+}
+
+async function maybeAuthorizeStorageRecipient(storageId, conn) {
+	if (!conn) return false;
+	const now = Date.now();
+	if (conn.lastStorageSendAuthAt &&
+		(now - conn.lastStorageSendAuthAt) < WS_STORAGE_SEND_AUTH_TTL_MS &&
+		conn.lastStorageSendAuthOk === true)
+		return true;
+
+	conn.storageId = storageId;
+	const fresh = await refreshConnPermission(_wsPool, conn, { force: true });
+	conn.lastStorageSendAuthAt = now;
+	conn.lastStorageSendAuthOk = !!fresh;
+
+	if (!fresh) {
+		try { conn.ws.send(JSON.stringify({ event: 'access-revoked', data: { storageId: String(storageId) } })); } catch (_) {}
+		try { conn.ws.close(1008, 'Storage access revoked'); } catch (_) {}
+		return false;
+	}
+	return true;
+}
+
 async function ensureActivePageAccess(pool, pageSqlPolicy, pageId, myConn, opts = {}) {
 	if (!myConn) return { ok: false, reason: 'not-subscribed' };
 
@@ -2603,11 +2695,16 @@ async function ensureActivePageAccess(pool, pageSqlPolicy, pageId, myConn, opts 
 		`SELECT p.id, p.user_id, p.parent_id, p.is_encrypted, p.share_allowed, p.storage_id,
 				s.user_id AS storage_owner_id
 		   FROM pages p
-		   JOIN storages s ON p.storage_id = s.id
+		   JOIN storages s
+		     ON p.storage_id = s.id
+		   LEFT JOIN storage_shares ss
+		     ON s.id = ss.storage_id
+		    AND ss.shared_with_user_id = ?
 		  WHERE p.id = ?
 			AND p.deleted_at IS NULL
+			AND (s.user_id = ? OR ss.shared_with_user_id IS NOT NULL)
 			${vis.sql}`,
-		[pageId, ...vis.params]
+		[userId, pageId, userId, ...vis.params]
 	);
 
 	if (!rows.length)
@@ -2657,10 +2754,13 @@ async function validateYjsParentAssignment(pool, pageSqlPolicy, {
 	const [rows] = await pool.execute(
 		`SELECT p.id, p.storage_id
 		   FROM pages p
-		   LEFT JOIN storage_shares ss ON p.storage_id = ss.storage_id AND ss.shared_with_user_id = ?
+		   JOIN storages s ON p.storage_id = s.id
+		   LEFT JOIN storage_shares ss
+		     ON s.id = ss.storage_id
+		    AND ss.shared_with_user_id = ?
 		  WHERE p.id = ?
 			AND p.deleted_at IS NULL
-			AND (p.user_id = ? OR ss.storage_id IS NOT NULL)
+			AND (s.user_id = ? OR ss.shared_with_user_id IS NOT NULL)
 			${vis.sql}`,
 		[viewerUserId, parentId, viewerUserId, ...vis.params]
 	);

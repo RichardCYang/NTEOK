@@ -1359,6 +1359,13 @@ module.exports = (dependencies) => {
                 });
                 
                 if (Number(isEncrypted) === 1 && Number(shareAllowed) === 0 && Number(existing.share_allowed) === 1) {
+                    if (redis) {
+                        await redis.publish('page-owner-only', JSON.stringify({
+                            pageId: id,
+                            storageId: existing.storage_id,
+                            ownerUserId: existing.user_id
+                        })).catch(() => {});
+                    }
                     if (typeof wsEvictNonOwnerCollaborators === 'function') wsEvictNonOwnerCollaborators(id, existing.user_id);
                     if (typeof wsBroadcastPageHiddenToStorage === 'function') wsBroadcastPageHiddenToStorage(existing.storage_id, id, existing.user_id);
                 }
