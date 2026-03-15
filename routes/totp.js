@@ -109,7 +109,8 @@ module.exports = (dependencies) => {
 		saveSession,
 		revokeSession,
 		listUserSessions,
-		requireRecentReauth
+requireRecentReauth,
+		requireStrongStepUp
 	} = dependencies;
 
 	async function revokeOtherSessions(userId, keepSessionId, reason) {
@@ -219,7 +220,7 @@ module.exports = (dependencies) => {
 		}
 	});
 
-	router.post("/setup", authMiddleware, csrfMiddleware, requireRecentReauth(5 * 60 * 1000), async (req, res) => {
+	router.post("/setup", authMiddleware, csrfMiddleware, requireStrongStepUp({ maxAgeMs: 5 * 60 * 1000, requireMfaIfEnabled: true }), async (req, res) => {
 		try {
 			const userId = req.user.id;
 			const username = req.user.username;
@@ -238,7 +239,7 @@ module.exports = (dependencies) => {
 		}
 	});
 
-	router.post("/verify-setup", authMiddleware, csrfMiddleware, requireRecentReauth(5 * 60 * 1000), totpLimiter, async (req, res) => {
+	router.post("/verify-setup", authMiddleware, csrfMiddleware, requireStrongStepUp({ maxAgeMs: 5 * 60 * 1000, requireMfaIfEnabled: true }), totpLimiter, async (req, res) => {
 		try {
 			const userId = req.user.id;
 			const { token } = req.body;
@@ -261,6 +262,7 @@ module.exports = (dependencies) => {
 			await pool.execute("UPDATE users SET totp_secret = ?, totp_enabled = 1, updated_at = ? WHERE id = ?", [encryptTotpSecret(secret), nowStr, userId]);
 			delete session.totpTempSecret;
 			session.lastStepUpAt = Date.now();
+			session.lastSensitiveStepUpAt = Date.now();
 			session.lastStepUpMethod = 'mfa';
 			session.accountHasMfa = true;
 			await saveSession(sessionId, session, SESSION_TTL_MS);
@@ -274,7 +276,7 @@ module.exports = (dependencies) => {
 		}
 	});
 
-	router.post("/disable", authMiddleware, csrfMiddleware, requireRecentReauth(5 * 60 * 1000), async (req, res) => {
+	router.post("/disable", authMiddleware, csrfMiddleware, requireStrongStepUp({ maxAgeMs: 5 * 60 * 1000, requireMfaIfEnabled: true }), async (req, res) => {
 		try {
 			const userId = req.user.id;
 			const { password } = req.body;
@@ -328,7 +330,8 @@ module.exports = (dependencies) => {
 			}
 			const sessionResult = await createSession(
 				{ id: userId, username: username, blockDuplicateLogin: block_duplicate_login },
-				buildSessionContextFromReq(req, getClientIp)
+				buildSessionContextFromReq(req, getClientIp),
+				{ markStepUp: true, stepUpMethod: "mfa", accountHasMfa: true }
 			);
 			if (!sessionResult.success) {
 				await revokeSession(tempSessionId, "duplicate-login-blocked");
@@ -401,7 +404,8 @@ module.exports = (dependencies) => {
 			await clearTotpFailures(redis, accountKey, ipKey);
 			const sessionResult = await createSession(
 				{ id: userId, username: username, blockDuplicateLogin: block_duplicate_login },
-				buildSessionContextFromReq(req, getClientIp)
+				buildSessionContextFromReq(req, getClientIp),
+				{ markStepUp: true, stepUpMethod: "mfa", accountHasMfa: true }
 			);
 			if (!sessionResult.success) {
 				await revokeSession(tempSessionId, "duplicate-login-blocked");

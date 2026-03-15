@@ -574,6 +574,14 @@ async function consumeWsTicket(sessionId, ticket, bindCtx = null) {
 	return true;
 }
 
+function normalizeTicketOrigin(raw) {
+    try {
+        return new URL(String(raw || "")).origin;
+    } catch (_) {
+        return "";
+    }
+}
+
 async function issueActionTicket(sessionId, action, resourceId, bindCtx = null) {
     const sid = String(sessionId || '').trim();
     const act = String(action || '').trim();
@@ -582,7 +590,8 @@ async function issueActionTicket(sessionId, action, resourceId, bindCtx = null) 
     const ticket = crypto.randomBytes(32).toString('base64url');
     const payload = JSON.stringify({
         ua: hashBindValue(bindCtx?.userAgent || ""),
-        ip: hashIpPrefix(bindCtx?.clientIp || "")
+        ip: hashIpPrefix(bindCtx?.clientIp || ""),
+        origin: hashBindValue(normalizeTicketOrigin(bindCtx?.origin || ""))
     });
     await redis.set(`action-ticket:${sid}:${act}:${rid}:${ticket}`, payload, { PX: ACTION_TICKET_TTL_MS, NX: true });
     return ticket;
@@ -601,6 +610,7 @@ async function consumeActionTicket(sessionId, action, resourceId, ticket, bindCt
 	try { parsed = JSON.parse(raw); } catch (_) { return false; }
 	if (parsed.ua && parsed.ua !== hashBindValue(bindCtx?.userAgent || "")) return false;
 	if (parsed.ip && parsed.ip !== hashIpPrefix(bindCtx?.clientIp || "")) return false;
+	if (parsed.origin && parsed.origin !== hashBindValue(normalizeTicketOrigin(bindCtx?.origin || ""))) return false;
 	await redis.del(key);
 	return true;
 }
@@ -1401,7 +1411,7 @@ function hashIpPrefix(ip) {
 	return crypto.createHash("sha256").update(prefix).digest("hex");
 }
 
-async function createSession(user, ctx = {}) {
+async function createSession(user, ctx = {}, options = {}) {
     if (IS_PRODUCTION && !ctx.clientIp) throw new Error("세션 생성: 운영 환경에서는 clientIp가 필수입니다.");
     const sessionId = crypto.randomBytes(24).toString("hex");
     const now = Date.now();
@@ -1413,6 +1423,9 @@ async function createSession(user, ctx = {}) {
         wsBroadcastToUser(user.id, 'duplicate-login', { message: '다른 위치에서 로그인하여 현재 세션이 종료됩니다.', timestamp: new Date().toISOString() });
         for (const oldSessionId of existingSessions) await revokeSession(oldSessionId, "duplicate-login");
     }
+    const markStepUp = options.markStepUp === true;
+    const stepUpAt = markStepUp ? now : null;
+    const accountHasMfa = options.accountHasMfa === true;
     const session = {
         type: "auth",
         userId: user.id,
@@ -1424,7 +1437,10 @@ async function createSession(user, ctx = {}) {
         absoluteExpiry,
         createdAt: now,
         lastAuthAt: now,
-        lastStepUpAt: now
+        lastStepUpAt: stepUpAt,
+        lastSensitiveStepUpAt: stepUpAt,
+        lastStepUpMethod: stepUpAt ? (options.stepUpMethod || "password") : null,
+        accountHasMfa
     };
     await saveSession(sessionId, session, SESSION_ABSOLUTE_TTL_MS);
     return { success: true, sessionId };
@@ -1453,7 +1469,7 @@ async function getSessionFromId(sessionId, ctx = {}) {
         const currentIpPrefixHash = hashIpPrefix(ctx.clientIp || "");
         const sameExact = !!(session.ipHashExact && currentExactIpHash && session.ipHashExact === currentExactIpHash);
         const samePrefix = !!(session.ipPrefixHash && currentIpPrefixHash && session.ipPrefixHash === currentIpPrefixHash);
-        const driftGraceMs = 10 * 60 * 1000;
+        const driftGraceMs = Math.max(0, Number(process.env.SESSION_IP_PREFIX_GRACE_MS || (60 * 1000)));
         const inGrace = Number(session.createdAt || 0) + driftGraceMs > Date.now();
         if (!sameExact && (!samePrefix || !inGrace)) {
             await revokeSession(sessionId, "network-mismatch");

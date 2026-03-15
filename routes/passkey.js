@@ -42,7 +42,8 @@ module.exports = (dependencies) => {
 		saveSession,
 		revokeSession,
 		listUserSessions,
-		requireRecentReauth
+requireRecentReauth,
+		requireStrongStepUp
 	} = dependencies;
 
 	async function revokeOtherSessions(userId, keepSessionId, reason) {
@@ -97,7 +98,8 @@ module.exports = (dependencies) => {
 
 		const sessionResult = await createSession(
 			{ id: userId, username, blockDuplicateLogin: block_duplicate_login },
-			buildSessionContextFromReq(req, getClientIp)
+			buildSessionContextFromReq(req, getClientIp),
+			{ markStepUp: true, stepUpMethod: "mfa", accountHasMfa: true }
 		);
 		if (!sessionResult.success) {
 			if (tempSessionId) await revokeSession(tempSessionId, "duplicate-login-blocked");
@@ -331,7 +333,7 @@ module.exports = (dependencies) => {
 		}
 	});
 
-	router.post("/register/options", authMiddleware, csrfMiddleware, requireRecentReauth(5 * 60 * 1000), async (req, res) => {
+	router.post("/register/options", authMiddleware, csrfMiddleware, requireStrongStepUp({ maxAgeMs: 5 * 60 * 1000, requireMfaIfEnabled: true }), async (req, res) => {
 		try {
 			const userId = req.user.id;
 			const username = req.user.username;
@@ -359,7 +361,7 @@ module.exports = (dependencies) => {
 		}
 	});
 
-	router.post("/register/verify", authMiddleware, csrfMiddleware, requireRecentReauth(5 * 60 * 1000), passkeyLimiter, async (req, res) => {
+	router.post("/register/verify", authMiddleware, csrfMiddleware, requireStrongStepUp({ maxAgeMs: 5 * 60 * 1000, requireMfaIfEnabled: true }), passkeyLimiter, async (req, res) => {
 		const conn = await pool.getConnection();
 		try {
 			await conn.beginTransaction();
@@ -403,6 +405,7 @@ module.exports = (dependencies) => {
 			const session = await getSession(sessionId);
 			if (session) {
 				session.lastStepUpAt = now.getTime();
+				session.lastSensitiveStepUpAt = now.getTime();
 				session.lastStepUpMethod = 'mfa';
 				session.accountHasMfa = true;
 				await saveSession(sessionId, session, SESSION_TTL_MS);
@@ -513,7 +516,11 @@ module.exports = (dependencies) => {
 				await recordLoginAttempt(pool, { userId: userId, username: username, ipAddress: getClientIp(req), port: req.connection.remotePort || 0, success: false, failureReason: countryCheck.reason, userAgent: req.headers['user-agent'] || null });
 				return res.status(403).json({ error: "현재 위치에서는 로그인할 수 없습니다." });
 			}
-			const sessionResult = await createSession({ id: userId, username: username, blockDuplicateLogin: block_duplicate_login }, buildSessionContextFromReq(req, getClientIp));
+			const sessionResult = await createSession(
+				{ id: userId, username: username, blockDuplicateLogin: block_duplicate_login },
+				buildSessionContextFromReq(req, getClientIp),
+				{ markStepUp: true, stepUpMethod: "mfa", accountHasMfa: true }
+			);
 			if (!sessionResult.success) {
 				await conn.commit();
 				return res.status(409).json({ error: sessionResult.error, code: 'DUPLICATE_LOGIN_BLOCKED' });
@@ -652,7 +659,7 @@ module.exports = (dependencies) => {
 		}
 	});
 
-	router.delete("/:id", authMiddleware, csrfMiddleware, requireRecentReauth(5 * 60 * 1000), async (req, res) => {
+	router.delete("/:id", authMiddleware, csrfMiddleware, requireStrongStepUp({ maxAgeMs: 5 * 60 * 1000, requireMfaIfEnabled: true }), async (req, res) => {
 		try {
 			const userId = req.user.id;
 			const passkeyId = parseInt(req.params.id);

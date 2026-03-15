@@ -39,6 +39,7 @@ module.exports = (dependencies) => {
 		recordLoginFailure,
 		clearLoginFailures,
 		requireRecentReauth,
+		requireStrongStepUp,
 		csrfMiddleware,
 		saveSession,
 		getSession,
@@ -477,7 +478,7 @@ module.exports = (dependencies) => {
         }
     });
 
-    router.put("/security-settings", authMiddleware, csrfMiddleware, requireRecentReauth(10 * 60 * 1000), async (req, res) => {
+    router.put("/security-settings", authMiddleware, csrfMiddleware, requireStrongStepUp({ maxAgeMs: 10 * 60 * 1000, requireMfaIfEnabled: true }), async (req, res) => {
         const { blockDuplicateLogin, countryWhitelistEnabled, allowedLoginCountries } = req.body;
 
         if (blockDuplicateLogin !== undefined && typeof blockDuplicateLogin !== "boolean") {
@@ -530,6 +531,43 @@ module.exports = (dependencies) => {
                 `UPDATE users SET ${updates.join(', ')} WHERE id = ?`,
                 values
             );
+
+            const currentSession = await getSession(req.cookies[SESSION_COOKIE_NAME]);
+            if (currentSession?.id) {
+                const now = Date.now();
+                const newSessionId = crypto.randomBytes(24).toString("hex");
+                const remainingTtl = currentSession.absoluteExpiry
+                    ? Math.max(1000, currentSession.absoluteExpiry - now)
+                    : SESSION_TTL_MS;
+
+                const rotatedSession = {
+                    ...currentSession,
+                    lastStepUpAt: now,
+                    lastSensitiveStepUpAt: now
+                };
+
+                await saveSession(newSessionId, rotatedSession, remainingTtl);
+                try {
+                    dependencies.wsCloseConnectionsForSession(currentSession.id, 1008, "Security settings changed");
+                } catch (_) {}
+                await revokeSession(currentSession.id, "security-settings-rotate");
+
+                const allSessionIds = await listUserSessions(req.user.id);
+                await Promise.all(
+                    (allSessionIds || [])
+                        .filter((sid) => sid && sid !== newSessionId)
+                        .map((sid) => revokeSession(sid, "security-settings-changed"))
+                );
+
+                res.cookie(SESSION_COOKIE_NAME, newSessionId, {
+                    httpOnly: true, sameSite: "strict", secure: COOKIE_SECURE, path: "/",
+                    maxAge: Math.min(SESSION_TTL_MS, remainingTtl)
+                });
+                res.cookie(CSRF_COOKIE_NAME, generateCsrfTokenForSession(newSessionId, "api"), {
+                    httpOnly: false, sameSite: "strict", secure: COOKIE_SECURE, path: "/",
+                    maxAge: Math.min(SESSION_TTL_MS, remainingTtl)
+                });
+            }
 
             const maskedUsername = req.user.username.substring(0, 2) + '***';
             console.log(`[보안 설정] 사용자 ID ${req.user.id} (${maskedUsername}): 설정 업데이트 완료`);

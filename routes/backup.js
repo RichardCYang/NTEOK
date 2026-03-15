@@ -1108,7 +1108,7 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
         return `/${type}/${currentUserId}/${filename}`;
     }
 
-    router.post('/import', authMiddleware, csrfMiddleware, requireRecentReauth(10 * 60 * 1000), backupImportLimiter, backupUpload.single('backup'), async (req, res) => {
+    router.post('/import', authMiddleware, csrfMiddleware, requireStrongStepUp({ maxAgeMs: 10 * 60 * 1000, requireMfaIfEnabled: true }), backupImportLimiter, backupUpload.single('backup'), async (req, res) => {
         const userId = req.user.id;
         const uploadedFile = req.file;
 
