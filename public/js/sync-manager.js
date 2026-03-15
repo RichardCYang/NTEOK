@@ -386,7 +386,6 @@ console.log('[WS] 연결 시도');
 
 ws.onopen = () => {
 	console.log('[WS] 연결 성공');
-	ws.send(JSON.stringify({ type: 'auth', ticket }));
 	reconnectAttempts = 0;
 	if (currentPageId) subscribePage(currentPageId);
 	if (currentStorageId) subscribeStorage(currentStorageId);

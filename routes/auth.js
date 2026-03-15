@@ -224,9 +224,13 @@ module.exports = (dependencies) => {
 				return res.status(401).json({ error: "비밀번호가 올바르지 않습니다." });
 			}
 			if (Number(user.totp_enabled) === 1 || Number(user.passkey_enabled) === 1) {
-				return res.status(403).json({
-					error: "MFA가 활성화된 계정은 전체 MFA 재인증이 필요합니다.",
-					code: "MFA_REAUTH_REQUIRED"
+				return res.status(428).json({
+					error: "MFA 재인증이 필요합니다.",
+					code: "MFA_REAUTH_REQUIRED",
+					methods: [
+					  Number(user.totp_enabled) === 1 ? 'totp' : null,
+					  Number(user.passkey_enabled) === 1 ? 'passkey' : null
+					].filter(Boolean)
 				});
 			}
 			const oldSessionId = req.cookies[SESSION_COOKIE_NAME];
@@ -234,7 +238,13 @@ module.exports = (dependencies) => {
 			if (session) {
 				const now = Date.now();
 				const newSessionId = crypto.randomBytes(24).toString("hex");
-				const rotatedSession = { ...session, lastStepUpAt: now, reauthenticatedAt: now };
+				const rotatedSession = {
+					...session,
+					lastStepUpAt: now,
+					reauthenticatedAt: now,
+					lastStepUpMethod: 'password',
+					accountHasMfa: Number(user.totp_enabled) === 1 || Number(user.passkey_enabled) === 1
+				};
 				const remainingTtl = session.absoluteExpiry ? Math.max(1000, session.absoluteExpiry - now) : SESSION_TTL_MS;
 				await saveSession(newSessionId, rotatedSession, remainingTtl);
 				await revokeSession(oldSessionId, "reauth-rotate");

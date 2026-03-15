@@ -273,7 +273,10 @@ module.exports = (dependencies) => {
         generatePageId,
         formatDateForDb,
         logError,
-        requireRecentReauth
+        requireRecentReauth,
+        issueActionTicket,
+        consumeActionTicket,
+        getSessionFromRequest
 	} = dependencies;
 
     const backupExportLimiter = rateLimit({
@@ -283,6 +286,24 @@ module.exports = (dependencies) => {
         legacyHeaders: false,
         keyGenerator: (req) => String(req.user?.id || ipKeyGenerator(req)),
     });
+
+    router.post('/export-ticket',
+        authMiddleware,
+        csrfMiddleware,
+        requireStrongStepUp({ maxAgeMs: 10 * 60 * 1000, requireMfaIfEnabled: true }),
+        backupExportLimiter,
+        async (req, res) => {
+            try {
+                const session = await getSessionFromRequest(req);
+                if (!session) return res.status(401).json({ error: '세션이 만료되었습니다.' });
+                const ticket = await issueActionTicket(session.id, 'backup-export', String(req.user.id));
+                res.json({ ok: true, ticket });
+            } catch (e) {
+                logError('POST /api/backup/export-ticket', e);
+                res.status(500).json({ error: '백업 export 티켓 발급 실패' });
+            }
+        }
+    );
 
     const wsConnections = dependencies.wsConnections;
     const yjsDocuments = dependencies.yjsDocuments;
@@ -789,12 +810,21 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
         }
     }
 
-    router.post('/export', authMiddleware, csrfMiddleware, requireRecentReauth(10 * 60 * 1000), backupExportLimiter, async (req, res) => {
+    router.post('/export', authMiddleware, csrfMiddleware, requireStrongStepUp({ maxAgeMs: 10 * 60 * 1000, requireMfaIfEnabled: true }), backupExportLimiter, async (req, res) => {
         const userId = req.user.id;
 
         try {
+            const session = await getSessionFromRequest(req);
+            if (!session) return res.status(401).json({ error: '세션이 만료되었습니다.' });
+
+            const { ticket } = req.body || {};
+            const valid = await consumeActionTicket(session.id, 'backup-export', String(userId), String(ticket || ''));
+            if (!valid) return res.status(403).json({ error: '유효하지 않거나 만료된 export 티켓입니다.' });
+
             res.set('Cache-Control', 'no-store, max-age=0');
             res.set('Pragma', 'no-cache');
+            res.set('Cross-Origin-Resource-Policy', 'same-origin');
+            res.set('X-Content-Type-Options', 'nosniff');
 
             await flushAllPendingE2eeSaves(pool);
 

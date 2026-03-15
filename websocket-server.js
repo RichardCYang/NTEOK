@@ -1805,12 +1805,13 @@ function initWebSocketServer(server, pool, sanitizeHtmlContent, IS_PRODUCTION, B
 
                 if (!sessionId) return done(false, 401, 'Unauthorized');
 
-if (typeof consumeWsTicket === 'function' && ticketFromQuery) {
-					if (!(await consumeWsTicket(sessionId, ticketFromQuery))) {
-						return done(false, 403, 'Forbidden: WebSocket ticket invalid');
-					}
-					req._wsTicketConsumed = true;
+				if (!ticketFromQuery) {
+					return done(false, 401, 'Forbidden: WebSocket ticket required');
 				}
+				if (typeof consumeWsTicket !== 'function' || !(await consumeWsTicket(sessionId, ticketFromQuery))) {
+					return done(false, 403, 'Forbidden: WebSocket ticket invalid');
+				}
+				req._wsTicketConsumed = true;
 
                 done(true);
             } catch (_) {
@@ -1874,12 +1875,8 @@ if (typeof consumeWsTicket === 'function' && ticketFromQuery) {
             ws.username = session.username;
 ws.sessionId = sessionId;
 ws.isAlive = true;
-ws._wsTicketAuthenticated = Boolean(req._wsTicketConsumed);
-ws._authDeadline = setTimeout(() => {
-    if (!ws._wsTicketAuthenticated) {
-        try { ws.close(1008, 'Auth timeout'); } catch (_) {}
-    }
-}, 1500);
+ws._wsTicketAuthenticated = true;
+ws._authDeadline = null;
             ws.boundUserAgent = req.headers["user-agent"] || "";
             ws.boundClientIp = getClientIpFromRequest(req) || req.socket?.remoteAddress || "";
             ws.lastFullSessionCheckAt = 0;
@@ -1919,20 +1916,7 @@ ws._authDeadline = setTimeout(() => {
 const kind = (data && typeof data.type === 'string') ? data.type : 'unknown';
 if (!consumeWsMessageBudget(ws, kind)) { try { ws.close(1008, 'Rate limit exceeded'); } catch (_) {} return; }
 
-if (!ws._wsTicketAuthenticated) {
-	if (kind !== 'auth' || typeof data.ticket !== 'string') {
-		try { ws.close(1008, 'Auth required'); } catch (_) {}
-		return;
-	}
-	if (typeof consumeWsTicket !== 'function' || !(await consumeWsTicket(ws.sessionId, data.ticket))) {
-		try { ws.close(1008, 'Invalid auth ticket'); } catch (_) {}
-		return;
-	}
-	ws._wsTicketAuthenticated = true;
-	if (ws._authDeadline) {
-		clearTimeout(ws._authDeadline);
-		ws._authDeadline = null;
-	}
+if (kind === 'auth') {
 	try { ws.send(JSON.stringify({ event: 'auth-ok', data: {} })); } catch (_) {}
 	return;
 }
@@ -1943,7 +1927,7 @@ await handleWebSocketMessage(ws, data, pool, sanitizeHtmlContent, getSessionFrom
                         try { ws.send(JSON.stringify({ event: 'error', data: { message: 'Failed' } })); } catch (_) {}
                     });
             });
-		    ws.send(JSON.stringify({ event: 'connected', data: { userId: session.userId, username: session.username } }));
+		    ws.send(JSON.stringify({ event: 'connected', data: { ok: true } }));
       	} catch (err) { try { ws.close(1011, 'Error'); } catch (_) {} }
     });
     const heartbeatInterval = setInterval(() => { wss.clients.forEach(ws => { if (ws.isAlive === false) { cleanupWebSocketConnection(ws, pool, sanitizeHtmlContent); return ws.terminate(); } ws.isAlive = false; ws.ping(); }); }, 60000);

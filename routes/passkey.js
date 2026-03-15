@@ -403,6 +403,8 @@ module.exports = (dependencies) => {
 			const session = await getSession(sessionId);
 			if (session) {
 				session.lastStepUpAt = now.getTime();
+				session.lastStepUpMethod = 'mfa';
+				session.accountHasMfa = true;
 				await saveSession(sessionId, session, SESSION_TTL_MS);
 			}
 

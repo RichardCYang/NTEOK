@@ -2107,6 +2107,18 @@ function getScopedPageIdFromReq(req) {
     return raw;
 }
 
+function liveDocReferencesAsset(docInfo, exactUrl) {
+    try {
+        if (!docInfo?.ydoc || !exactUrl) return false;
+        const xml = docInfo.ydoc.getXmlFragment('prosemirror')?.toString?.() || '';
+        if (xml.includes(exactUrl)) return true;
+        const json = JSON.stringify(docInfo.ydoc.toJSON?.() || {});
+        return json.includes(exactUrl);
+    } catch {
+        return false;
+    }
+}
+
 async function canViewerReadScopedAsset({
     currentUserId,
     ownerUserId,
@@ -2117,55 +2129,52 @@ async function canViewerReadScopedAsset({
 }) {
     if (!pageId) return false;
 
-    if (fileType === 'cover') {
-        const [rows] = await pool.execute(
-            `SELECT p.id
-               FROM pages p
-               JOIN storages s ON p.storage_id = s.id
-               LEFT JOIN storage_shares ss_cur
-                 ON s.id = ss_cur.storage_id
-                AND ss_cur.shared_with_user_id = ?
-              WHERE p.id = ?
-                AND p.user_id = ?
-                AND p.cover_image = ?
-                AND p.deleted_at IS NULL
-                AND (s.user_id = ? OR ss_cur.shared_with_user_id IS NOT NULL)
-                AND NOT (p.is_encrypted = 1 AND p.share_allowed = 0 AND p.user_id != ?)
-              LIMIT 1`,
-            [currentUserId, pageId, ownerUserId, coverPath, currentUserId, currentUserId]
-        );
-        return rows.length > 0;
-    }
-
     const [rows] = await pool.execute(
-        `SELECT p.id
-           FROM page_file_refs pfr
-           JOIN pages p ON p.id = pfr.page_id
+        `SELECT p.id, p.content, p.cover_image, p.is_encrypted, p.share_allowed
+           FROM pages p
            JOIN storages s ON p.storage_id = s.id
            LEFT JOIN storage_shares ss_cur
              ON s.id = ss_cur.storage_id
             AND ss_cur.shared_with_user_id = ?
           WHERE p.id = ?
             AND p.user_id = ?
-            AND pfr.owner_user_id = ?
-            AND pfr.stored_filename = ?
-            AND pfr.file_type = ?
             AND p.deleted_at IS NULL
             AND (s.user_id = ? OR ss_cur.shared_with_user_id IS NOT NULL)
             AND NOT (p.is_encrypted = 1 AND p.share_allowed = 0 AND p.user_id != ?)
           LIMIT 1`,
-        [
-            currentUserId,
-            pageId,
-            ownerUserId,
-            ownerUserId,
-            storedFilename,
-            fileType,
-            currentUserId,
-            currentUserId
-        ]
+        [currentUserId, pageId, ownerUserId, currentUserId, currentUserId]
     );
-    return rows.length > 0;
+    const page = rows[0];
+    if (!page) return false;
+
+    if (fileType === 'cover') {
+        return String(page.cover_image || '') === String(coverPath || '');
+    }
+
+    const exactUrl = fileType === 'imgs'
+        ? `/imgs/${ownerUserId}/${storedFilename}`
+        : `/paperclip/${ownerUserId}/${storedFilename}`;
+
+    const liveInfo = yjsDocuments?.get?.(String(pageId));
+    if (liveInfo && Number(liveInfo.ownerUserId) === Number(ownerUserId)) {
+        return liveDocReferencesAsset(liveInfo, exactUrl);
+    }
+
+    if (Number(page.is_encrypted) === 0) {
+        return typeof page.content === 'string' && page.content.includes(exactUrl);
+    }
+
+    const [refRows] = await pool.execute(
+        `SELECT 1
+           FROM page_file_refs
+          WHERE page_id = ?
+            AND owner_user_id = ?
+            AND stored_filename = ?
+            AND file_type = ?
+          LIMIT 1`,
+        [pageId, ownerUserId, storedFilename, fileType]
+    );
+    return refRows.length > 0;
 }
 
 app.get('/covers/:userId/:filename', authMiddleware, async (req, res) => {
