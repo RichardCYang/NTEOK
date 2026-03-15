@@ -87,6 +87,46 @@ function isSamePreviewHostFamily(leftHost, rightHost) {
     return left === right || left.endsWith(`.${right}`) || right.endsWith(`.${left}`);
 }
 
+function isOnlyWwwVariant(leftHost, rightHost) {
+    const left = normalizePreviewComparisonHost(leftHost);
+    const right = normalizePreviewComparisonHost(rightHost);
+    if (!left || !right) return false;
+    return left === right || left === `www.${right}` || right === `www.${left}`;
+}
+
+async function resolvePublicOutboundAddresses(hostname, isPublicRoutableIP) {
+    if (!hostname) return [];
+    try {
+        const ips = await dns.resolve(hostname);
+        return ips.filter(ip => isPublicRoutableIP(ip));
+    } catch {
+        return [];
+    }
+}
+
+function normalizeIpLiteral(ip) {
+    try {
+        return ipaddr.process(ip).toString();
+    } catch {
+        return null;
+    }
+}
+
+async function isSafePreviewRedirectTarget(currentUrl, nextUrl, isPublicRoutableIP) {
+    if (isOnlyWwwVariant(currentUrl.hostname, nextUrl.hostname)) return true;
+
+    const [curIps, nextIps] = await Promise.all([
+        resolvePublicOutboundAddresses(currentUrl.hostname, isPublicRoutableIP),
+        resolvePublicOutboundAddresses(nextUrl.hostname, isPublicRoutableIP)
+    ]);
+
+    const curSet = new Set(curIps.map(normalizeIpLiteral).filter(Boolean));
+    return nextIps
+        .map(normalizeIpLiteral)
+        .filter(Boolean)
+        .some(ip => curSet.has(ip));
+}
+
 function normalizeAndValidatePreviewUrl(rawUrl, isHostnameAllowedForPreview) {
     if (typeof rawUrl !== 'string') throw makeFetchError('INVALID_URL', '유효하지 않은 URL 형식입니다.');
     const trimmed = rawUrl.trim();
@@ -279,7 +319,7 @@ async function fetchHtmlWithValidatedRedirects(startUrl, isHostnameAllowedForPre
             const nextUrl = new URL(result.location, currentUrl);
             const normalizedNextUrl = normalizeAndValidatePreviewUrl(nextUrl.toString(), isHostnameAllowedForPreview);
 
-            if (!isSamePreviewHostFamily(currentUrl.hostname, normalizedNextUrl.hostname))
+            if (!(await isSafePreviewRedirectTarget(currentUrl, normalizedNextUrl, isPublicRoutableIP)))
                 throw makeFetchError('REDIRECT_BLOCKED', '자동 리다이렉트는 동일 호스트 계열 내에서만 허용됩니다.');
 
             currentUrl = normalizedNextUrl;
@@ -860,7 +900,10 @@ module.exports = (dependencies) => {
                 pageId: h.page_id,
                 pageTitle: h.page_title,
                 action: h.action,
-                details: (typeof h.details === 'string') ? JSON.parse(h.details) : (h.details || null),
+                details: (() => {
+                    if (typeof h.details !== 'string') return h.details || null;
+                    try { return JSON.parse(h.details); } catch { return null; }
+                })(),
                 createdAt: toIsoString(h.created_at)
             })));
         } catch (error) {
@@ -1090,7 +1133,7 @@ module.exports = (dependencies) => {
                         const absolute = new URL(href, finalUrl);
                         if (
                             absolute.protocol === 'https:' &&
-                            isSamePreviewHostFamily(finalUrl.hostname, absolute.hostname)
+                            isOnlyWwwVariant(finalUrl.hostname, absolute.hostname)
                         ) {
                             faviconUrl = absolute.toString();
                             break;

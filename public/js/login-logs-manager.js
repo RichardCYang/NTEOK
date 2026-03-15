@@ -121,28 +121,27 @@ function renderLoginLogsTable(logs) {
         return;
     }
 
-    tbody.innerHTML = logs.map(log => {
-        const statusBadge = log.success
-            ? '<span class="login-log-status-badge success">성공</span>'
-            : `<span class="login-log-status-badge failure">실패${log.failure_reason ? ` (${escapeHtml(log.failure_reason)})` : ''}</span>`;
+    tbody.textContent = '';
+    logs.forEach((log) => {
+        const tr = document.createElement('tr');
 
-        const location = formatLocation(log);
-        const { device, icon } = parseUserAgent(log.user_agent);
+        const cells = [
+            formatDateTime(log.created_at),
+            String(log.ip_address || ''),
+            String(log.port || ''),
+            formatLocation(log),
+            log.success ? '성공' : `실패${log.failure_reason ? ` (${log.failure_reason})` : ''}`,
+            parseUserAgent(log.user_agent).device
+        ];
 
-        return `
-            <tr>
-                <td>${formatDateTime(log.created_at)}</td>
-                <td>${escapeHtml(log.ip_address)}</td>
-                <td>${escapeHtml(String(log.port))}</td>
-                <td>${escapeHtml(location)}</td>
-                <td>${statusBadge}</td>
-                <td>
-                    <i class="fa-solid ${icon}"></i>
-                    ${escapeHtml(device)}
-                </td>
-            </tr>
-        `;
-    }).join('');
+        cells.forEach((value) => {
+            const td = document.createElement('td');
+            td.textContent = String(value || '');
+            tr.appendChild(td);
+        });
+
+        tbody.appendChild(tr);
+    });
 }
 
 function renderPagination(total, currentPage) {

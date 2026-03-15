@@ -432,11 +432,22 @@ function displaySearchResults(results, query) {
             li.className = 'search-result-item';
             li.dataset.pageId = result.id;
             const iconClass = result.isEncrypted ? 'fa-solid fa-lock' : (result.icon || 'fa-regular fa-file-lines');
-            li.innerHTML = `
-                <i class="${escapeHtmlAttr(iconClass)}"></i>
-                <span class="search-result-title">${escapeHtml(result.title)}</span>
-                <span style="font-size: 11px; color: #9ca3af;">열기</span>
-            `;
+            const icon = document.createElement('i');
+            icon.className = String(iconClass || 'fa-regular fa-file-lines')
+                .replace(/[^a-zA-Z0-9 _-]/g, '')
+                .trim() || 'fa-regular fa-file-lines';
+
+            const title = document.createElement('span');
+            title.className = 'search-result-title';
+            title.textContent = String(result.title || '제목 없음');
+
+            const openLabel = document.createElement('span');
+            openLabel.style = 'font-size: 11px; color: #9ca3af;';
+            openLabel.textContent = '열기';
+
+            li.appendChild(icon);
+            li.appendChild(title);
+            li.appendChild(openLabel);
             li.addEventListener('click', async () => {
                 await loadPage(result.id);
                 toggleModal(searchModal, false);

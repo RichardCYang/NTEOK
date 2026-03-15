@@ -1,6 +1,15 @@
 const express = require('express');
 const router = express.Router();
 const crypto = require('crypto');
+const erl = require('express-rate-limit');
+const rateLimit = erl.rateLimit || erl;
+
+const commentWriteLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 20,
+    standardHeaders: true,
+    legacyHeaders: false
+});
 
 module.exports = (dependencies) => {
     const {
@@ -88,11 +97,12 @@ module.exports = (dependencies) => {
         }
     });
 
-    router.post('/:pageId', authMiddleware, csrfMiddleware, async (req, res) => {
+    router.post('/:pageId', authMiddleware, csrfMiddleware, commentWriteLimiter, async (req, res) => {
         const pageId = req.params.pageId;
         const userId = req.user.id;
         const { content } = req.body;
         if (!content || typeof content !== 'string' || content.trim() === '') return res.status(400).json({ error: "댓글 내용을 입력해주세요." });
+        if (content.length > 2000) return res.status(400).json({ error: "댓글은 2000자 이하여야 합니다." });
         const sanitizedContent = sanitizeInput(content.trim());
         try {
             const page = await loadPageForCommentsOr404(userId, pageId, res);
@@ -126,12 +136,13 @@ module.exports = (dependencies) => {
         }
     });
 
-    router.put('/:commentId', authMiddleware, csrfMiddleware, async (req, res) => {
+    router.put('/:commentId', authMiddleware, csrfMiddleware, commentWriteLimiter, async (req, res) => {
         const commentId = req.params.commentId;
         const session = await getSessionFromRequest(req);
         const userId = session ? session.userId : null;
         const { content } = req.body;
         if (!content || typeof content !== 'string' || content.trim() === '') return res.status(400).json({ error: "댓글 내용을 입력해주세요." });
+        if (content.length > 2000) return res.status(400).json({ error: "댓글은 2000자 이하여야 합니다." });
         const sanitizedContent = sanitizeInput(content.trim());
         try {
             const [comments] = await pool.execute(`SELECT c.id, c.user_id, c.page_id FROM comments c WHERE c.id = ?`, [commentId]);

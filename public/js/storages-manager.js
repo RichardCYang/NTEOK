@@ -240,23 +240,42 @@ export function initStoragesManager(appState, onStorageSelected) {
             const safeCollabName = escapeHtml(collab.username || '');
             const safeCollabId = escapeHtmlAttr(collab.id);
 
-            item.innerHTML = `
-                <div class="collaborator-info">
-                    <span class="collaborator-name">${safeCollabName}</span>
-                </div>
-                <div class="collaborator-actions">
-                    <select class="collaborator-permission-select" data-user-id="${safeCollabId}" ${canManageCollaborators ? '' : 'disabled'}>
-                        <option value="READ" ${collab.permission === 'READ' ? 'selected' : ''}>읽기</option>
-                        <option value="EDIT" ${collab.permission === 'EDIT' ? 'selected' : ''}>편집</option>
-                        <option value="ADMIN" ${collab.permission === 'ADMIN' ? 'selected' : ''}>관리</option>
-                    </select>
-                    ${canManageCollaborators ? `
-                        <button class="collaborator-remove-btn" title="삭제">
-                            <i class="fa-solid fa-user-minus"></i>
-                        </button>
-                    ` : ''}
-                </div>
-            `;
+            const info = document.createElement('div');
+            info.className = 'collaborator-info';
+            const name = document.createElement('span');
+            name.className = 'collaborator-name';
+            name.textContent = String(collab.username || '');
+            info.appendChild(name);
+
+            const actions = document.createElement('div');
+            actions.className = 'collaborator-actions';
+            const select = document.createElement('select');
+            select.className = 'collaborator-permission-select';
+            select.dataset.userId = String(collab.id);
+            if (!canManageCollaborators) select.disabled = true;
+
+            ['READ', 'EDIT', 'ADMIN'].forEach((perm) => {
+                const opt = document.createElement('option');
+                opt.value = perm;
+                opt.textContent = perm === 'READ' ? '읽기' : perm === 'EDIT' ? '편집' : '관리';
+                if (collab.permission === perm) opt.selected = true;
+                select.appendChild(opt);
+            });
+
+            actions.appendChild(select);
+
+            if (canManageCollaborators) {
+                const removeBtn = document.createElement('button');
+                removeBtn.className = 'collaborator-remove-btn';
+                removeBtn.title = '삭제';
+                const icon = document.createElement('i');
+                icon.className = 'fa-solid fa-user-minus';
+                removeBtn.appendChild(icon);
+                actions.appendChild(removeBtn);
+            }
+
+            item.appendChild(info);
+            item.appendChild(actions);
 
             const permissionSelect = item.querySelector('.collaborator-permission-select');
             permissionSelect.addEventListener('change', async () => {

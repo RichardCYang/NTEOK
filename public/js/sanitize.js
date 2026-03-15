@@ -7,6 +7,14 @@ import { sanitizeBlockAlign, sanitizeCssLength } from './node-attr-sanitizers.js
 
 const CONTROL_CHARS_RE = /[\u0000-\u001F\u007F]/;
 
+if (window.trustedTypes && !window.__nteokTrustedTypesPolicy) {
+    window.__nteokTrustedTypesPolicy = window.trustedTypes.createPolicy('nteok-sanitize', {
+        createHTML(input) {
+            return DOMPurify.sanitize(String(input ?? ''), EDITOR_PURIFY_CONFIG);
+        }
+    });
+}
+
 function sanitizeNavHref(value, { allowRelative = true } = {}) {
     const safe = sanitizeHttpHref(value, {
         allowRelative,
@@ -258,12 +266,19 @@ if (!hooksInstalled) {
     DOMPurify.addHook('afterSanitizeAttributes', (node) => {
         if (String(node.tagName).toLowerCase() === 'a') {
             const target = String(node.getAttribute('target') || '').trim().toLowerCase();
+            if (target && target !== '_blank' && target !== '_self') {
+                node.removeAttribute('target');
+                node.removeAttribute('rel');
+                return;
+            }
             if (target === '_blank') {
                 const rel = (node.getAttribute('rel') || '').toLowerCase();
                 const set = new Set(rel.split(/\s+/).filter(Boolean));
                 set.add('noopener');
                 set.add('noreferrer');
                 node.setAttribute('rel', Array.from(set).join(' '));
+            } else {
+                node.removeAttribute('rel');
             }
         }
     });

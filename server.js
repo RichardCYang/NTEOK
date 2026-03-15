@@ -1164,6 +1164,21 @@ function sanitizeHtmlContent(html) {
 		const doc = dom.window.document;
 		const elements = doc.querySelectorAll('[style], [src], [href], [data-url], [data-thumbnail], [data-favicon], [data-src], [data-columns], [data-rows], [data-memos], [data-content], [data-title], [data-caption], [data-description]');
 		for (const el of elements) {
+            if (String(el.tagName || '').toLowerCase() === 'a') {
+                const target = String(el.getAttribute('target') || '').trim().toLowerCase();
+                if (target && target !== '_blank' && target !== '_self') {
+                    el.removeAttribute('target');
+                }
+                if (target === '_blank') {
+                    const rel = String(el.getAttribute('rel') || '').toLowerCase();
+                    const relSet = new Set(rel.split(/\s+/).filter(Boolean));
+                    relSet.add('noopener');
+                    relSet.add('noreferrer');
+                    el.setAttribute('rel', Array.from(relSet).join(' '));
+                } else {
+                    el.removeAttribute('rel');
+                }
+            }
             if (el.hasAttribute('style')) {
                 const sanitizedStyle = sanitizeInlineStyle(el.getAttribute('style') || '');
                 if (!sanitizedStyle) el.removeAttribute('style');
@@ -2040,6 +2055,14 @@ app.use((req, res, next) => {
     res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
 
     res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
+
+    res.setHeader(
+        'Content-Security-Policy-Report-Only',
+        [
+            "require-trusted-types-for 'script'",
+            "trusted-types dompurify nteok-sanitize"
+        ].join('; ') + ';'
+    );
 
     if (HSTS_ENABLED)
         res.setHeader('Strict-Transport-Security', 'max-age=15552000; includeSubDomains');

@@ -63,10 +63,17 @@ function renderTrashList(pages) {
         
         const info = document.createElement('div');
         info.style = 'display: flex; flex-direction: column; gap: 2px;';
-        info.innerHTML = `
-            <div style="font-weight: 500; color: #1f2937;">${escapeHtml(page.title)}</div>
-            <div style="font-size: 12px; color: #9ca3af;">삭제됨: ${formatTime(page.deletedAt)}</div>
-        `;
+
+        const titleEl = document.createElement('div');
+        titleEl.style = 'font-weight: 500; color: #1f2937;';
+        titleEl.textContent = String(page.title || '제목 없음');
+
+        const timeEl = document.createElement('div');
+        timeEl.style = 'font-size: 12px; color: #9ca3af;';
+        timeEl.textContent = `삭제됨: ${formatTime(page.deletedAt)}`;
+
+        info.appendChild(titleEl);
+        info.appendChild(timeEl);
         
         const actions = document.createElement('div');
         actions.style = 'display: flex; gap: 8px;';

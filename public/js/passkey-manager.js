@@ -81,23 +81,39 @@ async function loadPasskeyList() {
             return;
         }
 
-        listEl.innerHTML = data.passkeys.map(pk => `
-            <div style="display: flex; justify-content: space-between; align-items: center; padding: 12px; background: #f9fafb; border-radius: 3px; margin-bottom: 8px;">
-                <div>
-                    <div style="font-weight: 500; font-size: 14px; color: #374151;">
-                        <i class="fa-solid fa-key" style="margin-right: 8px; color: #2d5f5d;"></i>
-                        ${escapeHtml(pk.deviceName)}
-                    </div>
-                    <div style="font-size: 12px; color: #6b7280; margin-top: 4px;">
-                        등록: ${new Date(pk.createdAt).toLocaleDateString('ko-KR')}
-                        ${pk.lastUsed ? `· 마지막 사용: ${new Date(pk.lastUsed).toLocaleDateString('ko-KR')}` : ''}
-                    </div>
-                </div>
-                <button type="button" class="delete-passkey-btn" data-id="${escapeHtmlAttr(pk.id)}" style="padding: 6px 12px; background: #ef4444; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 12px;">
-                    삭제
-                </button>
-            </div>
-        `).join('');
+        listEl.textContent = '';
+        data.passkeys.forEach((pk) => {
+            const row = document.createElement('div');
+            row.style = 'display:flex;justify-content:space-between;align-items:center;padding:12px;background:#f9fafb;border-radius:3px;margin-bottom:8px;';
+
+            const left = document.createElement('div');
+            const title = document.createElement('div');
+            title.style = 'font-weight:500;font-size:14px;color:#374151;';
+            const icon = document.createElement('i');
+            icon.className = 'fa-solid fa-key';
+            icon.style = 'margin-right:8px;color:#2d5f5d;';
+            title.appendChild(icon);
+            title.appendChild(document.createTextNode(String(pk.deviceName || '알 수 없는 디바이스')));
+
+            const meta = document.createElement('div');
+            meta.style = 'font-size:12px;color:#6b7280;margin-top:4px;';
+            meta.textContent = `등록: ${new Date(pk.createdAt).toLocaleDateString('ko-KR')}` +
+                (pk.lastUsed ? ` · 마지막 사용: ${new Date(pk.lastUsed).toLocaleDateString('ko-KR')}` : '');
+
+            left.appendChild(title);
+            left.appendChild(meta);
+            row.appendChild(left);
+
+            const deleteBtn = document.createElement('button');
+            deleteBtn.type = 'button';
+            deleteBtn.className = 'delete-passkey-btn';
+            deleteBtn.dataset.id = String(pk.id || '');
+            deleteBtn.style = 'padding:6px 12px;background:#ef4444;color:white;border:none;border-radius:3px;cursor:pointer;font-size:12px;';
+            deleteBtn.textContent = '삭제';
+
+            row.appendChild(deleteBtn);
+            listEl.appendChild(row);
+        });
 
         document.querySelectorAll('.delete-passkey-btn').forEach(btn => {
             btn.addEventListener('click', async () => {
