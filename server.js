@@ -558,19 +558,30 @@ async function issueWsTicket(sessionId, bindCtx = null) {
     return ticket;
 }
 
+async function getAndDeleteRedisKey(key) {
+    if (typeof redis.getDel === "function") {
+        return await redis.getDel(key);
+    }
+    return await redis.eval(
+        `local v = redis.call("GET", KEYS[1])
+         if v then redis.call("DEL", KEYS[1]) end
+         return v`,
+        { keys: [key], arguments: [] }
+    );
+}
+
 async function consumeWsTicket(sessionId, ticket, bindCtx = null) {
 	const sid = String(sessionId || '').trim();
 	const tok = String(ticket || '').trim();
 	if (!sid || !tok) return false;
 	const key = `ws-ticket:${sid}:${tok}`;
-	const raw = await redis.get(key);
+	const raw = await getAndDeleteRedisKey(key);
 	if (!raw) return false;
 	let parsed = null;
 	try { parsed = JSON.parse(raw); } catch (_) { return false; }
 	if (parsed.ua && parsed.ua !== hashBindValue(bindCtx?.userAgent || "")) return false;
 	if (parsed.ip && parsed.ip !== hashIpPrefix(bindCtx?.clientIp || "")) return false;
 	if (parsed.origin && parsed.origin !== String(bindCtx?.origin || "")) return false;
-	await redis.del(key);
 	return true;
 }
 
@@ -604,14 +615,13 @@ async function consumeActionTicket(sessionId, action, resourceId, ticket, bindCt
 	const tok = String(ticket || '').trim();
 	if (!sid || !act || !rid || !tok) return false;
 	const key = `action-ticket:${sid}:${act}:${rid}:${tok}`;
-	const raw = await redis.get(key);
+	const raw = await getAndDeleteRedisKey(key);
 	if (!raw) return false;
 	let parsed = null;
 	try { parsed = JSON.parse(raw); } catch (_) { return false; }
 	if (parsed.ua && parsed.ua !== hashBindValue(bindCtx?.userAgent || "")) return false;
 	if (parsed.ip && parsed.ip !== hashIpPrefix(bindCtx?.clientIp || "")) return false;
 	if (parsed.origin && parsed.origin !== hashBindValue(normalizeTicketOrigin(bindCtx?.origin || ""))) return false;
-	await redis.del(key);
 	return true;
 }
 

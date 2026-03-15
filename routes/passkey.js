@@ -111,18 +111,12 @@ requireRecentReauth,
 	}
 
 	async function assertPasskeyLocked(redis, accountKey, ipKey) {
-		const uKey = `passkey-lock:user:${accountKey}`;
-		const iKey = `passkey-lock:ip:${ipKey}`;
+		const uKey = `passkey-lock-until:user:${accountKey}`;
+		const iKey = `passkey-lock-until:ip:${ipKey}`;
 		const [uRaw, iRaw] = await Promise.all([redis.get(uKey), redis.get(iKey)]);
 		const now = Date.now();
-		if (uRaw) {
-			const st = JSON.parse(uRaw);
-			if (st.lockedUntil && now < st.lockedUntil) return { ok: false, retryAfterMs: st.lockedUntil - now };
-		}
-		if (iRaw) {
-			const st = JSON.parse(iRaw);
-			if (st.lockedUntil && now < st.lockedUntil) return { ok: false, retryAfterMs: st.lockedUntil - now };
-		}
+		if (uRaw && Number(uRaw) > now) return { ok: false, retryAfterMs: Number(uRaw) - now };
+		if (iRaw && Number(iRaw) > now) return { ok: false, retryAfterMs: Number(iRaw) - now };
 		return { ok: true };
 	}
 
@@ -130,27 +124,28 @@ requireRecentReauth,
 		const PASSKEY_MAX_FAILS_USER = Number(process.env.PASSKEY_MAX_FAILS_USER || 8);
 		const PASSKEY_MAX_FAILS_IP = Number(process.env.PASSKEY_MAX_FAILS_IP || 20);
 		const PASSKEY_LOCK_MS = Number(process.env.PASSKEY_LOCK_MS || (10 * 60 * 1000));
-		const now = Date.now();
-		const incr = async (key, max) => {
-			const raw = await redis.get(key);
-			const cur = raw ? JSON.parse(raw) : { failCount: 0, lockedUntil: 0 };
-			cur.failCount += 1;
-			if (cur.failCount >= max) {
-				cur.lockedUntil = now + PASSKEY_LOCK_MS;
-				cur.failCount = 0;
+		const incr = async (failKey, lockKey, max) => {
+			const count = await redis.incr(failKey);
+			if (count === 1) await redis.pExpire(failKey, PASSKEY_LOCK_MS * 2);
+			if (count >= max) {
+				const tx = redis.multi();
+				tx.set(lockKey, String(Date.now() + PASSKEY_LOCK_MS), { PX: PASSKEY_LOCK_MS });
+				tx.del(failKey);
+				await tx.exec();
 			}
-			await redis.set(key, JSON.stringify(cur), { PX: PASSKEY_LOCK_MS * 2 });
 		};
 		await Promise.all([
-			incr(`passkey-lock:user:${accountKey}`, PASSKEY_MAX_FAILS_USER),
-			incr(`passkey-lock:ip:${ipKey}`, PASSKEY_MAX_FAILS_IP)
+			incr(`passkey-fails:user:${accountKey}`, `passkey-lock-until:user:${accountKey}`, PASSKEY_MAX_FAILS_USER),
+			incr(`passkey-fails:ip:${ipKey}`, `passkey-lock-until:ip:${ipKey}`, PASSKEY_MAX_FAILS_IP)
 		]);
 	}
 
 	async function clearPasskeyFailures(redis, accountKey, ipKey) {
 		await Promise.all([
-			redis.del(`passkey-lock:user:${accountKey}`),
-			redis.del(`passkey-lock:ip:${ipKey}`)
+			redis.del(`passkey-fails:user:${accountKey}`),
+			redis.del(`passkey-lock-until:user:${accountKey}`),
+			redis.del(`passkey-fails:ip:${ipKey}`),
+			redis.del(`passkey-lock-until:ip:${ipKey}`)
 		]);
 	}
 

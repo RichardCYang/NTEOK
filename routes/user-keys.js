@@ -67,10 +67,17 @@ module.exports = (dependencies) => {
             const session = await getSessionFromRequest(req);
             if (!session) return res.status(401).json({ error: '세션이 만료되었습니다.' });
 
-            const ticket = await issueActionTicket(session.id, 'export-private-key', kid, {
+            const bindCtx = {
     userAgent: req.headers['user-agent'] || '',
-    clientIp: getClientIpFromRequest(req)
-});
+    clientIp: getClientIpFromRequest(req),
+    origin: req.headers.origin || req.headers.referer || ''
+};
+const ticket = await issueActionTicket(
+    session.id,
+    'export-private-key',
+    kid,
+    bindCtx
+);
             res.json({ ok: true, ticket });
         } catch (error) {
             logError('POST /api/user-keys/:kid/export-ticket', error);
@@ -91,10 +98,18 @@ module.exports = (dependencies) => {
             const session = await getSessionFromRequest(req);
             if (!session) return res.status(401).json({ error: '세션이 만료되었습니다.' });
 
-            const valid = await consumeActionTicket(session.id, 'export-private-key', kid, ticket, {
+            const bindCtx = {
     userAgent: req.headers['user-agent'] || '',
-    clientIp: getClientIpFromRequest(req)
-});
+    clientIp: getClientIpFromRequest(req),
+    origin: req.headers.origin || req.headers.referer || ''
+};
+const valid = await consumeActionTicket(
+    session.id,
+    'export-private-key',
+    kid,
+    ticket,
+    bindCtx
+);
             if (!valid) return res.status(403).json({ error: '유효하지 않거나 만료된 티켓입니다.' });
 
             const keyPair = await userKeysRepo.getKeyPairByKid(kid);

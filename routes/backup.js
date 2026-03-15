@@ -296,10 +296,17 @@ module.exports = (dependencies) => {
             try {
                 const session = await getSessionFromRequest(req);
                 if (!session) return res.status(401).json({ error: '세션이 만료되었습니다.' });
-                const ticket = await issueActionTicket(session.id, 'backup-export', String(req.user.id), {
+                const bindCtx = {
     userAgent: req.headers['user-agent'] || '',
-    clientIp: getClientIpFromRequest(req)
-});
+    clientIp: getClientIpFromRequest(req),
+    origin: req.headers.origin || req.headers.referer || ''
+};
+const ticket = await issueActionTicket(
+    session.id,
+    'backup-export',
+    String(req.user.id),
+    bindCtx
+);
                 res.json({ ok: true, ticket });
             } catch (e) {
                 logError('POST /api/backup/export-ticket', e);
@@ -821,10 +828,18 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
             if (!session) return res.status(401).json({ error: '세션이 만료되었습니다.' });
 
             const { ticket } = req.body || {};
-            const valid = await consumeActionTicket(session.id, 'backup-export', String(userId), String(ticket || ''), {
+            const bindCtx = {
     userAgent: req.headers['user-agent'] || '',
-    clientIp: getClientIpFromRequest(req)
-});
+    clientIp: getClientIpFromRequest(req),
+    origin: req.headers.origin || req.headers.referer || ''
+};
+const valid = await consumeActionTicket(
+    session.id,
+    'backup-export',
+    String(userId),
+    String(ticket || ''),
+    bindCtx
+);
             if (!valid) return res.status(403).json({ error: '유효하지 않거나 만료된 export 티켓입니다.' });
 
             res.set('Cache-Control', 'no-store, max-age=0');
@@ -1408,12 +1423,17 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
                     if (buf) {
                         if (isImage && !isSupportedImageBuffer(buf, unique.filename)) return false;
                         if (!isImage) {
+                            const tp = path.join(tempDir, `v-${crypto.randomBytes(8).toString('hex')}`);
                             try {
-                                const tp = path.join(tempDir, `v-${crypto.randomBytes(8).toString('hex')}`);
                                 fs.writeFileSync(tp, buf);
                                 await assertSafeAttachmentFile(tp, unique.filename);
-                                fs.unlinkSync(tp);
-                            } catch (e) { return false; }
+                            } catch (e) {
+                                return false;
+                            } finally {
+                                try {
+                                    if (fs.existsSync(tp)) fs.unlinkSync(tp);
+                                } catch (_) {}
+                            }
                         }
                         fs.writeFileSync(destPath, buf);
                     } else {
@@ -1544,16 +1564,28 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
                 } catch (_) {}
             }
 
-            await connection.commit();
-            
-            for (const f of stagingFiles) {
-                try {
-                    fs.renameSync(f.stagingPath, f.targetPath);
-                } catch (e) {
-                    fs.copyFileSync(f.stagingPath, f.targetPath);
-                    fs.unlinkSync(f.stagingPath);
-                }
-            }
+const finalizedTargets = [];
+try {
+    for (const f of stagingFiles) {
+        try {
+            fs.renameSync(f.stagingPath, f.targetPath);
+        } catch (e) {
+            fs.copyFileSync(f.stagingPath, f.targetPath);
+            fs.unlinkSync(f.stagingPath);
+        }
+        finalizedTargets.push(f.targetPath);
+    }
+
+    await connection.commit();
+} catch (finalizeError) {
+    try { await connection.rollback(); } catch (_) {}
+    for (const targetPath of finalizedTargets.reverse()) {
+        try {
+            if (fs.existsSync(targetPath)) fs.unlinkSync(targetPath);
+        } catch (_) {}
+    }
+    throw finalizeError;
+}
 
             if (uploadedFile && fs.existsSync(uploadedFile.path)) fs.unlinkSync(uploadedFile.path);
             res.json({
@@ -1576,8 +1608,13 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
         } finally {
             if (redis) {
                 try {
-                    const current = await redis.get(importLockKey);
-                    if (current === importLockValue) await redis.del(importLockKey);
+                    await redis.eval(
+                        `if redis.call("GET", KEYS[1]) == ARGV[1]
+                          then return redis.call("DEL", KEYS[1])
+                          else return 0
+                         end`,
+                        { keys: [importLockKey], arguments: [importLockValue] }
+                    );
                 } catch (_) {}
             }
             if (connection) connection.release();

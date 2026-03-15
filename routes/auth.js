@@ -533,8 +533,16 @@ module.exports = (dependencies) => {
                 values
             );
 
-            const currentSession = await getSession(req.cookies[SESSION_COOKIE_NAME]);
-            if (currentSession?.id) {
+            const sessionFromReq = await dependencies.getSessionFromRequest(req);
+            const currentSessionId =
+                sessionFromReq?.id || String(req.cookies[SESSION_COOKIE_NAME] || '').trim();
+            const currentSession = currentSessionId ? await getSession(currentSessionId) : null;
+
+            if (
+                currentSession &&
+                currentSession.type === "auth" &&
+                Number(currentSession.userId) === Number(req.user.id)
+            ) {
                 const now = Date.now();
                 const newSessionId = crypto.randomBytes(24).toString("hex");
                 const remainingTtl = currentSession.absoluteExpiry
@@ -543,15 +551,17 @@ module.exports = (dependencies) => {
 
                 const rotatedSession = {
                     ...currentSession,
+                    expiresAt: now + SESSION_TTL_MS,
                     lastStepUpAt: now,
-                    lastSensitiveStepUpAt: now
+                    lastSensitiveStepUpAt: now,
+                    reauthenticatedAt: now
                 };
 
                 await saveSession(newSessionId, rotatedSession, remainingTtl);
                 try {
-                    dependencies.wsCloseConnectionsForSession(currentSession.id, 1008, "Security settings changed");
+                    dependencies.wsCloseConnectionsForSession(currentSessionId, 1008, "Security settings changed");
                 } catch (_) {}
-                await revokeSession(currentSession.id, "security-settings-rotate");
+                await revokeSession(currentSessionId, "security-settings-rotate");
 
                 const allSessionIds = await listUserSessions(req.user.id);
                 await Promise.all(

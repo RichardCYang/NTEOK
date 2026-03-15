@@ -12,18 +12,12 @@ const RATE_LIMIT_IPV6_SUBNET = (() => {
 })();
 
 async function assertNotLocked(redis, accountKey, ipKey) {
-	const uKey = `totp-lock:user:${accountKey}`;
-	const iKey = `totp-lock:ip:${ipKey}`;
+	const uKey = `totp-lock-until:user:${accountKey}`;
+	const iKey = `totp-lock-until:ip:${ipKey}`;
 	const [uRaw, iRaw] = await Promise.all([redis.get(uKey), redis.get(iKey)]);
 	const now = Date.now();
-	if (uRaw) {
-		const st = JSON.parse(uRaw);
-		if (st.lockedUntil && now < st.lockedUntil) return { ok: false, retryAfterMs: st.lockedUntil - now };
-	}
-	if (iRaw) {
-		const st = JSON.parse(iRaw);
-		if (st.lockedUntil && now < st.lockedUntil) return { ok: false, retryAfterMs: st.lockedUntil - now };
-	}
+	if (uRaw && Number(uRaw) > now) return { ok: false, retryAfterMs: Number(uRaw) - now };
+	if (iRaw && Number(iRaw) > now) return { ok: false, retryAfterMs: Number(iRaw) - now };
 	return { ok: true };
 }
 
@@ -31,27 +25,28 @@ async function recordTotpFailure(redis, accountKey, ipKey) {
 	const TOTP_MAX_FAILS_USER = Number(process.env.TOTP_MAX_FAILS_USER || 8);
 	const TOTP_MAX_FAILS_IP = Number(process.env.TOTP_MAX_FAILS_IP || 20);
 	const TOTP_LOCK_MS = Number(process.env.TOTP_LOCK_MS || (10 * 60 * 1000));
-	const now = Date.now();
-	const incr = async (key, max) => {
-		const raw = await redis.get(key);
-		const cur = raw ? JSON.parse(raw) : { failCount: 0, lockedUntil: 0 };
-		cur.failCount += 1;
-		if (cur.failCount >= max) {
-			cur.lockedUntil = now + TOTP_LOCK_MS;
-			cur.failCount = 0;
+	const incr = async (failKey, lockKey, max) => {
+		const count = await redis.incr(failKey);
+		if (count === 1) await redis.pExpire(failKey, TOTP_LOCK_MS * 2);
+		if (count >= max) {
+			const tx = redis.multi();
+			tx.set(lockKey, String(Date.now() + TOTP_LOCK_MS), { PX: TOTP_LOCK_MS });
+			tx.del(failKey);
+			await tx.exec();
 		}
-		await redis.set(key, JSON.stringify(cur), { PX: TOTP_LOCK_MS * 2 });
 	};
 	await Promise.all([
-		incr(`totp-lock:user:${accountKey}`, TOTP_MAX_FAILS_USER),
-		incr(`totp-lock:ip:${ipKey}`, TOTP_MAX_FAILS_IP)
+		incr(`totp-fails:user:${accountKey}`, `totp-lock-until:user:${accountKey}`, TOTP_MAX_FAILS_USER),
+		incr(`totp-fails:ip:${ipKey}`, `totp-lock-until:ip:${ipKey}`, TOTP_MAX_FAILS_IP)
 	]);
 }
 
 async function clearTotpFailures(redis, accountKey, ipKey) {
 	await Promise.all([
-		redis.del(`totp-lock:user:${accountKey}`),
-		redis.del(`totp-lock:ip:${ipKey}`)
+		redis.del(`totp-fails:user:${accountKey}`),
+		redis.del(`totp-lock-until:user:${accountKey}`),
+		redis.del(`totp-fails:ip:${ipKey}`),
+		redis.del(`totp-lock-until:ip:${ipKey}`)
 	]);
 }
 
