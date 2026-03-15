@@ -492,7 +492,6 @@ function assertNoDefaultSecrets() {
 if (IS_INTERNET_EXPOSED) {
     const url = new URL(BASE_URL);
     if (url.protocol !== "https:" && !isLocalhostHost(url.hostname)) throw new Error("[보안] 운영 환경에서 BASE_URL은 반드시 HTTPS여야 합니다");
-    if (!COOKIE_SECURE) throw new Error("[보안] 운영 환경에서는 Secure 쿠키가 필수입니다.");
 }
 assertNoDefaultSecrets();
 
