@@ -53,6 +53,61 @@ module.exports = (dependencies) => {
 		}
 	}
 
+	async function finalizeInteractiveLogin(conn, req, {
+		userId,
+		tempSessionId,
+		revokeReasonOnSuccess
+	}) {
+		const [userRows] = await conn.execute(
+			`SELECT username,
+					block_duplicate_login,
+					country_whitelist_enabled,
+					allowed_login_countries
+			   FROM users
+			  WHERE id = ?`,
+			[userId]
+		);
+		if (userRows.length === 0) return { ok: false, type: 'auth' };
+
+		const {
+			username,
+			block_duplicate_login,
+			country_whitelist_enabled,
+			allowed_login_countries
+		} = userRows[0];
+
+		const clientIp = getClientIp(req);
+		const countryCheck = checkCountryWhitelist(
+			{ country_whitelist_enabled, allowed_login_countries },
+			clientIp
+		);
+		if (!countryCheck.allowed) {
+			await recordLoginAttempt(pool, {
+				userId,
+				username,
+				ipAddress: clientIp,
+				port: req.connection.remotePort || 0,
+				success: false,
+				failureReason: countryCheck.reason,
+				userAgent: req.headers['user-agent'] || null
+			});
+			if (tempSessionId) await revokeSession(tempSessionId, "country-check-failed");
+			return { ok: false, type: 'country' };
+		}
+
+		const sessionResult = await createSession(
+			{ id: userId, username, blockDuplicateLogin: block_duplicate_login },
+			buildSessionContextFromReq(req, getClientIp)
+		);
+		if (!sessionResult.success) {
+			if (tempSessionId) await revokeSession(tempSessionId, "duplicate-login-blocked");
+			return { ok: false, type: 'duplicate', error: sessionResult.error };
+		}
+
+		if (tempSessionId) await revokeSession(tempSessionId, revokeReasonOnSuccess);
+		return { ok: true, sessionId: sessionResult.sessionId, username };
+	}
+
 	async function assertPasskeyLocked(redis, accountKey, ipKey) {
 		const uKey = `passkey-lock:user:${accountKey}`;
 		const iKey = `passkey-lock:ip:${ipKey}`;
@@ -364,6 +419,7 @@ module.exports = (dependencies) => {
 	});
 
 	router.post("/login/userless/options", passkeyLimiter, requireSameOriginForAuth, async (req, res) => {
+		if (!verifyPreAuthCsrfToken(req)) return res.status(403).json({ error: "유효하지 않은 요청입니다." });
 		try {
 			const options = await generateAuthenticationOptions({ rpID: rpID, timeout: 60000, userVerification: 'required' });
 			const now = new Date();
@@ -478,7 +534,8 @@ module.exports = (dependencies) => {
 		}
 	});
 
-	router.post("/authenticate/options", requireSameOriginForAuth, async (req, res) => {
+	router.post("/authenticate/options", passkeyLimiter, requireSameOriginForAuth, async (req, res) => {
+		if (!verifyPreAuthCsrfToken(req)) return res.status(403).json({ error: "유효하지 않은 요청입니다." });
 		try {
 			const tempSessionId = get2faCookie(req);
 			if (!tempSessionId) return res.status(400).json({ error: "세션 정보가 없습니다." });
@@ -564,19 +621,18 @@ module.exports = (dependencies) => {
 			const now = new Date();
 			const nowStr = formatDateForDb(now);
 			await conn.execute("UPDATE passkeys SET counter = ?, last_used_at = ? WHERE id = ?", [newCounter, nowStr, passkey.id]);
-			const [userRows] = await conn.execute("SELECT username, block_duplicate_login FROM users WHERE id = ?", [userId]);
-			if (userRows.length === 0) {
+			const finalizeResult = await finalizeInteractiveLogin(conn, req, {
+				userId,
+				tempSessionId,
+				revokeReasonOnSuccess: "login-complete"
+			});
+			if (!finalizeResult.ok) {
 				await conn.commit();
+				if (finalizeResult.type === 'country') return res.status(403).json({ error: "현재 위치에서는 로그인할 수 없습니다." });
+				if (finalizeResult.type === 'duplicate') return res.status(409).json({ error: finalizeResult.error, code: 'DUPLICATE_LOGIN_BLOCKED' });
 				return genericPasskeyFailure(res);
 			}
-			const { username, block_duplicate_login } = userRows[0];
-			const sessionResult = await createSession({ id: userId, username: username, blockDuplicateLogin: block_duplicate_login }, buildSessionContextFromReq(req, getClientIp));
-			if (!sessionResult.success) {
-				await conn.commit();
-				await revokeSession(tempSessionId, "duplicate-login-blocked");
-				return res.status(409).json({ error: sessionResult.error, code: 'DUPLICATE_LOGIN_BLOCKED' });
-			}
-			const sessionId = sessionResult.sessionId;
+			const { sessionId, username } = finalizeResult;
 			await conn.commit();
 			await revokeSession(tempSessionId, "login-complete");
 			res.clearCookie(TWO_FA_COOKIE_NAME, TWO_FA_COOKIE_OPTS);
