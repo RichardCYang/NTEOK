@@ -2,6 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 
 const candidates = [
+	path.join("node_modules", "@simplewebauthn", "browser", "dist", "bundle", "index.umd.min.js"),
+	path.join("node_modules", "@simplewebauthn", "browser", "dist", "bundle", "index.es5.umd.min.js"),
 	path.join("node_modules", "@simplewebauthn", "browser", "dist", "bundle", "index.js"),
 	path.join("node_modules", "@simplewebauthn", "browser", "dist", "bundle", "index.mjs"),
 	path.join("node_modules", "@simplewebauthn", "browser", "dist", "index.js"),

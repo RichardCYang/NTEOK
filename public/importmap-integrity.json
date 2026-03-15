@@ -24,5 +24,11 @@
   "/lib/tiptap-extensions/table-header.js": "sha384-7oIRHSVcNFVMdcCcdYChYknWTvMDd6esMOyT4h46N0o8to4SaOMu4YEWgPU7B+Uj",
   "/lib/tiptap-extensions/table-cell.js": "sha384-Pk1TGMloeIbCA5gaFGCzE8rqls5hZML4ngEsC0ktaFAVHzGZZmJLp8EnUkj78iws",
   "/lib/tiptap-extensions/prosemirror-tables.js": "sha384-NxJG1Hcfvp/DrnWID3fXw1aKdDB26jppBDS5jJQX7omctTMdmjWI/JiCBrQEg4Wx",
-  "/lib/dompurify/dompurify.js": "sha384-Xk7Yg8fWMvfON8XbcW6fk/H2p/Mb6BzhR0qZF2aS3Z41r+aZyJsAhA3z5eCUSYcq"
+  "/lib/dompurify/dompurify.js": "sha384-Xk7Yg8fWMvfON8XbcW6fk/H2p/Mb6BzhR0qZF2aS3Z41r+aZyJsAhA3z5eCUSYcq",
+  "/lib/simplewebauthn/browser.js": "sha384-yAwqL7rTyGVMT9a0Dcn7eXxCO+R5i9tIaSscz0HJYqv2/+HktDkQkJHF56oDHbxc",
+  "/lib/tiptap/tiptap-for-browser.min.js": "sha384-DNpMWalZtNA/SI2wYU3aEBCTb+OYJ0dwNsMx/H7Nvj/kOb99DKiTm/5hh9d+4yu5",
+  "/lib/katex/katex.min.js": "sha384-XjKyOOlGwcjNTAIQHIpgOno0Hl1YQqzUOEleOLALmuqehneUG+vnGctmUb0ZY0l8",
+  "/lib/html2canvas/html2canvas.min.js": "sha384-WGzx50h4v8NjwbATCN/4CosVmEIDpZcgcV7wAicoNu/O1agE4s9fn7HNqVhkn/hI",
+  "/lib/jspdf/jspdf.umd.min.js": "sha384-yHOtnsGdlMTUp9Ms8VHzgbg6kxjCkt9HlQw72Z3A21SnFoZBmDAFwpCP/SNcfWvz",
+  "/lib/sortablejs/Sortable.min.js": "sha384-HQ7gXypz4DSoOWacB4B/KU0i99HeCt4WcVrk2Me6Lg2btMz0ICdiyCAIy+v6b5pd"
 }
