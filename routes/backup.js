@@ -296,7 +296,10 @@ module.exports = (dependencies) => {
             try {
                 const session = await getSessionFromRequest(req);
                 if (!session) return res.status(401).json({ error: '세션이 만료되었습니다.' });
-                const ticket = await issueActionTicket(session.id, 'backup-export', String(req.user.id));
+                const ticket = await issueActionTicket(session.id, 'backup-export', String(req.user.id), {
+    userAgent: req.headers['user-agent'] || '',
+    clientIp: getClientIpFromRequest(req)
+});
                 res.json({ ok: true, ticket });
             } catch (e) {
                 logError('POST /api/backup/export-ticket', e);
@@ -818,7 +821,10 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
             if (!session) return res.status(401).json({ error: '세션이 만료되었습니다.' });
 
             const { ticket } = req.body || {};
-            const valid = await consumeActionTicket(session.id, 'backup-export', String(userId), String(ticket || ''));
+            const valid = await consumeActionTicket(session.id, 'backup-export', String(userId), String(ticket || ''), {
+    userAgent: req.headers['user-agent'] || '',
+    clientIp: getClientIpFromRequest(req)
+});
             if (!valid) return res.status(403).json({ error: '유효하지 않거나 만료된 export 티켓입니다.' });
 
             res.set('Cache-Control', 'no-store, max-age=0');

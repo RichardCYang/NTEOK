@@ -370,7 +370,7 @@ function requireSameOriginForPreview(req, res, next) {
         );
 
         const sfs = String(req.headers['sec-fetch-site'] || '').toLowerCase();
-        if (sfs && sfs !== 'same-origin' && sfs !== 'same-site') return res.status(403).json({ error: '요청 출처가 유효하지 않습니다.' });
+        if (sfs && sfs !== 'same-origin') return res.status(403).json({ error: '요청 출처가 유효하지 않습니다.' });
 
         const origin = req.headers.origin;
         const referer = req.headers.referer;
@@ -435,6 +435,11 @@ module.exports = (dependencies) => {
     }
 
     const previewNonceStore = new Map();
+    const previewProxyEnabled = !IS_INTERNET_EXPOSED || Boolean(redis);
+
+    function hashPreviewUserAgent(ua) {
+        return crypto.createHash('sha256').update(String(ua || '')).digest('hex');
+    }
 
     function hashPreviewSessionBinding(sid) {
         if (!sid) return 'none';
@@ -447,7 +452,7 @@ module.exports = (dependencies) => {
         if (!opaqueId) return res.status(403).json({ error: "접근 권한이 없습니다." });
 
         const sfs = req.headers['sec-fetch-site'];
-        if (typeof sfs === 'string' && sfs && sfs !== 'same-origin' && sfs !== 'same-site')
+        if (typeof sfs === 'string' && sfs && sfs !== 'same-origin')
             return res.status(403).json({ error: "접근 권한이 없습니다." });
 
         const origin = req.headers['origin'] || req.headers['referer'];
@@ -472,7 +477,7 @@ module.exports = (dependencies) => {
         return `${body}.${sig}`;
     }
 
-    async function verifyAndConsumePreviewTicket(token, expectedUserId, expectedSidHash = null) {
+    async function verifyAndConsumePreviewTicket(token, expectedUserId, expectedSidHash = null, opts = {}) {
         if (typeof token !== 'string' || !token.includes('.')) throw new Error('BAD_TICKET');
         const [body, sig] = token.split('.', 2);
         const expectedSig = crypto.createHmac('sha256', PROXY_SECRET).update(body).digest('base64url');
@@ -480,6 +485,8 @@ module.exports = (dependencies) => {
         const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
         if (Number(payload.uid) !== Number(expectedUserId)) throw new Error('BAD_TICKET_UID');
         if (expectedSidHash && payload.sidHash !== expectedSidHash) throw new Error('BAD_TICKET_SID');
+        if (opts.expectedOrigin && payload.origin !== opts.expectedOrigin) throw new Error('BAD_TICKET_ORIGIN');
+        if (opts.expectedUaHash && payload.uaHash !== opts.expectedUaHash) throw new Error('BAD_TICKET_UA');
         if (!payload.exp || Date.now() > Number(payload.exp)) throw new Error('TICKET_EXPIRED');
         if (!payload.nonce) throw new Error('TICKET_REPLAY');
 
@@ -999,7 +1006,16 @@ module.exports = (dependencies) => {
         let verified = null;
         try {
             const sidHash = hashPreviewSessionBinding(req.cookies?.[SESSION_COOKIE_NAME] || '');
-            verified = await verifyAndConsumePreviewTicket(String(ticket || ''), Number(req.user.id), sidHash);
+            const expectedOrigin = typeof req.headers.origin === 'string' && req.headers.origin
+                ? new URL(req.headers.origin).origin
+                : null;
+            const expectedUaHash = hashPreviewUserAgent(req.headers['user-agent'] || '');
+            verified = await verifyAndConsumePreviewTicket(
+                String(ticket || ''),
+                Number(req.user.id),
+                sidHash,
+                { expectedOrigin, expectedUaHash }
+            );
         } catch (_) {
             verified = null;
         }
@@ -1161,13 +1177,19 @@ module.exports = (dependencies) => {
                 ? await resolvePublicOutboundAddresses(new URL(faviconUrl).hostname, isPublicRoutableIP)
                 : [];
             const sidHash = hashPreviewSessionBinding(req.cookies?.[SESSION_COOKIE_NAME] || '');
-            const ticket = faviconUrl
+            const reqOrigin = typeof req.headers.origin === 'string' && req.headers.origin
+                ? new URL(req.headers.origin).origin
+                : null;
+            const uaHash = hashPreviewUserAgent(req.headers['user-agent'] || '');
+            const ticket = (previewProxyEnabled && faviconUrl)
                 ? signPreviewTicket({
                     uid: Number(req.user.id),
                     sidHash,
                     url: faviconUrl,
                     defaultHost: finalUrl.hostname,
                     allowedIps: faviconAllowedIps,
+                    origin: reqOrigin,
+                    uaHash,
                     exp: Date.now() + PREVIEW_TICKET_TTL_MS,
                     nonce: crypto.randomBytes(16).toString('hex')
                   })
@@ -1176,7 +1198,7 @@ module.exports = (dependencies) => {
             if (opaqueId && redis) {
                 await redis.set(`favicon-ticket:${opaqueId}`, ticket, { EX: 60 });
             }
-            const favicon = faviconUrl
+            const favicon = (ticket && opaqueId)
                 ? `/api/pages/proxy-favicon?id=${encodeURIComponent(opaqueId)}`
                 : buildGeneratedBookmarkFaviconUrl(finalUrl.hostname);
 

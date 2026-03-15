@@ -531,42 +531,78 @@ const CSRF_HMAC_KEY = Buffer.from(
 const WS_TICKET_TTL_MS = 30 * 1000;
 const ACTION_TICKET_TTL_MS = 30 * 1000;
 
-async function issueWsTicket(sessionId) {
+function hashBindValue(v) {
+    return crypto.createHash("sha256").update(String(v || "")).digest("hex");
+}
+
+function hashIpPrefix(ip) {
+    const str = String(ip || "");
+    if (!str) return "";
+    const parts = str.split(".");
+    if (parts.length === 4) return hashBindValue(parts.slice(0, 3).join(".") + ".0");
+    const v6 = str.split(":");
+    if (v6.length >= 4) return hashBindValue(v6.slice(0, 4).join(":") + "::");
+    return hashBindValue(str);
+}
+
+async function issueWsTicket(sessionId, bindCtx = null) {
     const sid = String(sessionId || '').trim();
     if (!sid) throw new Error('invalid-session');
     const ticket = crypto.randomBytes(32).toString('base64url');
-    await redis.set(`ws-ticket:${sid}:${ticket}`, '1', { PX: WS_TICKET_TTL_MS, NX: true });
+    const payload = JSON.stringify({
+        ua: hashBindValue(bindCtx?.userAgent || ""),
+        ip: hashIpPrefix(bindCtx?.clientIp || ""),
+        origin: String(bindCtx?.origin || "")
+    });
+    await redis.set(`ws-ticket:${sid}:${ticket}`, payload, { PX: WS_TICKET_TTL_MS, NX: true });
     return ticket;
 }
 
-async function consumeWsTicket(sessionId, ticket) {
+async function consumeWsTicket(sessionId, ticket, bindCtx = null) {
     const sid = String(sessionId || '').trim();
     const tok = String(ticket || '').trim();
     if (!sid || !tok) return false;
     const key = `ws-ticket:${sid}:${tok}`;
-    const deleted = await redis.del(key);
-    return deleted === 1;
+    const raw = await redis.get(key);
+    if (!raw) return false;
+    await redis.del(key);
+    let parsed = null;
+    try { parsed = JSON.parse(raw); } catch (_) { return false; }
+    if (parsed.ua && parsed.ua !== hashBindValue(bindCtx?.userAgent || "")) return false;
+    if (parsed.ip && parsed.ip !== hashIpPrefix(bindCtx?.clientIp || "")) return false;
+    if (parsed.origin && parsed.origin !== String(bindCtx?.origin || "")) return false;
+    return true;
 }
 
-async function issueActionTicket(sessionId, action, resourceId) {
+async function issueActionTicket(sessionId, action, resourceId, bindCtx = null) {
     const sid = String(sessionId || '').trim();
     const act = String(action || '').trim();
     const rid = String(resourceId || '').trim();
     if (!sid || !act || !rid) throw new Error('invalid-action-ticket');
     const ticket = crypto.randomBytes(32).toString('base64url');
-    await redis.set(`action-ticket:${sid}:${act}:${rid}:${ticket}`, '1', { PX: ACTION_TICKET_TTL_MS, NX: true });
+    const payload = JSON.stringify({
+        ua: hashBindValue(bindCtx?.userAgent || ""),
+        ip: hashIpPrefix(bindCtx?.clientIp || "")
+    });
+    await redis.set(`action-ticket:${sid}:${act}:${rid}:${ticket}`, payload, { PX: ACTION_TICKET_TTL_MS, NX: true });
     return ticket;
 }
 
-async function consumeActionTicket(sessionId, action, resourceId, ticket) {
+async function consumeActionTicket(sessionId, action, resourceId, ticket, bindCtx = null) {
     const sid = String(sessionId || '').trim();
     const act = String(action || '').trim();
     const rid = String(resourceId || '').trim();
     const tok = String(ticket || '').trim();
     if (!sid || !act || !rid || !tok) return false;
     const key = `action-ticket:${sid}:${act}:${rid}:${tok}`;
-    const deleted = await redis.del(key);
-    return deleted === 1;
+    const raw = await redis.get(key);
+    if (!raw) return false;
+    await redis.del(key);
+    let parsed = null;
+    try { parsed = JSON.parse(raw); } catch (_) { return false; }
+    if (parsed.ua && parsed.ua !== hashBindValue(bindCtx?.userAgent || "")) return false;
+    if (parsed.ip && parsed.ip !== hashIpPrefix(bindCtx?.clientIp || "")) return false;
+    return true;
 }
 
 function generateCsrfTokenForSession(sessionId, purpose = "api") {

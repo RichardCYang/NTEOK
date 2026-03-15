@@ -106,7 +106,7 @@ module.exports = (dependencies) => {
 			);
 
 			const sfs = req.headers["sec-fetch-site"];
-			if (typeof sfs === "string" && sfs && sfs !== "same-origin" && sfs !== "same-site") return res.status(403).json({ error: "요청 출처가 유효하지 않습니다." });
+			if (typeof sfs === "string" && sfs && sfs !== "same-origin") return res.status(403).json({ error: "요청 출처가 유효하지 않습니다." });
 
 			const origin = req.headers.origin;
 			const referer = req.headers.referer;
@@ -123,7 +123,8 @@ module.exports = (dependencies) => {
 		}
 	}
 
-	router.get("/csrf", (req, res) => {
+	router.get("/csrf", requireSameOriginForAuth, (req, res) => {
+	    res.setHeader("Vary", "Origin, Referer, Sec-Fetch-Site");
 	    const token = generatePreAuthCsrfToken();
 	    res.cookie(PREAUTH_CSRF_COOKIE_NAME, token, {
 	        httpOnly: false,
@@ -671,7 +672,15 @@ module.exports = (dependencies) => {
     		const { getSessionFromRequest } = dependencies;
     		const session = await getSessionFromRequest(req);
     		if (!session) return res.status(401).json({ error: "로그인이 필요합니다." });
-    		const ticket = await issueWsTicket(session.id);
+    		const reqOrigin =
+				(typeof req.headers.origin === "string" && req.headers.origin)
+					? req.headers.origin
+					: new URL(BASE_URL).origin;
+		const ticket = await issueWsTicket(session.id, {
+			userAgent: req.headers["user-agent"] || "",
+			clientIp: getClientIp(req),
+			origin: reqOrigin
+		});
     		res.json({ ok: true, ticket });
     	} catch (error) {
     		logError("POST /api/auth/ws-ticket", error);

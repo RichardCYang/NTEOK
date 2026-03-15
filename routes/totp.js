@@ -170,7 +170,7 @@ module.exports = (dependencies) => {
 					.map(u => new URL(u).origin)
 			);
 			const sfs = req.headers["sec-fetch-site"];
-			if (typeof sfs === "string" && sfs && sfs !== "same-origin" && sfs !== "same-site") return res.status(403).json({ error: "요청 출처가 유효하지 않습니다." });
+			if (typeof sfs === "string" && sfs && sfs !== "same-origin") return res.status(403).json({ error: "요청 출처가 유효하지 않습니다." });
 			const origin = req.headers.origin;
 			const referer = req.headers.referer;
 			let reqOrigin = null;
