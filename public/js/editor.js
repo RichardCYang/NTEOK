@@ -48,17 +48,10 @@ export const EXAMPLE_CONTENT = `
 
 
 import { secureFetch, syncPageUpdatedAtPadding, escapeHtml } from './ui-utils.js';
-
-const TT_POLICY = window.trustedTypes?.createPolicy('nteok-sanitize', {
-    createHTML: (html) => html
-});
+import { setTrustedHTML } from './sanitize.js';
 
 function safeSetInnerHTML(element, html) {
-    if (TT_POLICY) {
-        element.innerHTML = TT_POLICY.createHTML(html);
-    } else {
-        element.innerHTML = html;
-    }
+    setTrustedHTML(element, html);
 }
 
 import { TextAlign } from "@tiptap/extension-text-align";

@@ -310,6 +310,23 @@ export function sanitizeEditorHtml(html) {
     return DOMPurify.sanitize(html, EDITOR_PURIFY_CONFIG);
 }
 
+export function toTrustedHTML(html) {
+    const raw = String(html ?? '');
+    if (window.__nteokTrustedTypesPolicy) return window.__nteokTrustedTypesPolicy.createHTML(raw);
+    return sanitizeEditorHtml(raw);
+}
+
+export function setTrustedHTML(element, html) {
+    if (!element) return;
+    element.innerHTML = toTrustedHTML(html);
+}
+
+export function createFragmentFromTrustedHTML(html) {
+    const template = document.createElement('template');
+    template.innerHTML = toTrustedHTML(html);
+    return template.content.cloneNode(true);
+}
+
 export function htmlToPlainText(html, { maxLength = 0 } = {}) {
     if (!html || typeof html !== 'string') return '';
     const HARD_LIMIT = 2000000; 

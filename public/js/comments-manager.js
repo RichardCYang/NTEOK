@@ -1,25 +1,12 @@
 import { secureFetch, escapeHtml } from './ui-utils.js';
-
-const TT_POLICY = window.trustedTypes?.createPolicy('nteok-sanitize', {
-    createHTML: (html) => html
-});
+import { setTrustedHTML, createFragmentFromTrustedHTML } from './sanitize.js';
 
 function safeSetInnerHTML(element, html) {
-    if (TT_POLICY) {
-        element.innerHTML = TT_POLICY.createHTML(html);
-    } else {
-        element.innerHTML = html;
-    }
+    setTrustedHTML(element, html);
 }
 
 function safeCreateElementFromHTML(html) {
-    const template = document.createElement('template');
-    if (TT_POLICY) {
-        template.innerHTML = TT_POLICY.createHTML(html);
-    } else {
-        template.innerHTML = html;
-    }
-    return template.content.cloneNode(true);
+    return createFragmentFromTrustedHTML(html);
 }
 
 const state = {

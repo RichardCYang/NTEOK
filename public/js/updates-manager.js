@@ -1,17 +1,10 @@
 import { get } from './api-utils.js';
 import { toggleModal, escapeHtml } from './ui-utils.js';
 import { loadPage } from './pages-manager.js';
-
-const TT_POLICY = window.trustedTypes?.createPolicy('nteok-sanitize', {
-    createHTML: (html) => html
-});
+import { setTrustedHTML } from './sanitize.js';
 
 function safeSetInnerHTML(element, html) {
-    if (TT_POLICY) {
-        element.innerHTML = TT_POLICY.createHTML(html);
-    } else {
-        element.innerHTML = html;
-    }
+    setTrustedHTML(element, html);
 }
 
 let appState = null;

@@ -1,17 +1,10 @@
 
 import { secureFetch, escapeHtmlAttr } from './ui-utils.js';
 import { appendPageScopeParam } from './url-utils.js';
-
-const TT_POLICY = window.trustedTypes?.createPolicy('nteok-sanitize', {
-    createHTML: (html) => html
-});
+import { setTrustedHTML } from './sanitize.js';
 
 function safeSetInnerHTML(element, html) {
-    if (TT_POLICY) {
-        element.innerHTML = TT_POLICY.createHTML(html);
-    } else {
-        element.innerHTML = html;
-    }
+    setTrustedHTML(element, html);
 }
 
 let state = null;

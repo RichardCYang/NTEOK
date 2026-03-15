@@ -2068,37 +2068,30 @@ app.use((req, res, next) => {
 
 app.use((req, res, next) => {
     const nonce = res.locals.cspNonce;
-    res.setHeader(
-        "Content-Security-Policy",
-        [
-            "default-src 'self'",
-            "base-uri 'self'",
-            "object-src 'none'",
-            "frame-ancestors 'none'",
-            "frame-src 'self' https://www.youtube.com https://youtube.com https://www.youtube-nocookie.com https://youtube-nocookie.com",
-            "form-action 'self'",
-            `script-src 'nonce-${nonce}' 'strict-dynamic'`,
-            `style-src-elem 'self' 'nonce-${nonce}' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://fonts.googleapis.com`,
-            "style-src-attr 'self' 'unsafe-inline'",
-            "font-src 'self' https://cdnjs.cloudflare.com https://fonts.gstatic.com",
-            "img-src 'self' data:",
-            "connect-src 'self'"
-        ].filter(Boolean).join("; ") + ";"
-    );
+    const csp = [
+        "default-src 'self'",
+        "base-uri 'self'",
+        "object-src 'none'",
+        "frame-ancestors 'none'",
+        "frame-src 'self' https://www.youtube.com https://youtube.com https://www.youtube-nocookie.com https://youtube-nocookie.com",
+        "form-action 'self'",
+        `script-src 'nonce-${nonce}' 'strict-dynamic'`,
+        `style-src-elem 'self' 'nonce-${nonce}' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://fonts.googleapis.com`,
+        "style-src-attr 'self' 'unsafe-inline'",
+        "font-src 'self' https://cdnjs.cloudflare.com https://fonts.gstatic.com",
+        "img-src 'self' data:",
+        "connect-src 'self'",
+        "require-trusted-types-for 'script'",
+        "trusted-types dompurify nteok-sanitize"
+    ].join("; ") + ";";
+
+    res.setHeader("Content-Security-Policy", csp);
 
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('X-Frame-Options', 'DENY');
     res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
 
     res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
-
-    res.setHeader(
-        'Content-Security-Policy',
-        [
-            "require-trusted-types-for 'script'",
-            "trusted-types dompurify nteok-sanitize"
-        ].join('; ') + ';'
-    );
 
     if (HSTS_ENABLED)
         res.setHeader('Strict-Transport-Security', 'max-age=15552000; includeSubDomains');
