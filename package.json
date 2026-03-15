@@ -6,23 +6,22 @@
 	"engines": {
 		"node": ">=20.20.0 <21 || >=22.22.0 <23 || >=24.13.0 <25 || >=25.3.0"
 	},
-"scripts": {
-	"test": "echo \"Error: no test specified\" && exit 1",
-	"sync:dompurify": "node -e \"require('fs').copyFileSync('node_modules/dompurify/dist/purify.es.mjs', 'public/lib/dompurify/dompurify.js')\"",
-	"sync:simplewebauthn": "node scripts/sync-simplewebauthn.mjs",
-	"sync:security-libs": "npm run sync:dompurify && npm run sync:simplewebauthn",
-	"postinstall": "npm run sync:security-libs && node scripts/update-integrity.mjs",
-	"prestart": "node scripts/assert-security-versions.mjs && node scripts/assert-local-lib-integrity.mjs && node scripts/check-public-leaks.mjs",
-	"start": "node server.js",
-	"security:pin-third-party": "node scripts/pin-third-party.mjs"
-},
+	"scripts": {
+		"test": "echo \"Error: no test specified\" && exit 1",
+		"sync:dompurify": "node -e \"require('fs').copyFileSync('node_modules/dompurify/dist/purify.es.mjs', 'public/lib/dompurify/dompurify.js')\"",
+		"sync:simplewebauthn": "node scripts/sync-simplewebauthn.mjs",
+		"sync:security-libs": "npm run sync:dompurify && npm run sync:simplewebauthn",
+		"postinstall": "npm run sync:security-libs && node scripts/update-integrity.mjs",
+		"prestart": "node scripts/assert-security-versions.mjs && node scripts/assert-local-lib-integrity.mjs && node scripts/check-public-leaks.mjs",
+		"start": "node server.js",
+		"security:pin-third-party": "node scripts/pin-third-party.mjs"
+	},
 	"author": "MrDSP",
 	"license": "ISC",
 	"dependencies": {
 		"@simplewebauthn/browser": "^13.2.2",
 		"@simplewebauthn/server": "^13.2.2",
 		"acme-client": "^5.4.0",
-		"yauzl": "^3.2.1",
 		"archiver": "^7.0.1",
 		"axios": "^1.13.5",
 		"bcrypt": "^6.0.0",
@@ -32,7 +31,7 @@
 		"dotenv": "^17.2.3",
 		"express": "^5.2.1",
 		"express-rate-limit": "^8.3.0",
-		"geoip-lite": "^1.4.10",
+		"geoip-lite": "^2.0.0",
 		"ipaddr.js": "^2.3.0",
 		"isomorphic-dompurify": "3.0.0",
 		"jsdom": "^28.1.0",
@@ -44,11 +43,13 @@
 		"speakeasy": "^2.0.0",
 		"ws": "^8.18.3",
 		"y-protocols": "^1.0.6",
+		"yauzl": "^3.2.1",
 		"yjs": "^13.6.18"
 	},
-	"overrides": {
-		"axios": "^1.13.5",
-		"dompurify": "3.3.2",
-		"minimatch": "^10.2.1"
-	}
+"overrides": {
+    "axios": "^1.13.5",
+    "dompurify": "3.3.2",
+    "minimatch": "^10.2.1",
+    "yauzl": "^3.2.1"
+  }
 }
