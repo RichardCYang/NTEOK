@@ -1408,6 +1408,50 @@ async function cleanupOrphanedFiles(pool, filePaths, excludePageId, pageOwnerUse
     }
 }
 
+async function reconcileOwnerAssetRefsForSave(pool, pageId, pageOwnerUserId, realtimeFiles, allowInsertOwnerRefs) {
+    const ownerFiles = (realtimeFiles || []).filter((file) => {
+        const parts = String(file?.ref || '').split("/");
+        const ownerId = parseInt(parts[0], 10);
+        return ownerId === Number(pageOwnerUserId) && (file.type === "paperclip" || file.type === "imgs");
+    });
+
+    if (allowInsertOwnerRefs) {
+        for (const file of ownerFiles) {
+            const filename = String(file.ref || "").split("/")[1];
+            if (!filename) continue;
+            await pool.execute(
+                `INSERT IGNORE INTO page_file_refs (page_id, owner_user_id, stored_filename, file_type, created_at)
+                 VALUES (?, ?, ?, ?, NOW())`,
+                [pageId, pageOwnerUserId, filename, file.type]
+            );
+        }
+    }
+
+    for (const fileType of ["paperclip", "imgs"]) {
+        const currentFiles = [...new Set(
+            ownerFiles
+                .filter(f => f.type === fileType)
+                .map(f => String(f.ref || "").split("/")[1])
+                .filter(Boolean)
+        )];
+
+        if (currentFiles.length > 0) {
+            await pool.execute(
+                `DELETE FROM page_file_refs
+                  WHERE page_id = ? AND owner_user_id = ? AND file_type = ?
+                    AND stored_filename NOT IN (${currentFiles.map(() => "?").join(",")})`,
+                [pageId, pageOwnerUserId, fileType, ...currentFiles]
+            );
+        } else {
+            await pool.execute(
+                `DELETE FROM page_file_refs
+                  WHERE page_id = ? AND owner_user_id = ? AND file_type = ?`,
+                [pageId, pageOwnerUserId, fileType]
+            );
+        }
+    }
+}
+
 async function saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc, opts = {}) {
     try {
         const { epoch, allowDeleted = false, forceClearYjsState = false, preserveDbMetadata = false, actorUserId = null } = opts;
@@ -1505,42 +1549,16 @@ async function saveYjsDocToDatabase(pool, sanitizeHtmlContent, pageId, ydoc, opt
 
         if (!isEncrypted && (shouldUpdateContent || newFilesFromRealtimeDoc.length > 0)) {
             try {
-                for (const file of newFilesFromRealtimeDoc) {
-                    const parts = file.ref.split("/");
-                    const ownerId = parseInt(parts[0], 10);
-                    const filename = parts[1];
-                    if (ownerId === pageOwnerUserId) {
-                        await pool.execute(
-                            `INSERT IGNORE INTO page_file_refs (page_id, owner_user_id, stored_filename, file_type, created_at)
-                             VALUES (?, ?, ?, ?, NOW())`,
-                            [pageId, ownerId, filename, file.type]
-                        );
-                    }
-                }
+                const allowInsertOwnerRefs =
+                    actorUserId == null || Number(actorUserId) === Number(pageOwnerUserId);
 
-                const currentPaperclipFiles = newFilesFromRealtimeDoc.filter(f => f.type === "paperclip").map(f => f.ref.split("/")[1]);
-                if (currentPaperclipFiles.length > 0) {
-                    await pool.execute(
-                        `DELETE FROM page_file_refs
-                          WHERE page_id = ? AND owner_user_id = ? AND file_type = "paperclip"
-                            AND stored_filename NOT IN (${currentPaperclipFiles.map(() => "?").join(",")})`,
-                        [pageId, pageOwnerUserId, ...currentPaperclipFiles]
-                    );
-                } else {
-                    await pool.execute(`DELETE FROM page_file_refs WHERE page_id = ? AND owner_user_id = ? AND file_type = "paperclip"`, [pageId, pageOwnerUserId]);
-                }
-
-                const currentImgsFiles = newFilesFromRealtimeDoc.filter(f => f.type === "imgs").map(f => f.ref.split("/")[1]);
-                if (currentImgsFiles.length > 0) {
-                    await pool.execute(
-                        `DELETE FROM page_file_refs
-                          WHERE page_id = ? AND owner_user_id = ? AND file_type = "imgs"
-                            AND stored_filename NOT IN (${currentImgsFiles.map(() => "?").join(",")})`,
-                        [pageId, pageOwnerUserId, ...currentImgsFiles]
-                    );
-                } else {
-                    await pool.execute(`DELETE FROM page_file_refs WHERE page_id = ? AND owner_user_id = ? AND file_type = "imgs"`, [pageId, pageOwnerUserId]);
-                }
+                await reconcileOwnerAssetRefsForSave(
+                    pool,
+                    pageId,
+                    pageOwnerUserId,
+                    newFilesFromRealtimeDoc,
+                    allowInsertOwnerRefs
+                );
             } catch (regErr) {
                 console.error("보안 레지스트리 동기화 실패:", regErr);
             }
@@ -1809,7 +1827,13 @@ if (typeof consumeWsTicket === 'function' && ticketFromQuery) {
                 return;
             }
 
-            ws.on('close', () => { cleanupWebSocketConnection(ws, pool, sanitizeHtmlContent); });
+            ws.on('close', () => {
+                if (ws._authDeadline) {
+                    clearTimeout(ws._authDeadline);
+                    ws._authDeadline = null;
+                }
+                cleanupWebSocketConnection(ws, pool, sanitizeHtmlContent);
+            });
 
             const clientIp = (typeof getClientIpFromRequest === 'function')
                 ? getClientIpFromRequest(req)
@@ -1851,6 +1875,11 @@ if (typeof consumeWsTicket === 'function' && ticketFromQuery) {
 ws.sessionId = sessionId;
 ws.isAlive = true;
 ws._wsTicketAuthenticated = Boolean(req._wsTicketConsumed);
+ws._authDeadline = setTimeout(() => {
+    if (!ws._wsTicketAuthenticated) {
+        try { ws.close(1008, 'Auth timeout'); } catch (_) {}
+    }
+}, 1500);
             ws.boundUserAgent = req.headers["user-agent"] || "";
             ws.boundClientIp = getClientIpFromRequest(req) || req.socket?.remoteAddress || "";
             ws.lastFullSessionCheckAt = 0;
@@ -1900,6 +1929,10 @@ if (!ws._wsTicketAuthenticated) {
 		return;
 	}
 	ws._wsTicketAuthenticated = true;
+	if (ws._authDeadline) {
+		clearTimeout(ws._authDeadline);
+		ws._authDeadline = null;
+	}
 	try { ws.send(JSON.stringify({ event: 'auth-ok', data: {} })); } catch (_) {}
 	return;
 }

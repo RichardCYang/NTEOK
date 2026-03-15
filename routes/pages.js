@@ -72,6 +72,21 @@ function makeFetchError(code, message) {
     return err;
 }
 
+function normalizePreviewComparisonHost(hostname) {
+    return String(hostname || '')
+        .trim()
+        .toLowerCase()
+        .replace(/\.$/, '')
+        .replace(/^www\./, '');
+}
+
+function isSamePreviewHostFamily(leftHost, rightHost) {
+    const left = normalizePreviewComparisonHost(leftHost);
+    const right = normalizePreviewComparisonHost(rightHost);
+    if (!left || !right) return false;
+    return left === right || left.endsWith(`.${right}`) || right.endsWith(`.${left}`);
+}
+
 function normalizeAndValidatePreviewUrl(rawUrl, isHostnameAllowedForPreview) {
     if (typeof rawUrl !== 'string') throw makeFetchError('INVALID_URL', '유효하지 않은 URL 형식입니다.');
     const trimmed = rawUrl.trim();
@@ -262,7 +277,12 @@ async function fetchHtmlWithValidatedRedirects(startUrl, isHostnameAllowedForPre
         if (result?.type === 'redirect') {
             if (!result.location) throw makeFetchError('REDIRECT_BLOCKED', '리다이렉트 위치가 비어 있습니다.');
             const nextUrl = new URL(result.location, currentUrl);
-            currentUrl = normalizeAndValidatePreviewUrl(nextUrl.toString(), isHostnameAllowedForPreview);
+            const normalizedNextUrl = normalizeAndValidatePreviewUrl(nextUrl.toString(), isHostnameAllowedForPreview);
+
+            if (!isSamePreviewHostFamily(currentUrl.hostname, normalizedNextUrl.hostname))
+                throw makeFetchError('REDIRECT_BLOCKED', '자동 리다이렉트는 동일 호스트 계열 내에서만 허용됩니다.');
+
+            currentUrl = normalizedNextUrl;
             continue;
         }
     }
@@ -438,6 +458,44 @@ module.exports = (dependencies) => {
         return false;
     }
 
+    async function reconcilePageFileRefs({ pageId, ownerId, fileType, currentFiles, allowInsert }) {
+        const filenames = [...new Set(
+            (currentFiles || [])
+                .filter(f => f && f.type === fileType)
+                .map(f => String(f.ref || '').split('/')[1])
+                .filter(Boolean)
+        )];
+
+        if (allowInsert) {
+            for (const filename of filenames) {
+                await pool.execute(
+                    `INSERT IGNORE INTO page_file_refs (page_id, owner_user_id, stored_filename, file_type, created_at)
+                     VALUES (?, ?, ?, ?, NOW())`,
+                    [pageId, ownerId, filename, fileType]
+                );
+            }
+        }
+
+        if (filenames.length > 0) {
+            await pool.execute(
+                `DELETE FROM page_file_refs
+                  WHERE page_id = ?
+                    AND owner_user_id = ?
+                    AND file_type = ?
+                    AND stored_filename NOT IN (${filenames.map(() => '?').join(',')})`,
+                [pageId, ownerId, fileType, ...filenames]
+            );
+        } else {
+            await pool.execute(
+                `DELETE FROM page_file_refs
+                  WHERE page_id = ?
+                    AND owner_user_id = ?
+                    AND file_type = ?`,
+                [pageId, ownerId, fileType]
+            );
+        }
+    }
+
     async function syncPageFileRefs(pageId, pageOwnerUserId, actorUserId, content) {
         if (!content) return;
         try {
@@ -445,58 +503,29 @@ module.exports = (dependencies) => {
             const actorId = Number(actorUserId);
             if (!Number.isFinite(ownerId)) throw new Error('Invalid pageOwnerUserId');
             if (!Number.isFinite(actorId)) throw new Error('Invalid actorUserId');
-            if (actorId !== ownerId) return;
 
-            const newFiles = extractFilesFromContent(content, ownerId);
-
-            for (const file of newFiles) {
-                const parts = file.ref.split('/');
+            const allowInsert = actorId === ownerId;
+            const newFiles = extractFilesFromContent(content, ownerId).filter((file) => {
+                const parts = String(file?.ref || '').split('/');
                 const fileOwnerId = parseInt(parts[0], 10);
-                const filename = parts[1];
-                if (fileOwnerId === ownerId) {
-                    await pool.execute(
-                        `INSERT IGNORE INTO page_file_refs (page_id, owner_user_id, stored_filename, file_type, created_at)
-                         VALUES (?, ?, ?, ?, NOW())`,
-                        [pageId, fileOwnerId, filename, file.type]
-                    );
-                }
-            }
+                return fileOwnerId === ownerId && (file.type === 'paperclip' || file.type === 'imgs');
+            });
 
-            const currentPaperclipFiles = newFiles.filter(f => f.type === 'paperclip').map(f => f.ref.split('/')[1]);
-            if (currentPaperclipFiles.length > 0) {
-                await pool.execute(
-                    `DELETE FROM page_file_refs
-                      WHERE page_id = ?
-                        AND owner_user_id = ?
-                        AND file_type = 'paperclip'
-                        AND stored_filename NOT IN (${currentPaperclipFiles.map(() => '?').join(',')})`,
-                    [pageId, ownerId, ...currentPaperclipFiles]
-                );
-            } else {
-                await pool.execute(
-                    `DELETE FROM page_file_refs
-                      WHERE page_id = ? AND owner_user_id = ? AND file_type = 'paperclip'`,
-                    [pageId, ownerId]
-                );
-            }
+            await reconcilePageFileRefs({
+                pageId,
+                ownerId,
+                fileType: 'paperclip',
+                currentFiles: newFiles,
+                allowInsert
+            });
 
-            const currentImgsFiles = newFiles.filter(f => f.type === 'imgs').map(f => f.ref.split('/')[1]);
-            if (currentImgsFiles.length > 0) {
-                await pool.execute(
-                    `DELETE FROM page_file_refs
-                      WHERE page_id = ?
-                        AND owner_user_id = ?
-                        AND file_type = 'imgs'
-                        AND stored_filename NOT IN (${currentImgsFiles.map(() => '?').join(',')})`,
-                    [pageId, ownerId, ...currentImgsFiles]
-                );
-            } else {
-                await pool.execute(
-                    `DELETE FROM page_file_refs
-                      WHERE page_id = ? AND owner_user_id = ? AND file_type = 'imgs'`,
-                    [pageId, ownerId]
-                );
-            }
+            await reconcilePageFileRefs({
+                pageId,
+                ownerId,
+                fileType: 'imgs',
+                currentFiles: newFiles,
+                allowInsert
+            });
         } catch (regErr) {
             logError('syncPageFileRefs 실패', regErr);
         }
@@ -1059,7 +1088,10 @@ module.exports = (dependencies) => {
                 if (href) {
                     try {
                         const absolute = new URL(href, finalUrl);
-                        if (absolute.protocol === 'https:') {
+                        if (
+                            absolute.protocol === 'https:' &&
+                            isSamePreviewHostFamily(finalUrl.hostname, absolute.hostname)
+                        ) {
                             faviconUrl = absolute.toString();
                             break;
                         }

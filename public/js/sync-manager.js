@@ -380,7 +380,7 @@ async function connectWebSocket() {
         if (!ticket) throw new Error("no-ticket");
 
 const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-const wsUrl = `${protocol}//${window.location.host}/ws`;
+const wsUrl = `${protocol}//${window.location.host}/ws?ticket=${encodeURIComponent(ticket)}`;
 ws = new WebSocket(wsUrl);
 console.log('[WS] 연결 시도');
 
