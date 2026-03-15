@@ -210,14 +210,6 @@ const backupUpload = multer({
     }
 });
 
-const backupImportLimiter = rateLimit({
-    windowMs: 60 * 1000,
-    max: 2,
-    standardHeaders: true,
-    legacyHeaders: false,
-    keyGenerator: userAndIpRateKey,
-});
-
 function createImportTempDir() {
     const dir = path.join(tempDir, `import-extract-${Date.now()}-${crypto.randomBytes(6).toString('hex')}`);
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -300,6 +292,14 @@ module.exports = (dependencies) => {
         const ipPart = ipKeyGenerator(canonicalClientIp(req));
         return `${userPart}:${ipPart}`;
     }
+
+    const backupImportLimiter = rateLimit({
+        windowMs: 60 * 1000,
+        max: 2,
+        standardHeaders: true,
+        legacyHeaders: false,
+        keyGenerator: userAndIpRateKey,
+    });
 
     const backupExportLimiter = rateLimit({
         windowMs: 10 * 60 * 1000,

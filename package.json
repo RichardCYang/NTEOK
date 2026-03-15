@@ -40,16 +40,17 @@
 		"qrcode": "^1.5.4",
 		"rate-limit-redis": "^4.2.0",
 		"redis": "^4.7.0",
+		"semver": "^7.7.4",
 		"speakeasy": "^2.0.0",
 		"ws": "^8.18.3",
 		"y-protocols": "^1.0.6",
 		"yauzl": "^3.2.1",
 		"yjs": "^13.6.18"
 	},
-"overrides": {
-    "axios": "^1.13.5",
-    "dompurify": "3.3.2",
-    "minimatch": "^10.2.1",
-    "yauzl": "^3.2.1"
-  }
+	"overrides": {
+		"axios": "^1.13.5",
+		"dompurify": "3.3.2",
+		"minimatch": "^10.2.1",
+		"yauzl": "^3.2.1"
+	}
 }
