@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const dns = require("node:dns").promises;
 const http = require("node:http");
 const https = require("node:https");
+const tls = require("node:tls");
 const net = require("node:net");
 const ipaddr = require("ipaddr.js");
 const cheerio = require("cheerio");
@@ -207,10 +208,12 @@ function fetchDocumentFromPinnedAddress(targetUrl, pinnedIp, isPublicRoutableIP)
         const req = https.request({
             protocol: 'https:',
             hostname: pinnedIp,
+            family,
             port: 443,
             method: 'GET',
             path: `${targetUrl.pathname || '/'}${targetUrl.search || ''}`,
             servername: targetUrl.hostname,
+            checkServerIdentity: (_host, cert) => tls.checkServerIdentity(targetUrl.hostname, cert),
             agent: false,
             timeout: METADATA_FETCH_TIMEOUT_MS,
             headers: {
@@ -1062,10 +1065,12 @@ module.exports = (dependencies) => {
             const proxyReq = https.request({
                 protocol: 'https:',
                 hostname: pinnedIp,
+                family,
                 port: 443,
                 method: 'GET',
                 path: `${targetUrl.pathname || '/'}${targetUrl.search || ''}`,
                 servername: targetUrl.hostname,
+                checkServerIdentity: (_host, cert) => tls.checkServerIdentity(targetUrl.hostname, cert),
                 agent: false,
                 timeout: 3000,
                 headers: {

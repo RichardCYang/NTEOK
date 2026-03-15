@@ -75,7 +75,7 @@ const collaboratorUserSearchLimiter = rateLimit({
     max: 20,
     standardHeaders: true,
     legacyHeaders: false,
-    keyGenerator: (req) => `${req.user?.id || 'anon'}:${ipKeyGenerator(req)}`,
+    keyGenerator: userAndIpRateKey,
     message: { error: '사용자 검색 요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.' }
 });
 

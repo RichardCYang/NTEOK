@@ -3,15 +3,9 @@ const router = express.Router();
 const crypto = require('crypto');
 const erl = require('express-rate-limit');
 const rateLimit = erl.rateLimit || erl;
+const { ipKeyGenerator } = erl;
 
 const SENSITIVE_EXPORT_MAX_AGE_MS = 20 * 1000;
-
-const privateKeyExportLimiter = rateLimit({
-    windowMs: 10 * 60 * 1000,
-    max: 5,
-    standardHeaders: true,
-    legacyHeaders: false
-});
 
 module.exports = (dependencies) => {
     const {
@@ -23,8 +17,29 @@ module.exports = (dependencies) => {
         logError,
         requireRecentReauth,
         requireSensitiveStepUp,
-        requireStrongStepUp
+        requireStrongStepUp,
+        getClientIpFromRequest
     } = dependencies;
+
+    if (typeof getClientIpFromRequest !== 'function')
+        throw new Error('routes/user-keys.js: getClientIpFromRequest dependency missing');
+
+    function canonicalClientIp(req) {
+        return String(
+            getClientIpFromRequest(req) ||
+            req.ip ||
+            req.socket?.remoteAddress ||
+            '0.0.0.0'
+        ).trim();
+    }
+
+    const privateKeyExportLimiter = rateLimit({
+        windowMs: 10 * 60 * 1000,
+        max: 5,
+        standardHeaders: true,
+        legacyHeaders: false,
+        keyGenerator: (req) => `${req.user?.id || 'anon'}:${ipKeyGenerator(canonicalClientIp(req))}`,
+    });
 
     const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -69,7 +84,7 @@ module.exports = (dependencies) => {
 
             const bindCtx = {
     userAgent: req.headers['user-agent'] || '',
-    clientIp: getClientIpFromRequest(req),
+    clientIp: canonicalClientIp(req),
     origin: req.headers.origin || req.headers.referer || ''
 };
 const ticket = await issueActionTicket(
@@ -100,7 +115,7 @@ const ticket = await issueActionTicket(
 
             const bindCtx = {
     userAgent: req.headers['user-agent'] || '',
-    clientIp: getClientIpFromRequest(req),
+    clientIp: canonicalClientIp(req),
     origin: req.headers.origin || req.headers.referer || ''
 };
 const valid = await consumeActionTicket(

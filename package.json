@@ -31,7 +31,7 @@
 		"cookie-parser": "^1.4.7",
 		"dotenv": "^17.2.3",
 		"express": "^5.2.1",
-		"express-rate-limit": "^8.2.1",
+		"express-rate-limit": "^8.3.0",
 		"geoip-lite": "^1.4.10",
 		"ipaddr.js": "^2.3.0",
 		"isomorphic-dompurify": "3.0.0",

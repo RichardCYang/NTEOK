@@ -115,7 +115,7 @@ const MIN_RATIO_ENTRY_BYTES = 1 * 1024 * 1024;
 const MAX_HTML_PAGES = 500;
 const MAX_PAGE_HTML_BYTES = 1024 * 1024;
 
-const MAX_ENTRY_BUFFER_BYTES = 256 * 1024; 
+const MAX_ENTRY_BUFFER_BYTES = 256 * 1024;
 
 const FILE_TYPE = Object.freeze({
     PAPERCLIP: 'paperclip',
@@ -212,10 +212,10 @@ const backupUpload = multer({
 
 const backupImportLimiter = rateLimit({
     windowMs: 60 * 1000,
-    max: 2, 
+    max: 2,
     standardHeaders: true,
     legacyHeaders: false,
-    keyGenerator: (req) => String(req.user?.id || ipKeyGenerator(req)),
+    keyGenerator: userAndIpRateKey,
 });
 
 function createImportTempDir() {
@@ -273,18 +273,40 @@ module.exports = (dependencies) => {
         generatePageId,
         formatDateForDb,
         logError,
+        getClientIpFromRequest,
         requireRecentReauth,
+        requireStrongStepUp,
         issueActionTicket,
         consumeActionTicket,
         getSessionFromRequest
 	} = dependencies;
+
+    if (typeof requireStrongStepUp !== 'function')
+        throw new Error('routes/backup.js: requireStrongStepUp dependency missing');
+    if (typeof getClientIpFromRequest !== 'function')
+        throw new Error('routes/backup.js: getClientIpFromRequest dependency missing');
+
+    function canonicalClientIp(req) {
+        return String(
+            getClientIpFromRequest(req) ||
+            req.ip ||
+            req.socket?.remoteAddress ||
+            '0.0.0.0'
+        ).trim();
+    }
+
+    function userAndIpRateKey(req) {
+        const userPart = req.user?.id ? String(req.user.id) : 'anon';
+        const ipPart = ipKeyGenerator(canonicalClientIp(req));
+        return `${userPart}:${ipPart}`;
+    }
 
     const backupExportLimiter = rateLimit({
         windowMs: 10 * 60 * 1000,
         max: 3,
         standardHeaders: true,
         legacyHeaders: false,
-        keyGenerator: (req) => String(req.user?.id || ipKeyGenerator(req)),
+        keyGenerator: userAndIpRateKey,
     });
 
     router.post('/export-ticket',
@@ -296,17 +318,17 @@ module.exports = (dependencies) => {
             try {
                 const session = await getSessionFromRequest(req);
                 if (!session) return res.status(401).json({ error: '세션이 만료되었습니다.' });
-                const bindCtx = {
-    userAgent: req.headers['user-agent'] || '',
-    clientIp: getClientIpFromRequest(req),
-    origin: req.headers.origin || req.headers.referer || ''
-};
-const ticket = await issueActionTicket(
-    session.id,
-    'backup-export',
-    String(req.user.id),
-    bindCtx
-);
+				const bindCtx = {
+				    userAgent: req.headers['user-agent'] || '',
+				    clientIp: canonicalClientIp(req),
+				    origin: req.headers.origin || req.headers.referer || ''
+				};
+				const ticket = await issueActionTicket(
+				    session.id,
+				    'backup-export',
+				    String(req.user.id),
+				    bindCtx
+				);
                 res.json({ ok: true, ticket });
             } catch (e) {
                 logError('POST /api/backup/export-ticket', e);
@@ -428,8 +450,8 @@ const ticket = await issueActionTicket(
     }
 
 	const BACKUP_IMPORT_MAX_ENTRIES = Number(process.env.BACKUP_IMPORT_MAX_ENTRIES || 5000);
-	const BACKUP_IMPORT_MAX_TOTAL_UNCOMPRESSED = Number(process.env.BACKUP_IMPORT_MAX_TOTAL_UNCOMPRESSED || (300 * 1024 * 1024)); 
-	const BACKUP_IMPORT_MAX_ENTRY_UNCOMPRESSED = Number(process.env.BACKUP_IMPORT_MAX_ENTRY_UNCOMPRESSED || (20 * 1024 * 1024)); 
+	const BACKUP_IMPORT_MAX_TOTAL_UNCOMPRESSED = Number(process.env.BACKUP_IMPORT_MAX_TOTAL_UNCOMPRESSED || (300 * 1024 * 1024));
+	const BACKUP_IMPORT_MAX_ENTRY_UNCOMPRESSED = Number(process.env.BACKUP_IMPORT_MAX_ENTRY_UNCOMPRESSED || (20 * 1024 * 1024));
 
 	const ALLOWED_IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
 
@@ -830,7 +852,7 @@ ${stringifyJsonForHtmlScriptTag(pageMetadata)}
             const { ticket } = req.body || {};
             const bindCtx = {
     userAgent: req.headers['user-agent'] || '',
-    clientIp: getClientIpFromRequest(req),
+    clientIp: canonicalClientIp(req),
     origin: req.headers.origin || req.headers.referer || ''
 };
 const valid = await consumeActionTicket(
@@ -915,7 +937,7 @@ const valid = await consumeActionTicket(
                 return res.status(404).json({ error: '내보낼 데이터가 없습니다.' });
 
             const archive = archiver('zip', {
-                zlib: { level: 9 } 
+                zlib: { level: 9 }
             });
 
             res.attachment('nteok-backup.zip');
@@ -960,7 +982,7 @@ const valid = await consumeActionTicket(
 
             const imgRegex = /\/imgs\/(\d+)\/([A-Za-z0-9._-]{1,200}\.(?:png|jpe?g|gif|webp))(?:\?[^"'\s]*)?/gi;
             for (const page of pages) {
-                if (page.is_encrypted) continue; 
+                if (page.is_encrypted) continue;
                 const content = page.content || '';
                 let match;
                 while ((match = imgRegex.exec(content)) !== null) {
@@ -1200,14 +1222,14 @@ const valid = await consumeActionTicket(
                 return s;
             }
 
-            const workspaceMap = new Map(); 
-            const storageEncryptionMetaById = new Map(); 
-            const oldToNewPageMap = new Map(); 
-            const importedPages = []; 
-            const imgFilenameMap = new Map();       
-            const coverFilenameMap = new Map();     
-            const paperclipFilenameMap = new Map(); 
-            const coverImageFilenames = new Set(); 
+            const workspaceMap = new Map();
+            const storageEncryptionMetaById = new Map();
+            const oldToNewPageMap = new Map();
+            const importedPages = [];
+            const imgFilenameMap = new Map();
+            const coverFilenameMap = new Map();
+            const paperclipFilenameMap = new Map();
+            const coverImageFilenames = new Set();
             let totalPages = 0;
             let totalImages = 0;
 
@@ -1418,7 +1440,7 @@ const valid = await consumeActionTicket(
                 }
 
                 const stagingPath = path.join(stagingDir, `${crypto.randomBytes(12).toString('hex')}-${unique.filename}`);
-                
+
                 const processFile = async (srcPath, destPath, buf) => {
                     if (buf) {
                         if (isImage && !isSupportedImageBuffer(buf, unique.filename)) return false;
@@ -1479,7 +1501,7 @@ const valid = await consumeActionTicket(
             }
             const MAX_PAPERCLIP_BYTES_PER_USER = (() => {
                 const raw = String(process.env.MAX_PAPERCLIP_BYTES_PER_USER || '').trim().toLowerCase();
-                if (!raw) return 1024 * 1024 * 1024; 
+                if (!raw) return 1024 * 1024 * 1024;
                 const m = raw.match(/^(\d+(?:\.\d+)?)\s*(b|kb|mb|gb)?$/);
                 if (!m) return 1024 * 1024 * 1024;
                 const n = Number(m[1]);
