@@ -676,12 +676,16 @@ module.exports = (dependencies) => {
 				(typeof req.headers.origin === "string" && req.headers.origin)
 					? req.headers.origin
 					: new URL(BASE_URL).origin;
-		const ticket = await issueWsTicket(session.id, {
+const ticket = await issueWsTicket(session.id, {
 			userAgent: req.headers["user-agent"] || "",
 			clientIp: getClientIp(req),
 			origin: reqOrigin
 		});
-    		res.json({ ok: true, ticket });
+		res.setHeader("Cache-Control", "private, no-store, max-age=0, must-revalidate");
+		res.setHeader("Pragma", "no-cache");
+		res.setHeader("Expires", "0");
+		res.setHeader("Referrer-Policy", "no-referrer");
+		res.json({ ok: true, ticket });
     	} catch (error) {
     		logError("POST /api/auth/ws-ticket", error);
     		res.status(500).json({ error: "티켓 발급 중 오류가 발생했습니다." });

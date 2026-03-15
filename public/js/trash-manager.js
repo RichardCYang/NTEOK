@@ -2,6 +2,18 @@ import { get, post, del } from './api-utils.js';
 import { toggleModal, escapeHtml } from './ui-utils.js';
 import { fetchPageList } from './pages-manager.js';
 
+const TT_POLICY = window.trustedTypes?.createPolicy('nteok-sanitize', {
+    createHTML: (html) => html
+});
+
+function safeSetInnerHTML(element, html) {
+    if (TT_POLICY) {
+        element.innerHTML = TT_POLICY.createHTML(html);
+    } else {
+        element.innerHTML = html;
+    }
+}
+
 let appState = null;
 
 export function initTrashManager(state) {
@@ -29,12 +41,12 @@ export async function openTrashModal() {
     
     toggleModal(trashModal, true);
     
-    trashList.innerHTML = `<div style="padding: 40px; text-align: center; color: #9ca3af;" data-i18n="loading">불러오는 중...</div>`;
+    safeSetInnerHTML(trashList, `<div style="padding: 40px; text-align: center; color: #9ca3af;" data-i18n="loading">불러오는 중...</div>`);
 
     try {
         const storageId = appState ? appState.currentStorageId : null;
         if (!storageId) {
-            trashList.innerHTML = `<div style="padding: 40px; text-align: center; color: #9ca3af;">저장소가 선택되지 않았습니다.</div>`;
+            safeSetInnerHTML(trashList, `<div style="padding: 40px; text-align: center; color: #9ca3af;">저장소가 선택되지 않았습니다.</div>`);
             return;
         }
 
@@ -42,7 +54,7 @@ export async function openTrashModal() {
         renderTrashList(pages);
     } catch (error) {
         console.error('Failed to fetch trash list:', error);
-        trashList.innerHTML = `<div style="padding: 40px; text-align: center; color: #ef4444;">정보를 불러오는데 실패했습니다.</div>`;
+        safeSetInnerHTML(trashList, `<div style="padding: 40px; text-align: center; color: #ef4444;">정보를 불러오는데 실패했습니다.</div>`);
     }
 }
 
@@ -50,11 +62,11 @@ function renderTrashList(pages) {
     const trashList = document.getElementById('trash-list');
     
     if (!pages || pages.length === 0) {
-        trashList.innerHTML = `<div style="padding: 40px; text-align: center; color: #9ca3af;" data-i18n="trash_empty">휴지통이 비어 있습니다.</div>`;
+        safeSetInnerHTML(trashList, `<div style="padding: 40px; text-align: center; color: #9ca3af;" data-i18n="trash_empty">휴지통이 비어 있습니다.</div>`);
         return;
     }
 
-    trashList.innerHTML = '';
+    while (trashList.firstChild) trashList.removeChild(trashList.firstChild);
     
     pages.forEach(page => {
         const item = document.createElement('div');

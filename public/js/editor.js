@@ -49,6 +49,18 @@ export const EXAMPLE_CONTENT = `
 
 import { secureFetch, syncPageUpdatedAtPadding, escapeHtml } from './ui-utils.js';
 
+const TT_POLICY = window.trustedTypes?.createPolicy('nteok-sanitize', {
+    createHTML: (html) => html
+});
+
+function safeSetInnerHTML(element, html) {
+    if (TT_POLICY) {
+        element.innerHTML = TT_POLICY.createHTML(html);
+    } else {
+        element.innerHTML = html;
+    }
+}
+
 import { TextAlign } from "@tiptap/extension-text-align";
 
 import Color from "@tiptap/extension-color";
@@ -597,13 +609,13 @@ function renderSlashMenuItems() {
     const listEl = slashMenuEl.querySelector("#slash-menu-list");
     if (!listEl) return;
 
-    listEl.innerHTML = "";
+    while (listEl.firstChild) listEl.removeChild(listEl.firstChild);
 
     const displayFilter = (slashState.filterText || '').trim();
     if (displayFilter) {
         const filterInfo = document.createElement("li");
         filterInfo.className = "slash-menu-filter-info";
-        filterInfo.innerHTML = `검색: <strong>${escapeHtml(displayFilter)}</strong>`;
+        safeSetInnerHTML(filterInfo, `검색: <strong>${escapeHtml(displayFilter)}</strong>`);
         filterInfo.style.padding = "8px 16px";
         filterInfo.style.fontSize = "12px";
         filterInfo.style.color = "#999";
@@ -614,7 +626,7 @@ function renderSlashMenuItems() {
     if (slashState.filteredItems.length === 0) {
         const noResults = document.createElement("li");
         noResults.className = "slash-menu-no-results";
-        noResults.innerHTML = '검색 결과가 없습니다';
+        noResults.textContent = '검색 결과가 없습니다';
         noResults.style.padding = "16px";
         noResults.style.textAlign = "center";
         noResults.style.color = "#ccc";
@@ -629,13 +641,13 @@ function renderSlashMenuItems() {
                 li.classList.add("active");
             }
 
-            li.innerHTML = `
+            safeSetInnerHTML(li, `
                 <div class="slash-menu-item-icon">${item.icon}</div>
                 <div class="slash-menu-item-main">
                     <div class="slash-menu-item-label">${item.label}</div>
                     <div class="slash-menu-item-desc">${item.description}</div>
                 </div>
-            `;
+            `);
 
             listEl.appendChild(li);
         });
@@ -1184,7 +1196,7 @@ export function bindToolbar(editor) {
         : null;
 
     if (fontMenuElement) {
-        fontMenuElement.innerHTML = "";
+        while (fontMenuElement.firstChild) fontMenuElement.removeChild(fontMenuElement.firstChild);
         SYSTEM_FONTS.forEach((font) => {
             const button = document.createElement("button");
             button.type = "button";
@@ -1885,7 +1897,7 @@ function showTableContextMenu(x, y, editor) {
         return;
     }
 
-    contentEl.innerHTML = "";
+    while (contentEl.firstChild) contentEl.removeChild(contentEl.firstChild);
     TABLE_MENU_ITEMS.forEach(item => {
         if (item.type === "separator") {
             const separator = document.createElement("div");
@@ -1905,10 +1917,10 @@ function showTableContextMenu(x, y, editor) {
             button.disabled = true;
         }
 
-        button.innerHTML = `
+        safeSetInnerHTML(button, `
             <span class="context-menu-icon">${item.icon}</span>
             <span>${item.label}</span>
-        `;
+        `);
 
         button.addEventListener("click", (e) => {
             e.stopPropagation();

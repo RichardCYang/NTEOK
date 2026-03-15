@@ -3,6 +3,25 @@ import { secureFetch } from "./ui-utils.js";
 
 const Node = Tiptap.Core.Node;
 
+async function fetchTransientFaviconObjectUrl(opaqueId) {
+    if (typeof opaqueId !== 'string' || !/^[a-f0-9]{32}$/i.test(opaqueId)) return null;
+
+    const response = await secureFetch('/api/pages/proxy-favicon', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: opaqueId })
+    });
+
+    if (!response.ok) return null;
+    const blob = await response.blob();
+    return URL.createObjectURL(blob);
+}
+
+function getRenderableFaviconSrc(persisted, transient) {
+    if (typeof transient === 'string' && transient.startsWith('blob:')) return transient;
+    return sanitizeBookmarkImageUrl(persisted);
+}
+
 function sanitizeBookmarkImageUrl(value) {
     if (typeof value !== 'string') return null;
     const v = value.trim();
@@ -86,9 +105,8 @@ export const BookmarkBlock = Node.create({
             const container = document.createElement('div');
             container.className = 'bookmark-block-container';
             container.contentEditable = 'false';
-            let transientFavicon = isTransientProxyFavicon(node.attrs.favicon)
-                ? sanitizeBookmarkImageUrl(node.attrs.favicon)
-                : null;
+            let transientFavicon = null;
+            let transientObjectUrl = null;
 
             const render = () => {
                 container.innerHTML = '';
@@ -128,19 +146,26 @@ export const BookmarkBlock = Node.create({
 
                             const data = await response.json();
 
-                            if (typeof getPos === 'function') {
-                                const rawFavicon = sanitizeBookmarkImageUrl(data.favicon);
-                                transientFavicon = isTransientProxyFavicon(rawFavicon) ? rawFavicon : null;
-                                const persistedFavicon = transientFavicon
-                                    ? (buildGeneratedBookmarkFaviconUrlFromPageUrl(data.url) || null)
-                                    : rawFavicon;
+if (typeof getPos === 'function') {
+    if (transientObjectUrl) {
+        URL.revokeObjectURL(transientObjectUrl);
+        transientObjectUrl = null;
+    }
 
-                                editor.view.dispatch(editor.view.state.tr.setNodeMarkup(getPos(), null, {
-                                    url: data.url,
-                                    title: data.title,
-                                    favicon: persistedFavicon
-                                }));
-                            }
+    transientObjectUrl = await fetchTransientFaviconObjectUrl(data.faviconOpaqueId).catch(() => null);
+    transientFavicon = transientObjectUrl || null;
+
+    const rawFavicon = sanitizeBookmarkImageUrl(data.favicon);
+    const persistedFavicon = rawFavicon
+        || buildGeneratedBookmarkFaviconUrlFromPageUrl(data.url)
+        || null;
+
+    editor.view.dispatch(editor.view.state.tr.setNodeMarkup(getPos(), null, {
+        url: data.url,
+        title: data.title,
+        favicon: persistedFavicon
+    }));
+}
                         } catch (error) {
                             alert('오류: ' + error.message);
                             input.disabled = false;
@@ -187,7 +212,7 @@ export const BookmarkBlock = Node.create({
                     card.rel = 'noopener noreferrer';
                     card.className = 'bookmark-compact-link';
 
-                    const safeFavicon = transientFavicon || sanitizeBookmarkImageUrl(node.attrs.favicon);
+                    const safeFavicon = getRenderableFaviconSrc(node.attrs.favicon, transientFavicon);
                     if (safeFavicon) {
                         const icon = document.createElement('img');
                         icon.src = safeFavicon;
@@ -245,12 +270,15 @@ export const BookmarkBlock = Node.create({
                         node.attrs.url = updatedNode.attrs.url;
                         node.attrs.title = updatedNode.attrs.title;
                         node.attrs.favicon = updatedNode.attrs.favicon;
-                        if (!isTransientProxyFavicon(updatedNode.attrs.favicon)) {
-                            transientFavicon = null;
-                        }
                         render();
                     }
                     return true;
+                },
+                destroy: () => {
+                    if (transientObjectUrl) {
+                        URL.revokeObjectURL(transientObjectUrl);
+                        transientObjectUrl = null;
+                    }
                 },
                 stopEvent: (event) => {
                     const isInput = event.target.closest('input');

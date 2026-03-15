@@ -1,5 +1,27 @@
 import { secureFetch, escapeHtml } from './ui-utils.js';
 
+const TT_POLICY = window.trustedTypes?.createPolicy('nteok-sanitize', {
+    createHTML: (html) => html
+});
+
+function safeSetInnerHTML(element, html) {
+    if (TT_POLICY) {
+        element.innerHTML = TT_POLICY.createHTML(html);
+    } else {
+        element.innerHTML = html;
+    }
+}
+
+function safeCreateElementFromHTML(html) {
+    const template = document.createElement('template');
+    if (TT_POLICY) {
+        template.innerHTML = TT_POLICY.createHTML(html);
+    } else {
+        template.innerHTML = html;
+    }
+    return template.content.cloneNode(true);
+}
+
 const state = {
     pageId: null,
     comments: [],
@@ -21,7 +43,7 @@ export async function loadAndRenderComments(pageId, containerId = 'page-comments
         const res = await secureFetch(`/api/comments/${pageId}`);
 
         if (res.status === 403 || res.status === 404) {
-            container.innerHTML = '';
+            while (container.firstChild) container.removeChild(container.firstChild);
             container.classList.add('hidden');
             return;
         }
@@ -38,66 +60,131 @@ export async function loadAndRenderComments(pageId, containerId = 'page-comments
 }
 
 function renderComments(container) {
+    while (container.firstChild) container.removeChild(container.firstChild);
+    
+    const wrapper = document.createElement('div');
+    wrapper.className = `comments-wrapper ${state.isExpanded ? 'expanded' : ''}`;
+    
     const count = state.comments.length;
-    let toggleText = count === 0 ? '<i class="fa-regular fa-comment"></i> 댓글 추가' : `<i class="fa-regular fa-comment"></i> 댓글 ${count}개`;
-    let bodyHtml = '';
-    if (state.isExpanded) {
-        const commentsHtml = state.comments.map(comment => renderCommentItem(comment)).join('');
-        const inputBlockHtml = renderNewCommentBlock();
-        bodyHtml = `
-            <div class="comments-body">
-                <div class="comments-header-row">
-                    <div class="comments-title-expanded">댓글</div>
-                    <button class="close-comments-btn" title="접기">
-                        <i class="fa-solid fa-angle-up"></i>
-                    </button>
-                </div>
-                <div class="comments-list">
-                    ${commentsHtml}
-                    ${inputBlockHtml}
-                </div>
-            </div>
-        `;
-    }
-
-    container.innerHTML = `
-        <div class="comments-wrapper ${state.isExpanded ? 'expanded' : ''}">
-            ${!state.isExpanded ? `<button class="comment-toggle-btn">${toggleText}</button>` : ''}
-            ${bodyHtml}
-        </div>
-    `;
-
-    if (state.isExpanded) bindEvents(container);
-    else {
-        const toggleBtn = container.querySelector('.comment-toggle-btn');
-        if (toggleBtn) toggleBtn.addEventListener('click', () => {
+    
+    if (!state.isExpanded) {
+        const toggleBtn = document.createElement('button');
+        toggleBtn.className = 'comment-toggle-btn';
+        
+        const icon = document.createElement('i');
+        icon.className = 'fa-regular fa-comment';
+        toggleBtn.appendChild(icon);
+        
+        const text = document.createTextNode(count === 0 ? ' 댓글 추가' : ` 댓글 ${count}개`);
+        toggleBtn.appendChild(text);
+        
+        toggleBtn.addEventListener('click', () => {
             state.isExpanded = true;
             renderComments(container);
         });
+        
+        wrapper.appendChild(toggleBtn);
+    } else {
+        const commentsBody = document.createElement('div');
+        commentsBody.className = 'comments-body';
+        
+        const headerRow = document.createElement('div');
+        headerRow.className = 'comments-header-row';
+        
+        const title = document.createElement('div');
+        title.className = 'comments-title-expanded';
+        title.textContent = '댓글';
+        headerRow.appendChild(title);
+        
+        const closeBtn = document.createElement('button');
+        closeBtn.className = 'close-comments-btn';
+        closeBtn.title = '접기';
+        
+        const closeIcon = document.createElement('i');
+        closeIcon.className = 'fa-solid fa-angle-up';
+        closeBtn.appendChild(closeIcon);
+        headerRow.appendChild(closeBtn);
+        
+        commentsBody.appendChild(headerRow);
+        
+        const commentsList = document.createElement('div');
+        commentsList.className = 'comments-list';
+        
+        state.comments.forEach(comment => {
+            const commentElement = createCommentItem(comment);
+            commentsList.appendChild(commentElement);
+        });
+        
+        const newCommentElement = createNewCommentBlock();
+        commentsList.appendChild(newCommentElement);
+        
+        commentsBody.appendChild(commentsList);
+        wrapper.appendChild(commentsBody);
+        
+        bindEvents(container);
     }
+    
+    container.appendChild(wrapper);
 }
 
-function renderNewCommentBlock() {
-    let avatarContent = state.currentUser ? escapeHtml(state.currentUser.username.charAt(0).toUpperCase()) : '<i class="fa-regular fa-user"></i>';
-    const authorName = state.currentUser ? state.currentUser.username : 'Anonymous';
-    return `
-        <div class="comment-item new-comment-item">
-            <div class="comment-avatar">${avatarContent}</div>
-            <div class="comment-content-wrapper">
-                <div class="comment-meta">
-                    <span class="comment-author">${escapeHtml(authorName)}</span>
-                </div>
-                <div class="new-comment-block-wrapper">
-                    <div class="comment-input-row-block">
-                        <textarea id="new-comment-input" placeholder="댓글을 추가해보세요..." rows="1"></textarea>
-                        <button id="submit-comment-btn" class="comment-send-btn-block" disabled>
-                            <i class="fa-solid fa-arrow-up"></i>
-                        </button>
-                    </div>
-                </div>
-            </div>
-        </div>
-    `;
+function createNewCommentBlock() {
+    const commentItem = document.createElement('div');
+    commentItem.className = 'comment-item new-comment-item';
+    
+    const avatarDiv = document.createElement('div');
+    avatarDiv.className = 'comment-avatar';
+    
+    if (state.currentUser) {
+        const initial = state.currentUser.username.charAt(0).toUpperCase();
+        avatarDiv.textContent = initial;
+    } else {
+        const icon = document.createElement('i');
+        icon.className = 'fa-regular fa-user';
+        avatarDiv.appendChild(icon);
+    }
+    
+    commentItem.appendChild(avatarDiv);
+    
+    const contentWrapper = document.createElement('div');
+    contentWrapper.className = 'comment-content-wrapper';
+    
+    const metaDiv = document.createElement('div');
+    metaDiv.className = 'comment-meta';
+    
+    const authorSpan = document.createElement('span');
+    authorSpan.className = 'comment-author';
+    authorSpan.textContent = state.currentUser ? state.currentUser.username : 'Anonymous';
+    metaDiv.appendChild(authorSpan);
+    
+    contentWrapper.appendChild(metaDiv);
+    
+    const newCommentWrapper = document.createElement('div');
+    newCommentWrapper.className = 'new-comment-block-wrapper';
+    
+    const inputRow = document.createElement('div');
+    inputRow.className = 'comment-input-row-block';
+    
+    const textarea = document.createElement('textarea');
+    textarea.id = 'new-comment-input';
+    textarea.placeholder = '댓글을 추가해보세요...';
+    textarea.rows = 1;
+    inputRow.appendChild(textarea);
+    
+    const submitBtn = document.createElement('button');
+    submitBtn.id = 'submit-comment-btn';
+    submitBtn.className = 'comment-send-btn-block';
+    submitBtn.disabled = true;
+    
+    const submitIcon = document.createElement('i');
+    submitIcon.className = 'fa-solid fa-arrow-up';
+    submitBtn.appendChild(submitIcon);
+    inputRow.appendChild(submitBtn);
+    
+    newCommentWrapper.appendChild(inputRow);
+    contentWrapper.appendChild(newCommentWrapper);
+    commentItem.appendChild(contentWrapper);
+    
+    return commentItem;
 }
 
 function bindEvents(container) {
@@ -148,23 +235,65 @@ function bindEvents(container) {
     });
 }
 
-function renderCommentItem(comment) {
+function createCommentItem(comment) {
     const timeAgo = formatTimeAgo(new Date(comment.createdAt));
     const initial = comment.author ? comment.author.charAt(0).toUpperCase() : '?';
     const canDelete = comment.isMyComment;
-    return `
-        <div class="comment-item" id="comment-${comment.id}">
-            <div class="comment-avatar">${escapeHtml(initial)}</div>
-            <div class="comment-content-wrapper">
-                <div class="comment-meta">
-                    <span class="comment-author">${escapeHtml(comment.author || 'Guest')}</span>
-                    <span class="comment-date">${timeAgo}</span>
-                    ${canDelete ? `<button class="delete-comment-btn" data-comment-id="${comment.id}" title="삭제"><i class="fa-solid fa-xmark"></i></button>` : ''}
-                </div>
-                <div class="comment-text">${escapeHtml(comment.content).replace(/\n/g, '<br>')}</div>
-            </div>
-        </div>
-    `;
+    
+    const commentItem = document.createElement('div');
+    commentItem.className = 'comment-item';
+    commentItem.id = `comment-${comment.id}`;
+    
+    const avatarDiv = document.createElement('div');
+    avatarDiv.className = 'comment-avatar';
+    avatarDiv.textContent = initial;
+    commentItem.appendChild(avatarDiv);
+    
+    const contentWrapper = document.createElement('div');
+    contentWrapper.className = 'comment-content-wrapper';
+    
+    const metaDiv = document.createElement('div');
+    metaDiv.className = 'comment-meta';
+    
+    const authorSpan = document.createElement('span');
+    authorSpan.className = 'comment-author';
+    authorSpan.textContent = comment.author || 'Guest';
+    metaDiv.appendChild(authorSpan);
+    
+    const dateSpan = document.createElement('span');
+    dateSpan.className = 'comment-date';
+    dateSpan.textContent = timeAgo;
+    metaDiv.appendChild(dateSpan);
+    
+    if (canDelete) {
+        const deleteBtn = document.createElement('button');
+        deleteBtn.className = 'delete-comment-btn';
+        deleteBtn.dataset.commentId = comment.id;
+        deleteBtn.title = '삭제';
+        
+        const deleteIcon = document.createElement('i');
+        deleteIcon.className = 'fa-solid fa-xmark';
+        deleteBtn.appendChild(deleteIcon);
+        metaDiv.appendChild(deleteBtn);
+    }
+    
+    contentWrapper.appendChild(metaDiv);
+    
+    const textDiv = document.createElement('div');
+    textDiv.className = 'comment-text';
+    
+    const lines = comment.content.split('\n');
+    lines.forEach((line, index) => {
+        if (index > 0) {
+            textDiv.appendChild(document.createElement('br'));
+        }
+        textDiv.appendChild(document.createTextNode(line));
+    });
+    
+    contentWrapper.appendChild(textDiv);
+    commentItem.appendChild(contentWrapper);
+    
+    return commentItem;
 }
 
 async function submitComment() {

@@ -2,6 +2,18 @@ import { get } from './api-utils.js';
 import { toggleModal, escapeHtml } from './ui-utils.js';
 import { loadPage } from './pages-manager.js';
 
+const TT_POLICY = window.trustedTypes?.createPolicy('nteok-sanitize', {
+    createHTML: (html) => html
+});
+
+function safeSetInnerHTML(element, html) {
+    if (TT_POLICY) {
+        element.innerHTML = TT_POLICY.createHTML(html);
+    } else {
+        element.innerHTML = html;
+    }
+}
+
 let appState = null;
 
 export function initUpdatesManager(state) {
@@ -29,12 +41,12 @@ export async function openUpdatesModal() {
     
     toggleModal(updatesModal, true);
     
-    updatesList.innerHTML = '<div style="padding: 40px; text-align: center; color: #9ca3af;">업데이트 정보를 불러오는 중...</div>';
+    safeSetInnerHTML(updatesList, '<div style="padding: 40px; text-align: center; color: #9ca3af;">업데이트 정보를 불러오는 중...</div>');
 
     try {
         const storageId = appState ? appState.currentStorageId : null;
         if (!storageId) {
-            updatesList.innerHTML = '<div style="padding: 40px; text-align: center; color: #9ca3af;">저장소가 선택되지 않았습니다.</div>';
+            safeSetInnerHTML(updatesList, '<div style="padding: 40px; text-align: center; color: #9ca3af;">저장소가 선택되지 않았습니다.</div>');
             return;
         }
 
@@ -42,7 +54,7 @@ export async function openUpdatesModal() {
         renderUpdatesHistory(history);
     } catch (error) {
         console.error('Failed to fetch updates history:', error);
-        updatesList.innerHTML = '<div style="padding: 40px; text-align: center; color: #ef4444;">업데이트 정보를 불러오는데 실패했습니다.</div>';
+        safeSetInnerHTML(updatesList, '<div style="padding: 40px; text-align: center; color: #ef4444;">업데이트 정보를 불러오는데 실패했습니다.</div>');
     }
 }
 
@@ -50,11 +62,11 @@ function renderUpdatesHistory(history) {
     const updatesList = document.getElementById('updates-history-list');
     
     if (!history || history.length === 0) {
-        updatesList.innerHTML = '<div style="padding: 40px; text-align: center; color: #9ca3af;">최근 업데이트 내역이 없습니다.</div>';
+        safeSetInnerHTML(updatesList, '<div style="padding: 40px; text-align: center; color: #9ca3af;">최근 업데이트 내역이 없습니다.</div>');
         return;
     }
 
-updatesList.innerHTML = '';
+while (updatesList.firstChild) updatesList.removeChild(updatesList.firstChild);
 
     history.forEach(item => {
         const updateItem = document.createElement('div');
@@ -65,7 +77,7 @@ updatesList.innerHTML = '';
 
         const iconWrap = document.createElement('div');
         iconWrap.className = 'update-icon';
-        iconWrap.innerHTML = icon;
+        safeSetInnerHTML(iconWrap, icon);
 
         const contentWrap = document.createElement('div');
         contentWrap.className = 'update-content';

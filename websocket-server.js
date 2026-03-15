@@ -1795,8 +1795,6 @@ function initWebSocketServer(server, pool, sanitizeHtmlContent, IS_PRODUCTION, B
                 if (!isWsOriginAllowed(origin)) return done(false, 403, 'Forbidden');
 
                 const req = info.req;
-                const parsedUrl = new URL(req.url, `http://${req.headers.host || "localhost"}`);
-                const ticketFromQuery = parsedUrl.searchParams.get("ticket");
 
                 const cookies = {};
                 if (req.headers.cookie) {
@@ -1808,14 +1806,6 @@ function initWebSocketServer(server, pool, sanitizeHtmlContent, IS_PRODUCTION, B
                 const sessionId = cookies[SESSION_COOKIE_NAME];
 
                 if (!sessionId) return done(false, 401, 'Unauthorized');
-
-				if (!ticketFromQuery) {
-					return done(false, 401, 'Forbidden: WebSocket ticket required');
-				}
-				if (typeof consumeWsTicket !== 'function' || !(await consumeWsTicket(sessionId, ticketFromQuery))) {
-					return done(false, 403, 'Forbidden: WebSocket ticket invalid');
-				}
-				req._wsTicketConsumed = true;
 
                 done(true);
             } catch (_) {
@@ -1879,8 +1869,12 @@ function initWebSocketServer(server, pool, sanitizeHtmlContent, IS_PRODUCTION, B
             ws.username = session.username;
 ws.sessionId = sessionId;
 ws.isAlive = true;
-ws._wsTicketAuthenticated = true;
-ws._authDeadline = null;
+ws._wsTicketAuthenticated = false;
+ws._authDeadline = setTimeout(() => {
+    if (!ws._wsTicketAuthenticated) {
+        try { ws.close(1008, 'Authentication timeout'); } catch (_) {}
+    }
+}, 5000);
             ws.boundUserAgent = req.headers["user-agent"] || "";
             ws.boundClientIp = getClientIpFromRequest(req) || req.socket?.remoteAddress || "";
             ws.lastFullSessionCheckAt = 0;
@@ -1921,8 +1915,39 @@ const kind = (data && typeof data.type === 'string') ? data.type : 'unknown';
 if (!consumeWsMessageBudget(ws, kind)) { try { ws.close(1008, 'Rate limit exceeded'); } catch (_) {} return; }
 
 if (kind === 'auth') {
-	try { ws.send(JSON.stringify({ event: 'auth-ok', data: {} })); } catch (_) {}
-	return;
+    const ticket = (typeof data.ticket === 'string') ? data.ticket : '';
+    let expectedOrigin = null;
+    try {
+        expectedOrigin = typeof req.headers.origin === 'string' && req.headers.origin
+            ? new URL(req.headers.origin).origin
+            : null;
+    } catch (_) {
+        expectedOrigin = null;
+    }
+
+    const ok = typeof consumeWsTicket === 'function' && await consumeWsTicket(sessionId, ticket, {
+        userAgent: req.headers["user-agent"] || "",
+        clientIp: getClientIpFromRequest(req),
+        origin: expectedOrigin || ""
+    });
+
+    if (!ok) {
+        try { ws.close(1008, 'Forbidden'); } catch (_) {}
+        return;
+    }
+
+    ws._wsTicketAuthenticated = true;
+    if (ws._authDeadline) {
+        clearTimeout(ws._authDeadline);
+        ws._authDeadline = null;
+    }
+    try { ws.send(JSON.stringify({ event: 'auth-ok', data: {} })); } catch (_) {}
+    return;
+}
+
+if (!ws._wsTicketAuthenticated) {
+    try { ws.close(1008, 'Authenticate first'); } catch (_) {}
+    return;
 }
 
 await handleWebSocketMessage(ws, data, pool, sanitizeHtmlContent, getSessionFromId, pageSqlPolicy, pageAccess);

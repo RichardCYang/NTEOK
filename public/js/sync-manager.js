@@ -387,10 +387,6 @@ console.log('[WS] 연결 시도');
 ws.onopen = () => {
 	console.log('[WS] 연결 성공');
 	ws.send(JSON.stringify({ type: "auth", ticket }));
-	reconnectAttempts = 0;
-	if (currentPageId) subscribePage(currentPageId);
-	if (currentStorageId) subscribeStorage(currentStorageId);
-	subscribeUser();
 };
 
         ws.onmessage = (event) => {
@@ -438,6 +434,13 @@ function handleWebSocketMessage(message) {
     switch (event) {
         case 'connected':
             console.log('[WS] 서버 연결 확인:', data);
+            break;
+        case 'auth-ok':
+            console.log('[WS] 인증 완료');
+            reconnectAttempts = 0;
+            if (currentPageId) subscribePage(currentPageId);
+            if (currentStorageId) subscribeStorage(currentStorageId);
+            subscribeUser();
             break;
         case 'init':
             handleInit(data);

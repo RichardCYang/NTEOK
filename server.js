@@ -559,19 +559,19 @@ async function issueWsTicket(sessionId, bindCtx = null) {
 }
 
 async function consumeWsTicket(sessionId, ticket, bindCtx = null) {
-    const sid = String(sessionId || '').trim();
-    const tok = String(ticket || '').trim();
-    if (!sid || !tok) return false;
-    const key = `ws-ticket:${sid}:${tok}`;
-    const raw = await redis.get(key);
-    if (!raw) return false;
-    await redis.del(key);
-    let parsed = null;
-    try { parsed = JSON.parse(raw); } catch (_) { return false; }
-    if (parsed.ua && parsed.ua !== hashBindValue(bindCtx?.userAgent || "")) return false;
-    if (parsed.ip && parsed.ip !== hashIpPrefix(bindCtx?.clientIp || "")) return false;
-    if (parsed.origin && parsed.origin !== String(bindCtx?.origin || "")) return false;
-    return true;
+	const sid = String(sessionId || '').trim();
+	const tok = String(ticket || '').trim();
+	if (!sid || !tok) return false;
+	const key = `ws-ticket:${sid}:${tok}`;
+	const raw = await redis.get(key);
+	if (!raw) return false;
+	let parsed = null;
+	try { parsed = JSON.parse(raw); } catch (_) { return false; }
+	if (parsed.ua && parsed.ua !== hashBindValue(bindCtx?.userAgent || "")) return false;
+	if (parsed.ip && parsed.ip !== hashIpPrefix(bindCtx?.clientIp || "")) return false;
+	if (parsed.origin && parsed.origin !== String(bindCtx?.origin || "")) return false;
+	await redis.del(key);
+	return true;
 }
 
 async function issueActionTicket(sessionId, action, resourceId, bindCtx = null) {
@@ -589,20 +589,20 @@ async function issueActionTicket(sessionId, action, resourceId, bindCtx = null) 
 }
 
 async function consumeActionTicket(sessionId, action, resourceId, ticket, bindCtx = null) {
-    const sid = String(sessionId || '').trim();
-    const act = String(action || '').trim();
-    const rid = String(resourceId || '').trim();
-    const tok = String(ticket || '').trim();
-    if (!sid || !act || !rid || !tok) return false;
-    const key = `action-ticket:${sid}:${act}:${rid}:${tok}`;
-    const raw = await redis.get(key);
-    if (!raw) return false;
-    await redis.del(key);
-    let parsed = null;
-    try { parsed = JSON.parse(raw); } catch (_) { return false; }
-    if (parsed.ua && parsed.ua !== hashBindValue(bindCtx?.userAgent || "")) return false;
-    if (parsed.ip && parsed.ip !== hashIpPrefix(bindCtx?.clientIp || "")) return false;
-    return true;
+	const sid = String(sessionId || '').trim();
+	const act = String(action || '').trim();
+	const rid = String(resourceId || '').trim();
+	const tok = String(ticket || '').trim();
+	if (!sid || !act || !rid || !tok) return false;
+	const key = `action-ticket:${sid}:${act}:${rid}:${tok}`;
+	const raw = await redis.get(key);
+	if (!raw) return false;
+	let parsed = null;
+	try { parsed = JSON.parse(raw); } catch (_) { return false; }
+	if (parsed.ua && parsed.ua !== hashBindValue(bindCtx?.userAgent || "")) return false;
+	if (parsed.ip && parsed.ip !== hashIpPrefix(bindCtx?.clientIp || "")) return false;
+	await redis.del(key);
+	return true;
 }
 
 function generateCsrfTokenForSession(sessionId, purpose = "api") {
@@ -2093,7 +2093,7 @@ app.use((req, res, next) => {
     res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
 
     res.setHeader(
-        'Content-Security-Policy-Report-Only',
+        'Content-Security-Policy',
         [
             "require-trusted-types-for 'script'",
             "trusted-types dompurify nteok-sanitize"

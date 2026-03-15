@@ -999,10 +999,13 @@ module.exports = (dependencies) => {
         return res.status(200).send(generateSvgFavicon(hostname));
     });
 
-    router.get('/proxy-favicon', authMiddleware, requireSameOriginForPreviewGet, outboundFetchLimiter, async (req, res) => {
-        const opaqueId = typeof req.query.id === 'string' ? req.query.id : '';
+    router.get('/proxy-favicon', authMiddleware, (_req, res) => {
+        return res.status(405).json({ error: "POST only" });
+    });
+
+    router.post('/proxy-favicon', authMiddleware, requireSameOriginForPreview, csrfMiddleware, outboundFetchLimiter, async (req, res) => {
+        const opaqueId = typeof req.body?.id === 'string' ? req.body.id.trim() : '';
         const ticket = opaqueId && redis ? await redis.get(`favicon-ticket:${opaqueId}`) : '';
-        if (opaqueId && redis) await redis.del(`favicon-ticket:${opaqueId}`).catch(() => {});
         let verified = null;
         try {
             const sidHash = hashPreviewSessionBinding(req.cookies?.[SESSION_COOKIE_NAME] || '');
@@ -1016,6 +1019,9 @@ module.exports = (dependencies) => {
                 sidHash,
                 { expectedOrigin, expectedUaHash }
             );
+            if (verified && opaqueId && redis) {
+                await redis.del(`favicon-ticket:${opaqueId}`).catch(() => {});
+            }
         } catch (_) {
             verified = null;
         }
@@ -1135,6 +1141,10 @@ module.exports = (dependencies) => {
         const { url } = req.body;
         if (!url) return res.status(400).json({ error: "URL 이 필요합니다." });
         try {
+            res.setHeader("Cache-Control", "private, no-store, max-age=0, must-revalidate");
+            res.setHeader("Pragma", "no-cache");
+            res.setHeader("Expires", "0");
+            res.setHeader("Referrer-Policy", "no-referrer");
             if (typeof isHostnameAllowedForPreview !== "function") return res.status(500).json({ error: "링크 미리보기 보안 구성이 올바르지 않습니다." });
             const startUrl = normalizeAndValidatePreviewUrl(String(url), isHostnameAllowedForPreview);
             console.warn(`[미리보기-가져오기] 사용자=${req.user.id} 호스트=${startUrl.hostname}`);
@@ -1198,13 +1208,12 @@ module.exports = (dependencies) => {
             if (opaqueId && redis) {
                 await redis.set(`favicon-ticket:${opaqueId}`, ticket, { EX: 60 });
             }
-            const favicon = (ticket && opaqueId)
-                ? `/api/pages/proxy-favicon?id=${encodeURIComponent(opaqueId)}`
-                : buildGeneratedBookmarkFaviconUrl(finalUrl.hostname);
+            const favicon = buildGeneratedBookmarkFaviconUrl(finalUrl.hostname);
 
             res.json({
                 title,
                 favicon,
+                faviconOpaqueId: opaqueId || null,
                 url: finalUrl.toString()
             });
         } catch (error) {

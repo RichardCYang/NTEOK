@@ -2,6 +2,18 @@
 import { secureFetch, escapeHtmlAttr } from './ui-utils.js';
 import { appendPageScopeParam } from './url-utils.js';
 
+const TT_POLICY = window.trustedTypes?.createPolicy('nteok-sanitize', {
+    createHTML: (html) => html
+});
+
+function safeSetInnerHTML(element, html) {
+    if (TT_POLICY) {
+        element.innerHTML = TT_POLICY.createHTML(html);
+    } else {
+        element.innerHTML = html;
+    }
+}
+
 let state = null;
 let isRepositioning = false;
 let repositionStartY = 0;
@@ -231,7 +243,7 @@ function startRepositioning() {
     if (!container || !imageEl) return;
 
     container.classList.add('repositioning');
-    if (btn) btn.innerHTML = '<i class="fa-solid fa-check"></i> 완료';
+    if (btn) safeSetInnerHTML(btn, '<i class="fa-solid fa-check"></i> 완료');
 
     const currentPos = imageEl.style.backgroundPositionY;
     repositionStartPos = parseInt(currentPos) || 50;
@@ -294,7 +306,7 @@ function stopRepositioning() {
         }
     }
 
-    if (btn) btn.innerHTML = '<i class="fa-solid fa-arrows-up-down"></i> 위치 조정';
+    if (btn) safeSetInnerHTML(btn, '<i class="fa-solid fa-arrows-up-down"></i> 위치 조정');
 }
 
 function closeCoverModal() {
@@ -333,11 +345,11 @@ async function loadUserCovers() {
         const covers = await res.json();
 
         if (covers.length === 0) {
-            gallery.innerHTML = '<p class="cover-gallery-empty">업로드된 커버 이미지가 없습니다.</p>';
+            safeSetInnerHTML(gallery, '<p class="cover-gallery-empty">업로드된 커버 이미지가 없습니다.</p>');
             return;
         }
 
-        gallery.innerHTML = covers.map(cover => `
+        safeSetInnerHTML(gallery, covers.map(cover => `
         	<div class="user-cover-option" data-cover="${escapeHtmlAttr(cover.path)}">
                 <img src="/covers/${escapeHtmlAttr(cover.path)}" alt="사용자 커버">
                 <button class="delete-cover-btn" data-filename="${escapeHtmlAttr(cover.filename)}" title="삭제">
@@ -365,7 +377,7 @@ async function loadUserCovers() {
 
     } catch (error) {
         console.error('사용자 커버 목록 로드 오류:', error);
-        gallery.innerHTML = '<p class="cover-gallery-empty" style="color: #f44;">커버 목록을 불러오는데 실패했습니다.</p>';
+        safeSetInnerHTML(gallery, '<p class="cover-gallery-empty" style="color: #f44;">커버 목록을 불러오는데 실패했습니다.</p>');
     }
 }
 
@@ -524,7 +536,7 @@ function startRepositioning() {
     if (!container || !imageEl) return;
 
     container.classList.add('repositioning');
-    if (btn) btn.innerHTML = '<i class="fa-solid fa-check"></i> 완료';
+    if (btn) safeSetInnerHTML(btn, '<i class="fa-solid fa-check"></i> 완료');
 
     const currentPos = imageEl.style.backgroundPositionY;
     repositionStartPos = parseInt(currentPos) || 50;
@@ -587,7 +599,7 @@ function stopRepositioning() {
         }
     }
 
-    if (btn) btn.innerHTML = '<i class="fa-solid fa-arrows-up-down"></i> 위치 조정';
+    if (btn) safeSetInnerHTML(btn, '<i class="fa-solid fa-arrows-up-down"></i> 위치 조정');
 }
 
 function closeCoverModal() {
@@ -626,11 +638,11 @@ async function loadUserCovers() {
         const covers = await res.json();
 
         if (covers.length === 0) {
-            gallery.innerHTML = '<p class="cover-gallery-empty">업로드된 커버 이미지가 없습니다.</p>';
+            safeSetInnerHTML(gallery, '<p class="cover-gallery-empty">업로드된 커버 이미지가 없습니다.</p>');
             return;
         }
 
-        gallery.innerHTML = covers.map(cover => `
+        safeSetInnerHTML(gallery, covers.map(cover => `
         	<div class="user-cover-option" data-cover="${escapeHtmlAttr(cover.path)}">
                 <img src="/covers/${escapeHtmlAttr(cover.path)}" alt="사용자 커버">
                 <button class="delete-cover-btn" data-filename="${escapeHtmlAttr(cover.filename)}" title="삭제">
@@ -658,7 +670,7 @@ async function loadUserCovers() {
 
     } catch (error) {
         console.error('사용자 커버 목록 로드 오류:', error);
-        gallery.innerHTML = '<p class="cover-gallery-empty" style="color: #f44;">커버 목록을 불러오는데 실패했습니다.</p>';
+        safeSetInnerHTML(gallery, '<p class="cover-gallery-empty" style="color: #f44;">커버 목록을 불러오는데 실패했습니다.</p>');
     }
 }
 
