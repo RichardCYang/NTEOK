@@ -29,7 +29,11 @@ module.exports = (dependencies) => {
         formatDateForDb,
         wsCloseConnectionsForStorage,
         getClientIpFromRequest,
-        requireRecentReauth
+        requireRecentReauth,
+        requireStrongStepUp,
+        issueActionTicket,
+        consumeActionTicket,
+        getSessionFromRequest
     } = dependencies;
 
     const USER_SEARCH_CONTROL_CHARS_RE = /[\u0000-\u001F\u007F]/;
@@ -63,14 +67,14 @@ module.exports = (dependencies) => {
         return `${userPart}:${ipPart}`;
     }
 
-    const collaboratorUserSearchLimiter = rateLimit({
-        windowMs: 60 * 1000,
-        max: 30,
-        standardHeaders: true,
-        legacyHeaders: false,
-        keyGenerator: userAndIpRateKey,
-        message: { error: '사용자 검색 요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.' }
-    });
+const collaboratorUserSearchLimiter = rateLimit({
+    windowMs: 10 * 60 * 1000,
+    max: 20,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) => `${req.user?.id || 'anon'}:${ipKeyGenerator(req)}`,
+    message: { error: '사용자 검색 요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.' }
+});
 
     const collaboratorMutationLimiter = rateLimit({
         windowMs: 10 * 60 * 1000,
@@ -344,7 +348,12 @@ module.exports = (dependencies) => {
                 normalizedQuery,
                 req.user.id
             );
-            res.json(user ? [user] : []);
+            if (!user) {
+                await new Promise(r => setTimeout(r, 150));
+                return res.json([]);
+            }
+            await new Promise(r => setTimeout(r, 150));
+            res.json([user]);
         } catch (error) {
             logError('GET /api/storages/:id/users/search', error);
             res.status(500).json({ error: '사용자 검색 중 오류가 발생했습니다.' });
@@ -367,13 +376,41 @@ module.exports = (dependencies) => {
         }
     });
 
-    router.post('/:id/my-wrapped-dek', authMiddleware, csrfMiddleware, requireRecentReauth(5 * 60 * 1000), wrappedDekExportLimiter, async (req, res) => {
+    router.post('/:id/my-wrapped-dek-ticket',
+        authMiddleware,
+        csrfMiddleware,
+        requireStrongStepUp({ maxAgeMs: 5 * 60 * 1000, requireMfaIfEnabled: true }),
+        wrappedDekExportLimiter,
+        async (req, res) => {
+            try {
+                const session = await getSessionFromRequest(req);
+                if (!session) return res.status(401).json({ error: '세션이 만료되었습니다.' });
+                const ticket = await issueActionTicket(session.id, 'export-wrapped-dek', String(req.params.id));
+                return res.json({ ok: true, ticket });
+            } catch (error) {
+                logError('POST /api/storages/:id/my-wrapped-dek-ticket', error);
+                return res.status(500).json({ error: '티켓 발급 실패' });
+            }
+        }
+    );
+
+    router.post('/:id/my-wrapped-dek',
+        authMiddleware,
+        csrfMiddleware,
+        requireStrongStepUp({ maxAgeMs: 5 * 60 * 1000, requireMfaIfEnabled: true }),
+        wrappedDekExportLimiter,
+        async (req, res) => {
         try {
             const userId = req.user.id;
             const storageId = req.params.id;
-            const { purpose } = req.body || {};
+            const { purpose, ticket } = req.body || {};
 
             if (purpose !== 'unlock-storage') return res.status(400).json({ error: 'purpose=unlock-storage 가 필요합니다.' });
+
+            const session = await getSessionFromRequest(req);
+            if (!session) return res.status(401).json({ error: '세션이 만료되었습니다.' });
+            const valid = await consumeActionTicket(session.id, 'export-wrapped-dek', String(storageId), ticket);
+            if (!valid) return res.status(403).json({ error: '유효하지 않거나 만료된 티켓입니다.' });
 
             const storage = await storagesRepo.getStorageByIdForUser(userId, storageId);
             if (!storage) return res.status(404).json({ error: '저장소를 찾을 수 없습니다.' });
@@ -396,7 +433,7 @@ module.exports = (dependencies) => {
         }
     });
 
-    router.post('/:id/collaborators', authMiddleware, csrfMiddleware, requireRecentReauth(5 * 60 * 1000), collaboratorMutationLimiter, async (req, res) => {
+    router.post('/:id/collaborators', authMiddleware, csrfMiddleware, requireStrongStepUp({ maxAgeMs: 5 * 60 * 1000, requireMfaIfEnabled: true }), collaboratorMutationLimiter, async (req, res) => {
         let connection = null;
         try {
             const userId = req.user.id;
@@ -470,7 +507,7 @@ module.exports = (dependencies) => {
         }
     });
 
-    router.delete('/:id/collaborators/:targetUserId', authMiddleware, csrfMiddleware, requireRecentReauth(5 * 60 * 1000), collaboratorMutationLimiter, async (req, res) => {
+    router.delete('/:id/collaborators/:targetUserId', authMiddleware, csrfMiddleware, requireStrongStepUp({ maxAgeMs: 5 * 60 * 1000, requireMfaIfEnabled: true }), collaboratorMutationLimiter, async (req, res) => {
         let connection = null;
         try {
             const userId = req.user.id;
@@ -536,7 +573,7 @@ module.exports = (dependencies) => {
         }
     });
 
-    router.post('/:id/rekey', authMiddleware, csrfMiddleware, requireRecentReauth(5 * 60 * 1000), destructiveStorageLimiter, async (req, res) => {
+    router.post('/:id/rekey', authMiddleware, csrfMiddleware, requireStrongStepUp({ maxAgeMs: 5 * 60 * 1000, requireMfaIfEnabled: true }), destructiveStorageLimiter, async (req, res) => {
         let connection = null;
         try {
             const userId = req.user.id;

@@ -1,4 +1,6 @@
 import fs from 'node:fs';
+import semver from 'semver';
+
 const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
 const lock = fs.existsSync('package-lock.json') ? JSON.parse(fs.readFileSync('package-lock.json', 'utf8')) : null;
 
@@ -55,3 +57,14 @@ for (const [name, min] of Object.entries(CRITICAL)) {
 	}
 }
 console.log('[SECURITY] Dependency version check passed.');
+
+const v = process.versions.node;
+const ok = semver.satisfies(
+  v,
+  '>=20.20.0 <21 || >=22.22.0 <23 || >=24.13.0 <25 || >=25.3.0'
+);
+
+if (!ok) {
+  console.error(`[SECURITY] Unsupported Node.js runtime for 2026-01 security floor: ${v}`);
+  process.exit(1);
+}

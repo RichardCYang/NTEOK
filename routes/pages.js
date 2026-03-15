@@ -72,24 +72,9 @@ function makeFetchError(code, message) {
     return err;
 }
 
-function normalizePreviewComparisonHost(hostname) {
-    return String(hostname || '')
-        .trim()
-        .toLowerCase()
-        .replace(/\.$/, '')
-        .replace(/^www\./, '');
-}
-
-function isSamePreviewHostFamily(leftHost, rightHost) {
-    const left = normalizePreviewComparisonHost(leftHost);
-    const right = normalizePreviewComparisonHost(rightHost);
-    if (!left || !right) return false;
-    return left === right || left.endsWith(`.${right}`) || right.endsWith(`.${left}`);
-}
-
 function isOnlyWwwVariant(leftHost, rightHost) {
-    const left = normalizePreviewComparisonHost(leftHost);
-    const right = normalizePreviewComparisonHost(rightHost);
+    const left = String(leftHost || '').trim().toLowerCase().replace(/\.$/, '');
+    const right = String(rightHost || '').trim().toLowerCase().replace(/\.$/, '');
     if (!left || !right) return false;
     return left === right || left === `www.${right}` || right === `www.${left}`;
 }
@@ -113,18 +98,12 @@ function normalizeIpLiteral(ip) {
 }
 
 async function isSafePreviewRedirectTarget(currentUrl, nextUrl, isPublicRoutableIP) {
-    if (isOnlyWwwVariant(currentUrl.hostname, nextUrl.hostname)) return true;
+    if (currentUrl.protocol !== nextUrl.protocol) return false;
+    if ((currentUrl.port || '443') !== (nextUrl.port || '443')) return false;
+    if (!isOnlyWwwVariant(currentUrl.hostname, nextUrl.hostname)) return false;
 
-    const [curIps, nextIps] = await Promise.all([
-        resolvePublicOutboundAddresses(currentUrl.hostname, isPublicRoutableIP),
-        resolvePublicOutboundAddresses(nextUrl.hostname, isPublicRoutableIP)
-    ]);
-
-    const curSet = new Set(curIps.map(normalizeIpLiteral).filter(Boolean));
-    return nextIps
-        .map(normalizeIpLiteral)
-        .filter(Boolean)
-        .some(ip => curSet.has(ip));
+    const nextIps = await resolvePublicOutboundAddresses(nextUrl.hostname, isPublicRoutableIP);
+    return nextIps.length > 0;
 }
 
 function normalizeAndValidatePreviewUrl(rawUrl, isHostnameAllowedForPreview) {
@@ -423,8 +402,13 @@ module.exports = (dependencies) => {
         outboundFetchLimiter,
         pageWritePolicy,
         redis,
-        SESSION_COOKIE_NAME
+        SESSION_COOKIE_NAME,
+        getSessionFromRequest
 	} = dependencies;
+
+    function makeEncryptedAssetBindKey(sessionId, pageId, userId, fileType, filename) {
+        return `asset-bind:${sessionId}:${pageId}:${userId}:${fileType}:${filename}`;
+    }
 
     const previewNonceStore = new Map();
 
@@ -980,7 +964,9 @@ module.exports = (dependencies) => {
     });
 
     router.get('/proxy-favicon', authMiddleware, requireSameOriginForPreviewGet, outboundFetchLimiter, async (req, res) => {
-        const { ticket } = req.query;
+        const opaqueId = typeof req.query.id === 'string' ? req.query.id : '';
+        const ticket = opaqueId && redis ? await redis.get(`favicon-ticket:${opaqueId}`) : '';
+        if (opaqueId && redis) await redis.del(`favicon-ticket:${opaqueId}`).catch(() => {});
         let verified = null;
         try {
             const sidHash = hashPreviewSessionBinding(req.cookies?.[SESSION_COOKIE_NAME] || '');
@@ -1157,8 +1143,12 @@ module.exports = (dependencies) => {
                     nonce: crypto.randomBytes(16).toString('hex')
                   })
                 : null;
+            const opaqueId = ticket && redis ? crypto.randomBytes(16).toString('hex') : null;
+            if (opaqueId && redis) {
+                await redis.set(`favicon-ticket:${opaqueId}`, ticket, { EX: 60 });
+            }
             const favicon = faviconUrl
-                ? `/api/pages/proxy-favicon?ticket=${encodeURIComponent(ticket)}`
+                ? `/api/pages/proxy-favicon?id=${encodeURIComponent(opaqueId)}`
                 : buildGeneratedBookmarkFaviconUrl(finalUrl.hostname);
 
             res.json({
@@ -2002,6 +1992,14 @@ module.exports = (dependencies) => {
                 [id, userId, req.file.filename]
             );
 
+            if (Number(existing.is_encrypted) === 1 && redis) {
+                const session = await getSessionFromRequest(req);
+                if (session?.id) {
+                    const k = makeEncryptedAssetBindKey(session.id, id, userId, 'paperclip', req.file.filename);
+                    await redis.set(k, '1', { EX: 600 }).catch(() => {});
+                }
+            }
+
             res.json({
                 url: fileUrl,
                 filename: req.file.originalname,
@@ -2035,42 +2033,22 @@ module.exports = (dependencies) => {
     }
 
     async function countPlaintextPaperclipRefsForUser(ownerUserId, filename, excludePageId) {
-        const fileUrlPart = `/paperclip/${ownerUserId}/${filename}`;
-        const likePattern = `%${escapeLikeForSql(fileUrlPart)}%`;
-
-        const params = [ownerUserId, likePattern];
-        let sql = `
-            SELECT COUNT(*) AS cnt
-              FROM pages
-             WHERE user_id = ?
-               AND is_encrypted = 0
-               AND deleted_at IS NULL
-               AND content LIKE ? ESCAPE '\\\\'
-        `;
-        if (excludePageId) {
-            sql += ` AND id != ?`;
-            params.push(excludePageId);
-        }
-
-        const [rows] = await pool.execute(sql, params);
+        const [rows] = await pool.execute(
+            `SELECT COUNT(*) AS cnt
+               FROM page_file_refs r
+               JOIN pages p ON p.id = r.page_id
+              WHERE r.owner_user_id = ?
+                AND r.stored_filename = ?
+                AND r.file_type = 'paperclip'
+                AND p.deleted_at IS NULL
+                ${excludePageId ? 'AND p.id != ?' : ''}`,
+            excludePageId ? [ownerUserId, filename, excludePageId] : [ownerUserId, filename]
+        );
         return Number(rows?.[0]?.cnt || 0);
     }
 
-    async function backfillPaperclipRefsFromPlaintextContentForUser(ownerUserId, filename) {
-        const fileUrlPart = `/paperclip/${ownerUserId}/${filename}`;
-        const likePattern = `%${escapeLikeForSql(fileUrlPart)}%`;
-        try {
-            await pool.execute(
-                `INSERT IGNORE INTO page_file_refs (page_id, owner_user_id, stored_filename, file_type, created_at)
-                 SELECT id, ?, ?, 'paperclip', NOW()
-                   FROM pages
-                  WHERE user_id = ?
-                    AND is_encrypted = 0
-                    AND deleted_at IS NULL
-                    AND content LIKE ? ESCAPE '\\\\'`,
-                [ownerUserId, filename, ownerUserId, likePattern]
-            );
-        } catch (_) {}
+    async function backfillPaperclipRefsFromPlaintextContentForUser() {
+        return;
     }
 
     function findActiveYjsPagesReferencingPaperclip(ownerIdStr, filename, excludePageId) {
@@ -2086,13 +2064,17 @@ module.exports = (dependencies) => {
 
                 const meta = info.ydoc.getMap('metadata');
                 const html = meta?.get('content') || '';
-                if (typeof html === 'string' && html.includes(needle)) {
+                const refsFromHtml = extractFilesFromContent(html, Number(ownerIdStr));
+                if (refsFromHtml.some((r) => r.type === 'paperclip' && r.ref === `${ownerIdStr}/${filename}`)) {
                     out.push(String(pid));
                     continue;
                 }
                 try {
                     const xml = info.ydoc.getXmlFragment('prosemirror')?.toString?.() || '';
-                    if (typeof xml === 'string' && xml.includes(needle)) out.push(String(pid));
+                    const refsFromXml = extractFilesFromContent(xml, Number(ownerIdStr));
+                    if (refsFromXml.some((r) => r.type === 'paperclip' && r.ref === `${ownerIdStr}/${filename}`)) {
+                        out.push(String(pid));
+                    }
                 } catch (_) {}
             }
             return out;
@@ -2348,11 +2330,30 @@ module.exports = (dependencies) => {
                 return res.status(404).json({ error: "파일이 서버에 존재하지 않습니다." });
 
             const isEncryptedPage = Number(existing.is_encrypted) === 1;
-            let isReferenced = isEncryptedPage;
+            let isReferenced = false;
             const needle = assetUrl.split('?')[0];
 
             if (!isEncryptedPage) {
-                if (existing.content && existing.content.includes(needle)) isReferenced = true;
+                const wanted = extractFilesFromContent(existing.content || '', Number(userId));
+                const parsed = fileType === 'paperclip'
+                    ? { type: 'paperclip', ref: `${userId}/${filename}` }
+                    : fileType === 'imgs'
+                    ? { type: 'imgs', ref: `${userId}/${filename}` }
+                    : null;
+                if (parsed) {
+                    isReferenced = wanted.some((r) => r.type === parsed.type && r.ref === parsed.ref);
+                }
+            } else {
+                const session = await getSessionFromRequest(req);
+                if (!session?.id || !redis) {
+                    return res.status(403).json({ error: "암호화 페이지 자산 등록을 검증할 수 없습니다." });
+                }
+                const bindKey = makeEncryptedAssetBindKey(session.id, id, userId, fileType === 'covers' ? 'cover' : fileType, filename);
+                const ok = await redis.get(bindKey).catch(() => null);
+                if (ok === '1') {
+                    isReferenced = true;
+                    await redis.del(bindKey).catch(() => {});
+                }
             }
 
             if (!isReferenced && yjsDocuments && yjsDocuments.has(id)) {
@@ -2360,8 +2361,15 @@ module.exports = (dependencies) => {
                     const docInfo = yjsDocuments.get(id);
                     if (docInfo?.ydoc) {
                         const xml = docInfo.ydoc.getXmlFragment('prosemirror')?.toString?.() || '';
-                        const json = JSON.stringify(docInfo.ydoc.toJSON());
-                        if (xml.includes(needle) || json.includes(needle)) isReferenced = true;
+                        const refs = extractFilesFromContent(xml, Number(userId));
+                        const parsed = fileType === 'paperclip'
+                            ? { type: 'paperclip', ref: `${userId}/${filename}` }
+                            : fileType === 'imgs'
+                            ? { type: 'imgs', ref: `${userId}/${filename}` }
+                            : null;
+                        if (parsed && refs.some((r) => r.type === parsed.type && r.ref === parsed.ref)) {
+                            isReferenced = true;
+                        }
                     }
                 } catch (_) {}
             }

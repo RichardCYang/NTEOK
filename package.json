@@ -4,7 +4,7 @@
 	"description": "NTEOK - 한국어 넋(NEOK)과 노트(NOTE)의 합성어로 인간의 넋과 얼을 담는 노트",
 	"main": "server.js",
 	"engines": {
-		"node": "^20.19.0 || ^22.12.0 || >=24.0.0"
+		"node": ">=20.20.0 <21 || >=22.22.0 <23 || >=24.13.0 <25 || >=25.3.0"
 	},
 "scripts": {
 	"test": "echo \"Error: no test specified\" && exit 1",

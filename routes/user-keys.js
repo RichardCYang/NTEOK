@@ -19,7 +19,8 @@ module.exports = (dependencies) => {
         csrfMiddleware,
         formatDateForDb,
         logError,
-        requireRecentReauth
+        requireRecentReauth,
+        requireStrongStepUp
     } = dependencies;
 
     const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -49,7 +50,7 @@ module.exports = (dependencies) => {
         }
     });
 
-    router.post('/:kid/export-ticket', authMiddleware, csrfMiddleware, requireRecentReauth(5 * 60 * 1000), privateKeyExportLimiter, async (req, res) => {
+    router.post('/:kid/export-ticket', authMiddleware, csrfMiddleware, requireStrongStepUp({ maxAgeMs: 5 * 60 * 1000, requireMfaIfEnabled: true }), privateKeyExportLimiter, async (req, res) => {
         try {
             const { issueActionTicket, getSessionFromRequest } = dependencies;
             const userId = req.user.id;
@@ -71,7 +72,7 @@ module.exports = (dependencies) => {
         }
     });
 
-    router.post('/:kid/export-private', authMiddleware, csrfMiddleware, requireRecentReauth(5 * 60 * 1000), async (req, res) => {
+    router.post('/:kid/export-private', authMiddleware, csrfMiddleware, requireStrongStepUp({ maxAgeMs: 5 * 60 * 1000, requireMfaIfEnabled: true }), async (req, res) => {
         try {
             const { consumeActionTicket, getSessionFromRequest } = dependencies;
             const userId = req.user.id;

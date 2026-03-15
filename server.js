@@ -2130,13 +2130,35 @@ function getScopedPageIdFromReq(req) {
     return raw;
 }
 
+function parseExactAssetUrl(exactUrl) {
+    if (typeof exactUrl !== 'string' || !exactUrl.startsWith('/')) return null;
+    let m = exactUrl.match(/^\/paperclip\/(\d{1,12})\/([A-Za-z0-9][A-Za-z0-9._-]{0,199})$/);
+    if (m) return { type: 'paperclip', ref: `${m[1]}/${m[2]}` };
+    m = exactUrl.match(/^\/imgs\/(\d{1,12})\/([A-Za-z0-9][A-Za-z0-9._-]{0,199})$/);
+    if (m) return { type: 'imgs', ref: `${m[1]}/${m[2]}` };
+    return null;
+}
+
+function contentStructurallyReferencesAsset(content, ownerUserId, exactUrl) {
+    try {
+        const wanted = parseExactAssetUrl(exactUrl);
+        if (!wanted || typeof content !== 'string' || !content) return false;
+        const refs = extractFilesFromContent(content, Number(ownerUserId));
+        return refs.some((r) => r.type === wanted.type && r.ref === wanted.ref);
+    } catch {
+        return false;
+    }
+}
+
 function liveDocReferencesAsset(docInfo, exactUrl) {
     try {
         if (!docInfo?.ydoc || !exactUrl) return false;
+        const ownerUserId = Number(docInfo.ownerUserId);
+        const meta = docInfo.ydoc.getMap('metadata');
+        const html = meta?.get('content') || '';
+        if (contentStructurallyReferencesAsset(html, ownerUserId, exactUrl)) return true;
         const xml = docInfo.ydoc.getXmlFragment('prosemirror')?.toString?.() || '';
-        if (xml.includes(exactUrl)) return true;
-        const json = JSON.stringify(docInfo.ydoc.toJSON?.() || {});
-        return json.includes(exactUrl);
+        return contentStructurallyReferencesAsset(xml, ownerUserId, exactUrl);
     } catch {
         return false;
     }
@@ -2184,7 +2206,7 @@ async function canViewerReadScopedAsset({
     }
 
     if (Number(page.is_encrypted) === 0) {
-        return typeof page.content === 'string' && page.content.includes(exactUrl);
+        return contentStructurallyReferencesAsset(page.content, ownerUserId, exactUrl);
     }
 
     const [refRows] = await pool.execute(
@@ -2538,6 +2560,7 @@ function installGracefulShutdownHandlers(httpServer, pool, sanitizeHtmlContent) 
 			authMiddleware,
 			csrfMiddleware,
 			requireRecentReauth: buildRecentReauth({ getSessionFromRequest }).requireRecentReauth,
+requireStrongStepUp: buildRecentReauth({ getSessionFromRequest }).requireStrongStepUp,
 			assertLoginNotLocked,
 			recordLoginFailure,
 			clearLoginFailures,
