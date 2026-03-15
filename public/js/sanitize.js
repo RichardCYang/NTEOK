@@ -333,7 +333,8 @@ export function htmlToPlainText(html, { maxLength = 0 } = {}) {
     const input = html.length > HARD_LIMIT ? html.slice(0, HARD_LIMIT) : html;
     try {
         const parser = new DOMParser();
-        const doc = parser.parseFromString(input, 'text/html');
+        const trustedInput = toTrustedHTML(input);
+        const doc = parser.parseFromString(trustedInput, 'text/html');
         let out = (doc.body && doc.body.textContent) ? doc.body.textContent : '';
         out = out.replace(/\s+/g, ' ').trim();
         if (maxLength > 0 && out.length > maxLength) return out.slice(0, maxLength);
