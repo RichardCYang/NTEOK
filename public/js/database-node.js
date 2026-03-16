@@ -1,26 +1,12 @@
 
 import { addIcon } from './ui-utils.js';
-import * as DOMPurifyModule from '../lib/dompurify/dompurify.js';
 import { safeJsonClone, safeJsonParse } from './safe-json.js';
-
-function createPurifier() {
-    let m = DOMPurifyModule;
-    if (m.default) m = m.default;
-    if (typeof m === 'function' && !m.sanitize) return m(window);
-    return m;
-}
-const DOMPurify = createPurifier();
+import { sanitizeStructuredRichHtml } from './sanitize.js';
 
 const Node = Tiptap.Core.Node;
 
-const DB_CELL_PURIFY_CONFIG = {
-    USE_PROFILES: { html: true },
-    ALLOWED_TAGS: ['br', 'span', 'strong', 'b', 'em', 'i', 'u', 's', 'code', 'a'],
-    ALLOWED_ATTR: ['href', 'target', 'rel'],
-};
-
 function sanitizeCellHtml(html) {
-    return DOMPurify.sanitize(String(html ?? ''), DB_CELL_PURIFY_CONFIG);
+    return sanitizeStructuredRichHtml(html);
 }
 
 function cloneDatabaseColumns(columns) {

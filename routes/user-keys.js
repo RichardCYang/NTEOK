@@ -8,6 +8,7 @@ const { ipKeyGenerator } = erl;
 const SENSITIVE_EXPORT_MAX_AGE_MS = 20 * 1000;
 
 module.exports = (dependencies) => {
+    const { applySecretHeaders, requireTopLevelNavigation } = require('../middlewares/secret-download');
     const {
         userKeysRepo,
         storagesRepo,
@@ -102,7 +103,7 @@ const ticket = await issueActionTicket(
 
     router.post('/:kid/export-private', authMiddleware, csrfMiddleware, requireStrongStepUp({ maxAgeMs: SENSITIVE_EXPORT_MAX_AGE_MS, requireMfaIfEnabled: true }), async (req, res) => {
         try {
-            const { consumeActionTicket, getSessionFromRequest } = dependencies;
+            const { consumeActionTicket, getSessionFromRequest, redis } = dependencies;
             const userId = req.user.id;
             const kid = req.params.kid;
             const { ticket } = req.body;
@@ -114,34 +115,63 @@ const ticket = await issueActionTicket(
             if (!session) return res.status(401).json({ error: '세션이 만료되었습니다.' });
 
             const bindCtx = {
-    userAgent: req.headers['user-agent'] || '',
-    clientIp: canonicalClientIp(req),
-    origin: req.headers.origin || req.headers.referer || ''
-};
-const valid = await consumeActionTicket(
-    session.id,
-    'export-private-key',
-    kid,
-    ticket,
-    bindCtx
-);
+                userAgent: req.headers['user-agent'] || '',
+                clientIp: canonicalClientIp(req),
+                origin: req.headers.origin || req.headers.referer || ''
+            };
+            const valid = await consumeActionTicket(
+                session.id,
+                'export-private-key',
+                kid,
+                ticket,
+                bindCtx
+            );
             if (!valid) return res.status(403).json({ error: '유효하지 않거나 만료된 티켓입니다.' });
 
             const keyPair = await userKeysRepo.getKeyPairByKid(kid);
             if (!keyPair) return res.status(404).json({ error: '키 쌍을 찾을 수 없습니다.' });
             if (Number(keyPair.user_id) !== Number(userId)) return res.status(403).json({ error: '이 키 쌍을 조회할 권한이 없습니다.' });
 
-            res.setHeader('Cache-Control', 'no-store');
+            const downloadToken = crypto.randomBytes(24).toString('base64url');
+            await redis.set(
+                `private-key-export:${userId}:${kid}:${downloadToken}`,
+                JSON.stringify({
+                    kid: keyPair.kid,
+                    encryptedPrivateKey: keyPair.encrypted_private_key,
+                    keyWrapSalt: keyPair.key_wrap_salt
+                }),
+                { PX: 60 * 1000, NX: true }
+            );
+            applySecretHeaders(res);
             return res.json({
-                kid: keyPair.kid,
-                encryptedPrivateKey: keyPair.encrypted_private_key,
-                keyWrapSalt: keyPair.key_wrap_salt,
+                ok: true,
+                downloadPath: `/api/user-keys/${kid}/export-private/download/${downloadToken}`
             });
         } catch (error) {
             logError('POST /api/user-keys/:kid/export-private', error);
             res.status(500).json({ error: '개인키 export 에 실패했습니다.' });
         }
     });
+
+    router.get('/:kid/export-private/download/:token',
+        authMiddleware,
+        requireStrongStepUp({ maxAgeMs: SENSITIVE_EXPORT_MAX_AGE_MS, requireMfaIfEnabled: true }),
+        requireTopLevelNavigation,
+        async (req, res) => {
+            const { redis } = dependencies;
+            const userId = req.user.id;
+            const kid = req.params.kid;
+            const token = String(req.params.token || '');
+            const key = `private-key-export:${userId}:${kid}:${token}`;
+            const raw = await redis.get(key);
+            if (!raw) return res.status(404).send('expired');
+            await redis.del(key).catch(() => {});
+            applySecretHeaders(res);
+            res.attachment(`nteok-private-key-${kid}.json`);
+            res.type('application/json; charset=utf-8');
+            return res.send(raw);
+        }
+    );
 
     router.get('/public/:userId', authMiddleware, requireSensitiveStepUp({ maxAgeMs: 5 * 60 * 1000, requireMfaIfEnabled: true }), async (req, res) => {
         try {

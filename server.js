@@ -122,7 +122,8 @@ const {
 	assertSafeAttachmentFile,
 	assertSafeCsvContent,
 	installDomPurifySecurityHooks,
-	isHostnameAllowedForPreview
+	isHostnameAllowedForPreview,
+    assertSafeIpForPreview
 } = require("./security-utils");
 const ipKeyGenerator = expressRateLimit.ipKeyGenerator || (expressRateLimit.default && expressRateLimit.default.ipKeyGenerator);
 
@@ -2457,7 +2458,7 @@ const UPLOAD_TMP_DIR = path.join(__dirname, '.upload-tmp');
 const coverStorage = multer.diskStorage({
     destination: (_req, _file, cb) => cb(null, UPLOAD_TMP_DIR),
     filename: (req, file, cb) => {
-        const uniqueBase = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}`;
+        const uniqueBase = `${Date.now()}-${crypto.randomBytes(24).toString('base64url')}`;
         cb(null, `${uniqueBase}.upload`);
     }
 });
@@ -2483,8 +2484,8 @@ const coverUpload = multer({
 const editorImageStorage = multer.diskStorage({
     destination: (_req, _file, cb) => cb(null, UPLOAD_TMP_DIR),
     filename: (req, file, cb) => {
-		const uniqueBase = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}`;
-		cb(null, `${uniqueBase}.upload`);
+        const uniqueBase = `${Date.now()}-${crypto.randomBytes(24).toString('base64url')}`;
+        cb(null, `${uniqueBase}.upload`);
     }
 });
 
@@ -2509,13 +2510,9 @@ const editorImageUpload = multer({
 const paperclipStorage = multer.diskStorage({
     destination: (_req, _file, cb) => cb(null, UPLOAD_TMP_DIR),
     filename: (req, file, cb) => {
-	    const uniquePrefix = `${Date.now()}-${crypto.randomBytes(16).toString('hex')}`;
-	    const rawExt = path.extname(file.originalname);
-	    const ext = sanitizeExtension(rawExt);
-	    const base = sanitizeFilenameComponent(path.basename(file.originalname, rawExt), 120)
-	        .replace(/__+/g, '_');
-
-	    cb(null, `${uniquePrefix}__${base}${ext}`);
+        const uniquePrefix = `${Date.now()}-${crypto.randomBytes(24).toString('base64url')}`;
+        const ext = sanitizeExtension(path.extname(file.originalname));
+        cb(null, `${uniquePrefix}${ext}`);
     }
 });
 
@@ -2698,6 +2695,7 @@ requireStrongStepUp: buildRecentReauth({ getSessionFromRequest }).requireStrongS
 			checkCountryWhitelist,
 			getClientIpFromRequest,
 			isHostnameAllowedForPreview,
+            assertSafeIpForPreview,
 			assertSafeAttachmentFile,
 			assertImageFileSignature
 		};

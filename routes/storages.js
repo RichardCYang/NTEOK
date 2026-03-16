@@ -407,6 +407,30 @@ const ticket = await issueActionTicket(
         }
     );
 
+    router.post('/:id/unlock-nonce',
+        authMiddleware,
+        csrfMiddleware,
+        requireStrongStepUp({ maxAgeMs: SENSITIVE_EXPORT_MAX_AGE_MS, requireMfaIfEnabled: true }),
+        wrappedDekExportLimiter,
+        async (req, res) => {
+            const storageId = String(req.params.id);
+            const session = await getSessionFromRequest(req);
+            if (!session) return res.status(401).json({ error: '세션이 만료되었습니다.' });
+            const nonce = crypto.randomBytes(24).toString('base64url');
+            await redis.set(
+                `unlock-nonce:${session.id}:${storageId}:${nonce}`,
+                JSON.stringify({
+                    userId: req.user.id,
+                    ua: req.headers['user-agent'] || '',
+                    ip: getClientIpFromRequest(req),
+                    origin: req.headers.origin || req.headers.referer || ''
+                }),
+                { PX: 5000, NX: true }
+            );
+            return res.json({ ok: true, unlockNonce: nonce });
+        }
+    );
+
     router.post('/:id/my-wrapped-dek',
         authMiddleware,
         csrfMiddleware,
@@ -416,25 +440,30 @@ const ticket = await issueActionTicket(
         try {
             const userId = req.user.id;
             const storageId = req.params.id;
-            const { purpose, ticket } = req.body || {};
+            const { purpose, ticket, unlockNonce } = req.body || {};
 
             if (purpose !== 'unlock-storage') return res.status(400).json({ error: 'purpose=unlock-storage 가 필요합니다.' });
 
             const session = await getSessionFromRequest(req);
             if (!session) return res.status(401).json({ error: '세션이 만료되었습니다.' });
             const bindCtx = {
-    userAgent: req.headers['user-agent'] || '',
-    clientIp: getClientIpFromRequest(req),
-    origin: req.headers.origin || req.headers.referer || ''
-};
-const valid = await consumeActionTicket(
-    session.id,
-    'export-wrapped-dek',
-    String(storageId),
-    ticket,
-    bindCtx
-);
+                userAgent: req.headers['user-agent'] || '',
+                clientIp: getClientIpFromRequest(req),
+                origin: req.headers.origin || req.headers.referer || ''
+            };
+            const valid = await consumeActionTicket(
+                session.id,
+                'export-wrapped-dek',
+                String(storageId),
+                ticket,
+                bindCtx
+            );
             if (!valid) return res.status(403).json({ error: '유효하지 않거나 만료된 티켓입니다.' });
+
+            const unlockKey = `unlock-nonce:${session.id}:${storageId}:${String(unlockNonce || '')}`;
+            const unlockRaw = await redis.get(unlockKey);
+            if (!unlockRaw) return res.status(403).json({ error: '유효하지 않거나 만료된 unlock nonce 입니다.' });
+            await redis.del(unlockKey).catch(() => {});
 
             const storage = await storagesRepo.getStorageByIdForUser(userId, storageId);
             if (!storage) return res.status(404).json({ error: '저장소를 찾을 수 없습니다.' });
@@ -444,7 +473,9 @@ const valid = await consumeActionTicket(
             const wrappedDekRecord = await storageShareKeysRepo.getWrappedDek(storageId, userId);
             if (!wrappedDekRecord) return res.status(404).json({ error: '이 저장소에 대한 wrapped DEK 를 찾을 수 없습니다.' });
 
-            res.setHeader('Cache-Control', 'no-store');
+            res.setHeader('Cache-Control', 'no-store, max-age=0, must-revalidate');
+            res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
+            res.setHeader('X-Content-Type-Options', 'nosniff');
             res.json({
                 wrappedDek: wrappedDekRecord.wrapped_dek,
                 wrappingKid: wrappedDekRecord.wrapping_kid,

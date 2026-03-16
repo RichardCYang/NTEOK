@@ -47,7 +47,7 @@ function clampPlainText(raw, max = 4000) {
     return String(raw ?? '').replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '').slice(0, max);
 }
 
-function sanitizeStructuredHtml(raw) {
+export function sanitizeStructuredRichHtml(raw) {
     return DOMPurify.sanitize(String(raw ?? ''), {
         ALLOWED_TAGS: ['br', 'p', 'div', 'span', 'strong', 'b', 'em', 'i', 'u', 's', 'code', 'pre', 'ul', 'ol', 'li', 'blockquote', 'a'],
         ALLOWED_ATTR: ['href', 'target', 'rel'],
@@ -59,7 +59,7 @@ function sanitizeStructuredHtml(raw) {
 
 function normalizeStructuredValue(value, key = '') {
     if (typeof value === 'string') {
-        if (/^(content|html|description|caption)$/i.test(key)) return sanitizeStructuredHtml(value);
+        if (/^(content|html|description|caption)$/i.test(key)) return sanitizeStructuredRichHtml(value);
         return clampPlainText(value, 2000);
     }
     if (Array.isArray(value)) return value.slice(0, 500).map(v => normalizeStructuredValue(v, key));

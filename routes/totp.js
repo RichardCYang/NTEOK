@@ -70,6 +70,7 @@ function buildStable2FAAccountKeyFromSession(tempSession) {
 
 
 module.exports = (dependencies) => {
+	const { applySecretHeaders, requireTopLevelNavigation } = require('../middlewares/secret-download');
 	const {
 		pool,
 		bcrypt,
@@ -226,13 +227,47 @@ requireRecentReauth,
 			if (!session) return res.status(401).json({ error: "세션이 만료되었습니다." });
 			session.totpTempSecret = secret.base32;
 			await saveSession(sessionId, session, SESSION_TTL_MS);
-			res.setHeader('Cache-Control', 'no-store');
-			res.json({ secret: secret.base32, qrCode: qrCodeUrl });
+			const revealToken = crypto.randomBytes(24).toString('base64url');
+			await redis.set(
+				`totp-setup-reveal:${userId}:${revealToken}`,
+				JSON.stringify({ secret: secret.base32, qrCodeUrl }),
+				{ PX: 60 * 1000, NX: true }
+			);
+			applySecretHeaders(res);
+			res.json({
+				ok: true,
+				revealPath: `/api/totp/setup/reveal/${revealToken}`
+			});
 		} catch (error) {
 			logError("POST /api/totp/setup", error);
 			res.status(500).json({ error: "TOTP 설정 중 오류가 발생했습니다." });
 		}
 	});
+
+	router.get("/setup/reveal/:token",
+		authMiddleware,
+		requireStrongStepUp({ maxAgeMs: 5 * 60 * 1000, requireMfaIfEnabled: true }),
+		requireTopLevelNavigation,
+		async (req, res) => {
+			const userId = req.user.id;
+			const token = String(req.params.token || '');
+			const key = `totp-setup-reveal:${userId}:${token}`;
+			const raw = await redis.get(key);
+			if (!raw) return res.status(404).send('expired');
+			await redis.del(key).catch(() => {});
+			const { secret, qrCodeUrl } = JSON.parse(raw);
+			applySecretHeaders(res);
+			res.setHeader('Content-Security-Policy', "default-src 'none'; img-src data:; style-src 'unsafe-inline'; frame-ancestors 'none'; sandbox");
+			res.type('html').send(`
+				<!doctype html><html><body>
+					<h1>TOTP 설정</h1>
+					<p>아래 시드는 한 번만 표시됩니다.</p>
+					<p><code>${String(secret)}</code></p>
+					<img src="${String(qrCodeUrl)}" alt="TOTP QR" />
+				</body></html>
+			`);
+		}
+	);
 
 	router.post("/verify-setup", authMiddleware, csrfMiddleware, requireStrongStepUp({ maxAgeMs: 5 * 60 * 1000, requireMfaIfEnabled: true }), totpLimiter, async (req, res) => {
 		try {
@@ -262,14 +297,41 @@ requireRecentReauth,
 			session.accountHasMfa = true;
 			await saveSession(sessionId, session, SESSION_TTL_MS);
 			await revokeOtherSessions(userId, sessionId, "mfa-enabled");
-			res.setHeader("Cache-Control", "private, no-store, max-age=0, must-revalidate");
-			res.setHeader("Pragma", "no-cache");
-			res.setHeader("Expires", "0");
-			res.json({ success: true, backupCodes: backupCodes });		} catch (error) {
+			const downloadToken = crypto.randomBytes(24).toString('base64url');
+			await redis.set(
+				`totp-backup-codes:${userId}:${downloadToken}`,
+				JSON.stringify(backupCodes),
+				{ PX: 60 * 1000, NX: true }
+			);
+			applySecretHeaders(res);
+			res.json({
+				success: true,
+				downloadPath: `/api/totp/backup-codes/${downloadToken}`
+			});
+		} catch (error) {
 			logError("POST /api/totp/verify-setup", error);
 			res.status(500).json({ error: "TOTP 활성화 중 오류가 발생했습니다." });
 		}
 	});
+
+	router.get("/backup-codes/:token",
+		authMiddleware,
+		requireStrongStepUp({ maxAgeMs: 5 * 60 * 1000, requireMfaIfEnabled: true }),
+		requireTopLevelNavigation,
+		async (req, res) => {
+			const userId = req.user.id;
+			const token = String(req.params.token || '');
+			const key = `totp-backup-codes:${userId}:${token}`;
+			const raw = await redis.get(key);
+			if (!raw) return res.status(404).send('expired');
+			await redis.del(key).catch(() => {});
+			const codes = JSON.parse(raw);
+			applySecretHeaders(res);
+			res.attachment('nteok-totp-backup-codes.txt');
+			res.type('text/plain; charset=utf-8');
+			return res.send(codes.join('\n') + '\n');
+		}
+	);
 
 	router.post("/disable", authMiddleware, csrfMiddleware, requireStrongStepUp({ maxAgeMs: 5 * 60 * 1000, requireMfaIfEnabled: true }), async (req, res) => {
 		try {

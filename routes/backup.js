@@ -888,6 +888,7 @@ const valid = await consumeActionTicket(
                             if (c.isE2ee) continue;
                             const perm = String(c.permission || '');
                             if (perm !== 'EDIT' && perm !== 'ADMIN') continue;
+                            if (Number(c.userId) !== Number(userId)) continue;
                             try {
                                 const snapshotToken = (typeof issuePageSnapshotToken === 'function') ? issuePageSnapshotToken(c, pid) : null;
                                 c.ws.send(JSON.stringify({

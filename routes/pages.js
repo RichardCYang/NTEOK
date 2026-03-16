@@ -131,7 +131,7 @@ async function isSafePreviewRedirectTarget(currentUrl, nextUrl, isPublicRoutable
     return nextIps.length > 0;
 }
 
-function normalizeAndValidatePreviewUrl(rawUrl, isHostnameAllowedForPreview) {
+async function normalizeAndValidatePreviewUrl(rawUrl, isHostnameAllowedForPreview, assertSafeIpForPreview) {
     if (typeof rawUrl !== 'string') throw makeFetchError('INVALID_URL', '유효하지 않은 URL 형식입니다.');
     const trimmed = rawUrl.trim();
     if (!trimmed || trimmed.length > 2048) throw makeFetchError('INVALID_URL', '유효하지 않은 URL 형식입니다.');
@@ -150,6 +150,14 @@ function normalizeAndValidatePreviewUrl(rawUrl, isHostnameAllowedForPreview) {
     if (net.isIP(u.hostname)) throw makeFetchError('IP_LITERAL', 'IP 직접 지정 URL 은 허용되지 않습니다.');
     if (u.port && u.port !== '443') throw makeFetchError('DISALLOWED_PORT', '허용되지 않은 포트입니다.');
     if (typeof isHostnameAllowedForPreview !== 'function' || !isHostnameAllowedForPreview(u.hostname)) throw makeFetchError('DISALLOWED_HOST', '허용되지 않은 호스트입니다.');
+
+    if (typeof assertSafeIpForPreview === 'function') {
+        try {
+            await assertSafeIpForPreview(u.hostname);
+        } catch (e) {
+            throw makeFetchError('BLOCKED_PRIVATE_IP', '허용되지 않은 호스트입니다.');
+        }
+    }
 
     return u;
 }
@@ -308,8 +316,8 @@ async function fetchDocumentWithoutRedirects(targetUrl, resolvedIps, isPublicRou
     throw lastError || makeFetchError('FETCH_FAILED', '대상 서버에 연결할 수 없습니다.');
 }
 
-async function fetchHtmlWithValidatedRedirects(startUrl, isHostnameAllowedForPreview, isPublicRoutableIP) {
-    let currentUrl = normalizeAndValidatePreviewUrl(startUrl.toString(), isHostnameAllowedForPreview);
+async function fetchHtmlWithValidatedRedirects(startUrl, isHostnameAllowedForPreview, isPublicRoutableIP, assertSafeIpForPreview) {
+    let currentUrl = await normalizeAndValidatePreviewUrl(startUrl.toString(), isHostnameAllowedForPreview, assertSafeIpForPreview);
 
     for (let i = 0; i <= METADATA_FETCH_MAX_REDIRECTS; i++) {
         const resolvedIps = await resolvePublicOutboundAddresses(currentUrl.hostname, isPublicRoutableIP);
@@ -323,7 +331,7 @@ async function fetchHtmlWithValidatedRedirects(startUrl, isHostnameAllowedForPre
         if (result?.type === 'redirect') {
             if (!result.location) throw makeFetchError('REDIRECT_BLOCKED', '리다이렉트 위치가 비어 있습니다.');
             const nextUrl = new URL(result.location, currentUrl);
-            const normalizedNextUrl = normalizeAndValidatePreviewUrl(nextUrl.toString(), isHostnameAllowedForPreview);
+            const normalizedNextUrl = await normalizeAndValidatePreviewUrl(nextUrl.toString(), isHostnameAllowedForPreview, assertSafeIpForPreview);
 
             if (!(await isSafePreviewRedirectTarget(currentUrl, normalizedNextUrl, isPublicRoutableIP)))
                 throw makeFetchError('REDIRECT_BLOCKED', '자동 리다이렉트는 동일 호스트 계열 내에서만 허용됩니다.');
@@ -426,6 +434,7 @@ module.exports = (dependencies) => {
         isPrivateOrLocalIP,
         isPublicRoutableIP,
         isHostnameAllowedForPreview,
+        assertSafeIpForPreview,
         getClientIpFromRequest,
         outboundFetchLimiter,
         pageWritePolicy,
@@ -1152,10 +1161,10 @@ module.exports = (dependencies) => {
             res.setHeader("Expires", "0");
             res.setHeader("Referrer-Policy", "no-referrer");
             if (typeof isHostnameAllowedForPreview !== "function") return res.status(500).json({ error: "링크 미리보기 보안 구성이 올바르지 않습니다." });
-            const startUrl = normalizeAndValidatePreviewUrl(String(url), isHostnameAllowedForPreview);
+            const startUrl = await normalizeAndValidatePreviewUrl(String(url), isHostnameAllowedForPreview, assertSafeIpForPreview);
             console.warn(`[미리보기-가져오기] 사용자=${req.user.id} 호스트=${startUrl.hostname}`);
 
-            const { html, finalUrl } = await fetchHtmlWithValidatedRedirects(startUrl, isHostnameAllowedForPreview, isPublicRoutableIP);
+            const { html, finalUrl } = await fetchHtmlWithValidatedRedirects(startUrl, isHostnameAllowedForPreview, isPublicRoutableIP, assertSafeIpForPreview);
             const $ = cheerio.load(html);
             const title = (
                 $('meta[property="og:title"]').attr('content') ||
@@ -1401,10 +1410,16 @@ module.exports = (dependencies) => {
             const existing = authResult.page;
             const isPageOwner = authResult.isPageOwner;
 
-            const title = sanitizeInput(String(req.body.title !== undefined ? req.body.title : (existing.title || "제목 없음")).trim()).slice(0, 200) || "제목 없음";
-            const hasEncryptedContentField = Object.prototype.hasOwnProperty.call(req.body, "encryptedContent");
-            const hasEncryptionSalt = Object.prototype.hasOwnProperty.call(req.body, "encryptionSalt");
-            const hasIsEncryptedField = Object.prototype.hasOwnProperty.call(req.body, "isEncrypted");
+            const allowedFields = ['title', 'content', 'icon', 'isEncrypted', 'encryptionSalt', 'encryptedContent', 'shareAllowed', 'horizontalPadding'];
+            const patch = {};
+            for (const f of allowedFields) {
+                if (Object.prototype.hasOwnProperty.call(req.body, f)) patch[f] = req.body[f];
+            }
+
+            const title = sanitizeInput(String(patch.title !== undefined ? patch.title : (existing.title || "제목 없음")).trim()).slice(0, 200) || "제목 없음";
+            const hasEncryptedContentField = Object.prototype.hasOwnProperty.call(patch, "encryptedContent");
+            const hasEncryptionSalt = Object.prototype.hasOwnProperty.call(patch, "encryptionSalt");
+            const hasIsEncryptedField = Object.prototype.hasOwnProperty.call(patch, "isEncrypted");
             const touchesCryptoState = hasEncryptedContentField || hasEncryptionSalt || hasIsEncryptedField;
 
             const isE2eePage = Number(existing.storage_is_encrypted) === 1 && Number(existing.is_encrypted) === 1 && (existing.encryption_salt === null || existing.encryption_salt === undefined);
@@ -1418,27 +1433,27 @@ module.exports = (dependencies) => {
                 if (!passed) return;
             }
 
-            const reqIsEncrypted = (req.body.isEncrypted === true || req.body.isEncrypted === false) ? req.body.isEncrypted : undefined;
+            const reqIsEncrypted = (patch.isEncrypted === true || patch.isEncrypted === false) ? patch.isEncrypted : undefined;
             const isEncrypted = (reqIsEncrypted !== undefined) ? (reqIsEncrypted ? 1 : 0) : existing.is_encrypted;
             const encryptionStateChanged = Number(existing.is_encrypted) !== Number(isEncrypted);
 
             if (encryptionStateChanged && !isPageOwner) return res.status(403).json({ error: "암호화 전환은 페이지 소유자만 수행할 수 있습니다." });
 
             const isRealtimeCollabPage = (Number(existing.storage_is_encrypted) === 0 && Number(existing.is_encrypted) === 0);
-            const contentWillBeReset = (req.body.content !== undefined) || encryptionStateChanged || (Number(isEncrypted) === 1);
+            const contentWillBeReset = (patch.content !== undefined) || encryptionStateChanged || (Number(isEncrypted) === 1);
 
             if (isRealtimeCollabPage && contentWillBeReset && typeof wsHasActiveConnectionsForPage === 'function' && wsHasActiveConnectionsForPage(id)) {
                 return res.status(409).json({ error: '이 페이지는 현재 실시간 협업으로 열려 있어 REST 저장이 충돌합니다.' });
             }
 
             const turningOffEncryption = encryptionStateChanged && Number(existing.is_encrypted) === 1 && Number(isEncrypted) === 0;
-            if (turningOffEncryption && req.body.content === undefined) return res.status(400).json({ error: "암호화 해제 전환 시에는 복호화된 평문 content가 필요합니다." });
+            if (turningOffEncryption && patch.content === undefined) return res.status(400).json({ error: "암호화 해제 전환 시에는 복호화된 평문 content가 필요합니다." });
 
             let salt;
             let encContent;
             if (Number(isEncrypted) === 1) {
-                salt = hasEncryptionSalt ? req.body.encryptionSalt : existing.encryption_salt;
-                encContent = hasEncryptedContentField ? req.body.encryptedContent : existing.encrypted_content;
+                salt = hasEncryptionSalt ? patch.encryptionSalt : existing.encryption_salt;
+                encContent = hasEncryptedContentField ? patch.encryptedContent : existing.encrypted_content;
                 if (encryptionStateChanged && !hasEncryptedContentField) return res.status(400).json({ error: "암호화 전환 시 encryptedContent가 필요합니다." });
                 if (salt != null) {
                     if (typeof salt !== "string" || salt.length > 512 || !/^[A-Za-z0-9+/=]*$/.test(salt)) return res.status(400).json({ error: "유효하지 않은 encryptionSalt 형식" });
@@ -1454,10 +1469,10 @@ module.exports = (dependencies) => {
                 encContent = null;
             }
 
-            const hasContentField = Object.prototype.hasOwnProperty.call(req.body, 'content');
-            if (!isEncrypted && hasContentField && typeof req.body.content !== 'string') return res.status(400).json({ error: 'content must be a string' });
+            const hasContentField = Object.prototype.hasOwnProperty.call(patch, 'content');
+            if (!isEncrypted && hasContentField && typeof patch.content !== 'string') return res.status(400).json({ error: 'content must be a string' });
 
-            const content = isEncrypted ? '' : (hasContentField ? sanitizeHtmlContent(req.body.content || '<p></p>') : (existing.content ?? '<p></p>'));
+            const content = isEncrypted ? '' : (hasContentField ? sanitizeHtmlContent(patch.content || '<p></p>') : (existing.content ?? '<p></p>'));
 
             if (!isEncrypted && hasContentField && !isPageOwner) {
                 const beforeOwnerRefs = extractFilesFromContent(existing.content || '', Number(existing.user_id));
@@ -1465,19 +1480,19 @@ module.exports = (dependencies) => {
                 if (!sameOwnerAssetSet(beforeOwnerRefs, afterOwnerRefs)) return res.status(403).json({ error: "페이지 소유자 자산 참조는 소유자만 변경할 수 있습니다." });
             }
 
-            const icon = req.body.icon !== undefined ? validateAndNormalizeIcon(req.body.icon) : (existing.icon ?? null);
-            const hPadding = req.body.horizontalPadding !== undefined ? req.body.horizontalPadding : (existing.horizontal_padding ?? null);
+            const icon = patch.icon !== undefined ? validateAndNormalizeIcon(patch.icon) : (existing.icon ?? null);
+            const hPadding = patch.horizontalPadding !== undefined ? patch.horizontalPadding : (existing.horizontal_padding ?? null);
             const nowStr = formatDateForDb(new Date());
 
-            if (Number(isEncrypted) === 0 && req.body.content === undefined) {
-                const patch = {};
-                if (req.body.title !== undefined) patch.title = title;
-                if (req.body.icon !== undefined) patch.icon = icon;
-                if (Object.keys(patch).length > 0) syncYjsMetadataFromRest(id, patch);
+            if (Number(isEncrypted) === 0 && patch.content === undefined) {
+                const yPatch = {};
+                if (patch.title !== undefined) yPatch.title = title;
+                if (patch.icon !== undefined) yPatch.icon = icon;
+                if (Object.keys(yPatch).length > 0) syncYjsMetadataFromRest(id, yPatch);
             }
 
-            const requestedShareAllowed = Object.prototype.hasOwnProperty.call(req.body, 'shareAllowed')
-                ? (req.body.shareAllowed === true ? true : (req.body.shareAllowed === false ? false : null))
+            const requestedShareAllowed = Object.prototype.hasOwnProperty.call(patch, 'shareAllowed')
+                ? (patch.shareAllowed === true ? true : (patch.shareAllowed === false ? false : null))
                 : null;
 
             let shareAllowed;
@@ -1507,7 +1522,7 @@ module.exports = (dependencies) => {
 
             let sql = `UPDATE pages SET title=?, content=?, is_encrypted=?, encryption_salt=?, encrypted_content=?, icon=?, horizontal_padding=?, updated_at=?, share_allowed=?`;
             const params = [title, content, isEncrypted, salt, encContent, icon, hPadding, nowStr, shareAllowed];
-            const shouldResetYjsState = (req.body.content !== undefined) || encryptionStateChanged || (Number(isEncrypted) === 1);
+            const shouldResetYjsState = (patch.content !== undefined) || encryptionStateChanged || (Number(isEncrypted) === 1);
             if (shouldResetYjsState) {
                 invalidateYjsPersistenceForPage(id);
                 sql += `, yjs_state=NULL`;

@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const net = require('net');
+const dns = require('dns').promises;
 const yauzl = require('yauzl');
 const { promisify } = require('util');
 const { isPrivateOrLocalIP } = require('./network-utils');
@@ -255,6 +256,13 @@ function installDomPurifySecurityHooks(DOMPurify) {
 	});
 }
 
+async function assertSafeIpForPreview(hostname) {
+    const addresses = await dns.lookup(hostname, { all: true });
+    for (const addr of addresses) {
+        if (isPrivateOrLocalIP(addr.address)) throw new Error(`Private IP detected: ${addr.address}`);
+    }
+}
+
 module.exports = {
 	detectImageTypeFromMagic,
 	assertImageFileSignature,
@@ -262,5 +270,6 @@ module.exports = {
 	assertSafeCsvContent,
 	neutralizeCsvCell,
 	installDomPurifySecurityHooks,
-	isHostnameAllowedForPreview
+	isHostnameAllowedForPreview,
+    assertSafeIpForPreview
 };

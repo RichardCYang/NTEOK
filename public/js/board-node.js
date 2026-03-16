@@ -1,45 +1,12 @@
 
 import { addIcon } from './ui-utils.js';
-import * as DOMPurifyModule from '../lib/dompurify/dompurify.js';
 import { safeJsonClone, safeJsonParse } from './safe-json.js';
-
-function createPurifier() {
-    let m = DOMPurifyModule;
-    if (m.default) m = m.default;
-    if (typeof m === 'function' && !m.sanitize) return m(window);
-    return m;
-}
-const DOMPurify = createPurifier();
+import { sanitizeStructuredRichHtml } from './sanitize.js';
 
 const Node = Tiptap.Core.Node;
 
-const BOARD_CARD_PURIFY_CONFIG = {
-    USE_PROFILES: { html: true },
-    ALLOWED_TAGS: [
-        'br','p','div','span',
-        'strong','b','em','i','u','s',
-        'code','pre','ul','ol','li','blockquote',
-        'a'
-    ],
-    ALLOWED_ATTR: ['href','target','rel'],
-    FORBID_TAGS: ['style','script','svg','math'],
-};
-
 function sanitizeBoardCardHtml(html) {
-    const clean = DOMPurify.sanitize(String(html ?? ''), BOARD_CARD_PURIFY_CONFIG);
-
-    const tmp = document.createElement('div');
-    tmp.innerHTML = clean;
-    tmp.querySelectorAll('a').forEach((a) => {
-        const target = (a.getAttribute('target') || '').toLowerCase();
-        if (target === '_blank') {
-            const rel = new Set((a.getAttribute('rel') || '').split(/\s+/).filter(Boolean).map((s) => s.toLowerCase()));
-            rel.add('noopener');
-            rel.add('noreferrer');
-            a.setAttribute('rel', Array.from(rel).join(' '));
-        }
-    });
-    return tmp.innerHTML;
+    return sanitizeStructuredRichHtml(html);
 }
 
 function sanitizeBoardColumns(columns) {
