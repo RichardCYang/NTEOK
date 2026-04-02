@@ -10,7 +10,11 @@ const CRITICAL = {
 	'@simplewebauthn/browser': '13.2.2',
 	'@simplewebauthn/server': '13.2.2',
 	'ws': '8.18.3',
-	'axios': '1.13.5'
+	'axios': '1.13.5',
+	'node-forge': '1.4.0',
+	'lodash': '4.18.1',
+	'path-to-regexp': '8.4.2',
+	'brace-expansion': '5.0.5'
 };
 
 function normalizeSemver(raw) {

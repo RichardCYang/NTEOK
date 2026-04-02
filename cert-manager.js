@@ -1,10 +1,35 @@
 
 const acme = require('acme-client');
 const fs = require('fs').promises;
+const fsSync = require('fs');
 const path = require('path');
 const https = require('https');
+const semver = require('semver');
 
 const CERT_DIR = path.join(__dirname, 'certs');
+
+function getInstalledPackageVersion(pkgName) {
+    try {
+        let dir = path.dirname(require.resolve(pkgName));
+        for (let i = 0; i < 6; i++) {
+            const pkgJson = path.join(dir, 'package.json');
+            if (fsSync.existsSync(pkgJson)) {
+                const parsed = JSON.parse(fsSync.readFileSync(pkgJson, 'utf8'));
+                if (parsed && parsed.name === pkgName && parsed.version) return parsed.version;
+            }
+            const parent = path.dirname(dir);
+            if (parent === dir) break;
+            dir = parent;
+        }
+    } catch (_) {}
+    return null;
+}
+
+function assertSafeCryptoDeps() {
+    const forgeVersion = getInstalledPackageVersion('node-forge');
+    const coerced = semver.coerce(forgeVersion || '');
+    if (!coerced || semver.lt(coerced, '1.4.0')) throw new Error(`[보안] 취약한 node-forge 버전이 감지되었습니다 (${forgeVersion || '알 수 없음'}). 인증서 자동화 기능을 사용하려면 node-forge 1.4.0 이상의 버전이 필요합니다.`);
+}
 
 const ACME_DIRECTORY_URL = acme.directory.letsencrypt.production;
 
@@ -206,6 +231,7 @@ async function loadExistingCertificate() {
 }
 
 async function getCertificate(domain, duckdnsToken, email = 'admin@example.com') {
+    assertSafeCryptoDeps();
     const existing = await loadExistingCertificate();
 
     if (existing) {
@@ -217,6 +243,7 @@ async function getCertificate(domain, duckdnsToken, email = 'admin@example.com')
 }
 
 function scheduleRenewal(domain, duckdnsToken, email, renewalCallback) {
+    assertSafeCryptoDeps();
     const checkInterval = 24 * 60 * 60 * 1000; 
 
     setInterval(async () => {
