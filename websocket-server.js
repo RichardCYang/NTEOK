@@ -19,6 +19,21 @@ const REALTIME_URI_ATTRS = new Set([
 
 const REALTIME_ALLOWED_ATTR_RE = /^(?:id|title|level|type|checked|colspan|rowspan|colwidth|href|src|target|rel|data-[a-z0-9._:-]+)$/i;
 const REALTIME_FORBIDDEN_TAG_RE = /^(?:script|iframe|object|embed|meta|link|style|svg|math)$/i;
+const REALTIME_ALLOWED_NODE_NAMES = new Set([
+    'doc', 'text',
+    'paragraph', 'heading', 'blockquote',
+    'bulletlist', 'orderedlist', 'listitem',
+    'codeblock', 'horizontalrule', 'hardbreak',
+    'tasklist', 'taskitem',
+    'table', 'tablerow', 'tableheader', 'tablecell',
+    'mathblock', 'mathinline',
+    'imagewithcaption', 'calloutblock', 'toggleblock', 'boardblock',
+    'youtubeblock', 'bookmarkblock', 'fileblock', 'calendarblock', 'databaseblock',
+    'tabblock', 'tabitem',
+    'bold', 'italic', 'strike', 'code', 'textstyle'
+]);
+const REALTIME_LOCAL_RESOURCE_RE = /^\/(?:imgs|covers|paperclip)\//;
+const REALTIME_LOCAL_PROXY_RE = /^\/api\/pages\/proxy-favicon(?:\?|$)/;
 
 function decodeLooseDangerousValue(input) {
     let out = String(input || "");
@@ -34,6 +49,50 @@ function decodeLooseDangerousValue(input) {
 function hasForbiddenRealtimeScheme(raw) {
     const v = decodeLooseDangerousValue(raw).toLowerCase();
     return /^(?:javascript|vbscript|data|file):/.test(v);
+}
+
+function normalizeRealtimeNodeName(name) {
+    return String(name || '').trim().toLowerCase();
+}
+
+function isAllowedRealtimeNodeName(name) {
+    return REALTIME_ALLOWED_NODE_NAMES.has(normalizeRealtimeNodeName(name));
+}
+
+function isSafeRealtimeLinkUrl(raw) {
+    const v = decodeRealtimeAttr(raw).trim();
+    if (!v) return true;
+    if (/[\u0000-\u001F\u007F]/.test(v)) return false;
+    if (v.startsWith('#')) return true;
+    if (v.startsWith('/')) return !v.startsWith('//');
+    if (/^(?:mailto|tel):/i.test(v)) return true;
+    try {
+        const u = new URL(v);
+        return u.protocol === 'http:' || u.protocol === 'https:';
+    } catch (_) {
+        return false;
+    }
+}
+
+function isSafeRealtimeResourceUrl(raw) {
+    const v = decodeRealtimeAttr(raw).trim();
+    if (!v) return true;
+    if (/[\u0000-\u001F\u007F]/.test(v)) return false;
+    if (v.startsWith('//') || v.startsWith('#')) return false;
+    if (v.startsWith('/')) return REALTIME_LOCAL_RESOURCE_RE.test(v) || REALTIME_LOCAL_PROXY_RE.test(v);
+    try {
+        const u = new URL(v, 'https://nteok.invalid');
+        if (u.origin !== 'https://nteok.invalid') return false;
+        return REALTIME_LOCAL_RESOURCE_RE.test(u.pathname) || REALTIME_LOCAL_PROXY_RE.test(u.pathname + u.search);
+    } catch (_) {
+        return false;
+    }
+}
+
+function isSafeRealtimeUriAttr(name, value) {
+    const key = String(name || '').toLowerCase();
+    if (key === 'href' || key === 'data-url') return isSafeRealtimeLinkUrl(value);
+    return isSafeRealtimeResourceUrl(value);
 }
 
 const REALTIME_STRUCTURED_ATTRS = new Set(['data-columns', 'data-rows', 'data-memos', 'data-content', 'data-title', 'data-caption', 'data-description']);
@@ -75,8 +134,10 @@ function validateRealtimeFragmentStructure(xml) {
 
     const nodes = Array.from(doc.querySelectorAll("*"));
     for (const el of nodes) {
-        const tag = String(el.tagName || "").toLowerCase();
+        const tag = normalizeRealtimeNodeName(el.tagName);
+        if (tag === "root") continue;
         if (REALTIME_FORBIDDEN_TAG_RE.test(tag)) return { ok: false, code: 1008, reason: `Forbidden realtime node: ${tag}` };
+        if (!isAllowedRealtimeNodeName(tag)) return { ok: false, code: 1008, reason: `Unexpected realtime node: ${tag}` };
 
         for (const attr of Array.from(el.attributes || [])) {
             const name = String(attr.name || "").toLowerCase();
@@ -84,6 +145,7 @@ function validateRealtimeFragmentStructure(xml) {
 
             if (name.startsWith("on") || name === "style" || name === "srcdoc" || name === "formaction") return { ok: false, code: 1008, reason: `Forbidden realtime attr: ${name}` };
             if (!REALTIME_ALLOWED_ATTR_RE.test(name)) return { ok: false, code: 1008, reason: `Unexpected realtime attr: ${name}` };
+            if (REALTIME_URI_ATTRS.has(name) && !isSafeRealtimeUriAttr(name, value)) return { ok: false, code: 1008, reason: `Unsafe realtime URI in ${name}` };
             if (REALTIME_URI_ATTRS.has(name) && hasForbiddenRealtimeScheme(value)) return { ok: false, code: 1008, reason: `Forbidden realtime URI in ${name}` };
             if (!validateStructuredRealtimeAttr(name, value)) return { ok: false, code: 1008, reason: `Malformed realtime structured attr: ${name}` };
         }
@@ -1594,7 +1656,24 @@ async function loadOrCreateYjsDoc(pool, sanitizeHtmlContent, pageId) {
 	    if (page.is_encrypted === 1) {
 	        yMetadata.set('seeded', false);
 	    } else if (page.yjs_state) {
-	        try { Y.applyUpdate(ydoc, Buffer.from(page.yjs_state)); yMetadata.set('seeded', true); } catch (e) { yMetadata.set('seeded', false); }
+	        try {
+                Y.applyUpdate(ydoc, Buffer.from(page.yjs_state));
+                const sem = validateRealtimeYjsCandidate(ydoc, sanitizeHtmlContent);
+                if (!sem.ok) {
+                    try { await pool.execute('UPDATE pages SET yjs_state = NULL WHERE id = ?', [pageId]); } catch (_) {}
+                    ydoc.transact(() => {
+                        const xml = ydoc.getXmlFragment('prosemirror');
+                        if (xml && xml.length > 0) xml.delete(0, xml.length);
+                        yMetadata.delete('content');
+                    });
+                    yMetadata.set('seeded', false);
+                } else {
+                    yMetadata.set('seeded', true);
+                }
+            } catch (e) {
+                try { await pool.execute('UPDATE pages SET yjs_state = NULL WHERE id = ?', [pageId]); } catch (_) {}
+                yMetadata.set('seeded', false);
+            }
 	    } else {
 	        yMetadata.set('seeded', false);
 	    }

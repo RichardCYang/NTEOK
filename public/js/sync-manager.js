@@ -89,12 +89,12 @@ function validateStructuredRealtimeAttr(name, value) {
 
 function getAllowedRealtimeNodeNames() {
     const schema = state.editor?.schema || state.editor?.view?.state?.schema;
-    const out = new Set(['doc', 'text']);
+    const out = new Set(['doc', 'text', 'root']);
     if (schema?.nodes) {
-        for (const k in schema.nodes) out.add(k);
+        for (const k in schema.nodes) out.add(String(k || '').trim().toLowerCase());
     }
     if (schema?.marks) {
-        for (const k in schema.marks) out.add(k);
+        for (const k in schema.marks) out.add(String(k || '').trim().toLowerCase());
     }
     return out;
 }
@@ -106,7 +106,7 @@ function validateRealtimeXmlAgainstSchema(xml) {
 
     const allowedNames = getAllowedRealtimeNodeNames();
     for (const el of Array.from(doc.querySelectorAll('*'))) {
-        const tag = String(el.tagName || '').toLowerCase();
+        const tag = String(el.tagName || '').trim().toLowerCase();
         if (tag === 'root') continue;
         if (!allowedNames.has(tag)) return { ok: false, reason: `Unexpected realtime node: ${tag}` };
 
