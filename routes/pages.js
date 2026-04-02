@@ -2033,26 +2033,25 @@ module.exports = (dependencies) => {
                 return;
             }
 
-            const ext = path.extname(req.file.filename).toLowerCase();
-            const isImageExt = ['.jpg', '.jpeg', '.png', '.gif', '.webp'].includes(ext);
+            try {
+                await assertSafeAttachmentFile(req.file.path, req.file.filename);
 
-            if (isImageExt) {
-                const sig = await assertImageFileSignature(req.file.path).catch(() => null);
-                if (sig) normalizeUploadedImageFile(req.file, sig.ext);
-            } else {
-                try {
-                    await assertSafeAttachmentFile(req.file.path, req.file.filename);
-                } catch (e) {
-                    if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
-                    if (e?.message === 'PDF_SCAN_TOO_LARGE') return res.status(413).json({ error: 'PDF 파일이 너무 커서 안전 검사를 수행할 수 없습니다. 더 작은 파일로 업로드해 주세요.' });
-                    if (e?.message === 'PDF_SCAN_REQUIRED' || e?.message === 'UNSAFE_PDF_BY_SCANNER') return res.status(400).json({ error: 'PDF 첨부는 AV/CDR 검사를 통과해야 업로드할 수 있습니다.' });
-                    const msg = e?.message === 'RICH_DOCUMENT_ATTACHMENTS_DISABLED'
-                        ? '문서 첨부는 서버 보안 스캔 구성이 완료된 경우에만 허용됩니다.'
-                        : e?.message === 'OFFICE_SCAN_REQUIRED'
-                        ? 'Office 문서는 AV/CDR 스캔이 활성화되어야 업로드할 수 있습니다.'
-                        : '허용되지 않는 첨부파일 형식입니다.';
-                    return res.status(400).json({ error: msg });
+                const ext = path.extname(req.file.filename).toLowerCase();
+                if (['.jpg', '.jpeg', '.png', '.gif', '.webp'].includes(ext)) {
+                    const sig = assertImageFileSignature(req.file.path, new Set(['jpg', 'jpeg', 'png', 'gif', 'webp']));
+                    normalizeUploadedImageFile(req.file, sig.ext);
                 }
+            } catch (e) {
+                if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+                if (e?.message === 'BAD_IMAGE_SIGNATURE' || e?.message === 'DISALLOWED_IMAGE_TYPE' || e?.message === '이미지 확장자가 실제 파일 형식과 일치하지 않습니다.') return res.status(400).json({ error: '유효한 이미지 파일만 업로드할 수 있습니다.' });
+                if (e?.message === 'PDF_SCAN_TOO_LARGE') return res.status(413).json({ error: 'PDF 파일이 너무 커서 안전 검사를 수행할 수 없습니다. 더 작은 파일로 업로드해 주세요.' });
+                if (e?.message === 'PDF_SCAN_REQUIRED' || e?.message === 'UNSAFE_PDF_BY_SCANNER') return res.status(400).json({ error: 'PDF 첨부는 AV/CDR 검사를 통과해야 업로드할 수 있습니다.' });
+                const msg = e?.message === 'RICH_DOCUMENT_ATTACHMENTS_DISABLED'
+                    ? '문서 첨부는 서버 보안 스캔 구성이 완료된 경우에만 허용됩니다.'
+                    : e?.message === 'OFFICE_SCAN_REQUIRED'
+                    ? 'Office 문서는 AV/CDR 스캔이 활성화되어야 업로드할 수 있습니다.'
+                    : '허용되지 않는 첨부파일 형식입니다.';
+                return res.status(400).json({ error: msg });
             }
 
             try {
